@@ -15,6 +15,7 @@ default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa", "regor
 ast = ["regorus/ast"]
 cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]
+history = ["regorus/history"]
 
 [dependencies]
 magnus = { version = "0.9.2" }

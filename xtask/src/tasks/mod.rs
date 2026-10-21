@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod aeneas_history;
+pub use aeneas_history::ExtractHistoryLeanCommand;
 pub mod bindings;
 pub mod ci;
 pub mod dev;

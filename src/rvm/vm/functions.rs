@@ -58,7 +58,13 @@ impl RegoVM {
         let mut args = core::mem::take(&mut self.cached_builtin_args);
         args.clear();
         for &arg_reg in params.arg_registers().iter() {
-            let arg_value = self.get_register(arg_reg)?.clone();
+            let arg_value = match self.get_register(arg_reg) {
+                Ok(value) => value.clone(),
+                Err(error) => {
+                    self.cached_builtin_args = args;
+                    return Err(error);
+                }
+            };
             args.push(arg_value);
         }
 
@@ -92,10 +98,21 @@ impl RegoVM {
             }
         };
         let cache_name = builtins::must_cache(builtin_info.name.as_str());
+        #[cfg(feature = "history")]
+        let is_history_match = builtin_info.name == "history.match";
         drop(program);
 
-        self.ensure_dummy_exprs(args.len())?;
-        let dummy_span = self.get_dummy_span()?.clone();
+        if let Err(error) = self.ensure_dummy_exprs(args.len()) {
+            self.cached_builtin_args = args;
+            return Err(error);
+        }
+        let dummy_span = match self.get_dummy_span() {
+            Ok(span) => span.clone(),
+            Err(error) => {
+                self.cached_builtin_args = args;
+                return Err(error);
+            }
+        };
         // Take the dummy_exprs vec out of self so we can pass it to the builtin
         // while still calling &mut self methods afterwards.
         let dummy_exprs = core::mem::take(&mut self.dummy_exprs);
@@ -115,32 +132,42 @@ impl RegoVM {
             }
         }
 
-        let result = match builtin_fn(
-            &dummy_span,
-            dummy_exprs.get(..args.len()).unwrap_or(&[]),
-            &args,
-            self.strict_builtin_errors,
-        ) {
+        #[cfg(feature = "history")]
+        let contextual_result = is_history_match.then(|| {
+            builtins::history_match_with_context(
+                &dummy_span,
+                dummy_exprs.get(..args.len()).unwrap_or(&[]),
+                &args,
+                &mut self.history_match_state,
+                &mut self.execution_timer,
+            )
+        });
+        #[cfg(not(feature = "history"))]
+        let contextual_result = None;
+        #[cfg_attr(not(feature = "history"), allow(clippy::unnecessary_literal_unwrap))]
+        let result = contextual_result.unwrap_or_else(|| {
+            builtin_fn(
+                &dummy_span,
+                dummy_exprs.get(..args.len()).unwrap_or(&[]),
+                &args,
+                self.strict_builtin_errors,
+            )
+        });
+        self.dummy_exprs = dummy_exprs;
+        let result = match result {
             Ok(value) => value,
-            // Resource-limit errors must always propagate, even in non-strict
-            // mode, to prevent `not builtin(...)` from silently flipping to true.
-            Err(e) if !self.strict_builtin_errors => {
-                if e.downcast_ref::<crate::LimitError>().is_some() {
-                    self.dummy_exprs = dummy_exprs;
+            Err(error) => {
+                if self.strict_builtin_errors || builtins::is_fatal_builtin_error(&error) {
                     self.cached_builtin_args = args;
-                    return Err(e.into());
+                    #[cfg(feature = "history")]
+                    if is_history_match {
+                        return Err(Self::history_match_error(error, self.pc));
+                    }
+                    return Err(error.into());
                 }
                 Value::Undefined
             }
-            Err(err) => {
-                self.dummy_exprs = dummy_exprs;
-                self.cached_builtin_args = args;
-                return Err(err.into());
-            }
         };
-
-        // Put dummy_exprs back for reuse.
-        self.dummy_exprs = dummy_exprs;
 
         if let Some(name) = cache_name {
             // Move args into the cache. The now-empty (zero-capacity) Vec is
@@ -162,5 +189,32 @@ impl RegoVM {
         self.memory_check()?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "history")]
+    fn history_match_error(error: anyhow::Error, pc: usize) -> VmError {
+        if let Some(limit) = error.downcast_ref::<crate::LimitError>() {
+            return match *limit {
+                crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
+                    VmError::TimeLimitExceeded { elapsed, limit, pc }
+                }
+                crate::LimitError::MemoryLimitExceeded { usage, limit } => {
+                    VmError::MemoryLimitExceeded { usage, limit, pc }
+                }
+                crate::LimitError::RegexSizeLimitExceeded { limit } => {
+                    VmError::RegexSizeLimitExceeded { limit, pc }
+                }
+            };
+        }
+        if builtins::is_fatal_builtin_error(&error) {
+            return VmError::HistoryMatchFailure {
+                message: alloc::format!("{error}"),
+                pc,
+            };
+        }
+        VmError::HistoryMatchValidationError {
+            message: alloc::format!("{error}"),
+            pc,
+        }
     }
 }

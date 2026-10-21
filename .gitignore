@@ -57,3 +57,6 @@ bindings/java/.settings/
 
 # Emacs backup files
 *~
+
+# Lean build artifacts
+**/.lake/

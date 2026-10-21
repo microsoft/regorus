@@ -1,0 +1,12 @@
+name = "regorus-history"
+version = "0.1.0"
+defaultTargets = ["RegorusHistory"]
+
+[[lean_lib]]
+name = "RegorusHistory"
+
+[[require]]
+name = "aeneas"
+git = "https://github.com/AeneasVerif/aeneas"
+rev = "cd419953b67caae3e4d6b514b3ee3f3f1ff76ea1"
+subDir = "backends/lean"

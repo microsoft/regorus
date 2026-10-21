@@ -1,0 +1,5433 @@
+{
+  "aeneas_version": "nightly-2026.10.15-cd41995",
+  "charon_version": "0.1.287",
+  "crate": "regorus_history_extract",
+  "functions": [
+    {
+      "def_id": 251,
+      "lean_name": "Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::convert::num::ptr_try_from_impls::{impl core::convert::TryFrom<u32, core::num::error::TryFromIntError> for usize}::try_from",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/convert/num.rs",
+        "begin_line": 341,
+        "end_line": 341
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 175,
+      "lean_name": "core.mem.size_of",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::mem::size_of",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/mem/mod.rs",
+        "begin_line": 375,
+        "end_line": 375
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 187,
+      "lean_name": "core.num.U64.checked_shr",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::num::{u64}::checked_shr",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/num/uint_macros.rs",
+        "begin_line": 2243,
+        "end_line": 2243
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 292,
+      "lean_name": "core.option.OptionShared0T.copied",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::option::{core::option::Option<&'_0 T>}::copied",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/option.rs",
+        "begin_line": 2135,
+        "end_line": 2137
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 253,
+      "lean_name": "core.option.Option.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::option::{impl core::clone::Clone for core::option::Option<T>}::clone",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/option.rs",
+        "begin_line": 2278,
+        "end_line": 2278
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 178,
+      "lean_name": "core.result.Result.is_err",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::result::{core::result::Result<T, E>}::is_err",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/result.rs",
+        "begin_line": 647,
+        "end_line": 647
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 169,
+      "lean_name": "core.slice.Slice.first",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::slice::{[T]}::first",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/slice/mod.rs",
+        "begin_line": 157,
+        "end_line": 157
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 186,
+      "lean_name": "core.slice.Slice.last",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::slice::{[T]}::last",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/slice/mod.rs",
+        "begin_line": 283,
+        "end_line": 283
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 189,
+      "lean_name": "core.slice.Slice.binary_search",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::slice::{[T]}::binary_search",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/slice/mod.rs",
+        "begin_line": 2934,
+        "end_line": 2936
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 155,
+      "lean_name": "core.slice.Slice.sort_unstable",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "core::slice::{[T]}::sort_unstable",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/slice/mod.rs",
+        "begin_line": 3150,
+        "end_line": 3152
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 177,
+      "lean_name": "alloc.vec.Vec.try_reserve",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "alloc::vec::{alloc::vec::Vec<T>}::try_reserve",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/vec/mod.rs",
+        "begin_line": 1535,
+        "end_line": 1535
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 152,
+      "lean_name": "alloc.vec.Vec.truncate",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "alloc::vec::{alloc::vec::Vec<T>}::truncate",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/vec/mod.rs",
+        "begin_line": 1816,
+        "end_line": 1816
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 255,
+      "lean_name": "alloc.vec.Vec.as_slice",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "alloc::vec::{alloc::vec::Vec<T>}::as_slice",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/vec/mod.rs",
+        "begin_line": 1856,
+        "end_line": 1856
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 158,
+      "lean_name": "alloc.vec.Vec.pop",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "alloc::vec::{alloc::vec::Vec<T>}::pop",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/vec/mod.rs",
+        "begin_line": 2901,
+        "end_line": 2901
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 156,
+      "lean_name": "alloc.vec.Vec.is_empty",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "alloc::vec::{alloc::vec::Vec<T>}::is_empty",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/vec/mod.rs",
+        "begin_line": 3160,
+        "end_line": 3160
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 140,
+      "lean_name": "error.normalization_invariant",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::normalization_invariant",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 36,
+        "end_line": 40
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 174,
+      "lean_name": "error.symbolic_invariant",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::symbolic_invariant",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 42,
+        "end_line": 46
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 183,
+      "lean_name": "error.invalid_truth_assignment",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::invalid_truth_assignment",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 48,
+        "end_line": 52
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 252,
+      "lean_name": "error.graph_id_overflow",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::graph_id_overflow",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 54,
+        "end_line": 58
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 285,
+      "lean_name": "error.graph_index_overflow",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::graph_index_overflow",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 60,
+        "end_line": 62
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 287,
+      "lean_name": "error.invalid_atom_set",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::invalid_atom_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 64,
+        "end_line": 68
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 188,
+      "lean_name": "error.missing_transition_atom",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::missing_transition_atom",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 70,
+        "end_line": 74
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 179,
+      "lean_name": "error.allocation_failed",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::error::allocation_failed",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 76,
+        "end_line": 78
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 118,
+      "lean_name": "store.store_invariant",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::store::store_invariant",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 91,
+        "end_line": 95
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 119,
+      "lean_name": "store.inconsistent_nullability",
+      "lean_file": "RegorusHistory/Generated/FunsExternal_Template.lean",
+      "rust_name": "regorus_history_extract::store::inconsistent_nullability",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 96,
+        "end_line": 100
+      },
+      "is_opaque": true,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 247,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::TransitionId}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 281,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::TestId}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 282,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::RegexId}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 135,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpPartialEqTestId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TestId> for regorus_history_extract::kernel::TestId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 218,
+      "lean_name": "RegorusHistory.kernel.ConstId.Insts.CoreCmpPartialEqConstId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::ConstId> for regorus_history_extract::kernel::ConstId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 160,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpPartialEqRegexId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::RegexId> for regorus_history_extract::kernel::RegexId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 164,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpPartialEqTransitionId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TransitionId> for regorus_history_extract::kernel::TransitionId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 136,
+      "lean_name": "RegorusHistory.kernel.PathId.Insts.CoreCmpPartialEqPathId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::PathId> for regorus_history_extract::kernel::PathId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 279,
+      "lean_name": "RegorusHistory.kernel.VariableId.Insts.CoreCmpPartialEqVariableId.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::VariableId> for regorus_history_extract::kernel::VariableId}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 237,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpEq.assert_fields_are_eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::TestId}::assert_fields_are_eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 246,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpEq.assert_fields_are_eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::RegexId}::assert_fields_are_eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 249,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpEq.assert_fields_are_eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::TransitionId}::assert_fields_are_eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 236,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpOrd.cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::TestId}::cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 228,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpPartialOrdTestId.partial_cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::TestId> for regorus_history_extract::kernel::TestId}::partial_cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 245,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpOrd.cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::RegexId}::cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 244,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpPartialOrdRegexId.partial_cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::RegexId> for regorus_history_extract::kernel::RegexId}::partial_cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 248,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpOrd.cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::TransitionId}::cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 283,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpPartialOrdTransitionId.partial_cmp",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::TransitionId> for regorus_history_extract::kernel::TransitionId}::partial_cmp",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 173,
+      "lean_name": "RegorusHistory.kernel.RegexId.index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::RegexId}::index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 47,
+        "end_line": 52
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 264,
+      "lean_name": "RegorusHistory.kernel.TestId.index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::TestId}::index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 47,
+        "end_line": 52
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 265,
+      "lean_name": "RegorusHistory.kernel.TransitionId.index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::TransitionId}::index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 47,
+        "end_line": 52
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 266,
+      "lean_name": "RegorusHistory.kernel.TestId.from_index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::TestId}::from_index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 53,
+        "end_line": 58
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 267,
+      "lean_name": "RegorusHistory.kernel.RegexId.from_index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::RegexId}::from_index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 53,
+        "end_line": 58
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 268,
+      "lean_name": "RegorusHistory.kernel.TransitionId.from_index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::TransitionId}::from_index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 53,
+        "end_line": 58
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 284,
+      "lean_name": "RegorusHistory.kernel.id_slice_eq_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::id_slice_eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 130,
+        "end_line": 136
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.kernel.id_slice_eq"
+    },
+    {
+      "def_id": 284,
+      "lean_name": "RegorusHistory.kernel.id_slice_eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::id_slice_eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 127,
+        "end_line": 138
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 217,
+      "lean_name": "RegorusHistory.kernel.Term.Insts.CoreCmpPartialEqTerm.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::Term> for regorus_history_extract::kernel::Term}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 140,
+        "end_line": 146
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 134,
+      "lean_name": "RegorusHistory.kernel.Primitive.Insts.CoreCmpPartialEqPrimitive.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::Primitive> for regorus_history_extract::kernel::Primitive}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 150,
+        "end_line": 156
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 260,
+      "lean_name": "RegorusHistory.kernel.TestView.Insts.CoreCmpPartialEqTestView.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TestView<'_0>> for regorus_history_extract::kernel::TestView<'_0>}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 160,
+        "end_line": 176
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 261,
+      "lean_name": "RegorusHistory.kernel.RegexKindView.Insts.CoreCmpPartialEqRegexKindView.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::RegexKindView<'_0>> for regorus_history_extract::kernel::RegexKindView<'_0>}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 180,
+        "end_line": 192
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 262,
+      "lean_name": "RegorusHistory.kernel.TransitionView.Insts.CoreCmpPartialEqTransitionView.eq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TransitionView<'_0>> for regorus_history_extract::kernel::TransitionView<'_0>}::eq",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 196,
+        "end_line": 227
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 182,
+      "lean_name": "RegorusHistory.kernel.AtomSet.impl.ids",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{regorus_history_extract::kernel::AtomSet}::ids",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 259,
+        "end_line": 261
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 131,
+      "lean_name": "RegorusHistory.kernel.test_head",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::test_head",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 322,
+        "end_line": 333
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 275,
+      "lean_name": "RegorusHistory.kernel.atom_set_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::atom_set_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 263,
+        "end_line": 284
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 212,
+      "lean_name": "RegorusHistory.kernel.atom_set_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::atom_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 287
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.kernel.atom_set"
+    },
+    {
+      "def_id": 212,
+      "lean_name": "RegorusHistory.kernel.atom_set",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::atom_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 285,
+        "end_line": 290
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 161,
+      "lean_name": "RegorusHistory.kernel.regex_head",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::regex_head",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 334,
+        "end_line": 346
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 167,
+      "lean_name": "RegorusHistory.kernel.transition_head",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::transition_head",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 347,
+        "end_line": 365
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 142,
+      "lean_name": "RegorusHistory.kernel.test_child",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::test_child",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 366,
+        "end_line": 378
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 159,
+      "lean_name": "RegorusHistory.kernel.regex_child",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::regex_child",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 379,
+        "end_line": 393
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 165,
+      "lean_name": "RegorusHistory.kernel.transition_child",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::transition_child",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 394,
+        "end_line": 406
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 171,
+      "lean_name": "RegorusHistory.kernel.suffix_child",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::suffix_child",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 407,
+        "end_line": 419
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 45,
+      "lean_name": "RegorusHistory.normalize.finish_test_not",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::finish_test_not",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 380,
+        "end_line": 404
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 44,
+      "lean_name": "RegorusHistory.normalize.schedule_test_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::schedule_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 363,
+        "end_line": 374
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.schedule_test_children"
+    },
+    {
+      "def_id": 44,
+      "lean_name": "RegorusHistory.normalize.schedule_test_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::schedule_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 355,
+        "end_line": 379
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 46,
+      "lean_name": "RegorusHistory.normalize.test_not_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_not_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 405,
+        "end_line": 438
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 47,
+      "lean_name": "RegorusHistory.normalize.test_not_next",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_not_next",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 439,
+        "end_line": 449
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 48,
+      "lean_name": "RegorusHistory.normalize.test_not_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_not",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 455,
+        "end_line": 457
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_not"
+    },
+    {
+      "def_id": 48,
+      "lean_name": "RegorusHistory.normalize.test_not",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_not",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 450,
+        "end_line": 463
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 19,
+      "lean_name": "RegorusHistory.normalize.complementary",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::complementary",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 8,
+        "end_line": 19
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 20,
+      "lean_name": "RegorusHistory.normalize.distinct",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::distinct",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 20,
+        "end_line": 22
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 21,
+      "lean_name": "RegorusHistory.normalize.dual_test_count",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::dual_test_count",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 23,
+        "end_line": 29
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 22,
+      "lean_name": "RegorusHistory.normalize.midpoint",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::midpoint",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 30,
+        "end_line": 35
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 23,
+      "lean_name": "RegorusHistory.normalize.test_contains_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_contains",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 45,
+        "end_line": 53
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_contains"
+    },
+    {
+      "def_id": 23,
+      "lean_name": "RegorusHistory.normalize.test_contains",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_contains",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 36,
+        "end_line": 62
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 24,
+      "lean_name": "RegorusHistory.normalize.test_subset_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_subset",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 73,
+        "end_line": 77
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_subset"
+    },
+    {
+      "def_id": 24,
+      "lean_name": "RegorusHistory.normalize.test_subset",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_subset",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 63,
+        "end_line": 82
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 25,
+      "lean_name": "RegorusHistory.normalize.test_at",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_at",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 83,
+        "end_line": 88
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 26,
+      "lean_name": "RegorusHistory.normalize.regex_at",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_at",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 89,
+        "end_line": 94
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 27,
+      "lean_name": "RegorusHistory.normalize.test_pair_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_pair_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 95,
+        "end_line": 113
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 28,
+      "lean_name": "RegorusHistory.normalize.test_pair_collapse_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_pair_collapse",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_pair_collapse"
+    },
+    {
+      "def_id": 28,
+      "lean_name": "RegorusHistory.normalize.test_pair_collapse",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_pair_collapse",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 114,
+        "end_line": 123
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    },
+    {
+      "def_id": 29,
+      "lean_name": "RegorusHistory.normalize.test_complement_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_complement_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 124,
+        "end_line": 134
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 30,
+      "lean_name": "RegorusHistory.normalize.test_has_complement_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_has_complement",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_has_complement"
+    },
+    {
+      "def_id": 30,
+      "lean_name": "RegorusHistory.normalize.test_has_complement",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_has_complement",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 135,
+        "end_line": 143
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    },
+    {
+      "def_id": 31,
+      "lean_name": "RegorusHistory.normalize.test_compound_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_compound_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 144,
+        "end_line": 154
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 32,
+      "lean_name": "RegorusHistory.normalize.test_compound_collapse_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_compound_collapse",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_compound_collapse"
+    },
+    {
+      "def_id": 32,
+      "lean_name": "RegorusHistory.normalize.test_compound_collapse",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_compound_collapse",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 155,
+        "end_line": 168
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 33,
+      "lean_name": "RegorusHistory.normalize.test_redundant_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_redundant_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 169,
+        "end_line": 192
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 34,
+      "lean_name": "RegorusHistory.normalize.test_redundant_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_redundant",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_redundant"
+    },
+    {
+      "def_id": 34,
+      "lean_name": "RegorusHistory.normalize.test_redundant",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_redundant",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 193,
+        "end_line": 202
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    },
+    {
+      "def_id": 35,
+      "lean_name": "RegorusHistory.normalize.collect_test_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 211,
+        "end_line": 215
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.collect_test_children"
+    },
+    {
+      "def_id": 35,
+      "lean_name": "RegorusHistory.normalize.collect_test_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 203,
+        "end_line": 220
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 36,
+      "lean_name": "RegorusHistory.normalize.dedup_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::dedup_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 221,
+        "end_line": 246
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 37,
+      "lean_name": "RegorusHistory.normalize.dedup_ids_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::dedup_ids",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.dedup_ids"
+    },
+    {
+      "def_id": 37,
+      "lean_name": "RegorusHistory.normalize.dedup_ids",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::dedup_ids",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 247,
+        "end_line": 254
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 153,
+      "lean_name": "RegorusHistory.normalize.TestMode.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::TestMode}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 255,
+        "end_line": 255
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 38,
+      "lean_name": "RegorusHistory.normalize.collect_test_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_test_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 261,
+        "end_line": 281
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 39,
+      "lean_name": "RegorusHistory.normalize.collapse_test_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collapse_test_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 282,
+        "end_line": 293
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 40,
+      "lean_name": "RegorusHistory.normalize.retain_test_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::retain_test_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 294,
+        "end_line": 306
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 41,
+      "lean_name": "RegorusHistory.normalize.test_connective_loop0",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_connective",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_connective"
+    },
+    {
+      "def_id": 41,
+      "lean_name": "RegorusHistory.normalize.test_connective_loop1",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_connective",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 1, "pos": [ 1 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_connective"
+    },
+    {
+      "def_id": 41,
+      "lean_name": "RegorusHistory.normalize.test_connective_loop2",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_connective",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 2, "pos": [ 2 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.test_connective"
+    },
+    {
+      "def_id": 41,
+      "lean_name": "RegorusHistory.normalize.test_connective",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_connective",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 307,
+        "end_line": 348
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 42,
+      "lean_name": "RegorusHistory.normalize.test_and",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_and",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 349,
+        "end_line": 351
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 43,
+      "lean_name": "RegorusHistory.normalize.test_or",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::test_or",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 352,
+        "end_line": 354
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 49,
+      "lean_name": "RegorusHistory.normalize.nullable",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::nullable",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 464,
+        "end_line": 466
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 50,
+      "lean_name": "RegorusHistory.normalize.regex_test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 467,
+        "end_line": 474
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 51,
+      "lean_name": "RegorusHistory.normalize.dual_regex_count",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::dual_regex_count",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 475,
+        "end_line": 481
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 52,
+      "lean_name": "RegorusHistory.normalize.regex_contains_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_contains",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 491,
+        "end_line": 499
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_contains"
+    },
+    {
+      "def_id": 52,
+      "lean_name": "RegorusHistory.normalize.regex_contains",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_contains",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 482,
+        "end_line": 508
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 53,
+      "lean_name": "RegorusHistory.normalize.regex_subset_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_subset",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 519,
+        "end_line": 523
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_subset"
+    },
+    {
+      "def_id": 53,
+      "lean_name": "RegorusHistory.normalize.regex_subset",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_subset",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 509,
+        "end_line": 528
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 54,
+      "lean_name": "RegorusHistory.normalize.regex_complement_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_complement_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 529,
+        "end_line": 538
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 55,
+      "lean_name": "RegorusHistory.normalize.regex_has_complement_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_has_complement",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_has_complement"
+    },
+    {
+      "def_id": 55,
+      "lean_name": "RegorusHistory.normalize.regex_has_complement",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_has_complement",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 539,
+        "end_line": 552
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 56,
+      "lean_name": "RegorusHistory.normalize.regex_absorbed_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_absorbed_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 553,
+        "end_line": 574
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 57,
+      "lean_name": "RegorusHistory.normalize.regex_absorbed_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_absorbed",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_absorbed"
+    },
+    {
+      "def_id": 57,
+      "lean_name": "RegorusHistory.normalize.regex_absorbed",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_absorbed",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 575,
+        "end_line": 584
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    },
+    {
+      "def_id": 58,
+      "lean_name": "RegorusHistory.normalize.collect_regex_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_regex_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 593,
+        "end_line": 597
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.collect_regex_children"
+    },
+    {
+      "def_id": 58,
+      "lean_name": "RegorusHistory.normalize.collect_regex_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_regex_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 585,
+        "end_line": 602
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 162,
+      "lean_name": "RegorusHistory.normalize.RegexMode.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::RegexMode}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 603,
+        "end_line": 603
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 59,
+      "lean_name": "RegorusHistory.normalize.collect_regex_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_regex_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 609,
+        "end_line": 631
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 60,
+      "lean_name": "RegorusHistory.normalize.split_regex_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::split_regex_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 632,
+        "end_line": 646
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 163,
+      "lean_name": "RegorusHistory.normalize.RegexStats.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::RegexStats}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 647,
+        "end_line": 647
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 61,
+      "lean_name": "RegorusHistory.normalize.regex_stats_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_stats_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 655,
+        "end_line": 677
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 62,
+      "lean_name": "RegorusHistory.normalize.retain_regex_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::retain_regex_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 678,
+        "end_line": 699
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 63,
+      "lean_name": "RegorusHistory.normalize.nullable_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::nullable_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 700,
+        "end_line": 709
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop0",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop1",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 1, "pos": [ 1 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop2",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 2, "pos": [ 2 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop3",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 3, "pos": [ 3 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop4",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 4, "pos": [ 4 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop5",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 5, "pos": [ 5 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop6",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 6, "pos": [ 6 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop7",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 7, "pos": [ 7 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop8",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 8, "pos": [ 8 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop9",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 9, "pos": [ 9 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop10",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 10, "pos": [ 10 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop11",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 11, "pos": [ 11 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop12",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 12, "pos": [ 12 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop13",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 13, "pos": [ 13 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop14",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 14, "pos": [ 14 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop15",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 15, "pos": [ 15 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set_loop16",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 16, "pos": [ 16 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_set"
+    },
+    {
+      "def_id": 64,
+      "lean_name": "RegorusHistory.normalize.regex_set",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 710,
+        "end_line": 786
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 65,
+      "lean_name": "RegorusHistory.normalize.regex_union",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_union",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 787,
+        "end_line": 792
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 66,
+      "lean_name": "RegorusHistory.normalize.regex_intersect",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_intersect",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 793,
+        "end_line": 798
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 67,
+      "lean_name": "RegorusHistory.normalize.concat_collect_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::concat_collect_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 799,
+        "end_line": 819
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 68,
+      "lean_name": "RegorusHistory.normalize.regex_concat_loop0",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_concat",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_concat"
+    },
+    {
+      "def_id": 68,
+      "lean_name": "RegorusHistory.normalize.regex_concat_loop1",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_concat",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 1, "pos": [ 1 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.regex_concat"
+    },
+    {
+      "def_id": 68,
+      "lean_name": "RegorusHistory.normalize.regex_concat",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_concat",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 820,
+        "end_line": 841
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 69,
+      "lean_name": "RegorusHistory.normalize.regex_star",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_star",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 842,
+        "end_line": 852
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 70,
+      "lean_name": "RegorusHistory.normalize.regex_not",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::regex_not",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 853,
+        "end_line": 865
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 71,
+      "lean_name": "RegorusHistory.normalize.transition_const",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_const",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 866,
+        "end_line": 881
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 72,
+      "lean_name": "RegorusHistory.normalize.local_if",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::local_if",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 882,
+        "end_line": 900
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 73,
+      "lean_name": "RegorusHistory.normalize.collect_transition_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 909,
+        "end_line": 913
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.collect_transition_children"
+    },
+    {
+      "def_id": 73,
+      "lean_name": "RegorusHistory.normalize.collect_transition_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::collect_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 901,
+        "end_line": 918
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 166,
+      "lean_name": "RegorusHistory.normalize.TransitionMode.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::TransitionMode}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 919,
+        "end_line": 919
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 74,
+      "lean_name": "RegorusHistory.normalize.transition_collect_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_collect_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 925,
+        "end_line": 953
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 75,
+      "lean_name": "RegorusHistory.normalize.transition_collect_nodes_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_collect_nodes",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 962,
+        "end_line": 962
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.transition_collect_nodes"
+    },
+    {
+      "def_id": 75,
+      "lean_name": "RegorusHistory.normalize.transition_collect_nodes",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_collect_nodes",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 954,
+        "end_line": 966
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": true
+    },
+    {
+      "def_id": 76,
+      "lean_name": "RegorusHistory.normalize.transition_collect",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_collect",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 967,
+        "end_line": 1021
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 77,
+      "lean_name": "RegorusHistory.normalize.transition_union",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_union",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1022,
+        "end_line": 1027
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 170,
+      "lean_name": "RegorusHistory.normalize.ChildAction.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::ChildAction}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1042,
+        "end_line": 1042
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 78,
+      "lean_name": "RegorusHistory.normalize.schedule_transition_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::schedule_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1059,
+        "end_line": 1076
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.schedule_transition_children"
+    },
+    {
+      "def_id": 78,
+      "lean_name": "RegorusHistory.normalize.schedule_transition_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::schedule_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1050,
+        "end_line": 1081
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 79,
+      "lean_name": "RegorusHistory.normalize.take_values",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::take_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1082,
+        "end_line": 1097
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 80,
+      "lean_name": "RegorusHistory.normalize.suffix_values_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::suffix_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1106,
+        "end_line": 1110
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.suffix_values"
+    },
+    {
+      "def_id": 80,
+      "lean_name": "RegorusHistory.normalize.suffix_values",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::suffix_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1098,
+        "end_line": 1115
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 81,
+      "lean_name": "RegorusHistory.normalize.clean_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::clean_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1116,
+        "end_line": 1130
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 82,
+      "lean_name": "RegorusHistory.normalize.pair_conditionals",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::pair_conditionals",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1131,
+        "end_line": 1169
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 83,
+      "lean_name": "RegorusHistory.normalize.transition_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1170,
+        "end_line": 1412
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 84,
+      "lean_name": "RegorusHistory.normalize.transition_next",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_next",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1413,
+        "end_line": 1423
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 85,
+      "lean_name": "RegorusHistory.normalize.transition_machine_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_machine",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1432,
+        "end_line": 1434
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.normalize.transition_machine"
+    },
+    {
+      "def_id": 85,
+      "lean_name": "RegorusHistory.normalize.transition_machine",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_machine",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1424,
+        "end_line": 1440
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 87,
+      "lean_name": "RegorusHistory.normalize.clean_transition_path",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::clean_transition_path",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1451,
+        "end_line": 1457
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 86,
+      "lean_name": "RegorusHistory.normalize.transition_if",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_if",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1441,
+        "end_line": 1450
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 88,
+      "lean_name": "RegorusHistory.normalize.transition_intersect",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_intersect",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1458,
+        "end_line": 1465
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 89,
+      "lean_name": "RegorusHistory.normalize.transition_not",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_not",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1466,
+        "end_line": 1471
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 90,
+      "lean_name": "RegorusHistory.normalize.transition_append",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::transition_append",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1472,
+        "end_line": 1479
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 91,
+      "lean_name": "RegorusHistory.symbolic.cached",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::cached",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 13,
+        "end_line": 18
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 92,
+      "lean_name": "RegorusHistory.symbolic.grow_cache",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::grow_cache",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 19,
+        "end_line": 44
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 93,
+      "lean_name": "RegorusHistory.symbolic.schedule_derivative_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_derivative_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 55,
+        "end_line": 63
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.schedule_derivative_children"
+    },
+    {
+      "def_id": 93,
+      "lean_name": "RegorusHistory.symbolic.schedule_derivative_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_derivative_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 45,
+        "end_line": 68
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 94,
+      "lean_name": "RegorusHistory.symbolic.concat_suffix_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::concat_suffix",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 78,
+        "end_line": 82
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.concat_suffix"
+    },
+    {
+      "def_id": 94,
+      "lean_name": "RegorusHistory.symbolic.concat_suffix",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::concat_suffix",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 69,
+        "end_line": 87
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 181,
+      "lean_name": "RegorusHistory.symbolic.DerivativeFactors.Insts.CoreCloneClone.clone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::{impl core::clone::Clone for regorus_history_extract::symbolic::DerivativeFactors}::clone",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 88,
+        "end_line": 88
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 95,
+      "lean_name": "RegorusHistory.symbolic.derivative_child_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_child_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 94,
+        "end_line": 119
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 96,
+      "lean_name": "RegorusHistory.symbolic.derivative_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.derivative_children"
+    },
+    {
+      "def_id": 96,
+      "lean_name": "RegorusHistory.symbolic.derivative_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 120,
+        "end_line": 142
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 97,
+      "lean_name": "RegorusHistory.symbolic.derivative_branch",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_branch",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 143,
+        "end_line": 166
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 98,
+      "lean_name": "RegorusHistory.symbolic.derivative_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 167,
+        "end_line": 225
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 99,
+      "lean_name": "RegorusHistory.symbolic.derivative_next",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::derivative_next",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 226,
+        "end_line": 236
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 100,
+      "lean_name": "RegorusHistory.symbolic.symbolic_derivative_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::symbolic_derivative",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 245,
+        "end_line": 247
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.symbolic_derivative"
+    },
+    {
+      "def_id": 100,
+      "lean_name": "RegorusHistory.symbolic.symbolic_derivative",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::symbolic_derivative",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 237,
+        "end_line": 250
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 101,
+      "lean_name": "RegorusHistory.symbolic.validate_assignment",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::validate_assignment",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 251,
+        "end_line": 286
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 102,
+      "lean_name": "RegorusHistory.symbolic.positive_atom_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::positive_atom_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 287,
+        "end_line": 305
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 103,
+      "lean_name": "RegorusHistory.symbolic.positive_atom_index_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::positive_atom_index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 31,
+        "end_line": 31
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.positive_atom_index"
+    },
+    {
+      "def_id": 103,
+      "lean_name": "RegorusHistory.symbolic.positive_atom_index",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::positive_atom_index",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 306,
+        "end_line": 326
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 104,
+      "lean_name": "RegorusHistory.symbolic.atom_truth",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::atom_truth",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 327,
+        "end_line": 349
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 105,
+      "lean_name": "RegorusHistory.symbolic.schedule_test_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 358,
+        "end_line": 369
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.schedule_test_children"
+    },
+    {
+      "def_id": 105,
+      "lean_name": "RegorusHistory.symbolic.schedule_test_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_test_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 350,
+        "end_line": 374
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 106,
+      "lean_name": "RegorusHistory.symbolic.fold_test_values_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::fold_test_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 379,
+        "end_line": 393
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.fold_test_values"
+    },
+    {
+      "def_id": 106,
+      "lean_name": "RegorusHistory.symbolic.fold_test_values",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::fold_test_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 375,
+        "end_line": 398
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 107,
+      "lean_name": "RegorusHistory.symbolic.evaluate_test_branch",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::evaluate_test_branch",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 399,
+        "end_line": 416
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 108,
+      "lean_name": "RegorusHistory.symbolic.evaluate_test_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::evaluate_test_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 417,
+        "end_line": 439
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 109,
+      "lean_name": "RegorusHistory.symbolic.evaluate_test_next",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::evaluate_test_next",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 440,
+        "end_line": 452
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 110,
+      "lean_name": "RegorusHistory.symbolic.evaluate_test_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::evaluate_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 463,
+        "end_line": 465
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.evaluate_test"
+    },
+    {
+      "def_id": 110,
+      "lean_name": "RegorusHistory.symbolic.evaluate_test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::evaluate_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 453,
+        "end_line": 471
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 111,
+      "lean_name": "RegorusHistory.symbolic.schedule_transition_children_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 480,
+        "end_line": 491
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.schedule_transition_children"
+    },
+    {
+      "def_id": 111,
+      "lean_name": "RegorusHistory.symbolic.schedule_transition_children",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::schedule_transition_children",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 472,
+        "end_line": 496
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 112,
+      "lean_name": "RegorusHistory.symbolic.interpret_set",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_set",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 497,
+        "end_line": 519
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 113,
+      "lean_name": "RegorusHistory.symbolic.interpret_branch",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_branch",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 520,
+        "end_line": 536
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 114,
+      "lean_name": "RegorusHistory.symbolic.append_values_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::append_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 547,
+        "end_line": 551
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.append_values"
+    },
+    {
+      "def_id": 114,
+      "lean_name": "RegorusHistory.symbolic.append_values",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::append_values",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 537,
+        "end_line": 556
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 115,
+      "lean_name": "RegorusHistory.symbolic.interpret_step",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_step",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 557,
+        "end_line": 608
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 116,
+      "lean_name": "RegorusHistory.symbolic.interpret_next",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_next",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 609,
+        "end_line": 621
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 117,
+      "lean_name": "RegorusHistory.symbolic.interpret_transition_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 633,
+        "end_line": 635
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.symbolic.interpret_transition"
+    },
+    {
+      "def_id": 117,
+      "lean_name": "RegorusHistory.symbolic.interpret_transition",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::interpret_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 622,
+        "end_line": 641
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 190,
+      "lean_name": "RegorusHistory.store.TestNode.view",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::TestNode}::view",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 16,
+        "end_line": 27
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 195,
+      "lean_name": "RegorusHistory.store.VecStore.test_matches_at",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::test_matches_at",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 234,
+        "end_line": 239
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 198,
+      "lean_name": "RegorusHistory.store.VecStore.find_test_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 256,
+        "end_line": 266
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.store.VecStore.find_test"
+    },
+    {
+      "def_id": 198,
+      "lean_name": "RegorusHistory.store.VecStore.find_test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 252,
+        "end_line": 271
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 120,
+      "lean_name": "RegorusHistory.store.limit",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::limit",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 102,
+        "end_line": 106
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 194,
+      "lean_name": "RegorusHistory.store.VecStore.projected",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::projected",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 228,
+        "end_line": 233
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 121,
+      "lean_name": "RegorusHistory.store.copy_ids",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::copy_ids",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 107,
+        "end_line": 116
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 126,
+      "lean_name": "RegorusHistory.store.own_test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::own_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 149,
+        "end_line": 160
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 123,
+      "lean_name": "RegorusHistory.store.test_count",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::test_count",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 126,
+        "end_line": 131
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 122,
+      "lean_name": "RegorusHistory.store.payload",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::payload",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 117,
+        "end_line": 125
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 207,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.intern_test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::intern_test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 346,
+        "end_line": 363
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 192,
+      "lean_name": "RegorusHistory.store.TransitionNode.view",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::TransitionNode}::view",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 64,
+        "end_line": 80
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 197,
+      "lean_name": "RegorusHistory.store.VecStore.transition_matches_at",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::transition_matches_at",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 246,
+        "end_line": 251
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 200,
+      "lean_name": "RegorusHistory.store.VecStore.find_transition_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 296,
+        "end_line": 306
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.store.VecStore.find_transition"
+    },
+    {
+      "def_id": 200,
+      "lean_name": "RegorusHistory.store.VecStore.find_transition",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 292,
+        "end_line": 311
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 128,
+      "lean_name": "RegorusHistory.store.own_transition",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::own_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 174,
+        "end_line": 189
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 125,
+      "lean_name": "RegorusHistory.store.transition_extra",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::transition_extra",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 140,
+        "end_line": 148
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 209,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.intern_transition",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::intern_transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 392,
+        "end_line": 413
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 191,
+      "lean_name": "RegorusHistory.store.RegexNode.view",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::RegexNode}::view",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 41,
+        "end_line": 53
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 196,
+      "lean_name": "RegorusHistory.store.VecStore.regex_matches_at",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::regex_matches_at",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 240,
+        "end_line": 245
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 199,
+      "lean_name": "RegorusHistory.store.VecStore.find_regex_loop",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_regex",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 276,
+        "end_line": 286
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": true,
+      "reducible": false,
+      "loop": { "id": 0, "pos": [ 0 ], "is_body": false },
+      "parent_lean_name": "RegorusHistory.store.VecStore.find_regex"
+    },
+    {
+      "def_id": 199,
+      "lean_name": "RegorusHistory.store.VecStore.find_regex",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::find_regex",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 272,
+        "end_line": 291
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 127,
+      "lean_name": "RegorusHistory.store.own_regex",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::own_regex",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 161,
+        "end_line": 173
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 124,
+      "lean_name": "RegorusHistory.store.regex_count",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::regex_count",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 132,
+        "end_line": 139
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 208,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.intern_regex",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::intern_regex",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 364,
+        "end_line": 391
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 206,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.transition",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::transition",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 340,
+        "end_line": 345
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 205,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.regex",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::regex",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 331,
+        "end_line": 339
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 204,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.test",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::test",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 325,
+        "end_line": 330
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 203,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.constants",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::constants",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 322,
+        "end_line": 324
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 202,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.charge_aux",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::charge_aux",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 318,
+        "end_line": 321
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 201,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore.checkpoint",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}::checkpoint",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 314,
+        "end_line": 317
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": false,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 193,
+      "lean_name": "RegorusHistory.store.VecStore.new",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{regorus_history_extract::store::VecStore}::new",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 191,
+        "end_line": 227
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    },
+    {
+      "def_id": 129,
+      "lean_name": "RegorusHistory.smoke.extraction_smoke",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::smoke::extraction_smoke",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/smoke.rs",
+        "begin_line": 9,
+        "end_line": 29
+      },
+      "is_opaque": false,
+      "can_fail": true,
+      "can_diverge": true,
+      "is_rec": false,
+      "reducible": false
+    }
+  ],
+  "types": [
+    {
+      "def_id": 43,
+      "lean_name": "core.mem.maybe_uninit.MaybeUninit",
+      "lean_file": "RegorusHistory/Generated/TypesExternal_Template.lean",
+      "rust_name": "core::mem::maybe_uninit::MaybeUninit",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/mem/maybe_uninit.rs",
+        "begin_line": 355,
+        "end_line": 355
+      }
+    },
+    {
+      "def_id": 54,
+      "lean_name": "core.time.Duration",
+      "lean_file": "RegorusHistory/Generated/TypesExternal_Template.lean",
+      "rust_name": "core::time::Duration",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/time.rs",
+        "begin_line": 81,
+        "end_line": 81
+      }
+    },
+    {
+      "def_id": 38,
+      "lean_name": "alloc.collections.TryReserveError",
+      "lean_file": "RegorusHistory/Generated/TypesExternal_Template.lean",
+      "rust_name": "alloc::collections::TryReserveError",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/alloc/src/collections/mod.rs",
+        "begin_line": 71,
+        "end_line": 71
+      }
+    },
+    {
+      "def_id": 47,
+      "lean_name": "RegorusHistory.limit_error.LimitError",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::limit_error::LimitError",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/utils/limits/error.rs",
+        "begin_line": 11,
+        "end_line": 31
+      }
+    },
+    {
+      "def_id": 19,
+      "lean_name": "RegorusHistory.error.HistoryError",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::error::HistoryError",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/error.rs",
+        "begin_line": 8,
+        "end_line": 21
+      }
+    },
+    {
+      "def_id": 35,
+      "lean_name": "RegorusHistory.kernel.TransitionId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TransitionId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 17,
+      "lean_name": "RegorusHistory.kernel.TestId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TestId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 26,
+      "lean_name": "RegorusHistory.kernel.RegexId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::RegexId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 25,
+      "lean_name": "RegorusHistory.kernel.ConstId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::ConstId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 24,
+      "lean_name": "RegorusHistory.kernel.PathId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::PathId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 49,
+      "lean_name": "RegorusHistory.kernel.VariableId",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::VariableId",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 45,
+        "end_line": 45
+      }
+    },
+    {
+      "def_id": 23,
+      "lean_name": "RegorusHistory.kernel.Term",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::Term",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 70,
+        "end_line": 73
+      }
+    },
+    {
+      "def_id": 22,
+      "lean_name": "RegorusHistory.kernel.Primitive",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::Primitive",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 75,
+        "end_line": 78
+      }
+    },
+    {
+      "def_id": 30,
+      "lean_name": "RegorusHistory.kernel.TestView",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TestView",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 80,
+        "end_line": 89
+      }
+    },
+    {
+      "def_id": 33,
+      "lean_name": "RegorusHistory.kernel.RegexKindView",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::RegexKindView",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 91,
+        "end_line": 101
+      }
+    },
+    {
+      "def_id": 32,
+      "lean_name": "RegorusHistory.kernel.RegexView",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::RegexView",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 103,
+        "end_line": 106
+      }
+    },
+    {
+      "def_id": 36,
+      "lean_name": "RegorusHistory.kernel.TransitionView",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TransitionView",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 108,
+        "end_line": 122
+      }
+    },
+    {
+      "def_id": 29,
+      "lean_name": "RegorusHistory.kernel.Constants",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::Constants",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 232,
+        "end_line": 241
+      }
+    },
+    {
+      "def_id": 39,
+      "lean_name": "RegorusHistory.kernel.AtomSet",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::AtomSet",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 255,
+        "end_line": 257
+      }
+    },
+    {
+      "def_id": 20,
+      "lean_name": "RegorusHistory.kernel.TestHead",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TestHead",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 294,
+        "end_line": 300
+      }
+    },
+    {
+      "def_id": 34,
+      "lean_name": "RegorusHistory.kernel.RegexHead",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::RegexHead",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 302,
+        "end_line": 312
+      }
+    },
+    {
+      "def_id": 37,
+      "lean_name": "RegorusHistory.kernel.TransitionHead",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::TransitionHead",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 314,
+        "end_line": 321
+      }
+    },
+    {
+      "def_id": 5,
+      "lean_name": "RegorusHistory.normalize.TestMode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::TestMode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 256,
+        "end_line": 260
+      }
+    },
+    {
+      "def_id": 6,
+      "lean_name": "RegorusHistory.normalize.RegexMode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::RegexMode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 604,
+        "end_line": 608
+      }
+    },
+    {
+      "def_id": 7,
+      "lean_name": "RegorusHistory.normalize.RegexStats",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::RegexStats",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 648,
+        "end_line": 654
+      }
+    },
+    {
+      "def_id": 8,
+      "lean_name": "RegorusHistory.normalize.TransitionMode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::TransitionMode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 920,
+        "end_line": 924
+      }
+    },
+    {
+      "def_id": 9,
+      "lean_name": "RegorusHistory.normalize.Action",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::Action",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1028,
+        "end_line": 1041
+      }
+    },
+    {
+      "def_id": 10,
+      "lean_name": "RegorusHistory.normalize.ChildAction",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::normalize::ChildAction",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1043,
+        "end_line": 1049
+      }
+    },
+    {
+      "def_id": 11,
+      "lean_name": "RegorusHistory.symbolic.DerivativeFactors",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::symbolic::DerivativeFactors",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 89,
+        "end_line": 93
+      }
+    },
+    {
+      "def_id": 14,
+      "lean_name": "RegorusHistory.store.TransitionNode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::store::TransitionNode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 55,
+        "end_line": 62
+      }
+    },
+    {
+      "def_id": 13,
+      "lean_name": "RegorusHistory.store.RegexNode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::store::RegexNode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 29,
+        "end_line": 39
+      }
+    },
+    {
+      "def_id": 12,
+      "lean_name": "RegorusHistory.store.TestNode",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::store::TestNode",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 8,
+        "end_line": 14
+      }
+    },
+    {
+      "def_id": 15,
+      "lean_name": "RegorusHistory.store.VecStore",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::store::VecStore",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 84,
+        "end_line": 90
+      }
+    }
+  ],
+  "globals": [
+    {
+      "def_id": 6,
+      "lean_name": "RegorusHistory.kernel.MAX_GRAPH_BYTES",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::MAX_GRAPH_BYTES",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 8,
+        "end_line": 8
+      },
+      "can_fail": true
+    }
+  ],
+  "trait_decls": [
+    {
+      "def_id": 5,
+      "lean_name": "RegorusHistory.kernel.KernelStore",
+      "lean_file": "RegorusHistory/Generated/Types.lean",
+      "rust_name": "regorus_history_extract::kernel::KernelStore",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 242,
+        "end_line": 252
+      }
+    }
+  ],
+  "trait_impls": [
+    {
+      "def_id": 55,
+      "lean_name": "RegorusHistory.core.option.Option.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "core::option::{impl core::clone::Clone for core::option::Option<T>}",
+      "is_local": false,
+      "source": {
+        "file": "/rustc/library/core/src/option.rs",
+        "begin_line": 2271,
+        "end_line": 2275
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 50,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 65,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 66,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::clone::Clone for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 41,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::marker::Copy for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 47,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::marker::Copy for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 52,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::marker::Copy for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 31,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpPartialEqTestId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TestId> for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 7,
+      "impl_trait_rust_name": "core::cmp::PartialEq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 33,
+      "lean_name": "RegorusHistory.kernel.ConstId.Insts.CoreCmpPartialEqConstId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::ConstId> for regorus_history_extract::kernel::ConstId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 7,
+      "impl_trait_rust_name": "core::cmp::PartialEq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 44,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpPartialEqRegexId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::RegexId> for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 7,
+      "impl_trait_rust_name": "core::cmp::PartialEq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 49,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpPartialEqTransitionId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialEq<regorus_history_extract::kernel::TransitionId> for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 7,
+      "impl_trait_rust_name": "core::cmp::PartialEq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 42,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpEq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 10,
+      "impl_trait_rust_name": "core::cmp::Eq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 48,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpEq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 10,
+      "impl_trait_rust_name": "core::cmp::Eq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 53,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpEq",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Eq for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 10,
+      "impl_trait_rust_name": "core::cmp::Eq",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 36,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpPartialOrdTestId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::TestId> for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 8,
+      "impl_trait_rust_name": "core::cmp::PartialOrd",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 45,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpPartialOrdRegexId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::RegexId> for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 8,
+      "impl_trait_rust_name": "core::cmp::PartialOrd",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 67,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpPartialOrdTransitionId",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::PartialOrd<regorus_history_extract::kernel::TransitionId> for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 8,
+      "impl_trait_rust_name": "core::cmp::PartialOrd",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 40,
+      "lean_name": "RegorusHistory.kernel.TestId.Insts.CoreCmpOrd",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::TestId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 12,
+      "impl_trait_rust_name": "core::cmp::Ord",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 46,
+      "lean_name": "RegorusHistory.kernel.RegexId.Insts.CoreCmpOrd",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::RegexId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 12,
+      "impl_trait_rust_name": "core::cmp::Ord",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 51,
+      "lean_name": "RegorusHistory.kernel.TransitionId.Insts.CoreCmpOrd",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::kernel::{impl core::cmp::Ord for regorus_history_extract::kernel::TransitionId}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/kernel.rs",
+        "begin_line": 44,
+        "end_line": 44
+      },
+      "impl_trait_def_id": 12,
+      "impl_trait_rust_name": "core::cmp::Ord",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 7,
+      "lean_name": "RegorusHistory.normalize.TestMode.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::TestMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 255,
+        "end_line": 255
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 8,
+      "lean_name": "RegorusHistory.normalize.TestMode.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::marker::Copy for regorus_history_extract::normalize::TestMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 255,
+        "end_line": 255
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 10,
+      "lean_name": "RegorusHistory.normalize.RegexMode.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::RegexMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 603,
+        "end_line": 603
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 11,
+      "lean_name": "RegorusHistory.normalize.RegexMode.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::marker::Copy for regorus_history_extract::normalize::RegexMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 603,
+        "end_line": 603
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 13,
+      "lean_name": "RegorusHistory.normalize.RegexStats.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::RegexStats}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 647,
+        "end_line": 647
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 14,
+      "lean_name": "RegorusHistory.normalize.RegexStats.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::marker::Copy for regorus_history_extract::normalize::RegexStats}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 647,
+        "end_line": 647
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 16,
+      "lean_name": "RegorusHistory.normalize.TransitionMode.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::TransitionMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 919,
+        "end_line": 919
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 17,
+      "lean_name": "RegorusHistory.normalize.TransitionMode.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::marker::Copy for regorus_history_extract::normalize::TransitionMode}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 919,
+        "end_line": 919
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 19,
+      "lean_name": "RegorusHistory.normalize.ChildAction.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::clone::Clone for regorus_history_extract::normalize::ChildAction}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1042,
+        "end_line": 1042
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 20,
+      "lean_name": "RegorusHistory.normalize.ChildAction.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::normalize::{impl core::marker::Copy for regorus_history_extract::normalize::ChildAction}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/normalize.rs",
+        "begin_line": 1042,
+        "end_line": 1042
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 22,
+      "lean_name": "RegorusHistory.symbolic.DerivativeFactors.Insts.CoreCloneClone",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::{impl core::clone::Clone for regorus_history_extract::symbolic::DerivativeFactors}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 88,
+        "end_line": 88
+      },
+      "impl_trait_def_id": 0,
+      "impl_trait_rust_name": "core::clone::Clone",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 23,
+      "lean_name": "RegorusHistory.symbolic.DerivativeFactors.Insts.CoreMarkerCopy",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::symbolic::{impl core::marker::Copy for regorus_history_extract::symbolic::DerivativeFactors}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/../../../../../src/builtins/history/symbolic.rs",
+        "begin_line": 88,
+        "end_line": 88
+      },
+      "impl_trait_def_id": 9,
+      "impl_trait_rust_name": "core::marker::Copy",
+      "impl_trait_is_builtin": true
+    },
+    {
+      "def_id": 24,
+      "lean_name": "RegorusHistory.store.VecStore.Insts.Regorus_history_extractKernelKernelStore",
+      "lean_file": "RegorusHistory/Generated/Funs.lean",
+      "rust_name": "regorus_history_extract::store::{impl regorus_history_extract::kernel::KernelStore for regorus_history_extract::store::VecStore}",
+      "is_local": true,
+      "source": {
+        "file": "verification/aeneas/history/rust/src/store.rs",
+        "begin_line": 313,
+        "end_line": 414
+      },
+      "impl_trait_def_id": 5,
+      "impl_trait_rust_name": "regorus_history_extract::kernel::KernelStore",
+      "impl_trait_is_builtin": false
+    }
+  ]
+}
