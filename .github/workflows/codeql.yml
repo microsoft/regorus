@@ -135,7 +135,7 @@ jobs:
     - name: Check Rust guard diagnostic preservation
       if: matrix.language == 'rust'
       run: |
-        cargo test --locked -p regorus-mimalloc --features allocator-memory-limits mimalloc::tests::header_geometry_preserves_zeroed_aligned_reallocations -- --exact
+        cargo test --locked -p regorus-mimalloc --features allocator-memory-limits mimalloc::tests::allocator_preserves_zeroed_aligned_reallocations -- --exact
         cargo clippy --locked -p regorus-mimalloc --all-targets --features allocator-memory-limits -- -D warnings
 
     - name: Install Python build dependencies

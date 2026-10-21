@@ -365,16 +365,13 @@ mod tests {
         } else {
             assert_eq!(first.requested_bytes(), 16);
 
-            let global_before_failure = global_allocation_stats_snapshot().allocated;
+            let live_bytes_before_failure = current_thread_live_bytes();
             let failed =
                 second.with_scope(|| unsafe { allocator.realloc(ptr, old_layout, usize::MAX) });
             assert!(failed.is_null());
             assert_eq!(first.requested_bytes(), 16);
             assert_eq!(second.requested_bytes(), 0);
-            assert_eq!(
-                global_allocation_stats_snapshot().allocated,
-                global_before_failure
-            );
+            assert_eq!(current_thread_live_bytes() - live_bytes_before_failure, 0);
             assert!((0..16).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
             ptr = second
@@ -403,7 +400,7 @@ mod tests {
         let mut current = TestBudgetUsage::new();
         let old_layout = Layout::from_size_align(16, 16)?;
         let new_layout = Layout::from_size_align(64, 16)?;
-        let global_before = global_allocation_stats_snapshot().allocated;
+        let live_bytes_before = current_thread_live_bytes();
 
         let ptr = first.with_scope(|| {
             let ptr = unsafe { allocator.alloc(old_layout) };
@@ -434,8 +431,8 @@ mod tests {
             assert_eq!(first.requested_bytes(), old_layout.size() as u64);
             assert_eq!(current.requested_bytes(), 0);
             assert_eq!(
-                global_allocation_stats_snapshot().allocated,
-                global_before + old_layout.size() as u64
+                current_thread_live_bytes() - live_bytes_before,
+                i64::try_from(old_layout.size())?
             );
             assert!((0..old_layout.size()).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
 
@@ -471,7 +468,7 @@ mod tests {
                         current.requested_bytes(),
                         (old_layout.size() + new_layout.size()) as u64
                     );
-                    assert_eq!(global_allocation_stats_snapshot().allocated, global_before);
+                    assert_eq!(current_thread_live_bytes() - live_bytes_before, 0);
                 }
             }
         }
@@ -505,7 +502,7 @@ mod tests {
             (Some(2), 51, 70, 31, 128),
         ];
         for (next_owner, new_size, first_total, second_total, third_total) in transitions {
-            let global_before = global_allocation_stats_snapshot().allocated;
+            let live_bytes_before_realloc = current_thread_live_bytes();
             if ptr.is_null() {
                 assert!(!ptr.is_null());
             } else {
@@ -527,9 +524,11 @@ mod tests {
                 } else {
                     assert_eq!((ptr as usize) % layout.align(), 0);
                     assert!((0..23).all(|offset| unsafe { *ptr.add(offset) == 0x5a }));
+                    let expected_live_bytes_delta =
+                        i64::try_from(new_size)? - i64::try_from(layout.size())?;
                     assert_eq!(
-                        global_allocation_stats_snapshot().allocated,
-                        global_before - layout.size() as u64 + new_size as u64
+                        current_thread_live_bytes() - live_bytes_before_realloc,
+                        expected_live_bytes_delta
                     );
 
                     layout = Layout::from_size_align(new_size, layout.align())?;
