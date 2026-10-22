@@ -1,0 +1,84 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# RVM coverage for `array.flatten`, mirroring
+# tests/interpreter/cases/builtins/arrays/flatten.yaml so the interpreter and
+# RVM execution paths stay in parity for this builtin.
+
+cases:
+  - note: shallow
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([[1, 2], [3, 4]])
+    query: data.test.x
+    want_result: [1, 2, 3, 4]
+
+  - note: mixed-depth
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([[1, [2, 3]], 4, [5]])
+    query: data.test.x
+    want_result: [1, [2, 3], 4, 5]
+
+  - note: empty
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([])
+    query: data.test.x
+    want_result: []
+
+  - note: all-scalars
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([1, 2, 3])
+    query: data.test.x
+    want_result: [1, 2, 3]
+
+  - note: undefined-element-propagates
+    data: {}
+    modules:
+      - |
+        package test
+        r if { false }
+        x = array.flatten([r])
+    query: data.test.x
+    want_result: "#undefined"
+
+  - note: wrong-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten("not-an-array")
+    query: data.test.x
+    want_result: "#undefined"
+    # RVM defaults `strict_builtin_errors` to false (the interpreter defaults
+    # to true), so the type-check `bail!` raised by `ensure_array` is
+    # swallowed to Undefined here rather than surfacing as an error. This is
+    # a pre-existing, general divergence in default settings that applies to
+    # every builtin's error path, not something specific to `array.flatten`.
+    allow_interpreter_incorrect_behavior: true
+
+  - note: too-many-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([1], [2], [3])
+    query: data.test.x
+    want_result: "#undefined"
+    # Same non-strict-builtin-errors divergence as `wrong-type` above: the
+    # `ensure_args_count` arity-check `bail!` is swallowed to Undefined under
+    # RVM's default settings instead of surfacing as an error. (Two args are
+    # deliberately avoided here because `array.flatten(a, b)` with exactly
+    # one extra argument is valid Rego out-param call syntax equivalent to
+    # `b := array.flatten(a)`; three args unambiguously exceeds that.)
+    allow_interpreter_incorrect_behavior: true
