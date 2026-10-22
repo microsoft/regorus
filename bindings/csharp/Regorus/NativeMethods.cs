@@ -131,6 +131,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_program_serialize_binary(RegorusProgram* program);
 
         /// <summary>
+        /// Get the builtin names recorded in a program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_get_builtin_names", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_get_builtin_names(RegorusProgram* program);
+
+        /// <summary>
         /// Deserialize a program from binary format.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_program_deserialize_binary", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]

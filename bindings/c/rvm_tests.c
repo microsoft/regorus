@@ -19,6 +19,7 @@ int main() {
     RegorusProgram* program = NULL;
     RegorusBuffer* buffer = NULL;
     RegorusProgram* program2 = NULL;
+    RegorusProgram* empty_program = NULL;
     RegorusRvm* vm = NULL;
     RegorusProgram* host_program = NULL;
     RegorusRvm* host_vm = NULL;
@@ -80,6 +81,45 @@ int main() {
     regorus_result_drop(result);
     result_valid = false;
 
+    printf("Reading compiled builtin names...\n");
+    result = regorus_program_get_builtin_names(program);
+    result_valid = true;
+    if (!assert_ok(result, "get compiled builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[\"count\"]") != 0) {
+        fprintf(stderr, "unexpected builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_program_get_builtin_names(NULL);
+    result_valid = true;
+    if (result.status == Ok || !result.error_message) {
+        fprintf(stderr, "null program should return an explicit error\n");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    empty_program = regorus_program_new();
+    if (!empty_program) {
+        fprintf(stderr, "failed to allocate empty program\n");
+        goto Cleanup;
+    }
+    result = regorus_program_get_builtin_names(empty_program);
+    result_valid = true;
+    if (!assert_ok(result, "get empty program builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[]") != 0) {
+        fprintf(stderr, "unexpected empty program builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
     printf("Generating assembly listing...\n");
     result = regorus_program_generate_listing(program);
     result_valid = true;
@@ -117,6 +157,18 @@ int main() {
     }
 
     program2 = (RegorusProgram*)result.pointer_value;
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_program_get_builtin_names(program2);
+    result_valid = true;
+    if (!assert_ok(result, "get deserialized program builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[\"count\"]") != 0) {
+        fprintf(stderr, "unexpected deserialized builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
     regorus_result_drop(result);
     result_valid = false;
 
@@ -284,6 +336,9 @@ Cleanup:
     }
     if (program) {
         regorus_program_drop(program);
+    }
+    if (empty_program) {
+        regorus_program_drop(empty_program);
     }
     return exit_code;
 }

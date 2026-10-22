@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Regorus.Internal;
 
 #nullable enable
@@ -223,6 +224,31 @@ namespace Regorus
             return UseHandle(programPtr =>
             {
                 return CheckAndDropResult(API.regorus_program_generate_listing((RegorusProgram*)programPtr));
+            });
+        }
+
+        /// <summary>
+        /// Get the builtin names recorded in this program, in table order.
+        /// Registered host-await builtins are not included.
+        /// </summary>
+        public IReadOnlyList<string> GetBuiltinNames()
+        {
+            return UseHandle(programPtr =>
+            {
+                var json = CheckAndDropResult(
+                    API.regorus_program_get_builtin_names((RegorusProgram*)programPtr));
+                if (json is null)
+                {
+                    throw new InvalidOperationException("Native library returned no builtin names.");
+                }
+
+                var names = JsonSerializer.Deserialize<string[]>(json);
+                if (names is null || names.Any(name => name is null))
+                {
+                    throw new InvalidOperationException("Native library returned invalid builtin names.");
+                }
+
+                return Array.AsReadOnly(names);
             });
         }
 
