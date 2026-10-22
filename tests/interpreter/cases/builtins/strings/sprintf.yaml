@@ -145,22 +145,104 @@ cases:
       unicode_width: "   \"🙂\""
       unicode_precision: "\"🙂\""
 
-  - note: "%q on a number still errors"
+  - note: "%q full string format specification"
     data: {}
     modules:
       - |
         package test
 
-        error_case := sprintf("%q", [42])
+        ascii_only := sprintf("%+q", ["é🙂"])
+        raw := sprintf("%#q", ["a\tb"])
+        raw_fallback := sprintf("%#q", ["a\nb"])
+        left_aligned := sprintf("%-8q", ["é"])
+        width_and_precision := sprintf("%8.1q", ["éx"])
+        ascii_width_and_precision := sprintf("%+14.1q", ["éx"])
+        raw_width_and_precision := sprintf("%#8.2q", ["abx"])
+        dynamic := sprintf("%*.*q", [8, 1, "éx"])
+        indexed := sprintf("%[3]*.[2]*[1]q", ["éx", 1, 8])
     query: data.test
-    error: "number specified for format verb q."
+    want_result:
+      ascii_only: "\"\\u00e9\\U0001f642\""
+      raw: "`a\tb`"
+      raw_fallback: "\"a\\nb\""
+      left_aligned: "\"é\"     "
+      width_and_precision: "     \"é\""
+      ascii_width_and_precision: "      \"\\u00e9\""
+      raw_width_and_precision: "    `ab`"
+      dynamic: "     \"é\""
+      indexed: "     \"é\""
 
-  - note: "%q on a non-string, non-number value still errors (only Value::String is supported)"
+  - note: "%q follows OPA value conversion semantics"
     data: {}
     modules:
       - |
         package test
 
-        error_case := sprintf("%q", [true])
+        rune := sprintf("%q", [97])
+        control_rune := sprintf("%q", [0])
+        quote_rune := sprintf("%q", [39])
+        invalid_rune := sprintf("%q", [-1])
+        ascii_rune := sprintf("%+q", [233])
+        padded_rune := sprintf("%8q", [97])
+        fractional := sprintf("%q", [65.5])
+        fractional_width := sprintf("%8q", [65.5])
+        fractional_precision := sprintf("%.2q", [65.5])
+        fractional_rounds_to_integer := sprintf("%.2q", [9.99])
+        fractional_scientific_threshold := sprintf("%.2q", [0.00001])
+        fractional_zero_padded := sprintf("%08q", [65.5])
+        fractional_alternate := sprintf("%#q", [65.5])
+        bad_dynamic_precision := sprintf("%.*q", [-1, "x"])
+        bad_index := sprintf("%[1]2q", ["x"])
+        bad_index_precision := sprintf("%[1].2q", ["x"])
+        bad_index_does_not_consume := sprintf("%[2]2q %q", ["x"])
+        big_integer := sprintf("%q", [9223372036854775808])
+        boolean := sprintf("%q", [true])
+        null_value := sprintf("%q", [null])
+        array := sprintf("%q", [[1, "x"]])
+        set := sprintf("%q", [{true, 1, "x"}])
+        object := sprintf("%q", [{"b": 2, "a": 1}])
     query: data.test
-    error: "Go-syntax format verbs %#v. %q, %p and %T are not supported."
+    want_result:
+      rune: "'a'"
+      control_rune: "'\\x00'"
+      quote_rune: "'\\''"
+      invalid_rune: "'�'"
+      ascii_rune: "'\\u00e9'"
+      padded_rune: "     'a'"
+      fractional: "%!q(float64=65.5)"
+      fractional_width: "%!q(float64=    65.5)"
+      fractional_precision: "%!q(float64=66)"
+      fractional_rounds_to_integer: "%!q(float64=10)"
+      fractional_scientific_threshold: "%!q(float64=1e-05)"
+      fractional_zero_padded: "%!q(float64=000065.5)"
+      fractional_alternate: "%!q(float64=65.5000)"
+      bad_dynamic_precision: "%!(BADPREC)\"x\""
+      bad_index: "%!q(BADINDEX)"
+      bad_index_precision: "%!q(BADINDEX)"
+      bad_index_does_not_consume: "%!q(BADINDEX) \"x\""
+      big_integer: "%!q(big.Int=9223372036854775808)"
+      boolean: "\"true\""
+      null_value: "\"null\""
+      array: "\"[1, \\\"x\\\"]\""
+      set: "\"{true, 1, \\\"x\\\"}\""
+      object: "\"{\\\"a\\\": 1, \\\"b\\\": 2}\""
+
+  - note: "sprintf rejects literal width above the hard limit"
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := sprintf("%1000001q", ["x"])
+    query: data.test.result
+    error: "sprintf width or precision is too large"
+
+  - note: "sprintf rejects dynamic width above the hard limit"
+    data: {}
+    modules:
+      - |
+        package test
+
+        result := sprintf("%*q", [1000001, "x"])
+    query: data.test.result
+    error: "sprintf width or precision is outside the supported range"
