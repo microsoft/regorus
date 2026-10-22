@@ -2534,7 +2534,8 @@ pub(crate) fn regex_not<G: KernelStore>(store: &mut G, regex: RegexId) -> Kernel
             Ok(id) => id@ < final(store).graph().transitions.len()
                 && final(store).graph().transitions[id@ as int] == node@
                 && model::lift_transition(final(store).graph(), id@)
-                    == transition_unbounded_node(final(store).graph(), node@),
+                    == transition_unbounded_node(final(store).graph(), node@)
+                && tdepth(final(store).graph(), id@) == tdepth_node(final(store).graph(), node@),
             Err(_) => true,
         },
 )]
@@ -2543,7 +2544,7 @@ fn intern_transition_step<G: KernelStore>(
     node: TransitionView<'_>,
 ) -> KernelResult<TransitionId> {
     let id = store.intern_transition(node)?;
-    proof! { transition_unfold(store.graph(), id@); }
+    proof! { transition_unfold(store.graph(), id@); tdepth_lemma_unfold(store.graph(), id@); }
     Ok(id)
 }
 
@@ -2555,6 +2556,7 @@ fn intern_transition_step<G: KernelStore>(
         model::graph_wf(final(store).graph()), final(store).valid_store(),
         match result {
             Ok(id) => id@ < final(store).graph().transitions.len()
+                && final(store).graph().transitions[id@ as int] is Const
                 && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
                     ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
                         == model::regex_lang(final(store).graph(), sym, theta, regex@, word),
@@ -2587,6 +2589,8 @@ pub(crate) fn transition_const<G: KernelStore>(
         model::graph_wf(final(store).graph()), final(store).valid_store(),
         match result {
             Ok(id) => id@ < final(store).graph().transitions.len()
+                && tdepth(final(store).graph(), id@)
+                    <= if_bound(tdepth(old(store).graph(), a@), tdepth(old(store).graph(), b@))
                 && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
                     ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
                         == transition_if_combo(final(store).graph(), sym, theta, test, a, b, event, word),
@@ -2599,7 +2603,7 @@ fn local_if<G: KernelStore>(
     a: TransitionId,
     b: TransitionId,
 ) -> KernelResult<TransitionId> {
-    proof! { model::lemma_graph_wf_elim(store.graph()); }
+    proof! { model::lemma_graph_wf_elim(store.graph()); tdepth_lemma_extends_forall(store.graph()); }
     let c = store.constants();
     if test == c.test_true || a == b {
         Ok(a)
@@ -2685,7 +2689,11 @@ struct TransitionMode {
         match result {
             Ok(collapsed) => transition_collect_effect(final(store).graph(), mode@,
                 old(pending).view(), old(flat).view(), old(constants).view(),
-                final(pending).view(), final(flat).view(), final(constants).view(), collapsed),
+                final(pending).view(), final(flat).view(), final(constants).view(), collapsed)
+                && (!collapsed ==> collect_total(final(store).graph(), final(pending).view(), final(flat).view(),
+                        final(constants).view(), mode.intersect)
+                    <= collect_total(old(store).graph(), old(pending).view(), old(flat).view(),
+                        old(constants).view(), mode.intersect)),
             Err(_) => true,
         },
 )]
@@ -2710,6 +2718,7 @@ fn transition_collect_step<G: KernelStore>(
     proof! {
         transition_lemma_identities(store.graph(), mode@);
         model::lemma_graph_transition_wf(store.graph(), id@);
+        assert(p0 =~= prefix.push(id));
     }
     if id == mode.absorber {
         proof! { transition_lemma_collect_absorber(store.graph(), mode@, p0, f0, rs0); }
@@ -2728,6 +2737,7 @@ fn transition_collect_step<G: KernelStore>(
                     assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
                     reveal(transition_children);
                     transition_lemma_collect_expand(store.graph(), mode@, p0, f0, rs0, children);
+                    collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, mode.intersect);
                 }
             }
             TransitionHead::Intersect(n) if mode.intersect => {
@@ -2741,20 +2751,30 @@ fn transition_collect_step<G: KernelStore>(
                     assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
                     reveal(transition_children);
                     transition_lemma_collect_expand(store.graph(), mode@, p0, f0, rs0, children);
+                    collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, mode.intersect);
                 }
             }
             TransitionHead::Const(r) => {
                 constants.push(r);
-                proof! { transition_lemma_collect_constant(store.graph(), mode@, p0, f0, rs0, r); }
+                proof! {
+                    transition_lemma_collect_constant(store.graph(), mode@, p0, f0, rs0, r);
+                    collect_lemma_constant(store.graph(), prefix, id, f0, rs0, r, mode.intersect);
+                }
             }
             _ => {
                 flat.push(id);
-                proof! { transition_lemma_collect_leaf(store.graph(), mode@, p0, f0, rs0); }
+                proof! {
+                    transition_lemma_collect_leaf(store.graph(), mode@, p0, f0, rs0);
+                    collect_lemma_leaf(store.graph(), prefix, id, f0, rs0, mode.intersect);
+                }
             }
         }
     }
     proof! {
-        if id == mode.identity { transition_lemma_collect_identity(store.graph(), mode@, p0, f0, rs0); }
+        if id == mode.identity {
+            transition_lemma_collect_identity(store.graph(), mode@, p0, f0, rs0);
+            collect_lemma_drop(store.graph(), prefix, id, f0, rs0, mode.intersect);
+        }
     }
     Ok(false)
 }
@@ -2772,7 +2792,11 @@ fn transition_collect_step<G: KernelStore>(
             Ok(collapsed) => transition_collect_effect(final(store).graph(), mode@,
                 old(pending).view(), old(flat).view(), old(constants).view(),
                 final(pending).view(), final(flat).view(), final(constants).view(), collapsed)
-                && (!collapsed ==> final(pending).view().len() == 0),
+                && (!collapsed ==> final(pending).view().len() == 0)
+                && (!collapsed ==> collect_total(final(store).graph(), final(pending).view(), final(flat).view(),
+                        final(constants).view(), mode.intersect)
+                    <= collect_total(old(store).graph(), old(pending).view(), old(flat).view(),
+                        old(constants).view(), mode.intersect)),
             Err(_) => true,
         },
 )]
@@ -2806,6 +2830,11 @@ fn transition_collect_nodes<G: KernelStore>(
                         },
                 Err(_) => true,
             },
+            match state {
+                Ok(false) => collect_total(store.graph(), pending.view(), flat.view(), constants.view(), mode.intersect)
+                    <= collect_total(store.graph(), p0, f0, rs0, mode.intersect),
+                _ => true,
+            },
         decreases match state { Ok(false) => transition_pending_work(store.graph(), pending.view(), mode.intersect) + 1, _ => 0nat },
     ))]
     while !pending.is_empty() && matches!(state, Ok(false)) {
@@ -2820,6 +2849,7 @@ fn transition_collect_nodes<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         match result {
             Ok(id) => id@ < final(store).graph().transitions.len()
+                && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, intersect)
                 && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
                     ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
                         == transition_combo(final(store).graph(), sym, theta, children@, event, word, intersect),
@@ -2831,7 +2861,11 @@ fn transition_collect<G: KernelStore>(
     children: &[TransitionId],
     intersect: bool,
 ) -> KernelResult<TransitionId> {
-    proof_decl! { let ghost original = children@; }
+    proof_decl! { let ghost original = children@; let ghost entry = store.graph(); }
+    proof! {
+        tdepth_lemma_constants(entry);
+        collect_lemma_bound(entry, original, intersect);
+    }
     let c = store.constants();
     let identity = if intersect {
         c.transition_all
@@ -2871,6 +2905,7 @@ fn transition_collect<G: KernelStore>(
     proof! {
         transition_lemma_initial_collection(store.graph(), mode@, original,
             pending.view(), flat.view(), constants.view(), false);
+        collect_lemma_flat(store.graph(), original, pending.view(), flat.view(), constants.view(), intersect);
     }
     if !constants.is_empty() {
         proof_decl! { let ghost before_group = store.graph(); let ghost prior_flat = flat.view(); }
@@ -2892,6 +2927,8 @@ fn transition_collect<G: KernelStore>(
                 implies transition_lang(store.graph(), sym, theta, t, event, word)
                     == regex_combo(store.graph(), sym, theta, constants.view(), word, intersect) by {}
             transition_lemma_group_result(store.graph(), original, prior_flat, constants.view(), mode@, t);
+            tdepth_lemma_constants(store.graph());
+            collect_lemma_const_result(before_group, store.graph(), original, prior_flat, t, t != identity, intersect);
         }
         if t == absorber {
             return Ok(absorber);
@@ -2905,6 +2942,8 @@ fn transition_collect<G: KernelStore>(
         assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
         assert(transition_ids_valid(store.graph(), original));
         assert(transition_ids_valid(store.graph(), flat.view()));
+        tdepth_lemma_extends_forall(entry);
+        assert(collect_weight(store.graph(), flat.view(), intersect) <= collect_weight(store.graph(), original, intersect));
     }
     proof_decl! { let ghost unsorted = flat.view(); }
     flat.as_mut_slice().sort_unstable();
@@ -2927,6 +2966,19 @@ fn transition_collect<G: KernelStore>(
         transition_equivalence_future(store.graph(), original, flat.view(), intersect);
         transition_set_law(flat.view(), intersect);
         transition_lemma_identities(store.graph(), mode@);
+        assert forall|id: TransitionId| flat.view().contains(id) implies unsorted.contains(id) by {
+            assert(sorted.contains(id));
+        }
+        assert(flat.view().no_duplicates()) by {
+            assert forall|i: int, j: int| 0 <= i < flat.view().len() && 0 <= j < flat.view().len() && i != j
+                implies flat.view()[i] != flat.view()[j] by {
+                assert(model::transition_ids(flat.view())[i] == flat.view()[i]@);
+                assert(model::transition_ids(flat.view())[j] == flat.view()[j]@);
+            }
+        }
+        collect_lemma_subset(store.graph(), flat.view(), unsorted, intersect);
+        collect_lemma_final(entry, store.graph(), original, flat.view(), intersect);
+        tdepths_lemma_extends_forall(store.graph(), flat.view());
     }
     if flat.is_empty() {
         Ok(identity)
@@ -2953,6 +3005,7 @@ fn transition_collect<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         match result {
             Ok(id) => id@ < final(store).graph().transitions.len()
+                && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, false)
                 && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
                     ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
                         == transition_combo(final(store).graph(), sym, theta, children@, event, word, false),
@@ -3145,7 +3198,9 @@ fn suffix_values<G: KernelStore>(
     ensures transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
         transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
         match result {
-            Ok(()) => forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
+            Ok(()) => transition_action_views(final(tasks).view())
+                    == transition_clean_child_tasks(store.graph(), id, path, intersect, transition_action_views(old(tasks).view()))
+                && forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
                 transition_action_views(old(tasks).view()), prior, transition_action_views(final(tasks).view()), prior),
             Err(_) => true,
         },
@@ -3202,7 +3257,10 @@ fn clean_children<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Pair(a@, b@), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3215,12 +3273,15 @@ fn pair_conditionals<G: KernelStore>(
     tasks: &mut WorkVec<Action>,
     values: &mut WorkVec<TransitionId>,
 ) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
+    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+    let ghost entry = store.graph(); }
     proof! {
         transition_lemma_constants(store.graph());
         transition_configuration_future(store.graph(), p0, v0);
         model::lemma_graph_transition_wf(store.graph(), a@);
         model::lemma_graph_transition_wf(store.graph(), b@);
+        graph_lemma_extends_refl(entry);
+        tdepth_lemma_constants(entry);
     }
     let c = store.constants();
     if let (TransitionHead::If(x, xt, xe), TransitionHead::If(y, yt, ye)) = (left, right) {
@@ -3240,10 +3301,17 @@ fn pair_conditionals<G: KernelStore>(
                         == test_combo(store.graph(), sym, theta, seq![x, y], event, true));
                 }
                 machine_pair_empty_branches(store.graph(), a, b, x, xt, y, yt, c.transition_empty, guard);
+                tdepth_lemma_extends(entry, store.graph(), c.transition_empty@);
+                tdepth_lemma_pos(entry, a@);
+                tdepth_lemma_pos(entry, b@);
+                lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
             }
             if guard == c.test_false {
                 values.push(c.transition_empty);
-                proof! { transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty); }
+                proof! {
+                    transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
+                    machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
+                }
             } else {
                 tasks.push(Action::CleanIf(guard, c.test_true));
                 values.push(c.transition_empty);
@@ -3253,6 +3321,8 @@ fn pair_conditionals<G: KernelStore>(
                     machine_pair_empty_effect(store.graph(), a, b, xt, yt, guard, c.transition_empty, p0, v0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(guard@, c.test_true@))
                         .push(ActionShape::SwapThen).push(ActionShape::Pair(xt@, yt@)));
+                    machine_pair_empty(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, guard, c.test_true,
+                        c.transition_empty, v0);
                 }
             }
         } else if x == y {
@@ -3263,6 +3333,7 @@ fn pair_conditionals<G: KernelStore>(
                 machine_pair_if_effect(store.graph(), a, b, x, xt, yt, xe, ye, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
                     .push(ActionShape::Pair(xe@, ye@)).push(ActionShape::Pair(xt@, yt@)));
+                machine_pair_both(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, c.test_true, v0);
             }
         } else if xe == c.transition_empty || (ye != c.transition_empty && x < y) {
             tasks.push(Action::CleanIf(x, c.test_true));
@@ -3272,6 +3343,7 @@ fn pair_conditionals<G: KernelStore>(
                 machine_pair_if_effect(store.graph(), a, b, x, xt, b, xe, b, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
                     .push(ActionShape::Pair(xe@, b@)).push(ActionShape::Pair(xt@, b@)));
+                machine_pair_split(entry, store.graph(), p0, a, b, x, xt, xe, c.test_true, true, v0);
             }
         } else {
             tasks.push(Action::CleanIf(y, c.test_true));
@@ -3281,6 +3353,7 @@ fn pair_conditionals<G: KernelStore>(
                 machine_pair_if_effect(store.graph(), a, b, y, a, yt, a, ye, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(y@, c.test_true@))
                     .push(ActionShape::Pair(a@, ye@)).push(ActionShape::Pair(a@, yt@)));
+                machine_pair_split(entry, store.graph(), p0, a, b, y, yt, ye, c.test_true, false, v0);
             }
         }
         Ok(())
@@ -3301,7 +3374,10 @@ fn pair_conditionals<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Fold(model::transition_ids(xs.view()), index as nat), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3313,7 +3389,12 @@ fn transition_fold_step<G: KernelStore>(
     values: &mut WorkVec<TransitionId>,
 ) -> KernelResult<()> {
     proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); let ghost original = xs.view(); }
-    proof! { transition_configuration_future(store.graph(), p0, v0); }
+    proof_decl! { let ghost entry = store.graph(); }
+    proof! {
+        transition_configuration_future(store.graph(), p0, v0);
+        graph_lemma_extends_refl(entry);
+        assert(value_depths(entry, original) =~= tdepths(entry, model::transition_ids(original)));
+    }
     {
         if index == 0 {
             let flat = transition_collect(store, &xs, true)?;
@@ -3332,6 +3413,7 @@ fn transition_fold_step<G: KernelStore>(
                         transition_lemma_children(store.graph(), flat@);
                         assert(store.graph().transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(cs)));
                         machine_pair_fold_collection_effect(store.graph(), original, flat, cs, p0, v0);
+                        machine_fold_start(entry, store.graph(), p0, model::transition_ids(original), flat, cs, v0);
                     }
                     values.push(first);
                     tasks.push(Action::Fold(children, 1));
@@ -3344,6 +3426,7 @@ fn transition_fold_step<G: KernelStore>(
                     proof! {
                         machine_pair_set_result(store.graph(), original, ActionShape::Fold(model::transition_ids(original), 0), flat);
                         transition_lemma_push_result(store.graph(), ActionShape::Fold(model::transition_ids(original), 0), p0, v0, flat);
+                        machine_fold_flat(entry, store.graph(), p0, model::transition_ids(original), v0, flat);
                     }
                 }
             }
@@ -3363,11 +3446,15 @@ fn transition_fold_step<G: KernelStore>(
                 machine_pair_fold_next_effect(store.graph(), original, index as nat, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(original), next_index as nat))
                     .push(ActionShape::Pair(a@, b@)));
+                assert(model::transition_ids(original)[index as int] == b@);
+                assert(values.view() == v0.drop_last());
+                machine_fold_next(store.graph(), p0, model::transition_ids(original), index as nat, v0);
             }
         }
         proof! {
             if index != 0 && index >= original.len() {
                 machine_pair_fold_noop(store.graph(), original, index as nat, p0, v0);
+                machine_fold_noop(store.graph(), p0, model::transition_ids(original), index as nat, v0);
             }
         }
     }
@@ -3389,7 +3476,10 @@ fn transition_fold_step<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Clean(id@, path@),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Clean(id@, path@), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3404,13 +3494,14 @@ fn transition_clean_step<G: KernelStore>(
     proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
     proof_decl! { let ghost entry = store.graph(); }
     proof! { transition_lemma_constants(store.graph()); model::lemma_graph_transition_wf(store.graph(), id@); }
-    proof! { transition_configuration_future(store.graph(), p0, v0); }
+    proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
     match transition_head(store, id)? {
         TransitionHead::Const(_) => {
             values.push(id);
             proof! {
                 transition_lemma_clean_identity(store.graph(), id, path);
                 transition_lemma_push_result(store.graph(), ActionShape::Clean(id@, path@), p0, v0, id);
+                machine_value_result(entry, store.graph(), p0, ActionShape::Clean(id@, path@), v0, id);
             }
         }
         TransitionHead::If(test, a, b) => {
@@ -3447,16 +3538,24 @@ fn transition_clean_step<G: KernelStore>(
             }
             proof! {
                 assert(transition_action_views(tasks.view()) == transition_clean_if_tasks(store.graph(), test, a, b, yes, no, p0));
+                machine_clean_if(entry, store.graph(), p0, id, path, test, a, b, yes, no, v0);
             }
         }
-        TransitionHead::Union(n) => clean_children(store, id, n, false, path, tasks)?,
-        TransitionHead::Intersect(n) => clean_children(store, id, n, true, path, tasks)?,
+        TransitionHead::Union(n) => {
+            clean_children(store, id, n, false, path, tasks)?;
+            proof! { machine_clean_children(store.graph(), p0, id, path, false, v0); }
+        }
+        TransitionHead::Intersect(n) => {
+            clean_children(store, id, n, true, path, tasks)?;
+            proof! { machine_clean_children(store.graph(), p0, id, path, true, v0); }
+        }
         TransitionHead::Not(inner) => {
             tasks.push(Action::NotResult);
             tasks.push(Action::Clean(inner, path));
             proof! {
                 transition_lemma_clean_not_effect(store.graph(), id, path, inner, p0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)));
+                machine_clean_not(entry, store.graph(), p0, id, path, inner, v0);
             }
         }
         TransitionHead::Append(inner, n) => {
@@ -3469,6 +3568,7 @@ fn transition_clean_step<G: KernelStore>(
                 transition_lemma_suffix(store.graph(), id@);
                 transition_lemma_clean_append_effect(store.graph(), id, path, inner, xs.view(), r, p0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)));
+                machine_clean_append(entry, store.graph(), p0, id, path, inner, r, v0);
             }
         }
     }
@@ -3491,7 +3591,10 @@ fn transition_clean_step<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Not(id@),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Not(id@), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3508,6 +3611,7 @@ fn transition_not_step<G: KernelStore>(
         transition_lemma_constants(store.graph());
         model::lemma_graph_transition_wf(store.graph(), id@);
         transition_configuration_future(entry, base, prior);
+        graph_lemma_extends_refl(entry);
     }
     match transition_head(store, id)? {
         TransitionHead::Const(r) => {
@@ -3518,6 +3622,9 @@ fn transition_not_step<G: KernelStore>(
             proof! {
                 machine_unary_not_const_result(before_const, store.graph(), id, head, r, values.view().last());
                 transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
+                transition_lemma_extends_transitive(entry, before_const, store.graph());
+                assert(values.view() == prior.push(values.view().last()));
+                machine_value_result(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
             }
         }
         TransitionHead::Not(inner) => {
@@ -3525,6 +3632,7 @@ fn transition_not_step<G: KernelStore>(
             proof! {
                 machine_unary_double_not_result(store.graph(), id, inner);
                 transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, inner);
+                machine_not_double(entry, store.graph(), base, id, inner, prior);
             }
         }
         TransitionHead::Append(_, _) => {
@@ -3532,6 +3640,8 @@ fn transition_not_step<G: KernelStore>(
             proof! {
                 transition_lemma_result_same_term(store.graph(), ActionShape::Not(id@), values.view().last());
                 transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
+                assert(values.view() == prior.push(values.view().last()));
+                machine_wrap_interned(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
             }
         }
         TransitionHead::If(test, a, b) => {
@@ -3552,6 +3662,9 @@ fn transition_not_step<G: KernelStore>(
                     machine_unary_flip_result(before_if, store.graph(), id, test, a, b, guard, out);
                     machine_unary_clean_result_effect(store.graph(), ActionShape::Not(id@), out, base, prior);
                     assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Clean(out@, c.test_true@)));
+                    transition_lemma_extends_transitive(entry, before_if, store.graph());
+                    tdepth_lemma_constants(before_if);
+                    machine_not_flip(entry, store.graph(), base, id, test, a, b, out, c.test_true, prior);
                 }
             } else {
                 tasks.push(Action::CleanIf(test, c.test_true));
@@ -3560,6 +3673,7 @@ fn transition_not_step<G: KernelStore>(
                 proof! {
                     machine_unary_if_effect(store.graph(), id, test, a, b, None, base, prior);
                     assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, None, base));
+                    machine_unary_if(entry, store.graph(), base, id, test, a, b, None, prior);
                 }
             }
         }
@@ -3574,6 +3688,7 @@ fn transition_not_step<G: KernelStore>(
             proof! {
                 machine_unary_children_effect(store.graph(), id, None, true, base, prior);
                 assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, true, base));
+                machine_unary_children(store.graph(), base, id, None, true, prior);
             }
         }
         TransitionHead::Intersect(n) => {
@@ -3587,6 +3702,7 @@ fn transition_not_step<G: KernelStore>(
             proof! {
                 machine_unary_children_effect(store.graph(), id, None, false, base, prior);
                 assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, false, base));
+                machine_unary_children(store.graph(), base, id, None, false, prior);
             }
         }
     }
@@ -3610,7 +3726,10 @@ fn transition_not_step<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Append(id@, r@),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Append(id@, r@), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3629,6 +3748,8 @@ fn transition_append_step<G: KernelStore>(
         model::lemma_graph_transition_wf(store.graph(), id@);
         model::lemma_graph_regex_wf(store.graph(), r@);
         transition_configuration_future(entry, base, prior);
+        graph_lemma_extends_refl(entry);
+        tdepth_lemma_constants(entry);
     }
     {
         if r == c.epsilon {
@@ -3636,12 +3757,14 @@ fn transition_append_step<G: KernelStore>(
             proof! {
                 machine_unary_append_identity_result(store.graph(), id, r, id);
                 transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, id);
+                machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, id);
             }
         } else if r == c.empty {
             values.push(c.transition_empty);
             proof! {
                 machine_unary_append_identity_result(store.graph(), id, r, c.transition_empty);
                 transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, c.transition_empty);
+                machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, c.transition_empty);
             }
         } else {
             match transition_head(store, id)? {
@@ -3652,6 +3775,9 @@ fn transition_append_step<G: KernelStore>(
                     proof! {
                         machine_unary_append_const_result(before_const, store.graph(), id, head, r, out, values.view().last());
                         transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
+                        transition_lemma_extends_transitive(entry, before_const, store.graph());
+                        assert(values.view() == prior.push(values.view().last()));
+                        machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
                     }
                 }
                 TransitionHead::If(test, a, b) => {
@@ -3661,6 +3787,7 @@ fn transition_append_step<G: KernelStore>(
                     proof! {
                         machine_unary_if_effect(store.graph(), id, test, a, b, Some(r), base, prior);
                         assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, Some(r), base));
+                        machine_unary_if(entry, store.graph(), base, id, test, a, b, Some(r), prior);
                     }
                 }
                 TransitionHead::Union(n) => {
@@ -3674,6 +3801,7 @@ fn transition_append_step<G: KernelStore>(
                     proof! {
                         machine_unary_children_effect(store.graph(), id, Some(r), false, base, prior);
                         assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, Some(r), false, base));
+                        machine_unary_children(store.graph(), base, id, Some(r), false, prior);
                     }
                 }
                 TransitionHead::Append(inner, n) => {
@@ -3686,6 +3814,7 @@ fn transition_append_step<G: KernelStore>(
                     proof! {
                         machine_unary_append_nested_effect(store.graph(), id, inner, r, combined, children, base, prior);
                         assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Append(inner@, combined@)));
+                        machine_append_nested(entry, store.graph(), base, id, r, inner, combined, prior);
                     }
                 }
                 TransitionHead::Intersect(_) | TransitionHead::Not(_) => {
@@ -3712,6 +3841,9 @@ fn transition_append_step<G: KernelStore>(
                     proof! {
                         machine_unary_append_raw_result(before_intern, store.graph(), id, r, xs.view(), values.view().last());
                         transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
+                        transition_lemma_extends_transitive(entry, before_intern, store.graph());
+                        assert(values.view() == prior.push(values.view().last()));
+                        machine_wrap_interned(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
                     }
                 }
             }
@@ -3735,7 +3867,10 @@ fn transition_append_step<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Pair(a@, b@), old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3747,12 +3882,18 @@ fn transition_pair_step<G: KernelStore>(
     tasks: &mut WorkVec<Action>,
     values: &mut WorkVec<TransitionId>,
 ) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
+    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+    let ghost entry = store.graph(); }
     proof! {
         transition_lemma_constants(store.graph());
         transition_configuration_future(store.graph(), p0, v0);
         model::lemma_graph_transition_wf(store.graph(), a@);
         model::lemma_graph_transition_wf(store.graph(), b@);
+        graph_lemma_extends_refl(entry);
+        tdepth_lemma_constants(entry);
+        tdepth_lemma_pos(entry, a@);
+        tdepth_lemma_pos(entry, b@);
+        lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
     }
     {
         if a == b || b == c.transition_all {
@@ -3760,18 +3901,21 @@ fn transition_pair_step<G: KernelStore>(
             proof! {
                 machine_pair_identity_result(store.graph(), a, b, a, c.transition_all, c.transition_empty);
                 transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, a);
+                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, a);
             }
         } else if a == c.transition_all {
             values.push(b);
             proof! {
                 machine_pair_identity_result(store.graph(), a, b, b, c.transition_all, c.transition_empty);
                 transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, b);
+                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, b);
             }
         } else if a == c.transition_empty || b == c.transition_empty {
             values.push(c.transition_empty);
             proof! {
                 machine_pair_identity_result(store.graph(), a, b, c.transition_empty, c.transition_all, c.transition_empty);
                 transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
+                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
             }
         } else {
             let left = transition_head(store, a)?;
@@ -3785,6 +3929,8 @@ fn transition_pair_step<G: KernelStore>(
                         let out = values.view().last();
                         machine_pair_constant_result(after_regex, store.graph(), a, b, x, y, r, out);
                         transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
+                        transition_lemma_extends_transitive(entry, after_regex, store.graph());
+                        machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
                     }
                 }
                 (TransitionHead::If(_, _, _), TransitionHead::If(_, _, _)) => {
@@ -3803,6 +3949,10 @@ fn transition_pair_step<G: KernelStore>(
                         machine_pair_union_effect(store.graph(), a, b, true, p0, v0);
                         assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
                             transition_action_views(tasks.view()), values.view()));
+                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
+                            transition_children(store.graph(), a@).len())) + transition_child_actions(store.graph(), a@,
+                            ChildShape::PairLeft(b@)));
+                        machine_pair_union(store.graph(), p0, a, b, true, v0);
                     }
                 }
                 (_, TransitionHead::Union(n)) => {
@@ -3818,6 +3968,10 @@ fn transition_pair_step<G: KernelStore>(
                         machine_pair_union_effect(store.graph(), a, b, false, p0, v0);
                         assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
                             transition_action_views(tasks.view()), values.view()));
+                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
+                            transition_children(store.graph(), b@).len())) + transition_child_actions(store.graph(), b@,
+                            ChildShape::PairRight(a@)));
+                        machine_pair_union(store.graph(), p0, a, b, false, v0);
                     }
                 }
                 (TransitionHead::If(test, t, e), _) => {
@@ -3829,6 +3983,7 @@ fn transition_pair_step<G: KernelStore>(
                         machine_pair_if_effect(store.graph(), a, b, test, t, b, e, b, p0, v0);
                         assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
                             .push(ActionShape::Pair(e@, b@)).push(ActionShape::Pair(t@, b@)));
+                        machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, true, v0);
                     }
                 }
                 (_, TransitionHead::If(test, t, e)) => {
@@ -3840,6 +3995,7 @@ fn transition_pair_step<G: KernelStore>(
                         machine_pair_if_effect(store.graph(), a, b, test, a, t, a, e, p0, v0);
                         assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
                             .push(ActionShape::Pair(a@, e@)).push(ActionShape::Pair(a@, t@)));
+                        machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, false, v0);
                     }
                 }
                 _ => {
@@ -3848,6 +4004,8 @@ fn transition_pair_step<G: KernelStore>(
                         let out = values.view().last();
                         machine_pair_set_result(store.graph(), seq![a, b], ActionShape::Pair(a@, b@), out);
                         transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
+                        collect_lemma_pair_bound(entry, a, b);
+                        machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
                     }
                 }
             }
@@ -3870,7 +4028,9 @@ fn transition_pair_step<G: KernelStore>(
         match result {
             Ok(()) => transition_effect(final(store).graph(), task@,
                 transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view()),
+                transition_action_views(final(tasks).view()), final(values).view())
+                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()), task@, old(values).view(),
+                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             Err(_) => true,
         },
 )]
@@ -3880,15 +4040,20 @@ fn transition_step<G: KernelStore>(
     tasks: &mut WorkVec<Action>,
     values: &mut WorkVec<TransitionId>,
 ) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
-    proof! { transition_configuration_future(store.graph(), p0, v0); }
+    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+    let ghost entry = store.graph(); }
+    proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
     store.checkpoint()?;
     let c = store.constants();
     match task {
         Action::Union(n) => {
             let xs = take_values(values, n)?;
             values.push(transition_union(store, &xs)?);
-            proof! { machine_driver_union_effect(store.graph(), n as nat, p0, v0, values.view().last()); }
+            proof! {
+                machine_driver_union_effect(store.graph(), n as nat, p0, v0, values.view().last());
+                assert(values.view() == v0.take(v0.len() as int - n as int).push(values.view().last()));
+                machine_driver_union(entry, store.graph(), p0, n as nat, v0, values.view().last());
+            }
         }
         Action::Intersect(n) => {
             let xs = take_values(values, n)?;
@@ -3897,6 +4062,7 @@ fn transition_step<G: KernelStore>(
                 machine_driver_intersect_effect(store.graph(), n as nat, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(
                     model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int)), 0)));
+                machine_driver_intersect(store.graph(), p0, n as nat, v0);
             }
         }
         Action::Fold(xs, index) => {
@@ -3916,9 +4082,16 @@ fn transition_step<G: KernelStore>(
                 Some(v) => v,
                 None => return Err(invariant()),
             };
-            proof! { assert(values.view() =~= v0.take(v0.len() as int - 2)); }
+            proof! {
+                assert(values.view() =~= v0.take(v0.len() as int - 2));
+                assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
+            }
             values.push(local_if(store, test, a, b)?);
-            proof! { machine_driver_if_effect(store.graph(), test, None, p0, v0, values.view().last()); }
+            proof! {
+                machine_driver_if_effect(store.graph(), test, None, p0, v0, values.view().last());
+                assert(values.view() == v0.take(v0.len() as int - 2).push(values.view().last()));
+                machine_driver_if(entry, store.graph(), p0, ActionShape::If(test@), v0, values.view().last());
+            }
         }
         Action::CleanIf(test, path) => {
             let b = match values.pop() {
@@ -3929,12 +4102,16 @@ fn transition_step<G: KernelStore>(
                 Some(v) => v,
                 None => return Err(invariant()),
             };
-            proof! { assert(values.view() =~= v0.take(v0.len() as int - 2)); }
+            proof! {
+                assert(values.view() =~= v0.take(v0.len() as int - 2));
+                assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
+            }
             let out = local_if(store, test, a, b)?;
             tasks.push(Action::Clean(out, path));
             proof! {
                 machine_driver_if_effect(store.graph(), test, Some(path), p0, v0, out);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Clean(out@, path@)));
+                machine_driver_clean_if(entry, store.graph(), p0, test, path, v0, out);
             }
         }
         Action::Clean(id, path) => transition_clean_step(store, id, path, &c, tasks, values)?,
@@ -3951,6 +4128,7 @@ fn transition_step<G: KernelStore>(
             proof! {
                 machine_driver_result_effect(store.graph(), ActionShape::NotResult, p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Not(id@)));
+                machine_driver_result(store.graph(), p0, None, v0);
             }
         }
         Action::AppendResult(r) => {
@@ -3963,6 +4141,7 @@ fn transition_step<G: KernelStore>(
             proof! {
                 machine_driver_result_effect(store.graph(), ActionShape::AppendResult(r@), p0, v0);
                 assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Append(id@, r@)));
+                machine_driver_result(store.graph(), p0, Some(r@), v0);
             }
         }
         Action::SwapThen => {
@@ -3977,7 +4156,11 @@ fn transition_step<G: KernelStore>(
             proof! { assert(values.view() =~= v0.take(v0.len() as int - 2)); }
             values.push(a);
             values.push(b);
-            proof! { machine_driver_swap_effect(store.graph(), p0, v0); }
+            proof! {
+                machine_driver_swap_effect(store.graph(), p0, v0);
+                assert(values.view() =~= v0.take(v0.len() as int - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]));
+                machine_driver_swap(store.graph(), p0, v0);
+            }
         }
     }
     Ok(())
@@ -3994,7 +4177,9 @@ fn transition_step<G: KernelStore>(
         match result {
             Ok(()) => transition_program_refines(
                 transition_program(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-                transition_program(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view())),
+                transition_program(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()))
+                && machine_cost(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view())
+                    < machine_cost(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
             Err(_) => true,
         },
 )]
@@ -4024,8 +4209,7 @@ fn transition_next<G: KernelStore>(
     Ok(())
 }
 #[verus_verify]
-// Only successful-return correctness is claimed; the loop's resource checks are unchanged.
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
+// Only successful-return correctness is claimed; each step lowers `verify::machine_cost`.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 #[verus_spec(result =>
     requires model::graph_wf(old(store).graph()), old(store).valid_store(),
@@ -4045,7 +4229,11 @@ fn transition_machine<G: KernelStore>(
     let mut tasks = WorkVec::new();
     let mut values = WorkVec::new();
     tasks.push(initial);
-    proof! { assert(transition_action_views(tasks.view()) =~= seq![shape]); }
+    proof! {
+        assert(tasks.view() =~= seq![initial]);
+        assert(transition_action_views(tasks.view())[0] == shape);
+        assert(transition_action_views(tasks.view()) =~= seq![shape]);
+    }
     let mut state = Ok(());
     #[cfg_attr(verus_keep_ghost, verus_spec(
         invariant
@@ -4054,6 +4242,9 @@ fn transition_machine<G: KernelStore>(
             transition_configuration_valid(store.graph(), transition_action_views(tasks.view()), values.view()),
             state.is_ok() ==> transition_program_refines(original,
                 transition_program(store.graph(), transition_action_views(tasks.view()), values.view())),
+        decreases if state.is_ok() {
+            machine_cost(store.graph(), transition_action_views(tasks.view()), values.view()) + 1
+        } else { 0 },
     ))]
     while !tasks.is_empty() && state.is_ok() {
         proof_decl! { let ghost before = store.graph();
@@ -8513,6 +8704,2782 @@ pub(crate) mod verify {
     pub proof fn transition_lemma_work_positive(g: model::Graph, id: nat, intersect: bool)
         ensures transition_collect_work(g, id, intersect) >= 1,
     {}
+
+    // ----- termination cost arithmetic (transition_machine) -----
+    pub open spec fn n4(d: nat) -> nat
+        decreases d,
+    {
+        if d == 0 { 1 } else { 4 * n4((d - 1) as nat) }
+    }
+
+    pub open spec fn log4_floor(d: nat) -> nat
+        decreases d,
+    {
+        if d < 4 { 0 } else { 1 + log4_floor(d / 4) }
+    }
+
+    pub open spec fn set_bound(total: nat, n: nat) -> nat {
+        if n == 0 { 2 } else if n == 1 { total } else { (total - 1) as nat }
+    }
+
+    pub open spec fn if_bound(a: nat, b: nat) -> nat { 1 + if a >= b { a } else { b } }
+
+    pub open spec fn pair_bound(a: nat, b: nat) -> nat { a * b + a + b }
+
+    pub open spec fn sum_plus1(ds: Seq<nat>) -> nat
+        decreases ds.len(),
+    {
+        if ds.len() == 0 { 0 } else { sum_plus1(ds.drop_last()) + ds.last() + 1 }
+    }
+
+    pub open spec fn prod_plus1(ds: Seq<nat>) -> nat
+        decreases ds.len(),
+    {
+        if ds.len() == 0 { 1 } else { prod_plus1(ds.drop_last()) * (ds.last() + 1) }
+    }
+
+    pub open spec fn union_bound(ds: Seq<nat>) -> nat { set_bound(sum_plus1(ds), ds.len()) }
+
+    pub open spec fn intersect_bound(ds: Seq<nat>) -> nat { set_bound(prod_plus1(ds), ds.len()) }
+
+    proof fn lemma_n4_pos(d: nat)
+        ensures n4(d) >= 1, d < n4(d),
+        decreases d,
+    {
+        if d > 0 { lemma_n4_pos((d - 1) as nat); }
+    }
+
+    proof fn lemma_log4_le(d: nat)
+        requires d >= 1,
+        ensures n4(log4_floor(d)) <= d,
+        decreases d,
+    {
+        if d >= 4 { lemma_log4_le(d / 4); }
+    }
+
+    #[via_fn]
+    proof fn clean_cost_decreases(d: nat) {
+        if d > 1 {
+            lemma_log4_le(d);
+            assert(2 * (((d - 1) as nat) / 2) + 1 <= d);
+        }
+    }
+
+    #[via_fn]
+    proof fn not_cost_decreases(d: nat) {
+        if d > 1 {
+            lemma_n4_pos((d - 1) as nat);
+            assert(n4(d) == 4 * n4((d - 1) as nat));
+            lemma_n4_pos(d);
+            if d >= 2 {
+                lemma_n4_pos((d - 2) as nat);
+                assert(n4((d - 1) as nat) == 4 * n4((d - 2) as nat));
+            }
+        }
+    }
+
+    #[via_fn]
+    proof fn pair_cost_decreases(x: nat, y: nat) {
+        if !(x == 0 || y == 0 || (x <= 1 && y <= 1)) {
+            assert(x * (y + 1) < pair_bound(x, y)) by (nonlinear_arith) requires y >= 1;
+            assert(y * (x + 1) < pair_bound(x, y)) by (nonlinear_arith) requires x >= 1;
+            assert(x * y < pair_bound(x, y)) by (nonlinear_arith) requires x >= 1;
+            if x >= 1 { assert(pair_bound((x - 1) as nat, y) < pair_bound(x, y)) by (nonlinear_arith) requires x >= 1; }
+            if y >= 1 { assert(pair_bound(x, (y - 1) as nat) < pair_bound(x, y)) by (nonlinear_arith) requires y >= 1; }
+            if x >= 1 && y >= 1 {
+                assert(pair_bound((x - 1) as nat, (y - 1) as nat) < pair_bound(x, y)) by (nonlinear_arith) requires x >= 1, y >= 1;
+            }
+        }
+    }
+
+    /// Cost of `Clean` on a node of depth bound `d`.
+    pub open spec fn clean_cost(d: nat) -> nat
+        decreases d, 3nat, 0nat via clean_cost_decreases
+    {
+        if d <= 1 { 1 } else {
+            4 + d + 3 * clean_cost((d - 1) as nat) + pair_cost_upto(d, d)
+                + not_cost(log4_floor(d)) + append_cost(((d - 1) as nat) / 2)
+        }
+    }
+
+    /// Cost of `Not` on a node of depth bound `d`.
+    pub open spec fn not_cost(d: nat) -> nat
+        decreases n4(d), 2nat, 0nat via not_cost_decreases
+    {
+        if d <= 1 { 1 } else {
+            4 + n4(d) + 2 * not_cost((d - 1) as nat) + clean_cost(1 + n4((d - 1) as nat)) + clean_cost(2)
+                + pair_cost_upto((n4(d) - 1) as nat, (n4(d) - 1) as nat)
+        }
+    }
+
+    /// Cost of `Append` on a node of depth bound `d`.
+    pub open spec fn append_cost(d: nat) -> nat
+        decreases 2 * d + 1, 2nat, 0nat,
+    {
+        if d <= 1 { 1 } else { 3 + 3 * append_cost((d - 1) as nat) + clean_cost(2 * d) }
+    }
+
+    /// Cost of `Pair` on nodes of depth bounds `x` and `y`.
+    pub open spec fn pair_cost(x: nat, y: nat) -> nat
+        decreases pair_bound(x, y), 2nat, 0nat via pair_cost_decreases
+    {
+        if x == 0 || y == 0 || (x <= 1 && y <= 1) { 1 } else {
+            6 + (if x >= 2 { 2 * pair_cost((x - 1) as nat, y) + clean_cost(x * (y + 1)) } else { 0 })
+                + (if y >= 2 { 2 * pair_cost(x, (y - 1) as nat) + clean_cost(y * (x + 1)) } else { 0 })
+                + (if x >= 2 && y >= 2 { pair_cost((x - 1) as nat, (y - 1) as nat) + clean_cost(x * y) } else { 0 })
+        }
+    }
+
+    /// Sum of `pair_cost(x, y')` over `1 <= y' <= y` with `pair_bound(x, y') <= e`.
+    pub open spec fn pair_cost_row(x: nat, y: nat, e: nat) -> nat
+        decreases e, 2nat, y + 1,
+    {
+        if y == 0 { 0 } else {
+            (if pair_bound(x, y) <= e { pair_cost(x, y) } else { 0 }) + pair_cost_row(x, (y - 1) as nat, e)
+        }
+    }
+
+    /// Sum of `pair_cost_row(x', e, e)` over `1 <= x' <= x`.
+    pub open spec fn pair_cost_upto(x: nat, e: nat) -> nat
+        decreases e, 2nat, e + x + 2,
+    {
+        if x == 0 { 0 } else { pair_cost_row(x, e, e) + pair_cost_upto((x - 1) as nat, e) }
+    }
+
+    pub open spec fn pair_cost_total(e: nat) -> nat { pair_cost_upto(e, e) }
+
+    pub open spec fn sum_map(f: spec_fn(nat) -> nat, ds: Seq<nat>) -> nat decreases ds.len() { if ds.len() == 0 { 0 } else { sum_map(f, ds.drop_last()) + f(ds.last()) } }
+    pub open spec fn all_pos(ds: Seq<nat>) -> bool { forall|i: int| 0 <= i < ds.len() ==> #[trigger] ds[i] >= 1 }
+    pub open spec fn le_pointwise(a: Seq<nat>, b: Seq<nat>) -> bool { a.len() == b.len() && forall|i: int| 0 <= i < a.len() ==> #[trigger] a[i] <= b[i] }
+    pub open spec fn n4s(ds: Seq<nat>) -> Seq<nat> { Seq::new(ds.len(), |i: int| n4(ds[i])) }
+    pub open spec fn appends(ds: Seq<nat>) -> Seq<nat> { Seq::new(ds.len(), |i: int| 2 * ds[i] + 1) }
+    pub open spec fn pairs_left(ds: Seq<nat>, y: nat) -> Seq<nat> { Seq::new(ds.len(), |i: int| pair_bound(ds[i], y)) }
+    pub open spec fn pairs_right(x: nat, ds: Seq<nat>) -> Seq<nat> { Seq::new(ds.len(), |i: int| pair_bound(x, ds[i])) }
+    pub open spec fn clean_cost_fn() -> spec_fn(nat) -> nat { |d: nat| clean_cost(d) }
+    pub open spec fn not_cost_fn() -> spec_fn(nat) -> nat { |d: nat| not_cost(d) }
+    pub open spec fn append_cost_fn() -> spec_fn(nat) -> nat { |d: nat| append_cost(d) }
+    pub open spec fn pair_cost_left_fn(y: nat) -> spec_fn(nat) -> nat { |d: nat| pair_cost(d, y) }
+    pub open spec fn pair_cost_right_fn(x: nat) -> spec_fn(nat) -> nat { |d: nat| pair_cost(x, d) }
+    /// Abstract cost of the intersect fold from index k with accumulator bound acc.
+    pub open spec fn fold_cost(ds: Seq<nat>, k: nat, acc: nat) -> nat decreases ds.len() - k when k <= ds.len() {
+        if k >= ds.len() { 1 } else { 1 + pair_cost(acc, ds[k as int]) + fold_cost(ds, k + 1, pair_bound(acc, ds[k as int])) } }
+    pub open spec fn fold_bound(ds: Seq<nat>, k: nat, acc: nat) -> nat decreases ds.len() - k when k <= ds.len() {
+        if k >= ds.len() { acc } else { fold_bound(ds, k + 1, pair_bound(acc, ds[k as int])) } }
+
+    // ---------------------------------------------------------------- n4
+
+    pub proof fn lemma_n4_mono(a: nat, b: nat)
+        requires a <= b,
+        ensures n4(a) <= n4(b), a < b ==> n4(a) < n4(b),
+        decreases b,
+    {
+        if a < b {
+            lemma_n4_mono(a, (b - 1) as nat);
+            lemma_n4_pos((b - 1) as nat);
+        }
+    }
+
+    pub proof fn lemma_n4_add(a: nat, b: nat)
+        ensures n4(a + b) == n4(a) * n4(b),
+        decreases b,
+    {
+        if b > 0 {
+            lemma_n4_add(a, (b - 1) as nat);
+            let p = n4(a);
+            let q = n4((b - 1) as nat);
+            assert(n4(a + b) == 4 * n4((a + (b - 1)) as nat));
+            assert(4 * (p * q) == p * (4 * q)) by (nonlinear_arith);
+        } else {
+            assert(n4(a) * 1 == n4(a)) by (nonlinear_arith);
+        }
+    }
+
+    proof fn lemma_singleton(ds: Seq<nat>)
+        requires ds.len() == 1,
+        ensures sum_plus1(ds) == ds[0] + 1, prod_plus1(ds) == ds[0] + 1, ds.last() == ds[0],
+    {
+        let p = prod_plus1(ds.drop_last());
+        assert(sum_plus1(ds.drop_last()) == 0);
+        assert(p == 1);
+        assert(p * (ds[0] + 1) == ds[0] + 1) by (nonlinear_arith) requires p == 1;
+    }
+
+    pub proof fn lemma_log4_n4(k: nat)
+        ensures log4_floor(n4(k)) == k,
+        decreases k,
+    {
+        if k > 0 {
+            lemma_n4_pos((k - 1) as nat);
+            assert(n4(k) == 4 * n4((k - 1) as nat));
+            assert(n4(k) / 4 == n4((k - 1) as nat));
+            lemma_log4_n4((k - 1) as nat);
+        }
+    }
+
+    proof fn lemma_n4_small()
+        ensures n4(0) == 1, n4(1) == 4, n4(2) == 16,
+    {
+        assert(n4(0) == 1);
+        assert(n4(1) == 4);
+        assert(n4(2) == 16);
+    }
+
+    // ---------------------------------------------------------------- costs: positivity, steps
+
+    pub proof fn lemma_costs_pos(d: nat)
+        ensures clean_cost(d) >= 1, not_cost(d) >= 1, append_cost(d) >= 1,
+    {
+    }
+
+    proof fn lemma_pair_cost_pos(x: nat, y: nat)
+        ensures pair_cost(x, y) >= 1,
+    {
+    }
+
+    proof fn lemma_clean_step(d: nat)
+        ensures clean_cost(d) <= clean_cost(d + 1), d >= 1 ==> 2 * clean_cost(d) <= clean_cost(d + 1),
+    {
+        lemma_costs_pos(d);
+        assert(((d + 1) - 1) as nat == d);
+    }
+
+    proof fn lemma_not_step(d: nat)
+        ensures not_cost(d) <= not_cost(d + 1), d >= 1 ==> 2 * not_cost(d) <= not_cost(d + 1),
+    {
+        lemma_costs_pos(d);
+        assert(((d + 1) - 1) as nat == d);
+    }
+
+    proof fn lemma_append_step(d: nat)
+        ensures append_cost(d) <= append_cost(d + 1), d >= 1 ==> 2 * append_cost(d) <= append_cost(d + 1),
+    {
+        lemma_costs_pos(d);
+        assert(((d + 1) - 1) as nat == d);
+    }
+
+    proof fn lemma_pair_step_x(x: nat, y: nat)
+        ensures
+            pair_cost(x, y) <= pair_cost(x + 1, y),
+            x >= 1 && y >= 1 ==> 2 * pair_cost(x, y) <= pair_cost(x + 1, y),
+    {
+        lemma_pair_cost_pos(x, y);
+        lemma_pair_cost_pos(x + 1, y);
+        assert(((x + 1) - 1) as nat == x);
+    }
+
+    proof fn lemma_pair_step_y(x: nat, y: nat)
+        ensures
+            pair_cost(x, y) <= pair_cost(x, y + 1),
+            x >= 1 && y >= 1 ==> 2 * pair_cost(x, y) <= pair_cost(x, y + 1),
+    {
+        lemma_pair_cost_pos(x, y);
+        lemma_pair_cost_pos(x, y + 1);
+        assert(((y + 1) - 1) as nat == y);
+    }
+
+    // ---------------------------------------------------------------- generic step-function facts
+
+    #[verifier::opaque]
+    pub open spec fn steps_ok(f: spec_fn(nat) -> nat) -> bool {
+        forall|d: nat| #[trigger] f(d) <= f(d + 1) && (d >= 1 ==> 2 * f(d) <= f(d + 1))
+    }
+
+    proof fn lemma_steps_at(f: spec_fn(nat) -> nat, d: nat)
+        requires steps_ok(f),
+        ensures f(d) <= f(d + 1), d >= 1 ==> 2 * f(d) <= f(d + 1),
+    {
+        reveal(steps_ok);
+    }
+
+    proof fn lemma_f_mono(f: spec_fn(nat) -> nat, a: nat, b: nat)
+        requires steps_ok(f), a <= b,
+        ensures f(a) <= f(b),
+        decreases b - a,
+    {
+        if a < b {
+            lemma_f_mono(f, a, (b - 1) as nat);
+            lemma_steps_at(f, (b - 1) as nat);
+        }
+    }
+
+    proof fn lemma_f_superadd(f: spec_fn(nat) -> nat, a: nat, b: nat)
+        requires steps_ok(f), a >= 1, b >= 1,
+        ensures f(a) + f(b) <= f(a + b),
+    {
+        let m: nat = if a >= b { a } else { b };
+        lemma_f_mono(f, a, m);
+        lemma_f_mono(f, b, m);
+        lemma_steps_at(f, m);
+        lemma_f_mono(f, m + 1, a + b);
+    }
+
+    proof fn lemma_all_pos_drop_last(ds: Seq<nat>)
+        requires all_pos(ds), ds.len() >= 1,
+        ensures all_pos(ds.drop_last()), ds.last() >= 1,
+    {
+        assert forall|i: int| 0 <= i < ds.drop_last().len() implies #[trigger] ds.drop_last()[i] >= 1 by {
+            assert(ds[i] >= 1);
+        }
+        assert(ds[ds.len() - 1] >= 1);
+    }
+
+    proof fn lemma_f_sum(f: spec_fn(nat) -> nat, ds: Seq<nat>)
+        requires steps_ok(f), all_pos(ds), ds.len() >= 1,
+        ensures
+            sum_plus1(ds) >= 2 * ds.len(),
+            sum_map(f, ds) <= f((sum_plus1(ds) - ds.len()) as nat),
+        decreases ds.len(),
+    {
+        lemma_all_pos_drop_last(ds);
+        let p = ds.drop_last();
+        if ds.len() == 1 {
+            assert(sum_map(f, p) == 0);
+            assert(sum_plus1(p) == 0);
+        } else {
+            lemma_f_sum(f, p);
+            let s1 = (sum_plus1(p) - p.len()) as nat;
+            lemma_f_superadd(f, s1, ds.last());
+            assert((sum_plus1(ds) - ds.len()) as nat == s1 + ds.last());
+        }
+    }
+
+    proof fn lemma_sum_ge(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures sum_plus1(ds) >= 2 * ds.len(),
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            lemma_all_pos_drop_last(ds);
+            lemma_sum_ge(ds.drop_last());
+        }
+    }
+
+    proof fn lemma_prod_ge(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures
+            prod_plus1(ds) >= ds.len() + 1,
+            prod_plus1(ds) >= sum_plus1(ds),
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            lemma_all_pos_drop_last(ds);
+            let p = ds.drop_last();
+            lemma_prod_ge(p);
+            let pp = prod_plus1(p);
+            let sp = sum_plus1(p);
+            let l = ds.last();
+            let n = p.len();
+            if n == 0 {
+                assert(pp == 1);
+                assert(sp == 0);
+                assert(pp * (l + 1) == l + 1);
+            } else {
+                assert(pp * (l + 1) >= sp + l + 1 && pp * (l + 1) >= n + 2) by (nonlinear_arith)
+                    requires pp >= sp, pp >= n + 1, n >= 1, l >= 1;
+            }
+        }
+    }
+
+    proof fn lemma_prod_pos(ds: Seq<nat>)
+        ensures prod_plus1(ds) >= 1,
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            lemma_prod_pos(ds.drop_last());
+            let pp = prod_plus1(ds.drop_last());
+            let l = ds.last();
+            assert(pp * (l + 1) >= 1) by (nonlinear_arith) requires pp >= 1;
+        }
+    }
+
+    proof fn lemma_f_sum_bounds(f: spec_fn(nat) -> nat, ds: Seq<nat>)
+        requires steps_ok(f), all_pos(ds),
+        ensures
+            sum_map(f, ds) <= f((union_bound(ds) - 1) as nat),
+            sum_map(f, ds) <= f((intersect_bound(ds) - 1) as nat),
+    {
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            lemma_f_sum(f, ds);
+        } else if ds.len() >= 2 {
+            lemma_f_sum(f, ds);
+            lemma_prod_ge(ds);
+            lemma_f_mono(f, (sum_plus1(ds) - ds.len()) as nat, (union_bound(ds) - 1) as nat);
+            lemma_f_mono(f, (sum_plus1(ds) - ds.len()) as nat, (intersect_bound(ds) - 1) as nat);
+        }
+    }
+
+    // ---------------------------------------------------------------- monotonicity
+
+    proof fn lemma_clean_steps_ok()
+        ensures steps_ok(clean_cost_fn()),
+    {
+        reveal(steps_ok);
+        assert forall|d: nat| #[trigger] clean_cost_fn()(d) <= clean_cost_fn()(d + 1)
+            && (d >= 1 ==> 2 * clean_cost_fn()(d) <= clean_cost_fn()(d + 1)) by {
+            lemma_clean_step(d);
+        }
+    }
+
+    proof fn lemma_not_steps_ok()
+        ensures steps_ok(not_cost_fn()),
+    {
+        reveal(steps_ok);
+        assert forall|d: nat| #[trigger] not_cost_fn()(d) <= not_cost_fn()(d + 1)
+            && (d >= 1 ==> 2 * not_cost_fn()(d) <= not_cost_fn()(d + 1)) by {
+            lemma_not_step(d);
+        }
+    }
+
+    proof fn lemma_append_steps_ok()
+        ensures steps_ok(append_cost_fn()),
+    {
+        reveal(steps_ok);
+        assert forall|d: nat| #[trigger] append_cost_fn()(d) <= append_cost_fn()(d + 1)
+            && (d >= 1 ==> 2 * append_cost_fn()(d) <= append_cost_fn()(d + 1)) by {
+            lemma_append_step(d);
+        }
+    }
+
+    proof fn lemma_pair_left_steps_ok(y: nat)
+        requires y >= 1,
+        ensures steps_ok(pair_cost_left_fn(y)),
+    {
+        reveal(steps_ok);
+        assert forall|d: nat| #[trigger] pair_cost_left_fn(y)(d) <= pair_cost_left_fn(y)(d + 1)
+            && (d >= 1 ==> 2 * pair_cost_left_fn(y)(d) <= pair_cost_left_fn(y)(d + 1)) by {
+            lemma_pair_step_x(d, y);
+        }
+    }
+
+    proof fn lemma_pair_right_steps_ok(x: nat)
+        requires x >= 1,
+        ensures steps_ok(pair_cost_right_fn(x)),
+    {
+        reveal(steps_ok);
+        assert forall|d: nat| #[trigger] pair_cost_right_fn(x)(d) <= pair_cost_right_fn(x)(d + 1)
+            && (d >= 1 ==> 2 * pair_cost_right_fn(x)(d) <= pair_cost_right_fn(x)(d + 1)) by {
+            lemma_pair_step_y(x, d);
+        }
+    }
+
+    pub proof fn lemma_clean_cost_mono(a: nat, b: nat)
+        requires a <= b,
+        ensures clean_cost(a) <= clean_cost(b),
+    {
+        lemma_clean_steps_ok();
+        lemma_f_mono(clean_cost_fn(), a, b);
+    }
+
+    pub proof fn lemma_not_cost_mono(a: nat, b: nat)
+        requires a <= b,
+        ensures not_cost(a) <= not_cost(b),
+    {
+        lemma_not_steps_ok();
+        lemma_f_mono(not_cost_fn(), a, b);
+    }
+
+    pub proof fn lemma_append_cost_mono(a: nat, b: nat)
+        requires a <= b,
+        ensures append_cost(a) <= append_cost(b),
+    {
+        lemma_append_steps_ok();
+        lemma_f_mono(append_cost_fn(), a, b);
+    }
+
+    proof fn lemma_pair_cost_mono_x(x1: nat, x2: nat, y: nat)
+        requires x1 <= x2,
+        ensures pair_cost(x1, y) <= pair_cost(x2, y),
+        decreases x2,
+    {
+        if x1 < x2 {
+            lemma_pair_cost_mono_x(x1, (x2 - 1) as nat, y);
+            lemma_pair_step_x((x2 - 1) as nat, y);
+        }
+    }
+
+    proof fn lemma_pair_cost_mono_y(x: nat, y1: nat, y2: nat)
+        requires y1 <= y2,
+        ensures pair_cost(x, y1) <= pair_cost(x, y2),
+        decreases y2,
+    {
+        if y1 < y2 {
+            lemma_pair_cost_mono_y(x, y1, (y2 - 1) as nat);
+            lemma_pair_step_y(x, (y2 - 1) as nat);
+        }
+    }
+
+    pub proof fn lemma_pair_cost_mono(x1: nat, y1: nat, x2: nat, y2: nat)
+        requires x1 <= x2, y1 <= y2,
+        ensures 1 <= pair_cost(x1, y1) <= pair_cost(x2, y2),
+    {
+        lemma_pair_cost_pos(x1, y1);
+        lemma_pair_cost_mono_x(x1, x2, y1);
+        lemma_pair_cost_mono_y(x2, y1, y2);
+    }
+
+    proof fn lemma_row_mono_y(x: nat, y1: nat, y2: nat, e: nat)
+        requires y1 <= y2,
+        ensures pair_cost_row(x, y1, e) <= pair_cost_row(x, y2, e),
+        decreases y2,
+    {
+        if y1 < y2 {
+            lemma_row_mono_y(x, y1, (y2 - 1) as nat, e);
+        }
+    }
+
+    proof fn lemma_row_mono_e(x: nat, y: nat, e1: nat, e2: nat)
+        requires e1 <= e2,
+        ensures pair_cost_row(x, y, e1) <= pair_cost_row(x, y, e2),
+        decreases y,
+    {
+        if y > 0 {
+            lemma_row_mono_e(x, (y - 1) as nat, e1, e2);
+        }
+    }
+
+    proof fn lemma_upto_mono_x(x1: nat, x2: nat, e: nat)
+        requires x1 <= x2,
+        ensures pair_cost_upto(x1, e) <= pair_cost_upto(x2, e),
+        decreases x2,
+    {
+        if x1 < x2 {
+            lemma_upto_mono_x(x1, (x2 - 1) as nat, e);
+        }
+    }
+
+    proof fn lemma_upto_mono_e(x: nat, e1: nat, e2: nat)
+        requires e1 <= e2,
+        ensures pair_cost_upto(x, e1) <= pair_cost_upto(x, e2),
+        decreases x,
+    {
+        if x > 0 {
+            lemma_upto_mono_e((x - 1) as nat, e1, e2);
+            lemma_row_mono_e(x, e1, e1, e2);
+            lemma_row_mono_y(x, e1, e2, e2);
+        }
+    }
+
+    pub proof fn lemma_pair_cost_total_mono(a: nat, b: nat)
+        requires a <= b,
+        ensures pair_cost_total(a) <= pair_cost_total(b),
+    {
+        lemma_upto_mono_e(a, a, b);
+        lemma_upto_mono_x(a, b, b);
+    }
+
+    pub proof fn lemma_pair_bound_mono(a1: nat, b1: nat, a2: nat, b2: nat)
+        requires a1 <= a2, b1 <= b2,
+        ensures pair_bound(a1, b1) <= pair_bound(a2, b2),
+    {
+        assert(a1 * b1 <= a2 * b2) by (nonlinear_arith) requires a1 <= a2, b1 <= b2;
+    }
+
+    pub proof fn lemma_pair_bound_ge(a: nat, b: nat)
+        ensures a <= pair_bound(a, b), b <= pair_bound(a, b),
+    {
+        assert(a * b >= 0) by (nonlinear_arith);
+    }
+
+    /// `transition_collect([a, b], true)` stays within `pair_bound`.
+    pub proof fn collect_lemma_pair_bound(g: model::Graph, a: TransitionId, b: TransitionId)
+        ensures collect_bound(g, seq![a, b], true) == pair_bound(tdepth(g, a@), tdepth(g, b@)),
+    {
+        let x = tdepth(g, a@);
+        let y = tdepth(g, b@);
+        let ds = value_depths(g, seq![a, b]);
+        assert(ds =~= seq![x, y]);
+        assert(ds.drop_last() =~= seq![x]);
+        assert(ds.last() == y);
+        lemma_singleton(seq![x]);
+        assert(prod_plus1(ds) == (x + 1) * (y + 1));
+        assert((x + 1) * (y + 1) == x * y + x + y + 1) by (nonlinear_arith);
+    }
+
+    pub proof fn lemma_pair_bound_comm(a: nat, b: nat)
+        ensures pair_bound(a, b) == pair_bound(b, a),
+    {
+        assert(a * b == b * a) by (nonlinear_arith);
+    }
+
+    // ---------------------------------------------------------------- set bounds
+
+    proof fn lemma_le_pointwise_drop_last(a: Seq<nat>, b: Seq<nat>)
+        requires le_pointwise(a, b), a.len() >= 1,
+        ensures le_pointwise(a.drop_last(), b.drop_last()), a.last() <= b.last(),
+    {
+        assert forall|i: int| 0 <= i < a.drop_last().len() implies #[trigger] a.drop_last()[i] <= b.drop_last()[i] by {
+            assert(a[i] <= b[i]);
+        }
+        assert(a[a.len() - 1] <= b[a.len() - 1]);
+    }
+
+    proof fn lemma_totals_mono(a: Seq<nat>, b: Seq<nat>)
+        requires le_pointwise(a, b),
+        ensures sum_plus1(a) <= sum_plus1(b), prod_plus1(a) <= prod_plus1(b),
+        decreases a.len(),
+    {
+        if a.len() >= 1 {
+            lemma_le_pointwise_drop_last(a, b);
+            lemma_totals_mono(a.drop_last(), b.drop_last());
+            let pa = prod_plus1(a.drop_last());
+            let pb = prod_plus1(b.drop_last());
+            let la = a.last();
+            let lb = b.last();
+            assert(pa * (la + 1) <= pb * (lb + 1)) by (nonlinear_arith) requires pa <= pb, la <= lb;
+        }
+    }
+
+    pub proof fn lemma_bounds_mono(a: Seq<nat>, b: Seq<nat>)
+        requires le_pointwise(a, b),
+        ensures union_bound(a) <= union_bound(b), intersect_bound(a) <= intersect_bound(b),
+    {
+        lemma_totals_mono(a, b);
+        lemma_prod_pos(a);
+        lemma_prod_pos(b);
+        assert(prod_plus1(a) <= prod_plus1(b));
+    }
+
+    pub proof fn lemma_bounds_pos(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures
+            union_bound(ds) >= 2,
+            intersect_bound(ds) >= 2,
+            sum_plus1(ds) <= union_bound(ds) + 1,
+            prod_plus1(ds) <= intersect_bound(ds) + 1,
+            prod_plus1(ds) >= 1,
+            ds.len() >= 2 ==> union_bound(ds) + 1 == sum_plus1(ds) && intersect_bound(ds) + 1 == prod_plus1(ds),
+    {
+        lemma_sum_ge(ds);
+        lemma_prod_ge(ds);
+    }
+
+    // ---------------------------------------------------------------- sum lemmas
+
+    pub proof fn lemma_clean_sum(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures
+            sum_map(clean_cost_fn(), ds) <= clean_cost((union_bound(ds) - 1) as nat),
+            sum_map(clean_cost_fn(), ds) <= clean_cost((intersect_bound(ds) - 1) as nat),
+    {
+        lemma_clean_steps_ok();
+        lemma_f_sum_bounds(clean_cost_fn(), ds);
+    }
+
+    pub proof fn lemma_not_sum(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures
+            sum_map(not_cost_fn(), ds) <= not_cost((union_bound(ds) - 1) as nat),
+            sum_map(not_cost_fn(), ds) <= not_cost((intersect_bound(ds) - 1) as nat),
+    {
+        lemma_not_steps_ok();
+        lemma_f_sum_bounds(not_cost_fn(), ds);
+    }
+
+    pub proof fn lemma_append_sum(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures
+            sum_map(append_cost_fn(), ds) <= append_cost((union_bound(ds) - 1) as nat),
+            sum_map(append_cost_fn(), ds) <= append_cost((intersect_bound(ds) - 1) as nat),
+    {
+        lemma_append_steps_ok();
+        lemma_f_sum_bounds(append_cost_fn(), ds);
+    }
+
+    pub proof fn lemma_pair_left_sum(ds: Seq<nat>, y: nat)
+        requires all_pos(ds), y >= 1,
+        ensures sum_map(pair_cost_left_fn(y), ds) <= pair_cost((union_bound(ds) - 1) as nat, y),
+    {
+        lemma_pair_left_steps_ok(y);
+        lemma_f_sum_bounds(pair_cost_left_fn(y), ds);
+    }
+
+    pub proof fn lemma_pair_right_sum(x: nat, ds: Seq<nat>)
+        requires all_pos(ds), x >= 1,
+        ensures sum_map(pair_cost_right_fn(x), ds) <= pair_cost(x, (union_bound(ds) - 1) as nat),
+    {
+        lemma_pair_right_steps_ok(x);
+        lemma_f_sum_bounds(pair_cost_right_fn(x), ds);
+    }
+
+    // ---------------------------------------------------------------- Not bounds
+
+    proof fn lemma_n4s_prod(ds: Seq<nat>)
+        requires ds.len() >= 1,
+        ensures
+            sum_plus1(ds) >= 1,
+            prod_plus1(n4s(ds)) <= 2 * n4((sum_plus1(ds) - 1) as nat),
+            ds.len() >= 2 ==> prod_plus1(n4s(ds)) <= n4((sum_plus1(ds) - 1) as nat),
+        decreases ds.len(),
+    {
+        let p = ds.drop_last();
+        let l = ds.last();
+        assert(n4s(ds).drop_last() =~= n4s(p));
+        assert(n4s(ds).last() == n4(l));
+        lemma_n4_pos(l);
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            lemma_singleton(n4s(ds));
+        } else {
+            lemma_n4s_prod(p);
+            let a = (sum_plus1(p) - 1) as nat;
+            let pp = prod_plus1(n4s(p));
+            let m = n4(a);
+            let q = n4(l);
+            lemma_n4_add(a, l + 1);
+            assert(n4(l + 1) == 4 * q);
+            assert((sum_plus1(ds) - 1) as nat == a + (l + 1));
+            assert(pp * (q + 1) <= m * (4 * q)) by (nonlinear_arith) requires pp <= 2 * m, q >= 1;
+        }
+    }
+
+    proof fn lemma_n4s_sum(ds: Seq<nat>)
+        requires ds.len() >= 1, all_pos(ds),
+        ensures
+            prod_plus1(ds) >= 1,
+            sum_plus1(n4s(ds)) <= 2 * n4((prod_plus1(ds) - 1) as nat),
+            ds.len() >= 2 ==> sum_plus1(n4s(ds)) <= n4((prod_plus1(ds) - 1) as nat),
+        decreases ds.len(),
+    {
+        let p = ds.drop_last();
+        let l = ds.last();
+        lemma_all_pos_drop_last(ds);
+        assert(n4s(ds).drop_last() =~= n4s(p));
+        assert(n4s(ds).last() == n4(l));
+        lemma_n4_pos(l);
+        lemma_prod_pos(ds);
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            lemma_singleton(n4s(ds));
+        } else {
+            lemma_n4s_sum(p);
+            lemma_prod_ge(p);
+            let pp = prod_plus1(p);
+            let a = (pp - 1) as nat;
+            let s = sum_plus1(n4s(p));
+            let m = n4(a);
+            let q = n4(l);
+            lemma_n4_pos(a);
+            lemma_n4_add(a, l + 1);
+            assert(n4(l + 1) == 4 * q);
+            assert(pp * (l + 1) - 1 >= a + (l + 1)) by (nonlinear_arith) requires pp == a + 1, a >= 1, l >= 1;
+            lemma_n4_mono(a + (l + 1), (prod_plus1(ds) - 1) as nat);
+            assert(2 * m + q + 1 <= m * (4 * q)) by (nonlinear_arith) requires m >= 1, q >= 1;
+        }
+    }
+
+    pub proof fn lemma_not_union(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures intersect_bound(n4s(ds)) < n4(union_bound(ds)),
+    {
+        lemma_n4_small();
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            lemma_singleton(n4s(ds));
+            lemma_n4_pos(ds[0]);
+            assert(union_bound(ds) == ds[0] + 1);
+            assert(n4(ds[0] + 1) == 4 * n4(ds[0]));
+            assert(n4s(ds)[0] == n4(ds[0]));
+        } else if ds.len() >= 2 {
+            lemma_n4s_prod(ds);
+            lemma_n4_pos((sum_plus1(ds) - 1) as nat);
+            lemma_prod_pos(n4s(ds));
+        }
+    }
+
+    pub proof fn lemma_not_intersect(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures union_bound(n4s(ds)) <= n4(intersect_bound(ds)),
+    {
+        lemma_n4_small();
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            lemma_singleton(n4s(ds));
+            lemma_n4_pos(ds[0]);
+        } else if ds.len() >= 2 {
+            lemma_n4s_sum(ds);
+        }
+    }
+
+    // ---------------------------------------------------------------- Append / Pair over unions
+
+    proof fn lemma_appends_sum(ds: Seq<nat>)
+        ensures sum_plus1(appends(ds)) == 2 * sum_plus1(ds),
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            assert(appends(ds).drop_last() =~= appends(ds.drop_last()));
+            lemma_appends_sum(ds.drop_last());
+        }
+    }
+
+    pub proof fn lemma_append_union(ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures union_bound(appends(ds)) <= 2 * union_bound(ds) + 1,
+    {
+        lemma_appends_sum(ds);
+        lemma_sum_ge(ds);
+    }
+
+    proof fn lemma_pairs_left_sum(ds: Seq<nat>, y: nat)
+        ensures sum_plus1(pairs_left(ds, y)) == (y + 1) * sum_plus1(ds),
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            assert(pairs_left(ds, y).drop_last() =~= pairs_left(ds.drop_last(), y));
+            lemma_pairs_left_sum(ds.drop_last(), y);
+            let s = sum_plus1(ds.drop_last());
+            let l = ds.last();
+            assert((y + 1) * s + (l * y + l + y) + 1 == (y + 1) * (s + l + 1)) by (nonlinear_arith);
+        } else {
+            assert((y + 1) * sum_plus1(ds) == 0) by (nonlinear_arith) requires sum_plus1(ds) == 0;
+        }
+    }
+
+    proof fn lemma_pairs_right_sum(x: nat, ds: Seq<nat>)
+        ensures sum_plus1(pairs_right(x, ds)) == (x + 1) * sum_plus1(ds),
+        decreases ds.len(),
+    {
+        if ds.len() >= 1 {
+            assert(pairs_right(x, ds).drop_last() =~= pairs_right(x, ds.drop_last()));
+            lemma_pairs_right_sum(x, ds.drop_last());
+            let s = sum_plus1(ds.drop_last());
+            let l = ds.last();
+            assert((x + 1) * s + (x * l + x + l) + 1 == (x + 1) * (s + l + 1)) by (nonlinear_arith);
+        } else {
+            assert((x + 1) * sum_plus1(ds) == 0) by (nonlinear_arith) requires sum_plus1(ds) == 0;
+        }
+    }
+
+    pub proof fn lemma_pair_union_left(ds: Seq<nat>, y: nat)
+        requires all_pos(ds),
+        ensures union_bound(pairs_left(ds, y)) <= pair_bound(union_bound(ds), y),
+    {
+        lemma_pairs_left_sum(ds, y);
+        lemma_sum_ge(ds);
+        let s = sum_plus1(ds);
+        let u = union_bound(ds);
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            assert((y + 1) * s <= u * y + u + y) by (nonlinear_arith) requires u == s;
+        } else if ds.len() >= 2 {
+            assert((y + 1) * s <= u * y + u + y + 1) by (nonlinear_arith) requires u + 1 == s;
+        }
+    }
+
+    pub proof fn lemma_pair_union_right(x: nat, ds: Seq<nat>)
+        requires all_pos(ds),
+        ensures union_bound(pairs_right(x, ds)) <= pair_bound(x, union_bound(ds)),
+    {
+        lemma_pairs_right_sum(x, ds);
+        lemma_sum_ge(ds);
+        let s = sum_plus1(ds);
+        let u = union_bound(ds);
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            assert((x + 1) * s <= x * u + x + u) by (nonlinear_arith) requires u == s;
+        } else if ds.len() >= 2 {
+            assert((x + 1) * s <= x * u + x + u + 1) by (nonlinear_arith) requires u + 1 == s;
+        }
+    }
+
+    // ---------------------------------------------------------------- intersect fold
+
+    proof fn lemma_prod_front(ds: Seq<nat>)
+        requires ds.len() >= 1,
+        ensures prod_plus1(ds) == (ds[0] + 1) * prod_plus1(ds.subrange(1, ds.len() as int)),
+        decreases ds.len(),
+    {
+        let t = ds.subrange(1, ds.len() as int);
+        if ds.len() == 1 {
+            lemma_singleton(ds);
+            assert(prod_plus1(t) == 1);
+            assert((ds[0] + 1) * prod_plus1(t) == ds[0] + 1) by (nonlinear_arith) requires prod_plus1(t) == 1;
+        } else {
+            let p = ds.drop_last();
+            lemma_prod_front(p);
+            assert(t.drop_last() =~= p.subrange(1, p.len() as int));
+            assert(p[0] == ds[0]);
+            assert(t.last() == ds.last());
+            let a = ds[0] + 1;
+            let b = prod_plus1(p.subrange(1, p.len() as int));
+            let c = ds.last() + 1;
+            assert((a * b) * c == a * (b * c)) by (nonlinear_arith);
+        }
+    }
+
+    #[verifier::spinoff_prover]
+    proof fn lemma_fold_bound_eq(ds: Seq<nat>, k: nat, acc: nat)
+        requires k <= ds.len(),
+        ensures
+            fold_bound(ds, k, acc) + 1 == (acc + 1) * prod_plus1(ds.subrange(k as int, ds.len() as int)),
+            fold_bound(ds, k, acc) >= acc,
+        decreases ds.len() - k,
+    {
+        let t = ds.subrange(k as int, ds.len() as int);
+        if k >= ds.len() {
+            assert(t.len() == 0);
+            assert(prod_plus1(t) == 1);
+            assert((acc + 1) * 1 == acc + 1) by (nonlinear_arith);
+        } else {
+            let d = ds[k as int];
+            let acc2 = pair_bound(acc, d);
+            lemma_fold_bound_eq(ds, k + 1, acc2);
+            lemma_prod_front(t);
+            assert(t[0] == d);
+            assert(t.subrange(1, t.len() as int) =~= ds.subrange(k + 1 as int, ds.len() as int));
+            let r = prod_plus1(ds.subrange(k + 1 as int, ds.len() as int));
+            assert((acc * d + acc + d + 1) * r == (acc + 1) * ((d + 1) * r)) by (nonlinear_arith);
+            assert(acc * d >= 0) by (nonlinear_arith);
+        }
+    }
+
+    proof fn lemma_row_ge(x: nat, y: nat, ye: nat, e: nat)
+        requires 1 <= y <= ye, pair_bound(x, y) <= e,
+        ensures pair_cost(x, y) <= pair_cost_row(x, ye, e),
+        decreases ye,
+    {
+        if y < ye {
+            lemma_row_ge(x, y, (ye - 1) as nat, e);
+        }
+    }
+
+    proof fn lemma_fold_cost_bound(ds: Seq<nat>, k: nat, acc: nat, e: nat)
+        requires acc >= 1, k <= ds.len(), all_pos(ds), e >= fold_bound(ds, k, acc),
+        ensures
+            fold_cost(ds, k, acc) + pair_cost_upto((acc - 1) as nat, e)
+                <= (ds.len() - k) + 1 + pair_cost_upto((fold_bound(ds, k, acc) - 1) as nat, e),
+        decreases ds.len() - k,
+    {
+        if k < ds.len() {
+            let d = ds[k as int];
+            assert(d >= 1);
+            let acc2 = pair_bound(acc, d);
+            assert(acc * d >= 1) by (nonlinear_arith) requires acc >= 1, d >= 1;
+            lemma_fold_bound_eq(ds, k + 1, acc2);
+            lemma_fold_cost_bound(ds, k + 1, acc2, e);
+            lemma_row_ge(acc, d, e, e);
+            lemma_upto_mono_x(acc, (acc2 - 1) as nat, e);
+            assert(pair_cost_upto(acc, e) == pair_cost_row(acc, e, e) + pair_cost_upto((acc - 1) as nat, e));
+        }
+    }
+
+    pub proof fn lemma_fold(ds: Seq<nat>)
+        requires ds.len() >= 2, all_pos(ds),
+        ensures
+            fold_bound(ds, 1, ds[0]) == intersect_bound(ds),
+            fold_cost(ds, 1, ds[0]) <= intersect_bound(ds) + pair_cost_total(intersect_bound(ds)),
+    {
+        let e = intersect_bound(ds);
+        lemma_fold_bound_eq(ds, 1, ds[0]);
+        lemma_prod_front(ds);
+        lemma_prod_ge(ds);
+        assert(ds[0] >= 1);
+        lemma_fold_cost_bound(ds, 1, ds[0], e);
+        lemma_upto_mono_x((e - 1) as nat, e, e);
+    }
+
+    pub proof fn lemma_fold_mono(ds: Seq<nat>, k: nat, a: nat, b: nat)
+        requires a <= b, k <= ds.len(),
+        ensures fold_cost(ds, k, a) <= fold_cost(ds, k, b), fold_bound(ds, k, a) <= fold_bound(ds, k, b),
+        decreases ds.len() - k,
+    {
+        if k < ds.len() {
+            let d = ds[k as int];
+            lemma_pair_bound_mono(a, d, b, d);
+            lemma_pair_cost_mono(a, d, b, d);
+            lemma_fold_mono(ds, k + 1, pair_bound(a, d), pair_bound(b, d));
+        }
+    }
+
+    // ===== transition_machine termination: per-node depth bounds and an abstract run of the task stack =====
+
+    /// Depth bound of a transition node: `1 + max` at `If`, additive at `Union`, multiplicative at
+    /// `Intersect`, `4^d` at `Not`, `2d + 1` at `Append`.
+    pub open spec fn tdepth(g: model::Graph, id: nat) -> nat
+        decreases id, 1nat,
+    {
+        if id >= g.transitions.len() { 1 } else {
+            match g.transitions[id as int] {
+                model::TransitionNode::Const(_) => 1,
+                model::TransitionNode::If(_, a, b) => if_bound(
+                    if a < id { tdepth(g, a) } else { 1 }, if b < id { tdepth(g, b) } else { 1 }),
+                model::TransitionNode::Union(cs) => union_bound(tdepths_bounded(g, cs, id)),
+                model::TransitionNode::Intersect(cs) => intersect_bound(tdepths_bounded(g, cs, id)),
+                model::TransitionNode::Not(c) => n4(if c < id { tdepth(g, c) } else { 1 }),
+                model::TransitionNode::Append(c, _) => 2 * (if c < id { tdepth(g, c) } else { 1 }) + 1,
+            }
+        }
+    }
+
+    pub open spec fn tdepths_bounded(g: model::Graph, cs: Seq<nat>, bound: nat) -> Seq<nat>
+        decreases bound, 0nat,
+    {
+        Seq::new(cs.len(), |j: int| if 0 <= j < cs.len() && cs[j] < bound { tdepth(g, cs[j]) } else { 1 })
+    }
+
+    pub open spec fn tdepths(g: model::Graph, ids: Seq<nat>) -> Seq<nat> {
+        Seq::new(ids.len(), |i: int| tdepth(g, ids[i]))
+    }
+
+    pub open spec fn value_depths(g: model::Graph, values: Seq<TransitionId>) -> Seq<nat> {
+        Seq::new(values.len(), |i: int| tdepth(g, values[i]@))
+    }
+
+    pub open spec fn tdepth_node(g: model::Graph, node: model::TransitionNode) -> nat {
+        match node {
+            model::TransitionNode::Const(_) => 1,
+            model::TransitionNode::If(_, a, b) => if_bound(tdepth(g, a), tdepth(g, b)),
+            model::TransitionNode::Union(cs) => union_bound(tdepths(g, cs)),
+            model::TransitionNode::Intersect(cs) => intersect_bound(tdepths(g, cs)),
+            model::TransitionNode::Not(c) => n4(tdepth(g, c)),
+            model::TransitionNode::Append(c, _) => 2 * tdepth(g, c) + 1,
+        }
+    }
+
+    pub proof fn tdepth_lemma_unfold(g: model::Graph, id: nat)
+        requires model::graph_wf(g), id < g.transitions.len(),
+        ensures tdepth(g, id) == tdepth_node(g, g.transitions[id as int]),
+    {
+        model::lemma_graph_transition_wf(g, id);
+        match g.transitions[id as int] {
+            model::TransitionNode::Union(cs) => { assert(tdepths_bounded(g, cs, id) =~= tdepths(g, cs)); },
+            model::TransitionNode::Intersect(cs) => { assert(tdepths_bounded(g, cs, id) =~= tdepths(g, cs)); },
+            _ => {},
+        }
+    }
+
+    pub proof fn tdepth_lemma_pos(g: model::Graph, id: nat)
+        ensures tdepth(g, id) >= 1,
+        decreases id,
+    {
+        if id < g.transitions.len() {
+            match g.transitions[id as int] {
+                model::TransitionNode::Union(cs) => {
+                    let ds = tdepths_bounded(g, cs, id);
+                    assert forall|j: int| 0 <= j < ds.len() implies #[trigger] ds[j] >= 1 by {
+                        if cs[j] < id { tdepth_lemma_pos(g, cs[j]); }
+                    }
+                    lemma_bounds_pos(ds);
+                },
+                model::TransitionNode::Intersect(cs) => {
+                    let ds = tdepths_bounded(g, cs, id);
+                    assert forall|j: int| 0 <= j < ds.len() implies #[trigger] ds[j] >= 1 by {
+                        if cs[j] < id { tdepth_lemma_pos(g, cs[j]); }
+                    }
+                    lemma_bounds_pos(ds);
+                },
+                model::TransitionNode::Not(c) => { lemma_n4_pos(if c < id { tdepth(g, c) } else { 1 }); },
+                _ => {},
+            }
+        }
+    }
+
+    pub proof fn tdepths_lemma_pos(g: model::Graph, ids: Seq<nat>)
+        ensures all_pos(tdepths(g, ids)),
+    {
+        assert forall|i: int| 0 <= i < tdepths(g, ids).len() implies #[trigger] tdepths(g, ids)[i] >= 1 by {
+            tdepth_lemma_pos(g, ids[i]);
+        }
+    }
+
+    pub proof fn value_depths_lemma_pos(g: model::Graph, values: Seq<TransitionId>)
+        ensures all_pos(value_depths(g, values)),
+    {
+        assert forall|i: int| 0 <= i < value_depths(g, values).len() implies #[trigger] value_depths(g, values)[i] >= 1 by {
+            tdepth_lemma_pos(g, values[i]@);
+        }
+    }
+
+    pub proof fn tdepth_lemma_extends(a: model::Graph, b: model::Graph, id: nat)
+        requires model::graph_extends(a, b), id < a.transitions.len(),
+        ensures tdepth(a, id) == tdepth(b, id),
+        decreases id,
+    {
+        assert(a.transitions[id as int] == b.transitions[id as int]);
+        match a.transitions[id as int] {
+            model::TransitionNode::If(_, x, y) => {
+                if x < id { tdepth_lemma_extends(a, b, x); }
+                if y < id { tdepth_lemma_extends(a, b, y); }
+            },
+            model::TransitionNode::Union(cs) => {
+                assert forall|j: int| 0 <= j < cs.len() implies tdepths_bounded(a, cs, id)[j] == tdepths_bounded(b, cs, id)[j] by {
+                    if cs[j] < id { tdepth_lemma_extends(a, b, cs[j]); }
+                }
+                assert(tdepths_bounded(a, cs, id) =~= tdepths_bounded(b, cs, id));
+            },
+            model::TransitionNode::Intersect(cs) => {
+                assert forall|j: int| 0 <= j < cs.len() implies tdepths_bounded(a, cs, id)[j] == tdepths_bounded(b, cs, id)[j] by {
+                    if cs[j] < id { tdepth_lemma_extends(a, b, cs[j]); }
+                }
+                assert(tdepths_bounded(a, cs, id) =~= tdepths_bounded(b, cs, id));
+            },
+            model::TransitionNode::Not(c) => { if c < id { tdepth_lemma_extends(a, b, c); } },
+            model::TransitionNode::Append(c, _) => { if c < id { tdepth_lemma_extends(a, b, c); } },
+            _ => {},
+        }
+    }
+
+    pub proof fn tdepth_lemma_extends_forall(a: model::Graph)
+        ensures forall|b: model::Graph, id: nat| model::graph_extends(a, b) && id < a.transitions.len()
+            ==> #[trigger] tdepth(b, id) == tdepth(a, id),
+    {
+        assert forall|b: model::Graph, id: nat| model::graph_extends(a, b) && id < a.transitions.len()
+            implies #[trigger] tdepth(b, id) == tdepth(a, id) by { tdepth_lemma_extends(a, b, id); }
+    }
+
+    pub proof fn tdepths_lemma_extends(a: model::Graph, b: model::Graph, ids: Seq<nat>)
+        requires model::graph_extends(a, b), model::bounded(ids, a.transitions.len()),
+        ensures tdepths(a, ids) == tdepths(b, ids),
+    {
+        assert forall|i: int| 0 <= i < ids.len() implies tdepths(a, ids)[i] == tdepths(b, ids)[i] by {
+            tdepth_lemma_extends(a, b, ids[i]);
+        }
+        assert(tdepths(a, ids) =~= tdepths(b, ids));
+    }
+
+    pub proof fn tdepths_lemma_extends_forall(a: model::Graph, values: Seq<TransitionId>)
+        requires transition_ids_valid(a, values),
+        ensures forall|b: model::Graph| model::graph_extends(a, b)
+            ==> #[trigger] tdepths(b, model::transition_ids(values)) == tdepths(a, model::transition_ids(values)),
+    {
+        let ids = model::transition_ids(values);
+        assert(model::bounded(ids, a.transitions.len()));
+        assert forall|b: model::Graph| model::graph_extends(a, b)
+            implies #[trigger] tdepths(b, ids) == tdepths(a, ids) by { tdepths_lemma_extends(a, b, ids); }
+    }
+
+    pub proof fn value_depths_lemma_extends(a: model::Graph, b: model::Graph, values: Seq<TransitionId>)
+        requires model::graph_extends(a, b), transition_ids_valid(a, values),
+        ensures value_depths(a, values) == value_depths(b, values),
+    {
+        assert forall|i: int| 0 <= i < values.len() implies value_depths(a, values)[i] == value_depths(b, values)[i] by {
+            tdepth_lemma_extends(a, b, values[i]@);
+        }
+        assert(value_depths(a, values) =~= value_depths(b, values));
+    }
+
+    pub proof fn tdepth_lemma_constants(g: model::Graph)
+        requires model::graph_wf(g),
+        ensures tdepth(g, g.constants.transition_empty) == 1, tdepth(g, g.constants.transition_all) == 1,
+            tdepth(g, g.constants.transition_epsilon) == 1,
+    {
+        model::lemma_graph_wf_elim(g);
+    }
+
+    pub proof fn tdepth_lemma_const(g: model::Graph, id: nat)
+        requires id < g.transitions.len(), g.transitions[id as int] is Const,
+        ensures tdepth(g, id) == 1,
+    {}
+
+    // ----- abstract value stack -----
+
+    pub open spec fn abs_at(stack: Seq<nat>, j: int) -> nat { if 0 <= j < stack.len() { stack[j] } else { 1 } }
+    pub open spec fn abs_peek(stack: Seq<nat>, from_top: nat) -> nat { abs_at(stack, stack.len() - 1 - from_top) }
+    pub open spec fn abs_top(stack: Seq<nat>, k: nat) -> Seq<nat> { Seq::new(k, |i: int| abs_at(stack, stack.len() - k + i)) }
+    pub open spec fn abs_pop(stack: Seq<nat>, k: nat) -> Seq<nat> {
+        if k <= stack.len() { stack.take(stack.len() - k) } else { Seq::empty() }
+    }
+
+    pub open spec fn action_cost(g: model::Graph, task: ActionShape, stack: Seq<nat>) -> nat {
+        match task {
+            ActionShape::Clean(id, _) => clean_cost(tdepth(g, id)),
+            ActionShape::Not(id) => not_cost(tdepth(g, id)),
+            ActionShape::Append(id, _) => append_cost(tdepth(g, id)),
+            ActionShape::Pair(a, b) => pair_cost(tdepth(g, a), tdepth(g, b)),
+            ActionShape::Union(_) => 1,
+            ActionShape::If(_) => 1,
+            ActionShape::SwapThen => 1,
+            ActionShape::Intersect(n) =>
+                2 + intersect_bound(abs_top(stack, n)) + pair_cost_total(intersect_bound(abs_top(stack, n))),
+            ActionShape::Fold(xs, k) => if k == 0 {
+                    1 + intersect_bound(tdepths(g, xs)) + pair_cost_total(intersect_bound(tdepths(g, xs)))
+                } else if k >= xs.len() { 1 } else { fold_cost(tdepths(g, xs), k, abs_peek(stack, 0)) },
+            ActionShape::CleanIf(_, _) => 1 + clean_cost(if_bound(abs_peek(stack, 1), abs_peek(stack, 0))),
+            ActionShape::NotResult => 1 + not_cost(abs_peek(stack, 0)),
+            ActionShape::AppendResult(_) => 1 + append_cost(abs_peek(stack, 0)),
+        }
+    }
+
+    pub open spec fn action_next(g: model::Graph, task: ActionShape, stack: Seq<nat>) -> Seq<nat> {
+        match task {
+            ActionShape::Clean(id, _) => stack.push(tdepth(g, id)),
+            ActionShape::Not(id) => stack.push(n4(tdepth(g, id))),
+            ActionShape::Append(id, _) => stack.push(2 * tdepth(g, id) + 1),
+            ActionShape::Pair(a, b) => stack.push(pair_bound(tdepth(g, a), tdepth(g, b))),
+            ActionShape::Union(n) => abs_pop(stack, n).push(union_bound(abs_top(stack, n))),
+            ActionShape::Intersect(n) => abs_pop(stack, n).push(intersect_bound(abs_top(stack, n))),
+            ActionShape::Fold(xs, k) => if k == 0 { stack.push(intersect_bound(tdepths(g, xs))) }
+                else if k >= xs.len() { stack }
+                else { abs_pop(stack, 1).push(fold_bound(tdepths(g, xs), k, abs_peek(stack, 0))) },
+            ActionShape::If(_) => abs_pop(stack, 2).push(if_bound(abs_peek(stack, 1), abs_peek(stack, 0))),
+            ActionShape::CleanIf(_, _) => abs_pop(stack, 2).push(if_bound(abs_peek(stack, 1), abs_peek(stack, 0))),
+            ActionShape::NotResult => abs_pop(stack, 1).push(n4(abs_peek(stack, 0))),
+            ActionShape::AppendResult(_) => abs_pop(stack, 1).push(2 * abs_peek(stack, 0) + 1),
+            ActionShape::SwapThen => abs_pop(stack, 2).push(abs_peek(stack, 0)).push(abs_peek(stack, 1)),
+        }
+    }
+
+    /// Runs `tasks` (top = last) over an abstract stack of depth bounds; returns total cost and final stack.
+    pub open spec fn machine_run(g: model::Graph, tasks: Seq<ActionShape>, stack: Seq<nat>) -> (nat, Seq<nat>)
+        decreases tasks.len(),
+    {
+        if tasks.len() == 0 { (0, stack) } else {
+            let rest = machine_run(g, tasks.drop_last(), action_next(g, tasks.last(), stack));
+            (action_cost(g, tasks.last(), stack) + rest.0, rest.1)
+        }
+    }
+
+    /// Termination measure of `transition_machine`.
+    pub open spec fn machine_cost(g: model::Graph, tasks: Seq<ActionShape>, values: Seq<TransitionId>) -> nat {
+        machine_run(g, tasks, value_depths(g, values)).0
+    }
+
+    /// One machine step strictly lowers `machine_cost`: `task` was popped from `tasks0`.
+    pub open spec fn machine_progress(
+        g0: model::Graph, tasks0: Seq<ActionShape>, task: ActionShape, v0: Seq<TransitionId>,
+        g1: model::Graph, tasks1: Seq<ActionShape>, v1: Seq<TransitionId>,
+    ) -> bool {
+        machine_cost(g1, tasks1, v1) < machine_cost(g0, tasks0.push(task), v0)
+    }
+
+    pub proof fn le_pointwise_push(s1: Seq<nat>, s2: Seq<nat>, x: nat, y: nat)
+        requires le_pointwise(s1, s2), x <= y,
+        ensures le_pointwise(s1.push(x), s2.push(y)),
+    {
+        assert forall|i: int| 0 <= i < s1.push(x).len() implies #[trigger] s1.push(x)[i] <= s2.push(y)[i] by {
+            if i < s1.len() { assert(s1[i] <= s2[i]); }
+        }
+    }
+
+    pub proof fn le_pointwise_refl(s: Seq<nat>)
+        ensures le_pointwise(s, s),
+    {}
+
+    pub proof fn machine_lemma_stack_mono(s1: Seq<nat>, s2: Seq<nat>, k: nat)
+        requires le_pointwise(s1, s2),
+        ensures le_pointwise(abs_top(s1, k), abs_top(s2, k)), le_pointwise(abs_pop(s1, k), abs_pop(s2, k)),
+            abs_peek(s1, k) <= abs_peek(s2, k),
+    {
+        assert forall|i: int| 0 <= i < abs_top(s1, k).len() implies #[trigger] abs_top(s1, k)[i] <= abs_top(s2, k)[i] by {
+            let j = s1.len() - k + i;
+            if 0 <= j < s1.len() { assert(s1[j] <= s2[j]); }
+        }
+        assert forall|i: int| 0 <= i < abs_pop(s1, k).len() implies #[trigger] abs_pop(s1, k)[i] <= abs_pop(s2, k)[i] by {
+            assert(s1[i] <= s2[i]);
+        }
+        let j = s1.len() - 1 - k;
+        if 0 <= j < s1.len() { assert(s1[j] <= s2[j]); }
+    }
+
+    pub proof fn machine_lemma_action_mono(g: model::Graph, task: ActionShape, s1: Seq<nat>, s2: Seq<nat>)
+        requires le_pointwise(s1, s2),
+        ensures action_cost(g, task, s1) <= action_cost(g, task, s2),
+            le_pointwise(action_next(g, task, s1), action_next(g, task, s2)),
+    {
+        machine_lemma_stack_mono(s1, s2, 0);
+        machine_lemma_stack_mono(s1, s2, 1);
+        machine_lemma_stack_mono(s1, s2, 2);
+        let p0 = abs_peek(s1, 0);
+        let q0 = abs_peek(s2, 0);
+        let p1 = abs_peek(s1, 1);
+        let q1 = abs_peek(s2, 1);
+        match task {
+            ActionShape::Clean(id, _) => { le_pointwise_push(s1, s2, tdepth(g, id), tdepth(g, id)); },
+            ActionShape::Not(id) => { le_pointwise_push(s1, s2, n4(tdepth(g, id)), n4(tdepth(g, id))); },
+            ActionShape::Append(id, _) => { le_pointwise_push(s1, s2, 2 * tdepth(g, id) + 1, 2 * tdepth(g, id) + 1); },
+            ActionShape::Pair(a, b) => {
+                let v = pair_bound(tdepth(g, a), tdepth(g, b));
+                le_pointwise_push(s1, s2, v, v);
+            },
+            ActionShape::Union(n) => {
+                machine_lemma_stack_mono(s1, s2, n);
+                lemma_bounds_mono(abs_top(s1, n), abs_top(s2, n));
+                le_pointwise_push(abs_pop(s1, n), abs_pop(s2, n), union_bound(abs_top(s1, n)), union_bound(abs_top(s2, n)));
+            },
+            ActionShape::Intersect(n) => {
+                machine_lemma_stack_mono(s1, s2, n);
+                lemma_bounds_mono(abs_top(s1, n), abs_top(s2, n));
+                lemma_pair_cost_total_mono(intersect_bound(abs_top(s1, n)), intersect_bound(abs_top(s2, n)));
+                le_pointwise_push(abs_pop(s1, n), abs_pop(s2, n),
+                    intersect_bound(abs_top(s1, n)), intersect_bound(abs_top(s2, n)));
+            },
+            ActionShape::Fold(xs, k) => {
+                let ds = tdepths(g, xs);
+                if k == 0 {
+                    le_pointwise_push(s1, s2, intersect_bound(ds), intersect_bound(ds));
+                } else if k < xs.len() {
+                    lemma_fold_mono(ds, k, p0, q0);
+                    le_pointwise_push(abs_pop(s1, 1), abs_pop(s2, 1), fold_bound(ds, k, p0), fold_bound(ds, k, q0));
+                }
+            },
+            ActionShape::If(_) => {
+                le_pointwise_push(abs_pop(s1, 2), abs_pop(s2, 2), if_bound(p1, p0), if_bound(q1, q0));
+            },
+            ActionShape::CleanIf(_, _) => {
+                lemma_clean_cost_mono(if_bound(p1, p0), if_bound(q1, q0));
+                le_pointwise_push(abs_pop(s1, 2), abs_pop(s2, 2), if_bound(p1, p0), if_bound(q1, q0));
+            },
+            ActionShape::NotResult => {
+                lemma_not_cost_mono(p0, q0);
+                lemma_n4_mono(p0, q0);
+                le_pointwise_push(abs_pop(s1, 1), abs_pop(s2, 1), n4(p0), n4(q0));
+            },
+            ActionShape::AppendResult(_) => {
+                lemma_append_cost_mono(p0, q0);
+                le_pointwise_push(abs_pop(s1, 1), abs_pop(s2, 1), 2 * p0 + 1, 2 * q0 + 1);
+            },
+            ActionShape::SwapThen => {
+                le_pointwise_push(abs_pop(s1, 2), abs_pop(s2, 2), p0, q0);
+                le_pointwise_push(abs_pop(s1, 2).push(p0), abs_pop(s2, 2).push(q0), p1, q1);
+            },
+        }
+    }
+
+    pub proof fn machine_lemma_run_mono(g: model::Graph, tasks: Seq<ActionShape>, s1: Seq<nat>, s2: Seq<nat>)
+        requires le_pointwise(s1, s2),
+        ensures machine_run(g, tasks, s1).0 <= machine_run(g, tasks, s2).0,
+            le_pointwise(machine_run(g, tasks, s1).1, machine_run(g, tasks, s2).1),
+        decreases tasks.len(),
+    {
+        if tasks.len() > 0 {
+            machine_lemma_action_mono(g, tasks.last(), s1, s2);
+            machine_lemma_run_mono(g, tasks.drop_last(), action_next(g, tasks.last(), s1), action_next(g, tasks.last(), s2));
+        }
+    }
+
+    pub proof fn machine_lemma_run_split(g: model::Graph, pre: Seq<ActionShape>, post: Seq<ActionShape>, s: Seq<nat>)
+        ensures machine_run(g, pre + post, s).0
+                == machine_run(g, post, s).0 + machine_run(g, pre, machine_run(g, post, s).1).0,
+            machine_run(g, pre + post, s).1 == machine_run(g, pre, machine_run(g, post, s).1).1,
+        decreases post.len(),
+    {
+        if post.len() == 0 {
+            assert(pre + post =~= pre);
+        } else {
+            assert((pre + post).drop_last() =~= pre + post.drop_last());
+            assert((pre + post).last() == post.last());
+            machine_lemma_run_split(g, pre, post.drop_last(), action_next(g, post.last(), s));
+        }
+    }
+
+    pub proof fn machine_lemma_action_extends(g0: model::Graph, g1: model::Graph, task: ActionShape, s: Seq<nat>)
+        requires model::graph_extends(g0, g1), transition_action_valid(g0, task),
+        ensures action_cost(g0, task, s) == action_cost(g1, task, s), action_next(g0, task, s) == action_next(g1, task, s),
+    {
+        match task {
+            ActionShape::Clean(id, _) => { tdepth_lemma_extends(g0, g1, id); },
+            ActionShape::Not(id) => { tdepth_lemma_extends(g0, g1, id); },
+            ActionShape::Append(id, _) => { tdepth_lemma_extends(g0, g1, id); },
+            ActionShape::Pair(a, b) => { tdepth_lemma_extends(g0, g1, a); tdepth_lemma_extends(g0, g1, b); },
+            ActionShape::Fold(xs, _) => { tdepths_lemma_extends(g0, g1, xs); },
+            _ => {},
+        }
+    }
+
+    pub proof fn machine_lemma_run_extends(g0: model::Graph, g1: model::Graph, tasks: Seq<ActionShape>, s: Seq<nat>)
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, tasks),
+        ensures machine_run(g0, tasks, s) == machine_run(g1, tasks, s),
+        decreases tasks.len(),
+    {
+        if tasks.len() > 0 {
+            let t = tasks.last();
+            assert(transition_action_valid(g0, tasks[tasks.len() - 1]));
+            machine_lemma_action_extends(g0, g1, t, s);
+            assert forall|i: int| 0 <= i < tasks.drop_last().len() implies transition_action_valid(g0, #[trigger] tasks.drop_last()[i]) by {
+                assert(tasks.drop_last()[i] == tasks[i]);
+            }
+            machine_lemma_run_extends(g0, g1, tasks.drop_last(), action_next(g0, t, s));
+        }
+    }
+
+    /// One machine step: popping `task` and pushing `added` lowers the measure when the local run of
+    /// `added` is cheaper than `task` and leaves a pointwise smaller stack.
+    pub proof fn machine_lemma_step(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, task: ActionShape,
+        added: Seq<ActionShape>, v0: Seq<TransitionId>, v1: Seq<TransitionId>,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            machine_run(g1, added, value_depths(g1, v1)).0 < action_cost(g0, task, value_depths(g0, v0)),
+            le_pointwise(machine_run(g1, added, value_depths(g1, v1)).1, action_next(g0, task, value_depths(g0, v0))),
+        ensures machine_cost(g1, pending + added, v1) < machine_cost(g0, pending.push(task), v0),
+    {
+        let s0 = value_depths(g0, v0);
+        let r = machine_run(g1, added, value_depths(g1, v1));
+        let next = action_next(g0, task, s0);
+        assert(pending.push(task).drop_last() =~= pending);
+        machine_lemma_run_split(g1, pending, added, value_depths(g1, v1));
+        machine_lemma_run_mono(g1, pending, r.1, next);
+        machine_lemma_run_extends(g0, g1, pending, next);
+    }
+
+    /// A step that only pushes one value bounded by the task's abstract result.
+    pub proof fn machine_lemma_push(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, task: ActionShape,
+        v0: Seq<TransitionId>, out: TransitionId, bound: nat,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            action_cost(g0, task, value_depths(g0, v0)) >= 1,
+            action_next(g0, task, value_depths(g0, v0)) == value_depths(g0, v0).push(bound),
+            tdepth(g1, out@) <= bound,
+        ensures machine_cost(g1, pending, v0.push(out)) < machine_cost(g0, pending.push(task), v0),
+    {
+        value_depths_lemma_extends(g0, g1, v0);
+        assert(value_depths(g1, v0.push(out)) =~= value_depths(g1, v0).push(tdepth(g1, out@)));
+        le_pointwise_push(value_depths(g0, v0), value_depths(g0, v0), tdepth(g1, out@), bound);
+        assert(pending + Seq::<ActionShape>::empty() =~= pending);
+        machine_lemma_step(g0, g1, pending, task, Seq::empty(), v0, v0.push(out));
+    }
+
+    // ----- child task lists -----
+
+    pub open spec fn child_shapes(cs: Seq<nat>, action: ChildShape) -> Seq<ActionShape> {
+        cs.reverse().map(|i: int, child: nat| transition_child_shape(action, child))
+    }
+
+    pub open spec fn child_cost_fn(g: model::Graph, action: ChildShape) -> spec_fn(nat) -> nat {
+        match action {
+            ChildShape::Clean(_) => clean_cost_fn(),
+            ChildShape::Not => not_cost_fn(),
+            ChildShape::Append(_) => append_cost_fn(),
+            ChildShape::PairLeft(other) => pair_cost_left_fn(tdepth(g, other)),
+            ChildShape::PairRight(other) => pair_cost_right_fn(tdepth(g, other)),
+        }
+    }
+
+    pub open spec fn child_bound(g: model::Graph, action: ChildShape, d: nat) -> nat {
+        match action {
+            ChildShape::Clean(_) => d,
+            ChildShape::Not => n4(d),
+            ChildShape::Append(_) => 2 * d + 1,
+            ChildShape::PairLeft(other) => pair_bound(d, tdepth(g, other)),
+            ChildShape::PairRight(other) => pair_bound(tdepth(g, other), d),
+        }
+    }
+
+    pub open spec fn child_bounds(g: model::Graph, action: ChildShape, ds: Seq<nat>) -> Seq<nat> {
+        Seq::new(ds.len(), |i: int| child_bound(g, action, ds[i]))
+    }
+
+    pub proof fn lemma_sum_map_front(f: spec_fn(nat) -> nat, ds: Seq<nat>)
+        requires ds.len() > 0,
+        ensures sum_map(f, ds) == f(ds[0]) + sum_map(f, ds.drop_first()),
+        decreases ds.len(),
+    {
+        if ds.len() == 1 {
+            assert(ds.drop_last().len() == 0);
+            assert(ds.drop_first().len() == 0);
+            assert(sum_map(f, ds.drop_last()) == 0);
+            assert(sum_map(f, ds.drop_first()) == 0);
+            assert(ds.last() == ds[0]);
+        } else {
+            let init = ds.drop_last();
+            lemma_sum_map_front(f, init);
+            assert(init[0] == ds[0]);
+            assert(init.drop_first() =~= ds.drop_first().drop_last());
+            assert(ds.drop_first().last() == ds.last());
+            assert(sum_map(f, ds.drop_first())
+                == sum_map(f, ds.drop_first().drop_last()) + f(ds.drop_first().last()));
+        }
+    }
+
+    pub proof fn machine_lemma_children_run(g: model::Graph, cs: Seq<nat>, action: ChildShape, s: Seq<nat>)
+        ensures machine_run(g, child_shapes(cs, action), s)
+            == (sum_map(child_cost_fn(g, action), tdepths(g, cs)), s + child_bounds(g, action, tdepths(g, cs))),
+        decreases cs.len(),
+    {
+        let shapes = child_shapes(cs, action);
+        let ds = tdepths(g, cs);
+        let f = child_cost_fn(g, action);
+        if cs.len() == 0 {
+            assert(s + child_bounds(g, action, ds) =~= s);
+        } else {
+            let rest = cs.drop_first();
+            assert(shapes.last() == transition_child_shape(action, cs[0]));
+            assert(shapes.drop_last() =~= child_shapes(rest, action));
+            let b0 = child_bound(g, action, ds[0]);
+            assert(action_cost(g, shapes.last(), s) == f(ds[0]));
+            assert(action_next(g, shapes.last(), s) == s.push(b0));
+            machine_lemma_children_run(g, rest, action, s.push(b0));
+            assert(tdepths(g, rest) =~= ds.drop_first());
+            lemma_sum_map_front(f, ds);
+            assert(s.push(b0) + child_bounds(g, action, tdepths(g, rest)) =~= s + child_bounds(g, action, ds));
+        }
+    }
+
+    /// Running `[Union(n)/Intersect(n)] + children(action)` over `s`.
+    pub proof fn machine_lemma_set_run(g: model::Graph, id: nat, action: ChildShape, intersect: bool, s: Seq<nat>)
+        requires model::graph_wf(g), id < g.transitions.len(),
+        ensures ({
+            let cs = transition_children(g, id);
+            let ds = tdepths(g, cs);
+            let bs = child_bounds(g, action, ds);
+            let marker = if intersect { ActionShape::Intersect(cs.len()) } else { ActionShape::Union(cs.len()) };
+            let r = machine_run(g, seq![marker] + transition_child_actions(g, id, action), s);
+            &&& r.0 == sum_map(child_cost_fn(g, action), ds)
+                + (if intersect { 2 + intersect_bound(bs) + pair_cost_total(intersect_bound(bs)) } else { 1 })
+            &&& r.1 == s.push(if intersect { intersect_bound(bs) } else { union_bound(bs) })
+        }),
+    {
+        let cs = transition_children(g, id);
+        let ds = tdepths(g, cs);
+        let bs = child_bounds(g, action, ds);
+        let marker = if intersect { ActionShape::Intersect(cs.len()) } else { ActionShape::Union(cs.len()) };
+        assert(transition_child_actions(g, id, action) =~= child_shapes(cs, action));
+        machine_lemma_children_run(g, cs, action, s);
+        machine_lemma_run_split(g, seq![marker], child_shapes(cs, action), s);
+        let t = s + bs;
+        assert(abs_top(t, cs.len()) =~= bs);
+        assert(abs_pop(t, cs.len()) =~= s);
+        assert(seq![marker].drop_last() =~= Seq::<ActionShape>::empty());
+        assert(seq![marker].last() == marker);
+        let next = action_next(g, marker, t);
+        assert(machine_run(g, Seq::<ActionShape>::empty(), next) == (0nat, next));
+        assert(machine_run(g, seq![marker], t) == (action_cost(g, marker, t), next));
+    }
+
+    pub proof fn graph_lemma_extends_refl(g: model::Graph)
+        ensures model::graph_extends(g, g),
+    {
+        assert(g.tests.subrange(0, g.tests.len() as int) =~= g.tests);
+        assert(g.regexes.subrange(0, g.regexes.len() as int) =~= g.regexes);
+        assert(g.transitions.subrange(0, g.transitions.len() as int) =~= g.transitions);
+    }
+
+    pub proof fn machine_lemma_run1(g: model::Graph, t: ActionShape, s: Seq<nat>)
+        ensures machine_run(g, seq![t], s) == (action_cost(g, t, s), action_next(g, t, s)),
+    {
+        assert(seq![t].drop_last() =~= Seq::<ActionShape>::empty());
+        assert(seq![t].last() == t);
+        assert(machine_run(g, Seq::<ActionShape>::empty(), action_next(g, t, s)) == (0nat, action_next(g, t, s)));
+    }
+
+    pub proof fn machine_lemma_run2(g: model::Graph, t1: ActionShape, t2: ActionShape, s: Seq<nat>)
+        ensures machine_run(g, seq![t1, t2], s) == (action_cost(g, t2, s) + action_cost(g, t1, action_next(g, t2, s)),
+            action_next(g, t1, action_next(g, t2, s))),
+    {
+        assert(seq![t1, t2].drop_last() =~= seq![t1]);
+        assert(seq![t1, t2].last() == t2);
+        machine_lemma_run1(g, t1, action_next(g, t2, s));
+    }
+
+    pub proof fn machine_lemma_run3(g: model::Graph, t1: ActionShape, t2: ActionShape, t3: ActionShape, s: Seq<nat>)
+        ensures ({
+            let s1 = action_next(g, t3, s);
+            let s2 = action_next(g, t2, s1);
+            machine_run(g, seq![t1, t2, t3], s)
+                == (action_cost(g, t3, s) + action_cost(g, t2, s1) + action_cost(g, t1, s2), action_next(g, t1, s2))
+        }),
+    {
+        assert(seq![t1, t2, t3].drop_last() =~= seq![t1, t2]);
+        assert(seq![t1, t2, t3].last() == t3);
+        machine_lemma_run2(g, t1, t2, action_next(g, t3, s));
+    }
+
+    pub open spec fn value_bound(g: model::Graph, task: ActionShape) -> nat {
+        match task {
+            ActionShape::Clean(id, _) => tdepth(g, id),
+            ActionShape::Not(id) => n4(tdepth(g, id)),
+            ActionShape::Append(id, _) => 2 * tdepth(g, id) + 1,
+            ActionShape::Pair(a, b) => pair_bound(tdepth(g, a), tdepth(g, b)),
+            _ => 0,
+        }
+    }
+
+    pub open spec fn value_task(task: ActionShape) -> bool {
+        task is Clean || task is Not || task is Append || task is Pair
+    }
+
+    /// A value-producing task (`Clean`/`Not`/`Append`/`Pair`) that directly pushes `out`.
+    pub proof fn machine_value_result(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, task: ActionShape,
+        v0: Seq<TransitionId>, out: TransitionId,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            value_task(task),
+            tdepth(g1, out@) <= value_bound(g0, task)
+                || (out@ < g1.transitions.len() && g1.transitions[out@ as int] is Const),
+        ensures machine_cost(g1, pending, v0.push(out)) < machine_cost(g0, pending.push(task), v0),
+    {
+        match task {
+            ActionShape::Clean(id, _) => { lemma_costs_pos(tdepth(g0, id)); tdepth_lemma_pos(g0, id); },
+            ActionShape::Not(id) => { lemma_costs_pos(tdepth(g0, id)); lemma_n4_pos(tdepth(g0, id)); },
+            ActionShape::Append(id, _) => { lemma_costs_pos(tdepth(g0, id)); },
+            ActionShape::Pair(a, b) => {
+                lemma_pair_cost_mono(tdepth(g0, a), tdepth(g0, b), tdepth(g0, a), tdepth(g0, b));
+                tdepth_lemma_pos(g0, a);
+                assert(tdepth(g0, a) * tdepth(g0, b) >= 0) by (nonlinear_arith);
+            },
+            _ => {},
+        }
+        if out@ < g1.transitions.len() && g1.transitions[out@ as int] is Const { tdepth_lemma_const(g1, out@); }
+        machine_lemma_push(g0, g1, pending, task, v0, out, value_bound(g0, task));
+    }
+
+    // ----- Clean -----
+
+    pub proof fn machine_clean_if(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, path: TestId,
+        test: TestId, a: TransitionId, b: TransitionId, yes: TestId, no: TestId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            g0.transitions[id@ as int] == model::TransitionNode::If(test@, a@, b@),
+        ensures machine_cost(g1, transition_clean_if_tasks(g1, test, a, b, yes, no, pending), v0)
+            < machine_cost(g0, pending.push(ActionShape::Clean(id@, path@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, a@);
+        tdepth_lemma_extends(g0, g1, b@);
+        tdepth_lemma_pos(g0, a@);
+        tdepth_lemma_pos(g0, b@);
+        let da = tdepth(g0, a@);
+        let db = tdepth(g0, b@);
+        let d = tdepth(g0, id@);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let task = ActionShape::Clean(id@, path@);
+        lemma_clean_cost_mono(da, (d - 1) as nat);
+        lemma_clean_cost_mono(db, (d - 1) as nat);
+        let tasks = transition_clean_if_tasks(g1, test, a, b, yes, no, pending);
+        if yes@ == g1.constants.test_false {
+            let added = seq![ActionShape::Clean(b@, no@)];
+            assert(tasks =~= pending + added);
+            machine_lemma_run1(g1, added[0], s0);
+            le_pointwise_push(s0, s0, db, d);
+            machine_lemma_step(g0, g1, pending, task, added, v0, v0);
+        } else if no@ == g1.constants.test_false {
+            let added = seq![ActionShape::Clean(a@, yes@)];
+            assert(tasks =~= pending + added);
+            machine_lemma_run1(g1, added[0], s0);
+            le_pointwise_push(s0, s0, da, d);
+            machine_lemma_step(g0, g1, pending, task, added, v0, v0);
+        } else {
+            let added = seq![ActionShape::If(test@), ActionShape::Clean(b@, no@), ActionShape::Clean(a@, yes@)];
+            assert(tasks =~= pending + added);
+            machine_lemma_run3(g1, added[0], added[1], added[2], s0);
+            let s2 = s0.push(da).push(db);
+            assert(abs_pop(s2, 2) =~= s0);
+            assert(abs_peek(s2, 1) == da);
+            assert(abs_peek(s2, 0) == db);
+            le_pointwise_push(s0, s0, d, d);
+            machine_lemma_step(g0, g1, pending, task, added, v0, v0);
+        }
+    }
+
+    pub proof fn machine_clean_children(
+        g: model::Graph, pending: Seq<ActionShape>, id: TransitionId, path: TestId, intersect: bool, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g), transition_tasks_valid(g, pending), transition_ids_valid(g, v0),
+            id@ < g.transitions.len(),
+            match g.transitions[id@ as int] {
+                model::TransitionNode::Union(_) => !intersect,
+                model::TransitionNode::Intersect(_) => intersect,
+                _ => false,
+            },
+        ensures machine_cost(g, transition_clean_child_tasks(g, id, path, intersect, pending), v0)
+            < machine_cost(g, pending.push(ActionShape::Clean(id@, path@)), v0),
+    {
+        transition_lemma_children(g, id@);
+        tdepth_lemma_unfold(g, id@);
+        graph_lemma_extends_refl(g);
+        let cs = transition_children(g, id@);
+        let ds = tdepths(g, cs);
+        tdepths_lemma_pos(g, cs);
+        let action = ChildShape::Clean(path@);
+        let marker = if intersect { ActionShape::Intersect(cs.len()) } else { ActionShape::Union(cs.len()) };
+        let added = seq![marker] + transition_child_actions(g, id@, action);
+        assert(transition_clean_child_tasks(g, id, path, intersect, pending) =~= pending + added);
+        let s0 = value_depths(g, v0);
+        machine_lemma_set_run(g, id@, action, intersect, s0);
+        assert(child_bounds(g, action, ds) =~= ds);
+        lemma_clean_sum(ds);
+        lemma_bounds_pos(ds);
+        let d = tdepth(g, id@);
+        le_pointwise_push(s0, s0, d, d);
+        machine_lemma_step(g, g, pending, ActionShape::Clean(id@, path@), added, v0, v0);
+    }
+
+    pub proof fn machine_clean_not(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, path: TestId,
+        inner: TransitionId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            g0.transitions[id@ as int] == model::TransitionNode::Not(inner@),
+        ensures machine_cost(g1, pending.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)), v0)
+            < machine_cost(g0, pending.push(ActionShape::Clean(id@, path@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, inner@);
+        tdepth_lemma_pos(g0, inner@);
+        let dc = tdepth(g0, inner@);
+        let d = tdepth(g0, id@);
+        lemma_n4_pos(dc);
+        lemma_n4_mono(1, dc);
+        assert(n4(1) == 4 * n4(0));
+        lemma_log4_n4(dc);
+        lemma_clean_cost_mono(dc, (d - 1) as nat);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::NotResult, ActionShape::Clean(inner@, path@)];
+        assert(pending.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)) =~= pending + added);
+        machine_lemma_run2(g1, added[0], added[1], s0);
+        assert(abs_peek(s0.push(dc), 0) == dc);
+        assert(abs_pop(s0.push(dc), 1) =~= s0);
+        le_pointwise_push(s0, s0, d, d);
+        machine_lemma_step(g0, g1, pending, ActionShape::Clean(id@, path@), added, v0, v0);
+    }
+
+    pub proof fn machine_clean_append(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, path: TestId,
+        inner: TransitionId, r: RegexId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            match g0.transitions[id@ as int] { model::TransitionNode::Append(c, _) => c == inner@, _ => false },
+        ensures machine_cost(g1, pending.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)), v0)
+            < machine_cost(g0, pending.push(ActionShape::Clean(id@, path@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, inner@);
+        tdepth_lemma_pos(g0, inner@);
+        let dc = tdepth(g0, inner@);
+        let d = tdepth(g0, id@);
+        assert(((d - 1) as nat) / 2 == dc);
+        lemma_clean_cost_mono(dc, (d - 1) as nat);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::AppendResult(r@), ActionShape::Clean(inner@, path@)];
+        assert(pending.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)) =~= pending + added);
+        machine_lemma_run2(g1, added[0], added[1], s0);
+        assert(abs_peek(s0.push(dc), 0) == dc);
+        assert(abs_pop(s0.push(dc), 1) =~= s0);
+        le_pointwise_push(s0, s0, d, d);
+        machine_lemma_step(g0, g1, pending, ActionShape::Clean(id@, path@), added, v0, v0);
+    }
+
+    // ----- Not / Append -----
+
+    pub proof fn machine_not_double(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, inner: TransitionId,
+        v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            g0.transitions[id@ as int] == model::TransitionNode::Not(inner@),
+        ensures machine_cost(g1, pending, v0.push(inner)) < machine_cost(g0, pending.push(ActionShape::Not(id@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, inner@);
+        lemma_n4_pos(tdepth(g0, inner@));
+        lemma_n4_pos(tdepth(g0, id@));
+        machine_value_result(g0, g1, pending, ActionShape::Not(id@), v0, inner);
+    }
+
+    /// `out` is a freshly interned `Not(id)` / `Append(id, _)` node.
+    pub proof fn machine_wrap_interned(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, task: ActionShape,
+        v0: Seq<TransitionId>, out: TransitionId,
+    )
+        requires model::graph_wf(g1), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), transition_action_valid(g0, task), out@ < g1.transitions.len(),
+            match task {
+                ActionShape::Not(id) => g1.transitions[out@ as int] == model::TransitionNode::Not(id),
+                ActionShape::Append(id, _) => match g1.transitions[out@ as int] {
+                    model::TransitionNode::Append(c, _) => c == id,
+                    _ => false,
+                },
+                _ => false,
+            },
+        ensures machine_cost(g1, pending, v0.push(out)) < machine_cost(g0, pending.push(task), v0),
+    {
+        tdepth_lemma_unfold(g1, out@);
+        match task {
+            ActionShape::Not(id) => { tdepth_lemma_extends(g0, g1, id); },
+            ActionShape::Append(id, _) => { tdepth_lemma_extends(g0, g1, id); },
+            _ => {},
+        }
+        machine_value_result(g0, g1, pending, task, v0, out);
+    }
+
+    pub proof fn machine_not_flip(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, test: TestId,
+        a: TransitionId, b: TransitionId, out: TransitionId, path: TestId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            g0.transitions[id@ as int] == model::TransitionNode::If(test@, a@, b@),
+            a@ == g0.constants.transition_all, b@ == g0.constants.transition_empty,
+            out@ < g1.transitions.len(), tdepth(g1, out@) <= 2,
+        ensures machine_cost(g1, pending.push(ActionShape::Clean(out@, path@)), v0)
+            < machine_cost(g0, pending.push(ActionShape::Not(id@)), v0),
+    {
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_constants(g0);
+        let d = tdepth(g0, id@);
+        assert(d == 2);
+        lemma_n4_pos(2);
+        lemma_clean_cost_mono(tdepth(g1, out@), 2);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::Clean(out@, path@)];
+        assert(pending.push(ActionShape::Clean(out@, path@)) =~= pending + added);
+        machine_lemma_run1(g1, added[0], s0);
+        le_pointwise_push(s0, s0, tdepth(g1, out@), n4(d));
+        machine_lemma_step(g0, g1, pending, ActionShape::Not(id@), added, v0, v0);
+    }
+
+    pub open spec fn unary_task(id: TransitionId, suffix: Option<RegexId>) -> ActionShape {
+        match suffix { Some(r) => ActionShape::Append(id@, r@), None => ActionShape::Not(id@) }
+    }
+
+    pub proof fn machine_unary_if(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, test: TestId,
+        a: TransitionId, b: TransitionId, suffix: Option<RegexId>, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            g0.transitions[id@ as int] == model::TransitionNode::If(test@, a@, b@),
+        ensures machine_cost(g1, machine_unary_if_tasks(g1, test, a, b, suffix, pending), v0)
+            < machine_cost(g0, pending.push(unary_task(id, suffix)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, a@);
+        tdepth_lemma_extends(g0, g1, b@);
+        tdepth_lemma_pos(g0, a@);
+        tdepth_lemma_pos(g0, b@);
+        let da = tdepth(g0, a@);
+        let db = tdepth(g0, b@);
+        let d = tdepth(g0, id@);
+        let m = (d - 1) as nat;
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let task = unary_task(id, suffix);
+        let added = seq![
+            ActionShape::CleanIf(test@, g1.constants.test_true),
+            match suffix { Some(r) => ActionShape::Append(b@, r@), None => ActionShape::Not(b@) },
+            match suffix { Some(r) => ActionShape::Append(a@, r@), None => ActionShape::Not(a@) }];
+        assert(machine_unary_if_tasks(g1, test, a, b, suffix, pending) =~= pending + added);
+        machine_lemma_run3(g1, added[0], added[1], added[2], s0);
+        match suffix {
+            Some(r) => {
+                let s2 = s0.push(2 * da + 1).push(2 * db + 1);
+                assert(abs_pop(s2, 2) =~= s0);
+                assert(abs_peek(s2, 1) == 2 * da + 1);
+                assert(abs_peek(s2, 0) == 2 * db + 1);
+                let ib = if_bound(2 * da + 1, 2 * db + 1);
+                assert(ib <= 2 * d);
+                lemma_append_cost_mono(da, m);
+                lemma_append_cost_mono(db, m);
+                lemma_clean_cost_mono(ib, 2 * d);
+                le_pointwise_push(s0, s0, ib, 2 * d + 1);
+            },
+            None => {
+                let s2 = s0.push(n4(da)).push(n4(db));
+                assert(abs_pop(s2, 2) =~= s0);
+                assert(abs_peek(s2, 1) == n4(da));
+                assert(abs_peek(s2, 0) == n4(db));
+                let ib = if_bound(n4(da), n4(db));
+                lemma_n4_mono(da, m);
+                lemma_n4_mono(db, m);
+                lemma_n4_pos(m);
+                assert(n4(d) == 4 * n4(m));
+                lemma_not_cost_mono(da, m);
+                lemma_not_cost_mono(db, m);
+                lemma_clean_cost_mono(ib, 1 + n4(m));
+                le_pointwise_push(s0, s0, ib, n4(d));
+            },
+        }
+        machine_lemma_step(g0, g1, pending, task, added, v0, v0);
+    }
+
+    pub proof fn machine_unary_children(
+        g: model::Graph, pending: Seq<ActionShape>, id: TransitionId, suffix: Option<RegexId>, intersect: bool,
+        v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g), transition_tasks_valid(g, pending), transition_ids_valid(g, v0),
+            id@ < g.transitions.len(),
+            match g.transitions[id@ as int] {
+                model::TransitionNode::Union(_) => intersect == (suffix is None),
+                model::TransitionNode::Intersect(_) => !intersect && suffix is None,
+                _ => false,
+            },
+        ensures machine_cost(g, machine_unary_child_tasks(g, id, suffix, intersect, pending), v0)
+            < machine_cost(g, pending.push(unary_task(id, suffix)), v0),
+    {
+        transition_lemma_children(g, id@);
+        tdepth_lemma_unfold(g, id@);
+        graph_lemma_extends_refl(g);
+        let cs = transition_children(g, id@);
+        let ds = tdepths(g, cs);
+        tdepths_lemma_pos(g, cs);
+        lemma_bounds_pos(ds);
+        let d = tdepth(g, id@);
+        let action = match suffix { Some(r) => ChildShape::Append(r@), None => ChildShape::Not };
+        let marker = if intersect { ActionShape::Intersect(cs.len()) } else { ActionShape::Union(cs.len()) };
+        let added = seq![marker] + transition_child_actions(g, id@, action);
+        assert(machine_unary_child_tasks(g, id, suffix, intersect, pending) =~= pending + added);
+        let s0 = value_depths(g, v0);
+        machine_lemma_set_run(g, id@, action, intersect, s0);
+        let bs = child_bounds(g, action, ds);
+        match suffix {
+            Some(r) => {
+                assert(bs =~= appends(ds));
+                lemma_append_sum(ds);
+                lemma_append_union(ds);
+                le_pointwise_push(s0, s0, union_bound(bs), 2 * d + 1);
+            },
+            None => {
+                assert(bs =~= n4s(ds));
+                lemma_not_sum(ds);
+                if intersect {
+                    lemma_not_union(ds);
+                    lemma_pair_cost_total_mono(intersect_bound(bs), (n4(d) - 1) as nat);
+                    le_pointwise_push(s0, s0, intersect_bound(bs), n4(d));
+                } else {
+                    lemma_not_intersect(ds);
+                    le_pointwise_push(s0, s0, union_bound(bs), n4(d));
+                }
+            },
+        }
+        machine_lemma_step(g, g, pending, unary_task(id, suffix), added, v0, v0);
+    }
+
+    pub proof fn machine_append_nested(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, id: TransitionId, r: RegexId,
+        inner: TransitionId, combined: RegexId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), id@ < g0.transitions.len(),
+            match g0.transitions[id@ as int] { model::TransitionNode::Append(c, _) => c == inner@, _ => false },
+        ensures machine_cost(g1, pending.push(ActionShape::Append(inner@, combined@)), v0)
+            < machine_cost(g0, pending.push(ActionShape::Append(id@, r@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, id@);
+        tdepth_lemma_unfold(g0, id@);
+        tdepth_lemma_extends(g0, g1, inner@);
+        tdepth_lemma_pos(g0, inner@);
+        let dc = tdepth(g0, inner@);
+        let d = tdepth(g0, id@);
+        lemma_append_cost_mono(dc, (d - 1) as nat);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::Append(inner@, combined@)];
+        assert(pending.push(added[0]) =~= pending + added);
+        machine_lemma_run1(g1, added[0], s0);
+        le_pointwise_push(s0, s0, 2 * dc + 1, 2 * d + 1);
+        machine_lemma_step(g0, g1, pending, ActionShape::Append(id@, r@), added, v0, v0);
+    }
+
+    // ----- Pair -----
+
+    pub proof fn machine_pair_union(
+        g: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId, left: bool, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g), transition_tasks_valid(g, pending), transition_ids_valid(g, v0),
+            a@ < g.transitions.len(), b@ < g.transitions.len(),
+            g.transitions[if left { a@ as int } else { b@ as int }] is Union,
+        ensures ({
+            let id = if left { a@ } else { b@ };
+            let action = if left { ChildShape::PairLeft(b@) } else { ChildShape::PairRight(a@) };
+            machine_cost(g, pending.push(ActionShape::Union(transition_children(g, id).len()))
+                + transition_child_actions(g, id, action), v0)
+                < machine_cost(g, pending.push(ActionShape::Pair(a@, b@)), v0)
+        }),
+    {
+        let id = if left { a@ } else { b@ };
+        let action = if left { ChildShape::PairLeft(b@) } else { ChildShape::PairRight(a@) };
+        transition_lemma_children(g, id);
+        tdepth_lemma_unfold(g, id);
+        graph_lemma_extends_refl(g);
+        let cs = transition_children(g, id);
+        let ds = tdepths(g, cs);
+        tdepths_lemma_pos(g, cs);
+        lemma_bounds_pos(ds);
+        tdepth_lemma_pos(g, a@);
+        tdepth_lemma_pos(g, b@);
+        let x = tdepth(g, a@);
+        let y = tdepth(g, b@);
+        let marker = ActionShape::Union(cs.len());
+        let added = seq![marker] + transition_child_actions(g, id, action);
+        assert(pending.push(marker) + transition_child_actions(g, id, action) =~= pending + added);
+        let s0 = value_depths(g, v0);
+        machine_lemma_set_run(g, id, action, false, s0);
+        let bs = child_bounds(g, action, ds);
+        if left {
+            assert(bs =~= pairs_left(ds, y));
+            lemma_pair_left_sum(ds, y);
+            lemma_pair_union_left(ds, y);
+        } else {
+            assert(bs =~= pairs_right(x, ds));
+            lemma_pair_right_sum(x, ds);
+            lemma_pair_union_right(x, ds);
+        }
+        le_pointwise_push(s0, s0, union_bound(bs), pair_bound(x, y));
+        machine_lemma_step(g, g, pending, ActionShape::Pair(a@, b@), added, v0, v0);
+    }
+
+    pub proof fn lemma_pair_if_bound(x: nat, y: nat, p: nat, q: nat)
+        requires x >= 1, p <= pair_bound((x - 1) as nat, y), q <= pair_bound((x - 1) as nat, y),
+        ensures if_bound(p, q) <= x * (y + 1), x * (y + 1) <= pair_bound(x, y),
+    {
+        assert(pair_bound((x - 1) as nat, y) + 1 == x * (y + 1)) by (nonlinear_arith) requires x >= 1;
+        assert(x * (y + 1) <= pair_bound(x, y)) by (nonlinear_arith);
+    }
+
+    pub proof fn machine_pair_split(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId,
+        test: TestId, t: TransitionId, e: TransitionId, path: TestId, left: bool, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), a@ < g0.transitions.len(), b@ < g0.transitions.len(),
+            g0.transitions[if left { a@ as int } else { b@ as int }] == model::TransitionNode::If(test@, t@, e@),
+        ensures machine_cost(g1, if left {
+                pending.push(ActionShape::CleanIf(test@, path@)).push(ActionShape::Pair(e@, b@)).push(ActionShape::Pair(t@, b@))
+            } else {
+                pending.push(ActionShape::CleanIf(test@, path@)).push(ActionShape::Pair(a@, e@)).push(ActionShape::Pair(a@, t@))
+            }, v0) < machine_cost(g0, pending.push(ActionShape::Pair(a@, b@)), v0),
+    {
+        if left {
+            machine_pair_split_left(g0, g1, pending, a, b, test, t, e, path, v0);
+        } else {
+            machine_pair_split_right(g0, g1, pending, a, b, test, t, e, path, v0);
+        }
+    }
+
+    #[verifier::spinoff_prover]
+    pub proof fn machine_pair_split_left(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId,
+        test: TestId, t: TransitionId, e: TransitionId, path: TestId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), a@ < g0.transitions.len(), b@ < g0.transitions.len(),
+            g0.transitions[a@ as int] == model::TransitionNode::If(test@, t@, e@),
+        ensures machine_cost(g1, pending.push(ActionShape::CleanIf(test@, path@)).push(ActionShape::Pair(e@, b@))
+                .push(ActionShape::Pair(t@, b@)), v0) < machine_cost(g0, pending.push(ActionShape::Pair(a@, b@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, a@);
+        tdepth_lemma_unfold(g0, a@);
+        tdepth_lemma_extends(g0, g1, b@);
+        tdepth_lemma_extends(g0, g1, t@);
+        tdepth_lemma_extends(g0, g1, e@);
+        tdepth_lemma_pos(g0, b@);
+        tdepth_lemma_pos(g0, t@);
+        tdepth_lemma_pos(g0, e@);
+        let x = tdepth(g0, a@);
+        let y = tdepth(g0, b@);
+        let dt = tdepth(g0, t@);
+        let de = tdepth(g0, e@);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::CleanIf(test@, path@), ActionShape::Pair(e@, b@), ActionShape::Pair(t@, b@)];
+        assert(pending.push(added[0]).push(added[1]).push(added[2]) =~= pending + added);
+        machine_lemma_run3(g1, added[0], added[1], added[2], s0);
+        let p = pair_bound(dt, y);
+        let q = pair_bound(de, y);
+        let s2 = s0.push(p).push(q);
+        assert(abs_pop(s2, 2) =~= s0);
+        assert(abs_peek(s2, 1) == p);
+        assert(abs_peek(s2, 0) == q);
+        lemma_pair_bound_mono(dt, y, (x - 1) as nat, y);
+        lemma_pair_bound_mono(de, y, (x - 1) as nat, y);
+        lemma_pair_if_bound(x, y, p, q);
+        lemma_pair_cost_mono(dt, y, (x - 1) as nat, y);
+        lemma_pair_cost_mono(de, y, (x - 1) as nat, y);
+        lemma_clean_cost_mono(if_bound(p, q), x * (y + 1));
+        lemma_pair_split_cost(x, y, pair_cost(dt, y) + pair_cost(de, y) + 1 + clean_cost(if_bound(p, q)));
+        le_pointwise_push(s0, s0, if_bound(p, q), pair_bound(x, y));
+        machine_lemma_step(g0, g1, pending, ActionShape::Pair(a@, b@), added, v0, v0);
+    }
+
+    #[verifier::spinoff_prover]
+    pub proof fn machine_pair_split_right(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId,
+        test: TestId, t: TransitionId, e: TransitionId, path: TestId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), a@ < g0.transitions.len(), b@ < g0.transitions.len(),
+            g0.transitions[b@ as int] == model::TransitionNode::If(test@, t@, e@),
+        ensures machine_cost(g1, pending.push(ActionShape::CleanIf(test@, path@)).push(ActionShape::Pair(a@, e@))
+                .push(ActionShape::Pair(a@, t@)), v0) < machine_cost(g0, pending.push(ActionShape::Pair(a@, b@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, b@);
+        tdepth_lemma_unfold(g0, b@);
+        tdepth_lemma_extends(g0, g1, a@);
+        tdepth_lemma_extends(g0, g1, t@);
+        tdepth_lemma_extends(g0, g1, e@);
+        tdepth_lemma_pos(g0, a@);
+        tdepth_lemma_pos(g0, t@);
+        tdepth_lemma_pos(g0, e@);
+        let x = tdepth(g0, a@);
+        let y = tdepth(g0, b@);
+        let dt = tdepth(g0, t@);
+        let de = tdepth(g0, e@);
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::CleanIf(test@, path@), ActionShape::Pair(a@, e@), ActionShape::Pair(a@, t@)];
+        assert(pending.push(added[0]).push(added[1]).push(added[2]) =~= pending + added);
+        machine_lemma_run3(g1, added[0], added[1], added[2], s0);
+        let p = pair_bound(x, dt);
+        let q = pair_bound(x, de);
+        let s2 = s0.push(p).push(q);
+        assert(abs_pop(s2, 2) =~= s0);
+        assert(abs_peek(s2, 1) == p);
+        assert(abs_peek(s2, 0) == q);
+        lemma_pair_bound_comm(x, dt);
+        lemma_pair_bound_comm(x, de);
+        lemma_pair_bound_comm(x, y);
+        lemma_pair_bound_mono(dt, x, (y - 1) as nat, x);
+        lemma_pair_bound_mono(de, x, (y - 1) as nat, x);
+        lemma_pair_if_bound(y, x, p, q);
+        lemma_pair_cost_mono(x, dt, x, (y - 1) as nat);
+        lemma_pair_cost_mono(x, de, x, (y - 1) as nat);
+        lemma_clean_cost_mono(if_bound(p, q), y * (x + 1));
+        lemma_pair_split_cost_right(x, y, pair_cost(x, dt) + pair_cost(x, de) + 1 + clean_cost(if_bound(p, q)));
+        le_pointwise_push(s0, s0, if_bound(p, q), pair_bound(x, y));
+        machine_lemma_step(g0, g1, pending, ActionShape::Pair(a@, b@), added, v0, v0);
+    }
+
+    pub proof fn lemma_pair_split_cost(x: nat, y: nat, c: nat)
+        requires x >= 2, y >= 1, c <= 2 * pair_cost((x - 1) as nat, y) + 1 + clean_cost(x * (y + 1)),
+        ensures c < pair_cost(x, y),
+    {}
+
+    pub proof fn lemma_pair_split_cost_right(x: nat, y: nat, c: nat)
+        requires x >= 1, y >= 2, c <= 2 * pair_cost(x, (y - 1) as nat) + 1 + clean_cost(y * (x + 1)),
+        ensures c < pair_cost(x, y),
+    {}
+
+    pub proof fn machine_pair_both(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId,
+        x: TestId, xt: TransitionId, xe: TransitionId, y: TestId, yt: TransitionId, ye: TransitionId,
+        path: TestId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), a@ < g0.transitions.len(), b@ < g0.transitions.len(),
+            g0.transitions[a@ as int] == model::TransitionNode::If(x@, xt@, xe@),
+            g0.transitions[b@ as int] == model::TransitionNode::If(y@, yt@, ye@),
+        ensures machine_cost(g1, pending.push(ActionShape::CleanIf(x@, path@))
+                .push(ActionShape::Pair(xe@, ye@)).push(ActionShape::Pair(xt@, yt@)), v0)
+            < machine_cost(g0, pending.push(ActionShape::Pair(a@, b@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, a@);
+        model::lemma_graph_transition_wf(g0, b@);
+        tdepth_lemma_unfold(g0, a@);
+        tdepth_lemma_unfold(g0, b@);
+        tdepth_lemma_extends(g0, g1, xt@);
+        tdepth_lemma_extends(g0, g1, xe@);
+        tdepth_lemma_extends(g0, g1, yt@);
+        tdepth_lemma_extends(g0, g1, ye@);
+        tdepth_lemma_pos(g0, xt@);
+        tdepth_lemma_pos(g0, xe@);
+        tdepth_lemma_pos(g0, yt@);
+        tdepth_lemma_pos(g0, ye@);
+        let dx = tdepth(g0, a@);
+        let dy = tdepth(g0, b@);
+        let mx = (dx - 1) as nat;
+        let my = (dy - 1) as nat;
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let added = seq![ActionShape::CleanIf(x@, path@), ActionShape::Pair(xe@, ye@), ActionShape::Pair(xt@, yt@)];
+        assert(pending.push(added[0]).push(added[1]).push(added[2]) =~= pending + added);
+        machine_lemma_run3(g1, added[0], added[1], added[2], s0);
+        let p = pair_bound(tdepth(g0, xt@), tdepth(g0, yt@));
+        let q = pair_bound(tdepth(g0, xe@), tdepth(g0, ye@));
+        let s2 = s0.push(p).push(q);
+        assert(abs_pop(s2, 2) =~= s0);
+        assert(abs_peek(s2, 1) == p);
+        assert(abs_peek(s2, 0) == q);
+        lemma_pair_bound_mono(tdepth(g0, xt@), tdepth(g0, yt@), mx, dy);
+        lemma_pair_bound_mono(tdepth(g0, xe@), tdepth(g0, ye@), mx, dy);
+        lemma_pair_if_bound(dx, dy, p, q);
+        lemma_pair_cost_mono(tdepth(g0, xt@), tdepth(g0, yt@), mx, dy);
+        lemma_pair_cost_mono(tdepth(g0, xe@), tdepth(g0, ye@), mx, dy);
+        lemma_clean_cost_mono(if_bound(p, q), dx * (dy + 1));
+        le_pointwise_push(s0, s0, if_bound(p, q), pair_bound(dx, dy));
+        machine_lemma_step(g0, g1, pending, ActionShape::Pair(a@, b@), added, v0, v0);
+    }
+
+    pub proof fn machine_pair_empty(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, a: TransitionId, b: TransitionId,
+        x: TestId, xt: TransitionId, xe: TransitionId, y: TestId, yt: TransitionId, ye: TransitionId,
+        guard: TestId, path: TestId, empty: TransitionId, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g0), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), a@ < g0.transitions.len(), b@ < g0.transitions.len(),
+            g0.transitions[a@ as int] == model::TransitionNode::If(x@, xt@, xe@),
+            g0.transitions[b@ as int] == model::TransitionNode::If(y@, yt@, ye@),
+            tdepth(g1, empty@) == 1,
+        ensures machine_cost(g1, pending.push(ActionShape::CleanIf(guard@, path@))
+                .push(ActionShape::SwapThen).push(ActionShape::Pair(xt@, yt@)), v0.push(empty))
+            < machine_cost(g0, pending.push(ActionShape::Pair(a@, b@)), v0),
+    {
+        model::lemma_graph_transition_wf(g0, a@);
+        model::lemma_graph_transition_wf(g0, b@);
+        tdepth_lemma_unfold(g0, a@);
+        tdepth_lemma_unfold(g0, b@);
+        tdepth_lemma_extends(g0, g1, xt@);
+        tdepth_lemma_extends(g0, g1, yt@);
+        tdepth_lemma_pos(g0, xt@);
+        tdepth_lemma_pos(g0, yt@);
+        tdepth_lemma_pos(g0, xe@);
+        tdepth_lemma_pos(g0, ye@);
+        let dx = tdepth(g0, a@);
+        let dy = tdepth(g0, b@);
+        let mx = (dx - 1) as nat;
+        let my = (dy - 1) as nat;
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let v1 = v0.push(empty);
+        assert(value_depths(g1, v1) =~= s0.push(1));
+        let added = seq![ActionShape::CleanIf(guard@, path@), ActionShape::SwapThen, ActionShape::Pair(xt@, yt@)];
+        assert(pending.push(added[0]).push(added[1]).push(added[2]) =~= pending + added);
+        machine_lemma_run3(g1, added[0], added[1], added[2], s0.push(1));
+        let p = pair_bound(tdepth(g0, xt@), tdepth(g0, yt@));
+        let s1 = s0.push(1nat).push(p);
+        assert(abs_pop(s1, 2) =~= s0);
+        assert(abs_peek(s1, 0) == p);
+        assert(abs_peek(s1, 1) == 1);
+        let s2 = s0.push(p).push(1nat);
+        assert(action_next(g1, ActionShape::SwapThen, s1) =~= s2);
+        assert(abs_pop(s2, 2) =~= s0);
+        assert(abs_peek(s2, 1) == p);
+        assert(abs_peek(s2, 0) == 1);
+        lemma_pair_bound_mono(tdepth(g0, xt@), tdepth(g0, yt@), mx, my);
+        assert(pair_bound(mx, my) + 1 == dx * dy) by (nonlinear_arith) requires dx >= 1, dy >= 1, mx == dx - 1, my == dy - 1;
+        assert(dx * dy <= pair_bound(dx, dy)) by (nonlinear_arith);
+        assert(tdepth(g0, xt@) * tdepth(g0, yt@) >= 0) by (nonlinear_arith);
+        lemma_pair_cost_mono(tdepth(g0, xt@), tdepth(g0, yt@), mx, my);
+        lemma_clean_cost_mono(if_bound(p, 1), dx * dy);
+        le_pointwise_push(s0, s0, if_bound(p, 1), pair_bound(dx, dy));
+        machine_lemma_step(g0, g1, pending, ActionShape::Pair(a@, b@), added, v0, v1);
+    }
+
+    // ----- Fold -----
+
+    pub proof fn machine_fold_flat(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, xs: Seq<nat>, v0: Seq<TransitionId>, out: TransitionId,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            tdepth(g1, out@) <= intersect_bound(tdepths(g0, xs)),
+        ensures machine_cost(g1, pending, v0.push(out)) < machine_cost(g0, pending.push(ActionShape::Fold(xs, 0)), v0),
+    {
+        machine_lemma_push(g0, g1, pending, ActionShape::Fold(xs, 0), v0, out, intersect_bound(tdepths(g0, xs)));
+    }
+
+    pub proof fn machine_fold_start(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, xs: Seq<nat>, flat: TransitionId,
+        cs: Seq<TransitionId>, v0: Seq<TransitionId>,
+    )
+        requires model::graph_wf(g1), model::graph_extends(g0, g1), transition_tasks_valid(g0, pending),
+            transition_ids_valid(g0, v0), flat@ < g1.transitions.len(), cs.len() >= 1,
+            g1.transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(cs)),
+            tdepth(g1, flat@) <= intersect_bound(tdepths(g0, xs)),
+        ensures machine_cost(g1, pending.push(ActionShape::Fold(model::transition_ids(cs), 1)), v0.push(cs[0]))
+            < machine_cost(g0, pending.push(ActionShape::Fold(xs, 0)), v0),
+    {
+        tdepth_lemma_unfold(g1, flat@);
+        let ids = model::transition_ids(cs);
+        let ds = tdepths(g1, ids);
+        tdepths_lemma_pos(g1, ids);
+        let e = intersect_bound(tdepths(g0, xs));
+        let e1 = intersect_bound(ds);
+        let d0 = ds[0];
+        assert(d0 == tdepth(g1, cs[0]@));
+        let s0 = value_depths(g0, v0);
+        value_depths_lemma_extends(g0, g1, v0);
+        let v1 = v0.push(cs[0]);
+        assert(value_depths(g1, v1) =~= s0.push(d0));
+        let task = ActionShape::Fold(ids, 1);
+        let added = seq![task];
+        assert(pending.push(task) =~= pending + added);
+        machine_lemma_run1(g1, task, s0.push(d0));
+        assert(abs_peek(s0.push(d0), 0) == d0);
+        assert(abs_pop(s0.push(d0), 1) =~= s0);
+        lemma_costs_pos(0);
+        if ids.len() >= 2 {
+            lemma_fold(ds);
+            lemma_pair_cost_total_mono(e1, e);
+            le_pointwise_push(s0, s0, e1, e);
+        } else {
+            lemma_singleton(ds);
+            le_pointwise_push(s0, s0, d0, e);
+        }
+        machine_lemma_step(g0, g1, pending, ActionShape::Fold(xs, 0), added, v0, v1);
+    }
+
+    pub proof fn machine_fold_next(g: model::Graph, pending: Seq<ActionShape>, xs: Seq<nat>, k: nat, v0: Seq<TransitionId>)
+        requires transition_tasks_valid(g, pending), 1 <= k < xs.len(), v0.len() >= 1,
+        ensures machine_cost(g, pending.push(ActionShape::Fold(xs, k + 1)).push(ActionShape::Pair(v0.last()@, xs[k as int])),
+                v0.drop_last())
+            < machine_cost(g, pending.push(ActionShape::Fold(xs, k)), v0),
+    {
+        graph_lemma_extends_refl(g);
+        let s0 = value_depths(g, v0);
+        let s1 = value_depths(g, v0.drop_last());
+        assert(s1 =~= abs_pop(s0, 1));
+        let da = tdepth(g, v0.last()@);
+        assert(abs_peek(s0, 0) == da);
+        let ds = tdepths(g, xs);
+        let p = pair_bound(da, ds[k as int]);
+        let added = seq![ActionShape::Fold(xs, k + 1), ActionShape::Pair(v0.last()@, xs[k as int])];
+        assert(pending.push(added[0]).push(added[1]) =~= pending + added);
+        machine_lemma_run2(g, added[0], added[1], s1);
+        assert(abs_peek(s1.push(p), 0) == p);
+        assert(abs_pop(s1.push(p), 1) =~= s1);
+        assert(fold_cost(ds, k, da) == 1 + pair_cost(da, ds[k as int]) + fold_cost(ds, k + 1, p));
+        assert(fold_bound(ds, k, da) == fold_bound(ds, k + 1, p));
+        if k + 1 >= xs.len() {
+            assert(fold_cost(ds, k + 1, p) == 1);
+            assert(fold_bound(ds, k + 1, p) == p);
+        }
+        le_pointwise_refl(action_next(g, ActionShape::Fold(xs, k), s0));
+        machine_lemma_step(g, g, pending, ActionShape::Fold(xs, k), added, v0, v0.drop_last());
+    }
+
+    pub proof fn machine_fold_noop(g: model::Graph, pending: Seq<ActionShape>, xs: Seq<nat>, k: nat, v0: Seq<TransitionId>)
+        requires transition_tasks_valid(g, pending), 1 <= k, xs.len() <= k,
+        ensures machine_cost(g, pending, v0) < machine_cost(g, pending.push(ActionShape::Fold(xs, k)), v0),
+    {
+        graph_lemma_extends_refl(g);
+        let s0 = value_depths(g, v0);
+        assert(pending + Seq::<ActionShape>::empty() =~= pending);
+        le_pointwise_refl(s0);
+        machine_lemma_step(g, g, pending, ActionShape::Fold(xs, k), Seq::empty(), v0, v0);
+    }
+
+    // ----- driver actions -----
+
+    pub proof fn machine_driver_union(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, n: nat, v0: Seq<TransitionId>, out: TransitionId,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            n <= v0.len(),
+            tdepth(g1, out@) <= union_bound(value_depths(g0, v0.subrange(v0.len() - n, v0.len() as int))),
+        ensures machine_cost(g1, pending, v0.take(v0.len() - n).push(out))
+            < machine_cost(g0, pending.push(ActionShape::Union(n)), v0),
+    {
+        let s0 = value_depths(g0, v0);
+        let rest = v0.take(v0.len() - n);
+        assert(abs_top(s0, n) =~= value_depths(g0, v0.subrange(v0.len() - n, v0.len() as int)));
+        assert(abs_pop(s0, n) =~= value_depths(g0, rest));
+        assert(transition_ids_valid(g0, rest));
+        value_depths_lemma_extends(g0, g1, rest);
+        let v1 = rest.push(out);
+        let b = union_bound(abs_top(s0, n));
+        assert(value_depths(g1, v1) =~= value_depths(g0, rest).push(tdepth(g1, out@)));
+        le_pointwise_push(value_depths(g0, rest), value_depths(g0, rest), tdepth(g1, out@), b);
+        assert(pending + Seq::<ActionShape>::empty() =~= pending);
+        machine_lemma_step(g0, g1, pending, ActionShape::Union(n), Seq::empty(), v0, v1);
+    }
+
+    pub proof fn machine_driver_intersect(g: model::Graph, pending: Seq<ActionShape>, n: nat, v0: Seq<TransitionId>)
+        requires transition_tasks_valid(g, pending), n <= v0.len(),
+        ensures machine_cost(g, pending.push(ActionShape::Fold(
+                model::transition_ids(v0.subrange(v0.len() - n, v0.len() as int)), 0)), v0.take(v0.len() - n))
+            < machine_cost(g, pending.push(ActionShape::Intersect(n)), v0),
+    {
+        graph_lemma_extends_refl(g);
+        let s0 = value_depths(g, v0);
+        let rest = v0.take(v0.len() - n);
+        let xs = model::transition_ids(v0.subrange(v0.len() - n, v0.len() as int));
+        assert(abs_top(s0, n) =~= tdepths(g, xs));
+        assert(abs_pop(s0, n) =~= value_depths(g, rest));
+        let task = ActionShape::Fold(xs, 0);
+        let added = seq![task];
+        assert(pending.push(task) =~= pending + added);
+        machine_lemma_run1(g, task, value_depths(g, rest));
+        le_pointwise_refl(action_next(g, ActionShape::Intersect(n), s0));
+        machine_lemma_step(g, g, pending, ActionShape::Intersect(n), added, v0, rest);
+    }
+
+    pub proof fn machine_driver_if(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, task: ActionShape, v0: Seq<TransitionId>,
+        out: TransitionId,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            task is If, v0.len() >= 2,
+            tdepth(g1, out@) <= if_bound(tdepth(g0, v0[v0.len() - 2]@), tdepth(g0, v0[v0.len() - 1]@)),
+        ensures machine_cost(g1, pending, v0.take(v0.len() - 2).push(out)) < machine_cost(g0, pending.push(task), v0),
+    {
+        let s0 = value_depths(g0, v0);
+        let rest = v0.take(v0.len() - 2);
+        assert(abs_pop(s0, 2) =~= value_depths(g0, rest));
+        assert(transition_ids_valid(g0, rest));
+        value_depths_lemma_extends(g0, g1, rest);
+        let v1 = rest.push(out);
+        let b = if_bound(abs_peek(s0, 1), abs_peek(s0, 0));
+        assert(value_depths(g1, v1) =~= value_depths(g0, rest).push(tdepth(g1, out@)));
+        le_pointwise_push(value_depths(g0, rest), value_depths(g0, rest), tdepth(g1, out@), b);
+        assert(pending + Seq::<ActionShape>::empty() =~= pending);
+        machine_lemma_step(g0, g1, pending, task, Seq::empty(), v0, v1);
+    }
+
+    pub proof fn machine_driver_clean_if(
+        g0: model::Graph, g1: model::Graph, pending: Seq<ActionShape>, test: TestId, path: TestId,
+        v0: Seq<TransitionId>, out: TransitionId,
+    )
+        requires model::graph_extends(g0, g1), transition_tasks_valid(g0, pending), transition_ids_valid(g0, v0),
+            v0.len() >= 2,
+            tdepth(g1, out@) <= if_bound(tdepth(g0, v0[v0.len() - 2]@), tdepth(g0, v0[v0.len() - 1]@)),
+        ensures machine_cost(g1, pending.push(ActionShape::Clean(out@, path@)), v0.take(v0.len() - 2))
+            < machine_cost(g0, pending.push(ActionShape::CleanIf(test@, path@)), v0),
+    {
+        let s0 = value_depths(g0, v0);
+        let rest = v0.take(v0.len() - 2);
+        assert(abs_pop(s0, 2) =~= value_depths(g0, rest));
+        assert(transition_ids_valid(g0, rest));
+        value_depths_lemma_extends(g0, g1, rest);
+        let b = if_bound(abs_peek(s0, 1), abs_peek(s0, 0));
+        let task = ActionShape::Clean(out@, path@);
+        let added = seq![task];
+        assert(pending.push(task) =~= pending + added);
+        machine_lemma_run1(g1, task, value_depths(g0, rest));
+        lemma_clean_cost_mono(tdepth(g1, out@), b);
+        le_pointwise_push(value_depths(g0, rest), value_depths(g0, rest), tdepth(g1, out@), b);
+        machine_lemma_step(g0, g1, pending, ActionShape::CleanIf(test@, path@), added, v0, rest);
+    }
+
+    pub proof fn machine_driver_result(
+        g: model::Graph, pending: Seq<ActionShape>, suffix: Option<nat>, v0: Seq<TransitionId>,
+    )
+        requires transition_tasks_valid(g, pending), v0.len() >= 1,
+        ensures machine_cost(g, pending.push(match suffix {
+                Some(r) => ActionShape::Append(v0.last()@, r), None => ActionShape::Not(v0.last()@) }), v0.drop_last())
+            < machine_cost(g, pending.push(match suffix {
+                Some(r) => ActionShape::AppendResult(r), None => ActionShape::NotResult }), v0),
+    {
+        graph_lemma_extends_refl(g);
+        let s0 = value_depths(g, v0);
+        let rest = value_depths(g, v0.drop_last());
+        assert(abs_pop(s0, 1) =~= rest);
+        assert(abs_peek(s0, 0) == tdepth(g, v0.last()@));
+        let task = match suffix { Some(r) => ActionShape::Append(v0.last()@, r), None => ActionShape::Not(v0.last()@) };
+        let added = seq![task];
+        assert(pending.push(task) =~= pending + added);
+        machine_lemma_run1(g, task, rest);
+        let old_task = match suffix { Some(r) => ActionShape::AppendResult(r), None => ActionShape::NotResult };
+        le_pointwise_refl(action_next(g, old_task, s0));
+        machine_lemma_step(g, g, pending, old_task, added, v0, v0.drop_last());
+    }
+
+    pub proof fn machine_driver_swap(g: model::Graph, pending: Seq<ActionShape>, v0: Seq<TransitionId>)
+        requires transition_tasks_valid(g, pending), v0.len() >= 2,
+        ensures machine_cost(g, pending, v0.take(v0.len() - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]))
+            < machine_cost(g, pending.push(ActionShape::SwapThen), v0),
+    {
+        graph_lemma_extends_refl(g);
+        let s0 = value_depths(g, v0);
+        let v1 = v0.take(v0.len() - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]);
+        assert(value_depths(g, v1) =~= action_next(g, ActionShape::SwapThen, s0));
+        le_pointwise_refl(value_depths(g, v1));
+        assert(pending + Seq::<ActionShape>::empty() =~= pending);
+        machine_lemma_step(g, g, pending, ActionShape::SwapThen, Seq::empty(), v0, v1);
+    }
+
+    // ----- set collection: depth conservation -----
+
+    pub open spec fn collect_bound(g: model::Graph, ids: Seq<TransitionId>, intersect: bool) -> nat {
+        if intersect { intersect_bound(value_depths(g, ids)) } else { union_bound(value_depths(g, ids)) }
+    }
+
+    pub open spec fn collect_weight(g: model::Graph, ids: Seq<TransitionId>, intersect: bool) -> nat {
+        if intersect { prod_plus1(value_depths(g, ids)) } else { sum_plus1(value_depths(g, ids)) }
+    }
+
+    pub open spec fn pow2(n: nat) -> nat
+        decreases n,
+    {
+        if n == 0 { 1 } else { 2 * pow2((n - 1) as nat) }
+    }
+
+    /// Conserved quantity of `transition_collect_nodes`: pending, flattened, and constant children.
+    pub open spec fn collect_total(
+        g: model::Graph, pending: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>, intersect: bool,
+    ) -> nat {
+        if intersect {
+            collect_weight(g, pending, true) * collect_weight(g, flat, true) * pow2(constants.len())
+        } else {
+            collect_weight(g, pending, false) + collect_weight(g, flat, false) + 2 * constants.len()
+        }
+    }
+
+    pub proof fn lemma_pow2_pos(n: nat)
+        ensures pow2(n) >= 1,
+        decreases n,
+    {
+        if n > 0 { lemma_pow2_pos((n - 1) as nat); }
+    }
+
+    pub proof fn collect_lemma_push(g: model::Graph, ids: Seq<TransitionId>, id: TransitionId, intersect: bool)
+        ensures collect_weight(g, ids.push(id), intersect) == if intersect {
+                collect_weight(g, ids, true) * (tdepth(g, id@) + 1)
+            } else { collect_weight(g, ids, false) + tdepth(g, id@) + 1 },
+    {
+        let s = value_depths(g, ids);
+        assert(value_depths(g, ids.push(id)) =~= s.push(tdepth(g, id@)));
+        assert(s.push(tdepth(g, id@)).drop_last() =~= s);
+    }
+
+    pub proof fn collect_lemma_concat(g: model::Graph, a: Seq<TransitionId>, b: Seq<TransitionId>, intersect: bool)
+        ensures collect_weight(g, a + b, intersect) == if intersect {
+                collect_weight(g, a, true) * collect_weight(g, b, true)
+            } else { collect_weight(g, a, false) + collect_weight(g, b, false) },
+        decreases b.len(),
+    {
+        if b.len() == 0 {
+            assert(a + b =~= a);
+            assert(value_depths(g, b).len() == 0);
+            let wa = collect_weight(g, a, true);
+            assert(wa * 1 == wa) by (nonlinear_arith);
+        } else {
+            let b0 = b.drop_last();
+            let x = b.last();
+            collect_lemma_concat(g, a, b0, intersect);
+            assert(a + b =~= (a + b0).push(x));
+            assert(b =~= b0.push(x));
+            collect_lemma_push(g, a + b0, x, intersect);
+            collect_lemma_push(g, b0, x, intersect);
+            let wa = collect_weight(g, a, true);
+            let wb = collect_weight(g, b0, true);
+            let d = tdepth(g, x@);
+            assert(wa * wb * (d + 1) == wa * (wb * (d + 1))) by (nonlinear_arith);
+        }
+    }
+
+    pub proof fn collect_lemma_remove(g: model::Graph, s: Seq<TransitionId>, i: int, intersect: bool)
+        requires 0 <= i < s.len(),
+        ensures collect_weight(g, s, intersect) == if intersect {
+                collect_weight(g, s.remove(i), true) * (tdepth(g, s[i]@) + 1)
+            } else { collect_weight(g, s.remove(i), false) + tdepth(g, s[i]@) + 1 },
+    {
+        let a = s.take(i);
+        let c = s.skip(i + 1);
+        assert(s =~= a.push(s[i]) + c);
+        assert(s.remove(i) =~= a + c);
+        collect_lemma_concat(g, a.push(s[i]), c, intersect);
+        collect_lemma_push(g, a, s[i], intersect);
+        collect_lemma_concat(g, a, c, intersect);
+        let wa = collect_weight(g, a, true);
+        let wc = collect_weight(g, c, true);
+        let d = tdepth(g, s[i]@);
+        assert(wa * (d + 1) * wc == wa * wc * (d + 1)) by (nonlinear_arith);
+    }
+
+    pub proof fn collect_lemma_subset(g: model::Graph, sub: Seq<TransitionId>, sup: Seq<TransitionId>, intersect: bool)
+        requires sub.no_duplicates(), forall|x: TransitionId| sub.contains(x) ==> sup.contains(x),
+        ensures collect_weight(g, sub, intersect) <= collect_weight(g, sup, intersect),
+        decreases sub.len(),
+    {
+        if sub.len() == 0 {
+            assert(value_depths(g, sub).len() == 0);
+            lemma_prod_pos(value_depths(g, sup));
+        } else {
+            let x = sub.last();
+            let rest = sub.drop_last();
+            assert(sub[sub.len() - 1] == x);
+            assert(sub.contains(x));
+            let i = choose|i: int| 0 <= i < sup.len() && sup[i] == x;
+            let sup2 = sup.remove(i);
+            assert forall|y: TransitionId| rest.contains(y) implies sup2.contains(y) by {
+                let j = choose|j: int| 0 <= j < rest.len() && rest[j] == y;
+                assert(sub[j] == y);
+                assert(sub.contains(y));
+                let k = choose|k: int| 0 <= k < sup.len() && sup[k] == y;
+                assert(k != i);
+                if k < i { assert(sup2[k] == y); } else { assert(sup2[k - 1] == y); }
+            }
+            assert(rest.no_duplicates()) by {
+                assert forall|p: int, q: int| 0 <= p < rest.len() && 0 <= q < rest.len() && p != q implies rest[p] != rest[q] by {
+                    assert(sub[p] == rest[p] && sub[q] == rest[q]);
+                }
+            }
+            collect_lemma_subset(g, rest, sup2, intersect);
+            assert(sub =~= rest.push(x));
+            collect_lemma_push(g, rest, x, intersect);
+            collect_lemma_remove(g, sup, i, intersect);
+            let wr = collect_weight(g, rest, true);
+            let ws = collect_weight(g, sup2, true);
+            let d = tdepth(g, x@);
+            if intersect {
+                assert(wr * (d + 1) <= ws * (d + 1)) by (nonlinear_arith) requires wr <= ws;
+            }
+        }
+    }
+
+    pub proof fn collect_lemma_drop(
+        g: model::Graph, prefix: Seq<TransitionId>, id: TransitionId, flat: Seq<TransitionId>, rs: Seq<RegexId>, intersect: bool,
+    )
+        ensures collect_total(g, prefix, flat, rs, intersect) <= collect_total(g, prefix.push(id), flat, rs, intersect),
+    {
+        collect_lemma_push(g, prefix, id, intersect);
+        let wp = collect_weight(g, prefix, true);
+        let wf = collect_weight(g, flat, true);
+        let p = pow2(rs.len());
+        let d = tdepth(g, id@);
+        assert(wp * wf * p <= wp * (d + 1) * wf * p) by (nonlinear_arith);
+    }
+
+    pub proof fn collect_lemma_leaf(
+        g: model::Graph, prefix: Seq<TransitionId>, id: TransitionId, flat: Seq<TransitionId>, rs: Seq<RegexId>, intersect: bool,
+    )
+        ensures collect_total(g, prefix, flat.push(id), rs, intersect) <= collect_total(g, prefix.push(id), flat, rs, intersect),
+    {
+        collect_lemma_push(g, prefix, id, intersect);
+        collect_lemma_push(g, flat, id, intersect);
+        let wp = collect_weight(g, prefix, true);
+        let wf = collect_weight(g, flat, true);
+        let p = pow2(rs.len());
+        let d = tdepth(g, id@);
+        assert(wp * (wf * (d + 1)) * p == wp * (d + 1) * wf * p) by (nonlinear_arith);
+    }
+
+    pub proof fn collect_lemma_constant(
+        g: model::Graph, prefix: Seq<TransitionId>, id: TransitionId, flat: Seq<TransitionId>, rs: Seq<RegexId>,
+        r: RegexId, intersect: bool,
+    )
+        requires id@ < g.transitions.len(), g.transitions[id@ as int] is Const,
+        ensures collect_total(g, prefix, flat, rs.push(r), intersect) <= collect_total(g, prefix.push(id), flat, rs, intersect),
+    {
+        collect_lemma_push(g, prefix, id, intersect);
+        tdepth_lemma_const(g, id@);
+        assert(pow2(rs.push(r).len()) == 2 * pow2(rs.len()));
+        let wp = collect_weight(g, prefix, true);
+        let wf = collect_weight(g, flat, true);
+        let p = pow2(rs.len());
+        assert(wp * wf * (2 * p) == wp * 2 * wf * p) by (nonlinear_arith);
+    }
+
+    pub proof fn collect_lemma_expand(
+        g: model::Graph, prefix: Seq<TransitionId>, id: TransitionId, children: Seq<TransitionId>,
+        flat: Seq<TransitionId>, rs: Seq<RegexId>, intersect: bool,
+    )
+        requires model::graph_wf(g), id@ < g.transitions.len(),
+            model::transition_ids(children) == transition_children(g, id@),
+            match g.transitions[id@ as int] {
+                model::TransitionNode::Union(_) => !intersect,
+                model::TransitionNode::Intersect(_) => intersect,
+                _ => false,
+            },
+        ensures collect_total(g, prefix + children, flat, rs, intersect)
+            <= collect_total(g, prefix.push(id), flat, rs, intersect),
+    {
+        transition_lemma_children(g, id@);
+        tdepth_lemma_unfold(g, id@);
+        let cs = transition_children(g, id@);
+        assert(value_depths(g, children) =~= tdepths(g, cs));
+        tdepths_lemma_pos(g, cs);
+        lemma_bounds_pos(tdepths(g, cs));
+        collect_lemma_concat(g, prefix, children, intersect);
+        collect_lemma_push(g, prefix, id, intersect);
+        let wp = collect_weight(g, prefix, true);
+        let wc = collect_weight(g, children, true);
+        let wf = collect_weight(g, flat, true);
+        let p = pow2(rs.len());
+        let d = tdepth(g, id@);
+        if intersect {
+            assert(wp * wc * wf * p <= wp * (d + 1) * wf * p) by (nonlinear_arith) requires wc <= d + 1;
+        }
+    }
+
+    /// After `transition_collect_nodes`: the flattened children and constants fit in the original weight.
+    pub proof fn collect_lemma_flat(
+        g: model::Graph, original: Seq<TransitionId>, pending: Seq<TransitionId>, flat: Seq<TransitionId>,
+        rs: Seq<RegexId>, intersect: bool,
+    )
+        requires pending.len() == 0,
+            collect_total(g, pending, flat, rs, intersect)
+                <= collect_total(g, original, Seq::empty(), Seq::empty(), intersect),
+        ensures collect_weight(g, flat, intersect) <= collect_weight(g, original, intersect),
+            rs.len() >= 1 ==> if intersect { collect_weight(g, flat, true) * 2 <= collect_weight(g, original, true) }
+                else { collect_weight(g, flat, false) + 2 <= collect_weight(g, original, false) },
+    {
+        assert(value_depths(g, pending).len() == 0);
+        assert(value_depths(g, Seq::<TransitionId>::empty()).len() == 0);
+        let wf = collect_weight(g, flat, true);
+        let wo = collect_weight(g, original, true);
+        let p = pow2(rs.len());
+        lemma_pow2_pos(rs.len());
+        if rs.len() >= 1 { lemma_pow2_pos((rs.len() - 1) as nat); }
+        if intersect {
+            assert(1 * wf * p == wf * p) by (nonlinear_arith);
+            assert(wo * 1 * 1 == wo) by (nonlinear_arith);
+            assert(wf <= wf * p) by (nonlinear_arith) requires p >= 1;
+            if rs.len() >= 1 { assert(wf * 2 <= wf * p) by (nonlinear_arith) requires p >= 2; }
+        }
+    }
+
+    pub proof fn collect_lemma_extends(a: model::Graph, b: model::Graph, ids: Seq<TransitionId>, intersect: bool)
+        requires model::graph_extends(a, b), transition_ids_valid(a, ids),
+        ensures collect_weight(a, ids, intersect) == collect_weight(b, ids, intersect),
+    {
+        value_depths_lemma_extends(a, b, ids);
+    }
+
+    /// `t` is the constant transition built from the collected constants.
+    pub proof fn collect_lemma_const_result(
+        a: model::Graph, b: model::Graph, original: Seq<TransitionId>, flat: Seq<TransitionId>, t: TransitionId,
+        pushed: bool, intersect: bool,
+    )
+        requires model::graph_extends(a, b), transition_ids_valid(a, original), transition_ids_valid(a, flat),
+            t@ < b.transitions.len(), b.transitions[t@ as int] is Const,
+            if intersect { collect_weight(a, flat, true) * 2 <= collect_weight(a, original, true) }
+                else { collect_weight(a, flat, false) + 2 <= collect_weight(a, original, false) },
+        ensures collect_weight(b, if pushed { flat.push(t) } else { flat }, intersect) <= collect_weight(b, original, intersect),
+    {
+        collect_lemma_extends(a, b, original, intersect);
+        collect_lemma_extends(a, b, flat, intersect);
+        collect_lemma_push(b, flat, t, intersect);
+        tdepth_lemma_const(b, t@);
+        let wf = collect_weight(b, flat, true);
+        assert(wf <= wf * 2) by (nonlinear_arith);
+    }
+
+    pub proof fn collect_lemma_bound(g: model::Graph, ids: Seq<TransitionId>, intersect: bool)
+        ensures collect_bound(g, ids, intersect) >= 2,
+    {
+        value_depths_lemma_pos(g, ids);
+        lemma_bounds_pos(value_depths(g, ids));
+    }
+
+    /// Depth of the three possible results of `transition_collect`.
+    pub proof fn collect_lemma_final(
+        entry: model::Graph, g: model::Graph, original: Seq<TransitionId>, flat: Seq<TransitionId>, intersect: bool,
+    )
+        requires model::graph_wf(g), model::graph_extends(entry, g), transition_ids_valid(entry, original),
+            transition_ids_valid(g, flat),
+            collect_weight(g, flat, intersect) <= collect_weight(g, original, intersect),
+        ensures collect_bound(entry, original, intersect) >= 2,
+            tdepth(g, g.constants.transition_empty) == 1, tdepth(g, g.constants.transition_all) == 1,
+            flat.len() == 1 ==> tdepth(g, flat[0]@) <= collect_bound(entry, original, intersect),
+            flat.len() >= 2 ==> tdepth_node(g, if intersect {
+                    model::TransitionNode::Intersect(model::transition_ids(flat))
+                } else { model::TransitionNode::Union(model::transition_ids(flat)) })
+                <= collect_bound(entry, original, intersect),
+    {
+        tdepth_lemma_constants(g);
+        value_depths_lemma_extends(entry, g, original);
+        let ds = value_depths(entry, original);
+        value_depths_lemma_pos(entry, original);
+        lemma_bounds_pos(ds);
+        lemma_sum_ge(ds);
+        lemma_prod_ge(ds);
+        let fs = value_depths(g, flat);
+        value_depths_lemma_pos(g, flat);
+        lemma_sum_ge(fs);
+        lemma_prod_ge(fs);
+        assert(tdepths(g, model::transition_ids(flat)) =~= fs);
+        if flat.len() == 1 {
+            lemma_singleton(fs);
+            assert(fs[0] == tdepth(g, flat[0]@));
+        }
+    }
 
     pub open spec fn transition_collect_combo(
         g: model::Graph, sym: model::Symbols, theta: Seq<Data>, pending: Seq<TransitionId>,

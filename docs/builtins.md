@@ -377,8 +377,10 @@ also states, for every `(head, tail)` the policy decodes to,
 (nonempty variable names, defined path keys) is the decoding of some policy, so
 the result covers every regex the grammar admits. Every verified loop carries a
 `decreases` clause; no `exec_allows_no_decreases_clause` remains under
-`src/builtins/history` except on `normalize::transition_machine`, whose
-re-pairing of cleaned conditionals defeats size-bound measures.
+`src/builtins/history`. `transition_machine` decreases
+`normalize::verify::machine_cost`, an abstract run of the task stack over
+per-node depth bounds (`tdepth`: `1 + max` at `If`, additive at `Union`,
+multiplicative at `Intersect`, `4^d` at `Not`, `2d + 1` at `Append`).
 
 The FFI, Java, Python, Ruby, and WASM crates expose an opt-in `history` feature
 that forwards to `regorus/history`; their default features are unchanged.
