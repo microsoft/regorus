@@ -1,0 +1,94 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: positive-limit
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b,c,d", ",", 2)
+    query: data.test.x
+    want_result: ["a", "b,c,d"]
+
+  - note: exact-limit
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b,c", ",", 3)
+    query: data.test.x
+    want_result: ["a", "b", "c"]
+
+  - note: limit-exceeds-parts
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b", ",", 10)
+    query: data.test.x
+    want_result: ["a", "b"]
+
+  - note: zero-limit
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b,c", ",", 0)
+    query: data.test.x
+    want_result: []
+
+  - note: negative-limit-tail
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b,c,d", ",", -2)
+    query: data.test.x
+    want_result: ["c", "d"]
+
+  - note: empty-string
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("", ",", 5)
+    query: data.test.x
+    want_result: [""]
+
+  - note: non-integer-n-undefined
+    strict: false
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b", ",", 1.5)
+    query: data.test.x
+    no_result: true
+
+  - note: wrong-arg-count
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b", ",")
+    query: data.test.x
+    error: "`strings.split_n` expects 3 arguments"
+
+  - note: empty-delimiter-with-remainder
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("abcd", "", 3)
+    query: data.test.x
+    want_result: ["a", "b", "cd"]
+
+  - note: limit-one-returns-whole-string
+    data: {}
+    modules:
+      - |
+        package test
+        x = strings.split_n("a,b,c", ",", 1)
+    query: data.test.x
+    want_result: ["a,b,c"]
