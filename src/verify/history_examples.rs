@@ -21,9 +21,7 @@ verus! {
 
 broadcast use vstd::string::group_string_axioms;
 
-pub open spec fn tag(name: Seq<char>, payload: Data) -> Data {
-    Data::Object(Map::empty().insert(Data::String(name), payload))
-}
+use super::history_specs::tag;
 
 pub open spec fn comparison(name: Seq<char>, path: Seq<Data>, term: Data) -> Data {
     tag(name, Data::Object(Map::empty()

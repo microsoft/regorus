@@ -1496,13 +1496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regorus-history-extract"
-version = "0.0.0"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
 name = "regorus-mimalloc"
 version = "2.2.8"
 dependencies = [
@@ -2173,7 +2166,6 @@ dependencies = [
  "clap",
  "regex",
  "semver",
- "serde_json",
  "toml_edit",
  "zip",
 ]

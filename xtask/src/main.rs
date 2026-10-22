@@ -9,10 +9,10 @@ use clap::{Parser, Subcommand};
 use tasks::{
     BindingsCommand, BuildAllBindingsCommand, BuildFfiCommand, BuildJavaCommand, BuildNugetCommand,
     BuildPythonCommand, BuildWasmCommand, CiDebugCommand, CiReleaseCommand, ClippyCommand,
-    ExtractHistoryLeanCommand, FmtCommand, PrecommitCommand, PrepushCommand,
-    TestAllBindingsCommand, TestCCommand, TestCNoStdCommand, TestCppCommand, TestCsharpCommand,
-    TestFfiCommand, TestGoCommand, TestJavaCommand, TestMuslCommand, TestNoStdCommand,
-    TestPythonCommand, TestRubyCommand, TestWasmCommand, UpdateDepsCommand,
+    FmtCommand, PrecommitCommand, PrepushCommand, TestAllBindingsCommand, TestCCommand,
+    TestCNoStdCommand, TestCppCommand, TestCsharpCommand, TestFfiCommand, TestGoCommand,
+    TestJavaCommand, TestMuslCommand, TestNoStdCommand, TestPythonCommand, TestRubyCommand,
+    TestWasmCommand, UpdateDepsCommand,
 };
 
 #[derive(Parser)]
@@ -24,8 +24,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Extract the production history kernel and elaborate the pinned Lean scaffold
-    ExtractHistoryLean(ExtractHistoryLeanCommand),
     /// Bump binding manifests to match the main regorus crate version
     Bindings(BindingsCommand),
     /// Build the regorus FFI crate for selected targets
@@ -89,7 +87,6 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::ExtractHistoryLean(cmd) => cmd.run()?,
         Commands::Bindings(cmd) => cmd.run()?,
         Commands::Ffi(cmd) => cmd.run()?,
         Commands::CiRelease(cmd) => cmd.run()?,

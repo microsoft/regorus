@@ -189,7 +189,6 @@ impl CompiledPair {
 
 impl CompiledPair {
     #[verus_verify]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
@@ -238,6 +237,7 @@ impl CompiledPair {
                         forall|i: int| 0 <= i < self.cursors@.len() ==> cursor_ready(*self, self.cursors@[i], crate::verify::value_specs::history_view(*history)),
                         selected matches Some(i) ==> i < self.cursors@.len()
                             && super::source::verify::values_data(bindings@) == super::source::verify::values_data(self.cursors@[i as int].bindings@),
+                    decreases self.cursors@.len() - index,
                 ))]
                 while index < self.cursors.len() {
                     let cursor = &self.cursors[index];
@@ -325,7 +325,6 @@ impl CompiledPair {
     }
     #[cfg(feature = "cache")]
     #[verus_verify]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)),
         ensures progress_metadata_unchanged(*old(self), *final(self)), pair_frame(*old(self), *final(self)), pair_wf(*final(self)),
@@ -358,6 +357,7 @@ impl CompiledPair {
             invariant index <= snapshot@.len(), snapshot@.len() <= history@.len(),
                 prefix_equal ==> forall|i: int| 0 <= i < index ==> crate::verify::value_specs::value_view(snapshot@[i]) == crate::verify::value_specs::value_view(history@[i]),
             ensures failure is Some || !prefix_equal || index == snapshot@.len(),
+            decreases snapshot@.len() - index,
         ))]
         while index < snapshot.len() {
             loop_try!(checkpoint(timer, world), failure);
@@ -429,7 +429,6 @@ impl CompiledPair {
         Ok(answer)
     }
     #[verus_verify]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), bindings@.len() == old(self).symbols@.variables.len(),
             forall|i: int| 0 <= i < bindings@.len() ==> crate::verify::value_specs::value_view(bindings@[i]) != crate::verify::value_specs::Data::Undefined,
@@ -463,6 +462,7 @@ impl CompiledPair {
                 previous matches Some((t, e, r)) ==> t@ < self.store.graph().transitions.len() && instantiation_result(*self, t, bindings@, *e, r),
             ensures pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
                 failure is Some || residual_after_prefix(*self, super::source::verify::values_data(history@), bindings@, history@.len(), residual),
+            decreases suffix@.len() - index,
         ))]
         while index < suffix.len() {
             let event = &suffix[index];
@@ -548,7 +548,6 @@ impl CompiledPair {
     }
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     #[verus_verify]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), transition@ < old(self).store.graph().transitions.len(),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
@@ -604,6 +603,7 @@ impl CompiledPair {
                 atoms_wf(self.store.graph(), transition@, atoms@),
                 successor_map(*self) == successor_map(entry),
                 self.atoms@.len() <= needed || self.atoms@ == prior_atoms,
+            decreases needed - self.atoms@.len(),
         ))]
         while self.atoms.len() < needed {
             proof_decl! { let ghost before_push = *self; }
@@ -648,7 +648,6 @@ impl CompiledPair {
         checkpoint(timer, world)
     }
     #[verus_verify]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), transition@ < old(self).store.graph().transitions.len(),
@@ -719,6 +718,7 @@ impl CompiledPair {
                     == model::test_holds(self.symbols@, super::source::verify::values_data(bindings@), model::lift_test(self.store.graph(), atoms@[j]@), crate::verify::value_specs::value_view(*event)),
                 forall|j: nat| index <= j ==> !symbolic::verify::truth_word_bit(words.view(), j),
             ensures failure is None ==> index == atoms@.len(),
+            decreases atoms@.len() - index,
         ))]
         while index < atoms.ids().len() {
             let id = loop_try!(
@@ -869,7 +869,6 @@ impl CompiledPair {
 
 #[cfg(feature = "cache")]
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result =>
     ensures result matches Ok(answer) ==> answer == (super::source::verify::values_data(left@) == super::source::verify::values_data(right@)),
 )]
@@ -890,6 +889,7 @@ fn equal_bindings(
             bindings_equal ==> forall|i: int| 0 <= i < index ==> crate::verify::value_specs::value_view(left@[i]) == crate::verify::value_specs::value_view(right@[i]),
             !bindings_equal ==> super::source::verify::values_data(left@) != super::source::verify::values_data(right@),
         ensures failure is Some || !bindings_equal || index == left.len(),
+        decreases left@.len() - index,
     ))]
     while index < left.len() {
         loop_try!(checkpoint(timer, world), failure);
@@ -925,7 +925,6 @@ enum Walk {
 /// Collect every unsigned base primitive read anywhere in the transition DAG.
 /// Branches are deliberately not pruned using an event or request substitution.
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result =>
     requires old(store).valid_store(), model::graph_wf(old(store).graph()), root@ < old(store).graph().transitions.len(),
     ensures final(store).valid_store(), model::graph_wf(final(store).graph()),
@@ -965,6 +964,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
             store.valid_store(), model::graph_wf(store.graph()), model::graph_extends(base, store.graph()),
             store.restoration() == old(store).restoration(),
             collector(base, root@, visited(transitions@, tests@), frontier(base, work.view()), found(store.graph(), primitives@)),
+        decreases transition_atoms_work(base, work.view()),
     ))]
     while let Some(task) = work.pop() {
         proof_decl! {
@@ -984,6 +984,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
             assert(collector(base, root@, before_done, before_pending, before_atoms));
             assert(walk_wf(base, task));
             lemma_atom_ids_obey_cmp();
+            lemma_walk_work_push(base);
         }
         store.checkpoint()?;
         match task {
@@ -1001,6 +1002,9 @@ pub(crate) fn transition_atoms<G: KernelStore>(
                 proof! {
                     lemma_visited_insert_transition(before_transitions, before_tests, id);
                     model::lemma_graph_transition_wf(base, id@);
+                    if base.transitions[id@ as int] is Union || base.transitions[id@ as int] is Intersect {
+                        lemma_transition_walk_start(base, id);
+                    }
                 }
                 match store.transition(id)? {
                     TransitionView::Const(_) => {}
@@ -1040,6 +1044,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
                         .ok_or_else(|| invariant("transition child index overflow"))?;
                     work.push(Walk::TransitionChildren(id, next));
                     work.push(Walk::Transition(child));
+                    proof! { lemma_transition_children_walk(base, id, index, child, next); }
                 }
             }
             Walk::Test(id) => {
@@ -1054,7 +1059,12 @@ pub(crate) fn transition_atoms<G: KernelStore>(
                     continue;
                 }
                 proof! { lemma_visited_insert_test(before_transitions, before_tests, id); }
-                proof! { model::lemma_graph_test_wf(base, id@); }
+                proof! {
+                    model::lemma_graph_test_wf(base, id@);
+                    if base.tests[id@ as int] is And || base.tests[id@ as int] is Or {
+                        lemma_test_walk_start(base, id);
+                    }
+                }
                 match store.test(id)? {
                     TestView::True | TestView::False => {}
                     TestView::Atom { primitive, .. } => {
@@ -1093,6 +1103,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
                         .ok_or_else(|| invariant("test child index overflow"))?;
                     work.push(Walk::TestChildren(id, next));
                     work.push(Walk::Test(child));
+                    proof! { lemma_test_children_walk(base, id, index, child, next); }
                 }
             }
         }
@@ -1368,6 +1379,136 @@ pub(crate) mod verify {
                     && (g.transitions[id@ as int] is Union || g.transitions[id@ as int] is Intersect),
                 Walk::TestChildren(id, _) => id@ < g.tests.len()
                     && (g.tests[id@ as int] is And || g.tests[id@ as int] is Or),
+            }
+        }
+
+        // Termination measure for `transition_atoms`: the tree-unfolded size of the walk
+        // over `base`. A children frame pays 1 for each continuation that pops it.
+        pub open spec fn test_walk_node_work(g: model::Graph, id: nat) -> nat
+            decreases id, 1nat,
+        {
+            if id >= g.tests.len() { 1 } else {
+                match g.tests[id as int] {
+                    model::TestNode::And(cs) | model::TestNode::Or(cs) => 1 + test_walk_children_work(g, cs, id),
+                    _ => 1,
+                }
+            }
+        }
+        pub open spec fn test_walk_children_work(g: model::Graph, children: Seq<nat>, bound: nat) -> nat
+            decreases bound, 0nat, children.len(),
+        {
+            if children.len() == 0 { 1 } else {
+                1 + (if children[0] < bound { test_walk_node_work(g, children[0]) } else { 0 })
+                    + test_walk_children_work(g, children.skip(1), bound)
+            }
+        }
+        pub open spec fn transition_walk_node_work(g: model::Graph, id: nat) -> nat
+            decreases id, 1nat,
+        {
+            if id >= g.transitions.len() { 1 } else {
+                match g.transitions[id as int] {
+                    model::TransitionNode::If(t, a, b) => 1 + test_walk_node_work(g, t)
+                        + (if a < id { transition_walk_node_work(g, a) } else { 0 })
+                        + (if b < id { transition_walk_node_work(g, b) } else { 0 }),
+                    model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) =>
+                        1 + transition_walk_children_work(g, cs, id),
+                    model::TransitionNode::Not(c) | model::TransitionNode::Append(c, _) =>
+                        1 + (if c < id { transition_walk_node_work(g, c) } else { 0 }),
+                    _ => 1,
+                }
+            }
+        }
+        pub open spec fn transition_walk_children_work(g: model::Graph, children: Seq<nat>, bound: nat) -> nat
+            decreases bound, 0nat, children.len(),
+        {
+            if children.len() == 0 { 1 } else {
+                1 + (if children[0] < bound { transition_walk_node_work(g, children[0]) } else { 0 })
+                    + transition_walk_children_work(g, children.skip(1), bound)
+            }
+        }
+        pub(super) open spec fn walk_task_work(g: model::Graph, task: Walk) -> nat {
+            match task {
+                Walk::Transition(id) => transition_walk_node_work(g, id@),
+                Walk::Test(id) => test_walk_node_work(g, id@),
+                Walk::TransitionChildren(id, i) => if i < transition_edges(g, id@).len() {
+                    transition_walk_children_work(g, transition_edges(g, id@).skip(i as int), id@)
+                } else { 1 },
+                Walk::TestChildren(id, i) => if i < test_edges(g, id@).len() {
+                    test_walk_children_work(g, test_edges(g, id@).skip(i as int), id@)
+                } else { 1 },
+            }
+        }
+        pub(super) open spec fn transition_atoms_work(g: model::Graph, work: Seq<Walk>) -> nat
+            decreases work.len(),
+        {
+            if work.len() == 0 { 0 } else {
+                transition_atoms_work(g, work.drop_last()) + walk_task_work(g, work.last())
+            }
+        }
+
+        pub(super) proof fn lemma_walk_work_push(g: model::Graph)
+            ensures forall|work: Seq<Walk>, task: Walk| #[trigger] transition_atoms_work(g, work.push(task))
+                == transition_atoms_work(g, work) + walk_task_work(g, task),
+        {
+            assert forall|work: Seq<Walk>, task: Walk| #[trigger] transition_atoms_work(g, work.push(task))
+                == transition_atoms_work(g, work) + walk_task_work(g, task) by {
+                assert(work.push(task).drop_last() =~= work);
+            }
+        }
+
+        /// Entering a composite pops `1 + children` and pushes the `*Children(id, 0)` frame.
+        pub(super) proof fn lemma_transition_walk_start(g: model::Graph, id: TransitionId)
+            requires id@ < g.transitions.len(), g.transitions[id@ as int] is Union || g.transitions[id@ as int] is Intersect,
+            ensures walk_task_work(g, Walk::Transition(id)) == 1 + walk_task_work(g, Walk::TransitionChildren(id, 0)),
+        {
+            assert(transition_edges(g, id@).skip(0) =~= transition_edges(g, id@));
+        }
+
+        pub(super) proof fn lemma_test_walk_start(g: model::Graph, id: TestId)
+            requires id@ < g.tests.len(), g.tests[id@ as int] is And || g.tests[id@ as int] is Or,
+            ensures walk_task_work(g, Walk::Test(id)) == 1 + walk_task_work(g, Walk::TestChildren(id, 0)),
+        {
+            assert(test_edges(g, id@).skip(0) =~= test_edges(g, id@));
+        }
+
+        /// A live continuation pops `1 + child + rest` and pushes `child` and `rest`.
+        pub(super) proof fn lemma_transition_children_walk(g: model::Graph, id: TransitionId, index: usize, child: TransitionId, next: usize)
+            requires model::graph_wf(g), id@ < g.transitions.len(), index < transition_edges(g, id@).len(),
+                (g.transitions[id@ as int] is Union || g.transitions[id@ as int] is Intersect),
+                child@ == transition_edges(g, id@)[index as int], next == index + 1,
+            ensures walk_task_work(g, Walk::TransitionChildren(id, index))
+                == 1 + walk_task_work(g, Walk::Transition(child)) + walk_task_work(g, Walk::TransitionChildren(id, next)),
+        {
+            model::lemma_graph_transition_wf(g, id@);
+            let cs = transition_edges(g, id@);
+            assert(cs[index as int] < id@);
+            assert(cs.skip(index as int)[0] == cs[index as int]);
+            assert(cs.skip(index as int).skip(1) =~= cs.skip(next as int));
+            assert(transition_walk_children_work(g, cs.skip(index as int), id@)
+                == 1 + transition_walk_node_work(g, cs[index as int]) + transition_walk_children_work(g, cs.skip(next as int), id@));
+            if next >= cs.len() {
+                assert(cs.skip(next as int).len() == 0);
+                assert(transition_walk_children_work(g, cs.skip(next as int), id@) == 1);
+            }
+        }
+
+        pub(super) proof fn lemma_test_children_walk(g: model::Graph, id: TestId, index: usize, child: TestId, next: usize)
+            requires model::graph_wf(g), id@ < g.tests.len(), index < test_edges(g, id@).len(),
+                (g.tests[id@ as int] is And || g.tests[id@ as int] is Or),
+                child@ == test_edges(g, id@)[index as int], next == index + 1,
+            ensures walk_task_work(g, Walk::TestChildren(id, index))
+                == 1 + walk_task_work(g, Walk::Test(child)) + walk_task_work(g, Walk::TestChildren(id, next)),
+        {
+            model::lemma_graph_test_wf(g, id@);
+            let cs = test_edges(g, id@);
+            assert(cs[index as int] < id@);
+            assert(cs.skip(index as int)[0] == cs[index as int]);
+            assert(cs.skip(index as int).skip(1) =~= cs.skip(next as int));
+            assert(test_walk_children_work(g, cs.skip(index as int), id@)
+                == 1 + test_walk_node_work(g, cs[index as int]) + test_walk_children_work(g, cs.skip(next as int), id@));
+            if next >= cs.len() {
+                assert(cs.skip(next as int).len() == 0);
+                assert(test_walk_children_work(g, cs.skip(next as int), id@) == 1);
             }
         }
 

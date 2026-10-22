@@ -16,8 +16,7 @@ pub(crate) type KernelResult<T> = core::result::Result<T, HistoryError>;
 #[verus_verify]
 pub(crate) const MAX_GRAPH_BYTES: usize = 100 * 1024;
 
-// Aeneas cannot lower Rust's implicit return from `?` inside every loop shape.
-// Preserve the original error and stop the current loop; propagate after its end.
+// Keep a loop-body error in a local, stop the loop, and propagate it after the loop.
 macro_rules! loop_try {
     ($expression:expr, $failure:ident) => {{
         let outcome = $expression;

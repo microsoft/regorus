@@ -1013,6 +1013,267 @@ pub open spec fn decodes_policy(policy: Data, head: Head, tail: Regex<SrcTest>) 
     }
 }
 
+pub open spec fn tag(name: Seq<char>, payload: Data) -> Data {
+    Data::Object(Map::empty().insert(Data::String(name), payload))
+}
+
+/// Well-formedness is exactly the decoders' side conditions.
+pub open spec fn term_wf(t: Term) -> bool {
+    match t {
+        Term::Constant(_) => true,
+        Term::Variable(name) => name.len() > 0,
+    }
+}
+
+pub open spec fn head_wf(h: Head) -> bool
+    decreases h,
+{
+    match h {
+        Head::Variable(name) => name.len() > 0,
+        Head::Array(children) => forall|i: int| 0 <= i < children.len() ==> head_wf(children[i]),
+        Head::Object(fields) => forall|key: Data| fields.contains_key(key) ==> head_wf(fields[key]),
+        _ => true,
+    }
+}
+
+pub open spec fn test_wf(t: SrcTest) -> bool
+    decreases t,
+{
+    match t {
+        SrcTest::Bool(_) => true,
+        SrcTest::And(children) => forall|i: int| 0 <= i < children.len() ==> test_wf(children[i]),
+        SrcTest::Or(children) => forall|i: int| 0 <= i < children.len() ==> test_wf(children[i]),
+        SrcTest::Eq(path, term) => term_wf(term)
+            && forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
+        SrcTest::Neq(path, term) => term_wf(term)
+            && forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
+    }
+}
+
+pub open spec fn tail_wf(r: Regex<SrcTest>) -> bool
+    decreases r,
+{
+    match r {
+        Regex::Test(t) => test_wf(t),
+        Regex::Union(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
+        Regex::Concat(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
+        Regex::Intersect(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
+        Regex::Star(c) => tail_wf(*c),
+        Regex::Not(c) => tail_wf(*c),
+        _ => true,
+    }
+}
+
+proof fn lemma_tag_payload(name: Seq<char>, payload: Data)
+    ensures tagged_payload(tag(name, payload), name) == Some(payload),
+{
+    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
+    assert(Map::<Data, Data>::empty().insert(Data::String(name), payload).dom()
+        =~= Set::<Data>::empty().insert(Data::String(name)));
+}
+
+proof fn lemma_term_encodable(t: Term)
+    requires term_wf(t),
+    ensures exists|d: Data| decodes_term(d, t),
+{
+    match t {
+        Term::Constant(v) => {
+            lemma_tag_payload("value"@, v);
+            assert(decodes_term(tag("value"@, v), t));
+        },
+        Term::Variable(name) => {
+            lemma_tag_payload("var"@, Data::String(name));
+            assert(decodes_term(tag("var"@, Data::String(name)), t));
+        },
+    }
+}
+
+proof fn lemma_head_encodable(h: Head)
+    requires head_wf(h),
+    ensures exists|d: Data| decodes_head(d, h),
+    decreases h,
+{
+    broadcast use vstd::map::group_map_lemmas;
+    match h {
+        Head::Literal(v) => {
+            lemma_tag_payload("value"@, v);
+            assert(decodes_head(tag("value"@, v), h));
+        },
+        Head::Variable(name) => {
+            lemma_tag_payload("var"@, Data::String(name));
+            assert(decodes_head(tag("var"@, Data::String(name)), h));
+        },
+        Head::Any => {
+            lemma_tag_payload("any"@, Data::Bool(true));
+            assert(decodes_head(tag("any"@, Data::Bool(true)), h));
+        },
+        Head::Array(children) => {
+            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
+                implies exists|d: Data| decodes_head(d, children[i]) by {
+                lemma_head_encodable(children[i]);
+            }
+            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_head(d, children[i]));
+            lemma_tag_payload("array"@, Data::Array(values));
+            assert(decodes_head(tag("array"@, Data::Array(values)), h));
+        },
+        Head::Object(fields) => {
+            assert forall|key: Data| fields.contains_key(key)
+                implies exists|d: Data| decodes_head(d, fields[key]) by {
+                vstd::map::axiom_map_index_decreases(fields, key);
+                lemma_head_encodable(fields[key]);
+            }
+            let values = Map::new(fields.dom(), |k: Data| choose|d: Data| decodes_head(d, fields[k]));
+            assert(values.dom() == fields.dom());
+            assert forall|key: Data| fields.contains_key(key)
+                implies decodes_head(values[key], fields[key]) by {
+                assert(values[key] == choose|d: Data| decodes_head(d, fields[key]));
+            }
+            lemma_tag_payload("object"@, Data::Object(values));
+            assert(decodes_head(tag("object"@, Data::Object(values)), h));
+        },
+    }
+}
+
+proof fn lemma_comparison_encodable(name: Seq<char>, path: Seq<Data>, term: Term)
+    requires
+        term_wf(term),
+        forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
+    ensures exists|d: Data| decodes_comparison(d, name, path, term),
+{
+    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
+    lemma_source_literals();
+    assert("path"@[0] != "term"@[0]);
+    lemma_term_encodable(term);
+    let td = choose|d: Data| decodes_term(d, term);
+    let pk = Data::String("path"@);
+    let tk = Data::String("term"@);
+    let fields = Map::<Data, Data>::empty().insert(pk, Data::Array(path)).insert(tk, td);
+    assert(fields.dom() =~= Set::empty().insert(pk).insert(tk));
+    lemma_tag_payload(name, Data::Object(fields));
+    assert(decodes_comparison(tag(name, Data::Object(fields)), name, path, term));
+}
+
+proof fn lemma_test_encodable(t: SrcTest)
+    requires test_wf(t),
+    ensures exists|d: Data| decodes_test(d, t),
+    decreases t,
+{
+    match t {
+        SrcTest::Bool(value) => {
+            assert(decodes_test(Data::Bool(value), t));
+        },
+        SrcTest::And(children) => {
+            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
+                implies exists|d: Data| decodes_test(d, children[i]) by {
+                lemma_test_encodable(children[i]);
+            }
+            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_test(d, children[i]));
+            lemma_tag_payload("and"@, Data::Array(values));
+            assert(decodes_test(tag("and"@, Data::Array(values)), t));
+        },
+        SrcTest::Or(children) => {
+            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
+                implies exists|d: Data| decodes_test(d, children[i]) by {
+                lemma_test_encodable(children[i]);
+            }
+            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_test(d, children[i]));
+            lemma_tag_payload("or"@, Data::Array(values));
+            assert(decodes_test(tag("or"@, Data::Array(values)), t));
+        },
+        SrcTest::Eq(path, term) => {
+            lemma_comparison_encodable("eq"@, path, term);
+            let d = choose|d: Data| decodes_comparison(d, "eq"@, path, term);
+            assert(decodes_test(d, t));
+        },
+        SrcTest::Neq(path, term) => {
+            lemma_comparison_encodable("neq"@, path, term);
+            let d = choose|d: Data| decodes_comparison(d, "neq"@, path, term);
+            assert(decodes_test(d, t));
+        },
+    }
+}
+
+proof fn lemma_tail_encodable(r: Regex<SrcTest>)
+    requires tail_wf(r),
+    ensures exists|d: Data| decodes_tail(d, r),
+    decreases r,
+{
+    match r {
+        Regex::Empty => {
+            lemma_tag_payload("empty"@, Data::Bool(true));
+            assert(decodes_tail(tag("empty"@, Data::Bool(true)), r));
+        },
+        Regex::All => {
+            lemma_tag_payload("all"@, Data::Bool(true));
+            assert(decodes_tail(tag("all"@, Data::Bool(true)), r));
+        },
+        Regex::Epsilon => {
+            lemma_tag_payload("epsilon"@, Data::Bool(true));
+            assert(decodes_tail(tag("epsilon"@, Data::Bool(true)), r));
+        },
+        Regex::Test(t) => {
+            lemma_test_encodable(t);
+            let c = choose|d: Data| decodes_test(d, t);
+            lemma_tag_payload("test"@, c);
+            assert(decodes_tail(tag("test"@, c), r));
+        },
+        Regex::Union(cs) => {
+            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
+                lemma_tail_encodable(cs[i]);
+            }
+            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
+            lemma_tag_payload("union"@, Data::Array(values));
+            assert(decodes_tail(tag("union"@, Data::Array(values)), r));
+        },
+        Regex::Concat(cs) => {
+            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
+                lemma_tail_encodable(cs[i]);
+            }
+            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
+            lemma_tag_payload("concat"@, Data::Array(values));
+            assert(decodes_tail(tag("concat"@, Data::Array(values)), r));
+        },
+        Regex::Intersect(cs) => {
+            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
+                lemma_tail_encodable(cs[i]);
+            }
+            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
+            lemma_tag_payload("intersect"@, Data::Array(values));
+            assert(decodes_tail(tag("intersect"@, Data::Array(values)), r));
+        },
+        Regex::Star(child) => {
+            lemma_tail_encodable(*child);
+            let c = choose|d: Data| decodes_tail(d, *child);
+            lemma_tag_payload("star"@, c);
+            assert(decodes_tail(tag("star"@, c), r));
+        },
+        Regex::Not(child) => {
+            lemma_tail_encodable(*child);
+            let c = choose|d: Data| decodes_tail(d, *child);
+            lemma_tag_payload("not"@, c);
+            assert(decodes_tail(tag("not"@, c), r));
+        },
+    }
+}
+
+pub proof fn lemma_policy_encodable(head: Head, tail: Regex<SrcTest>)
+    requires head_wf(head), tail_wf(tail),
+    ensures exists|policy: Data| decodes_policy(policy, head, tail),
+{
+    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
+    lemma_source_literals();
+    assert("request"@[0] != "history"@[0]);
+    lemma_head_encodable(head);
+    lemma_tail_encodable(tail);
+    let hd = choose|d: Data| decodes_head(d, head);
+    let td = choose|d: Data| decodes_tail(d, tail);
+    let rk = Data::String("request"@);
+    let hk = Data::String("history"@);
+    let fields = Map::<Data, Data>::empty().insert(rk, hd).insert(hk, td);
+    assert(fields.dom() =~= Set::empty().insert(rk).insert(hk));
+    assert(decodes_policy(Data::Object(fields), head, tail));
+}
+
 pub open spec fn pair_lang(head: Head, tail: Regex<SrcTest>, req: Data, history: Seq<Data>) -> bool {
     exists|theta: Subst| head_match(head, req, theta) && theta.dom() == head_vars(head)
         && lang(|test: SrcTest, event: Data| src_test_holds(theta, test, event), tail, history)
@@ -1353,6 +1614,32 @@ pub proof fn lemma_policy_lang_decoded(
     if pair_lang(head, tail, request, history) {
         assert(exists|h: Head, r: Regex<SrcTest>| decodes_policy(policy, h, r)
             && pair_lang(h, r, request, history));
+    }
+}
+
+pub proof fn lemma_policy_lang_every_decoding(policy: Data, request: Data, history: Seq<Data>)
+    ensures forall|head: Head, tail: Regex<SrcTest>| #[trigger] decodes_policy(policy, head, tail)
+        ==> policy_lang(policy, request, history) == pair_lang(head, tail, request, history),
+{
+    assert forall|head: Head, tail: Regex<SrcTest>| #[trigger] decodes_policy(policy, head, tail)
+        implies policy_lang(policy, request, history) == pair_lang(head, tail, request, history) by {
+        lemma_policy_lang_decoded(policy, head, tail, request, history);
+    }
+}
+
+/// Adequacy: every well-formed pair is the decoding of some policy, and `policy_lang`
+/// of that policy is `pair_lang` of the pair for every request and history.
+pub proof fn theorem_every_pair_has_a_policy(head: Head, tail: Regex<SrcTest>)
+    requires head_wf(head), tail_wf(tail),
+    ensures exists|policy: Data| #[trigger] decodes_policy(policy, head, tail)
+        && forall|request: Data, history: Seq<Data>|
+            policy_lang(policy, request, history) == pair_lang(head, tail, request, history),
+{
+    lemma_policy_encodable(head, tail);
+    let policy = choose|policy: Data| decodes_policy(policy, head, tail);
+    assert forall|request: Data, history: Seq<Data>|
+        policy_lang(policy, request, history) == pair_lang(head, tail, request, history) by {
+        lemma_policy_lang_decoded(policy, head, tail, request, history);
     }
 }
 

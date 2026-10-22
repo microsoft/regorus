@@ -11,4 +11,3 @@ regex = "1.12"
 toml_edit = "0.25"
 semver = "1.0"
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
-serde_json = "1.0"

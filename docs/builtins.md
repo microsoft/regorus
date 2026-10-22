@@ -362,46 +362,6 @@ full outer-array COW copies on append. There is no overall O(delta) guarantee,
 caller-supplied history identity, revision counter, or checkpoint tree. Drop the
 evaluator (or replace a VM's program) to release its local matching caches.
 
-### Rust-to-Lean extraction
-
-```sh
-cargo test -p regorus-history-extract
-AENEAS_HOME="$HOME/.aeneas" cargo xtask extract-history-lean
-```
-
-`verification/aeneas/history/rust` includes the production kernel, normalization,
-symbolic derivatives and error sources literally, with a checked structural
-VecStore backend. It does not include Regorus as a dependency or copy its
-semantics. The task requires the already-installed pinned Aeneas
-`nightly-2026.10.15-cd41995`, Charon `0.1.287` (`26abff028ced534ebf8e861f2d3dd1743e2aa318`), its
-`nightly-2026-09-17` Rust SDK components, and Lean
-`leanprover/lean4:v4.35.0-rc4`, matching both pinned dependencies. It installs no tools. The Lean project pins
-Aeneas commit `cd419953b67caae3e4d6b514b3ee3f3f1ff76ea1` and mathlib commit
-`1f414401f69059aa7eead47b53ee40bd38455eeb`.
-
-The command regenerates fresh LLBC, runs strict translation, validates structured
-source/name coverage for all 19 required production APIs and their local
-normalization/symbolic helpers, elaborates Lean, and `#check`s manifest-generated
-declaration names. It stages under `target/aeneas/history`, keeps dependency
-caches between runs, and publishes generated files and both manifests only after
-all checks pass. The temporary coverage file is checked but not published. A nonempty unmarked generated tree is
-never replaced. Publication failures preserve or restore the prior snapshot.
-
-The pinned `-print-unknown-externals` reporter crashes on Rust unit; the approved
-task instead reports assumptions from `translation.json` and generated external
-declarations. Only scalar diagnostic factories are explicitly opaque; no
-normalization/symbolic implementation or VecStore interning body is hidden.
-External assumptions include integer conversions, `size_of`, checked shifts,
-Option copying/cloning, Result inspection, slice first/last/search/sort, and Vec
-reservation/truncation/slice/pop/emptiness operations; diagnostic construction;
-and the opaque types `MaybeUninit`, `Duration`, and `TryReserveError`. The manifest
-and `TypesExternal`/`FunsExternal` files record the exact declarations.
-
-This checks translation coverage and Lean elaboration, **not correctness**.
-Value traversal/equality, request decoding/binding, runtime arena/storage layout,
-event caches, history-progress reuse and evaluator/VM integration remain outside
-the extracted core and are covered by Rust differential/integration checks.
-
 Production correctness is established by the body-verified Verus contract on
 `HistoryMatchState::evaluate` in `src/builtins/history/mod.rs`. Every successful
 `Ok(answer)` equals the independent `policy_lang` specification in
@@ -410,7 +370,15 @@ committed history oldest-to-newest. Errors carry no Boolean interpretation and
 preserve the retained-state invariant. The proof covers both Base
 (`--no-default-features --features history,arc,std`) and Cached
 (`--features history`) production profiles, including compilation, normalization,
-symbolic execution, event-class caches, replay, and cursor reuse.
+symbolic execution, event-class caches, replay, and cursor reuse. The contract
+also states, for every `(head, tail)` the policy decodes to,
+`answer == pair_lang(head, tail, request, history)`;
+`history_specs::theorem_every_pair_has_a_policy` shows every well-formed pair
+(nonempty variable names, defined path keys) is the decoding of some policy, so
+the result covers every regex the grammar admits. Every verified loop carries a
+`decreases` clause; no `exec_allows_no_decreases_clause` remains under
+`src/builtins/history` except on `normalize::transition_machine`, whose
+re-pairing of cleaned conditionals defeats size-bound measures.
 
 The FFI, Java, Python, Ruby, and WASM crates expose an opt-in `history` feature
 that forwards to `regorus/history`; their default features are unchanged.
@@ -432,10 +400,8 @@ Hashconsius/bumpus pointer tables and buckets grow with infallible `alloc::vec::
 Native allocator `Send`/`Sync` markers rely on exclusive chunk ownership,
 immutable shared access, and corresponding element-type bounds outside SMT.
 No compiler, normalizer, derivative, interpreter, matcher,
-replay, or evaluator body is trusted. The independent handwritten
-`RegorusHistory.Spec.Language` Lean specification remains available with its
-language-algebra theorems; the Verus counterparts are catalogued below. The
-production-refinement theorem is the Verus contract.
+replay, or evaluator body is trusted. The production-refinement theorem is the
+Verus contract.
 
 Arena exhaustion is a distinct error, `HistoryError::ArenaExhausted`, separate
 from global-allocator failure (`AllocationFailed`) and the byte cap
@@ -464,14 +430,7 @@ the clock and fallible reservation call sites; arena allocation uses verified bu
 The capability itself adds no runtime trace/counter or retained matcher state,
 and does not change the Engine/FFI interface. Kernel reservation callbacks preserve the existing
 reserve → charge → resize order. This makes observations explicit for the
-production proof; its generic finite-interaction replay model is checked, while
-the generated matcher’s native replay/adequacy link is not yet established.
-
-Fresh Base/Cached production MIR reaches the real recursive Value/collection
-comparisons. The pinned Aeneas backend currently rejects their mixed recursive
-function/trait-implementation groups. The published kernel snapshot is therefore
-not a production matcher correctness proof; no comparison body is hidden to
-work around this limitation.
+production proof.
 
 ### Verified regex-language theorems
 
@@ -490,6 +449,7 @@ The independent definitions live in
 | Similarity preserves language | `history_algebra::theorem_similarity_preserves_language`; policy corollary `theorem_similar_tails_same_decision`; source deviation `theorem_eq_or_neq_not_similar_to_true`; signed-kernel complement `lemma_test_complement_holds` and `lemma_test_complement_involutive` | `normalize.rs` smart constructors `regex_union`, `regex_intersect`, `regex_concat`, `regex_star`, `regex_not`, `regex_test`, `test_and`, `test_or`, `test_not` ensure language/truth equality with the unnormalized combination. Distributivity belongs to the equational theory but is not applied by the normalizer. |
 | Symbolic derivative correctness | `history_algebra::theorem_symbolic_derivative_correct`; stronger `lemma_symbolic_derivative_interp` gives syntactic equality with `derivative` | `symbolic::verify::derivative_correct` on `symbolic_derivative`, bridged by `lemma_derivative_correct_is_symbolic_derivative`. Runtime smart-constructor contracts supply the paper's `Norm`; the independent theorem needs no normalization. |
 | Matcher correctness | `history_algebra::theorem_matcher_correct`, `theorem_rule_decision`, `theorem_not_fired` | `HistoryMatchState::evaluate` ensures successful `answer == policy_lang`; `progress::verify::lemma_residual_is_symbolic_run` connects runtime residuals to the symbolic run. `history.match` returns this Boolean; the Rego author applies require/forbid modes. |
+| Pair language for every regex | `history_specs::theorem_every_pair_has_a_policy` (encoding adequacy; `head_wf`/`tail_wf` are exactly the decoders' side conditions) | `HistoryMatchState::evaluate` ensures `answer == pair_lang(head, tail, request, history)` for every decoding of the policy Value. |
 
 ### Performance scopes
 

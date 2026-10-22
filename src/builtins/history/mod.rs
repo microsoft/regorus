@@ -109,6 +109,9 @@ impl HistoryMatchState {
         ensures final(self).state_wf(),
             result matches Ok(answer) ==> answer == language::policy_lang(
                 value_view(*policy), value_view(*request), history_view(*history)),
+            result matches Ok(answer) ==> forall|head: language::Head, tail: language::Regex<language::SrcTest>|
+                #[trigger] language::decodes_policy(value_view(*policy), head, tail)
+                    ==> answer == language::pair_lang(head, tail, value_view(*request), history_view(*history)),
     )]
     pub(crate) fn evaluate(
         &mut self,
@@ -172,7 +175,8 @@ impl HistoryMatchState {
                         implies retained_pair_wf(self.pairs@[j]) by {
                         if j != index { assert(self.pairs@[j] == before[j]); }
                     }
-                    language::lemma_policy_lang_decoded(value_view(*policy), head, tail,
+                    assert(language::decodes_policy(value_view(*policy), head, tail));
+                    language::lemma_policy_lang_every_decoding(value_view(*policy),
                         value_view(*request), history_view(*history));
                 }
                 match result {
@@ -225,7 +229,8 @@ impl HistoryMatchState {
             }
         };
         proof! {
-            language::lemma_policy_lang_decoded(value_view(*policy), head, tail,
+            assert(language::decodes_policy(value_view(*policy), head, tail));
+            language::lemma_policy_lang_every_decoding(value_view(*policy),
                 value_view(*request), history_view(*history));
         }
         #[cfg(feature = "cache")]

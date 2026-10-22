@@ -3,7 +3,6 @@
 members = [
     "tests/ensure_no_std",
   "xtask",
-  "verification/aeneas/history/rust",
 ]
 
 [package]

@@ -87,6 +87,10 @@ fn grow_cache<G: KernelStore>(
     requires model::graph_wf(store.graph()), derivative_factors_wf(store.graph(), id, count as nat, concat),
         derivative_tasks_wf(store.graph(), old(tasks).view()),
     ensures derivative_tasks_wf(store.graph(), final(tasks).view()),
+        old(tasks).view().is_prefix_of(final(tasks).view()),
+        result is Ok ==> final(tasks).view().len() <= old(tasks).view().len() + count,
+        forall|j: int| #![trigger final(tasks).view()[j]] old(tasks).view().len() <= j < final(tasks).view().len() ==> final(tasks).view()[j].0@
+            == derivative_children_ids(store.graph(), id)[j - old(tasks).view().len()] && !final(tasks).view()[j].1,
 )]
 fn schedule_derivative_children<G: KernelStore>(
     store: &G,
@@ -99,14 +103,32 @@ fn schedule_derivative_children<G: KernelStore>(
     let mut prefix = true;
     let mut failure = None;
     let mut i = 0;
+    proof_decl! { let ghost start = tasks.view(); }
     #[cfg_attr(verus_keep_ghost, verus_spec(invariant i <= count, derivative_tasks_wf(store.graph(), tasks.view()),
         model::graph_wf(store.graph()), derivative_factors_wf(store.graph(), id, count as nat, concat),
         model::regex_node_wf_at(store.graph(), store.graph().regexes[id@ as int], id@),
-        prefix == derivative_prefix(store.graph(), id, i as nat), decreases count - i))]
+        prefix == derivative_prefix(store.graph(), id, i as nat),
+        start == old(tasks).view(), start.is_prefix_of(tasks.view()),
+        forall|j: int| #![trigger tasks.view()[j]] start.len() <= j < tasks.view().len() ==> tasks.view()[j].0@
+            == derivative_children_ids(store.graph(), id)[j - start.len()] && !tasks.view()[j].1,
+        invariant_except_break failure is None, tasks.view().len() <= start.len() + i,
+            (!concat || prefix) ==> tasks.view().len() == start.len() + i,
+        ensures failure is None ==> tasks.view().len() <= start.len() + count,
+        decreases count - i))]
     while i < count {
         let child = loop_try!(regex_child(store, id, i), failure);
+        proof_decl! { let ghost prior = tasks.view(); }
         if !concat || prefix {
             tasks.push((child, false));
+        }
+        proof! {
+            assert forall|j: int| #![trigger tasks.view()[j]] start.len() <= j < tasks.view().len() implies tasks.view()[j].0@
+                == derivative_children_ids(store.graph(), id)[j - start.len()] && !tasks.view()[j].1 by {
+                if j < prior.len() { assert(tasks.view()[j] == prior[j]); } else {
+                    assert(j == start.len() + i);
+                    assert(child@ == derivative_children_ids(store.graph(), id)[i as int]);
+                }
+            }
         }
         let n = loop_try!(nullable(store, child), failure);
         prefix &= n;
@@ -300,6 +322,10 @@ fn derivative_children<G: KernelStore>(
         model::graph_wf(final(store).graph()), final(store).valid_store(), final(cache)@ == old(cache)@,
         derivative_cache_wf(final(store).graph(), final(cache)@), derivative_tasks_wf(final(store).graph(), final(tasks).view()),
         match result { Ok(Some(out)) => derivative_correct(final(store).graph(), id@, out), _ => true },
+        result is Ok ==> final(tasks).view() == old(tasks).view()
+            || (derivative_tasks_wf(old(store).graph(), final(tasks).view())
+                && derivative_work(old(store).graph(), final(tasks).view())
+                    < derivative_work(old(store).graph(), old(tasks).view().push((id, finish)))),
 )]
 fn derivative_branch<G: KernelStore>(
     store: &mut G,
@@ -323,6 +349,7 @@ fn derivative_branch<G: KernelStore>(
     } else {
         tasks.push((id, true));
         schedule_derivative_children(store, id, count, kind == 2, tasks)?;
+        proof! { derivative_lemma_work_branch(store.graph(), id, old(tasks).view(), tasks.view()); }
         Ok(None)
     }
 }
@@ -334,6 +361,8 @@ fn derivative_branch<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         model::graph_wf(final(store).graph()), final(store).valid_store(),
         derivative_cache_wf(final(store).graph(), final(cache)@), derivative_tasks_wf(final(store).graph(), final(tasks).view()),
+        result is Ok ==> derivative_work(final(store).graph(), final(tasks).view())
+            < derivative_work(old(store).graph(), old(tasks).view().push((id, finish))),
 )]
 fn derivative_step<G: KernelStore>(
     store: &mut G,
@@ -342,6 +371,7 @@ fn derivative_step<G: KernelStore>(
     finish: bool,
     tasks: &mut WorkVec<(RegexId, bool)>,
 ) -> KernelResult<()> {
+    proof_decl! { let ghost before = store.graph(); let ghost prior_tasks = tasks.view(); }
     proof! { derivative_frame(store.graph()); model::lemma_graph_regex_wf(store.graph(), id@); derivative_constants(store.graph()); }
     store.checkpoint()?;
     grow_cache(store, cache, id)?;
@@ -370,6 +400,7 @@ fn derivative_step<G: KernelStore>(
                 } else {
                     tasks.push((id, true));
                     tasks.push((inner, false));
+                    proof! { derivative_lemma_work_unary(store.graph(), id, prior_tasks, inner); }
                     None
                 }
             }
@@ -380,6 +411,7 @@ fn derivative_step<G: KernelStore>(
                 } else {
                     tasks.push((id, true));
                     tasks.push((inner, false));
+                    proof! { derivative_lemma_work_unary(store.graph(), id, prior_tasks, inner); }
                     None
                 }
             }
@@ -404,6 +436,9 @@ fn derivative_step<G: KernelStore>(
             }
         }
     }
+    proof! {
+        derivative_lemma_step_post(before, store.graph(), id, finish, prior_tasks, tasks.view());
+    }
     Ok(())
 }
 #[verus_verify]
@@ -414,6 +449,7 @@ fn derivative_step<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         model::graph_wf(final(store).graph()), final(store).valid_store(),
         derivative_cache_wf(final(store).graph(), final(cache)@), derivative_tasks_wf(final(store).graph(), final(tasks).view()),
+        result is Ok ==> derivative_work(final(store).graph(), final(tasks).view()) < derivative_work(old(store).graph(), old(tasks).view()),
 )]
 fn derivative_next<G: KernelStore>(
     store: &mut G,
@@ -424,10 +460,10 @@ fn derivative_next<G: KernelStore>(
         Some(v) => v,
         None => return Err(invariant()),
     };
+    proof! { assert(old(tasks).view() =~= tasks.view().push((id, finish))); }
     derivative_step(store, cache, id, finish, tasks)
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result =>
     requires model::graph_wf(old(store).graph()), old(store).valid_store(), root@ < old(store).graph().regexes.len(),
         derivative_cache_wf(old(store).graph(), old(cache)@),
@@ -449,7 +485,8 @@ pub(crate) fn symbolic_derivative<G: KernelStore>(
     #[cfg_attr(verus_keep_ghost, verus_spec(invariant model::graph_extends(entry, store.graph()), model::graph_wf(entry),
         store.restoration() == old(store).restoration(),
         model::graph_wf(store.graph()), store.valid_store(), root@ < store.graph().regexes.len(),
-        derivative_cache_wf(store.graph(), cache@), derivative_tasks_wf(store.graph(), tasks.view())))]
+        derivative_cache_wf(store.graph(), cache@), derivative_tasks_wf(store.graph(), tasks.view()),
+        decreases if state is Ok { derivative_work(store.graph(), tasks.view()) + 1 } else { 0 }))]
     while !tasks.is_empty() && state.is_ok() {
         proof! { derivative_extends(entry, store.graph()); }
         state = derivative_next(store, cache, &mut tasks);
@@ -695,6 +732,9 @@ fn fold_test_values(values: &mut WorkVec<bool>, count: usize, and: bool) -> Kern
         result.is_ok() ==> forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
             test_run(store.graph(), old(tasks).view().push((id, finish)), old(values).view(), sym, theta, event)
                 == test_run(store.graph(), final(tasks).view(), final(values).view(), sym, theta, event),
+        result.is_ok() ==> final(tasks).view() == old(tasks).view()
+            || norm::test_not_work(store.graph(), final(tasks).view())
+                < norm::test_not_work(store.graph(), old(tasks).view().push((id, finish))),
 )]
 fn evaluate_test_branch<G: KernelStore>(
     store: &G,
@@ -725,6 +765,7 @@ fn evaluate_test_branch<G: KernelStore>(
                     == test_run(store.graph(), tasks.view(), values.view(), sym, theta, event) by {
                 test_expand(store.graph(), id, old(tasks).view(), old(values).view(), sym, theta, event);
             }
+            test_lemma_eval_branch_work(store.graph(), id, old(tasks).view());
         }
     }
     Ok(())
@@ -740,6 +781,8 @@ fn evaluate_test_branch<G: KernelStore>(
             truth_words_realize(final(store).graph(), atoms@, words@, sym, theta, event) ==>
                 test_run(final(store).graph(), old(tasks).view().push((id, finish)), old(values).view(), sym, theta, event)
                     == test_run(final(store).graph(), final(tasks).view(), final(values).view(), sym, theta, event),
+        result.is_ok() ==> norm::test_not_work(final(store).graph(), final(tasks).view())
+            < norm::test_not_work(old(store).graph(), old(tasks).view().push((id, finish))),
 )]
 fn evaluate_test_step<G: KernelStore>(
     store: &mut G,
@@ -773,6 +816,7 @@ fn evaluate_test_step<G: KernelStore>(
                     == test_run(store.graph(), tasks.view(), values.view(), sym, theta, event) by {
             test_run_unfold(store.graph(), old(tasks).view().push((id, finish)), old(values).view(), sym, theta, event);
         }
+        test_lemma_eval_step_work(store.graph(), id, finish, old(tasks).view(), tasks.view());
     }
     Ok(())
 }
@@ -787,6 +831,8 @@ fn evaluate_test_step<G: KernelStore>(
             truth_words_realize(final(store).graph(), atoms@, words@, sym, theta, event) ==>
                 test_run(final(store).graph(), old(tasks).view(), old(values).view(), sym, theta, event)
                     == test_run(final(store).graph(), final(tasks).view(), final(values).view(), sym, theta, event),
+        result.is_ok() ==> norm::test_not_work(final(store).graph(), final(tasks).view())
+            < norm::test_not_work(old(store).graph(), old(tasks).view()),
 )]
 fn evaluate_test_next<G: KernelStore>(
     store: &mut G,
@@ -803,7 +849,6 @@ fn evaluate_test_next<G: KernelStore>(
     evaluate_test_step(store, id, finish, atoms, words, tasks, values)
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result =>
     requires model::graph_wf(old(store).graph()), root@ < old(store).graph().tests.len(),
         model::atom_ids_wf(old(store).graph(), atoms@),
@@ -840,6 +885,7 @@ fn evaluate_test<G: KernelStore>(
                 truth_words_realize(store.graph(), atoms@, words@, sym, theta, event) ==>
                     test_run(store.graph(), tasks.view(), values.view(), sym, theta, event)
                         == Some(seq![model::test_holds(sym, theta, model::lift_test(store.graph(), root@), event)]),
+        decreases if state is Ok { norm::test_not_work(store.graph(), tasks.view()) + 1 } else { 0 },
     ))]
     while !tasks.is_empty() && state.is_ok() {
         state = evaluate_test_next(store, atoms, words, &mut tasks, &mut values);
@@ -968,6 +1014,10 @@ fn interpret_set<G: KernelStore>(
             interp_results_equiv(model::gsem(sym, theta),
                 interp_run(old(store).graph(), old(tasks).view().push((id, finish)), lifted_values(old(store).graph(), old(values).view()), sym, theta, event),
                 interp_run(final(store).graph(), final(tasks).view(), lifted_values(final(store).graph(), final(values).view()), sym, theta, event)),
+        result.is_ok() ==> final(tasks).view() == old(tasks).view()
+            || (interp_tasks_wf(old(store).graph(), final(tasks).view())
+                && interp_work(old(store).graph(), final(tasks).view())
+                    < interp_work(old(store).graph(), old(tasks).view().push((id, finish)))),
 )]
 fn interpret_branch<G: KernelStore>(
     store: &mut G,
@@ -1009,6 +1059,7 @@ fn interpret_branch<G: KernelStore>(
                     interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event)) by {
                 interp_expand_set(store.graph(), id, old(tasks).view(), lifted_values(store.graph(), old(values).view()), sym, theta, event);
             }
+            interp_lemma_work_branch(store.graph(), id, old(tasks).view());
         }
     }
     Ok(())
@@ -1068,6 +1119,8 @@ fn append_values<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         interp_tasks_wf(final(store).graph(), final(tasks).view()), norm::regex_ids_valid(final(store).graph(), final(values).view()),
         result.is_ok() ==> interp_machine_relation(old(store).graph(), final(store).graph(), old(tasks).view().push((id, finish)), final(tasks).view(), old(values).view(), final(values).view(), atoms@, words@),
+        result.is_ok() ==> interp_work(final(store).graph(), final(tasks).view())
+            < interp_work(old(store).graph(), old(tasks).view().push((id, finish))),
 )]
 fn interpret_step<G: KernelStore>(
     store: &mut G,
@@ -1109,6 +1162,7 @@ fn interpret_step<G: KernelStore>(
                             interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event)) by {
                     interp_choose(store.graph(), id, finish, test, a, b, chosen, pending, lifted_values(store.graph(), prior), sym, theta, event);
                 }
+                interp_lemma_work_if(store.graph(), id, finish, pending, chosen);
             }
         }
         TransitionHead::Union(n) => interpret_branch(store, id, n, false, finish, tasks, values)?,
@@ -1145,6 +1199,7 @@ fn interpret_step<G: KernelStore>(
                             == interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event) by {
                         interp_expand_unary(store.graph(), id, inner, pending, lifted_values(store.graph(), prior), sym, theta, event);
                     }
+                    interp_lemma_work_unary(store.graph(), id, pending, inner);
                 }
             }
         }
@@ -1193,6 +1248,7 @@ fn interpret_step<G: KernelStore>(
                             == interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event) by {
                         interp_expand_unary(store.graph(), id, inner, pending, lifted_values(store.graph(), prior), sym, theta, event);
                     }
+                    interp_lemma_work_unary(store.graph(), id, pending, inner);
                 }
             }
         }
@@ -1205,6 +1261,7 @@ fn interpret_step<G: KernelStore>(
                     interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event)) by {
             interp_same_configuration_extends(before, store.graph(), pending.push((id, finish)), prior, sym, theta, event);
         }
+        interp_lemma_step_post(before, store.graph(), id, finish, pending, tasks.view());
     }
     Ok(())
 }
@@ -1217,6 +1274,7 @@ fn interpret_step<G: KernelStore>(
         final(store).restoration() == old(store).restoration(),
         interp_tasks_wf(final(store).graph(), final(tasks).view()), norm::regex_ids_valid(final(store).graph(), final(values).view()),
         result.is_ok() ==> interp_machine_relation(old(store).graph(), final(store).graph(), old(tasks).view(), final(tasks).view(), old(values).view(), final(values).view(), atoms@, words@),
+        result.is_ok() ==> interp_work(final(store).graph(), final(tasks).view()) < interp_work(old(store).graph(), old(tasks).view()),
 )]
 fn interpret_next<G: KernelStore>(
     store: &mut G,
@@ -1233,7 +1291,6 @@ fn interpret_next<G: KernelStore>(
     interpret_step(store, id, finish, atoms, words, tasks, values)
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 #[verus_spec(result =>
@@ -1278,6 +1335,7 @@ pub(crate) fn interpret_transition<G: KernelStore>(
                     interp_results_equiv(model::gsem(sym, theta),
                         interp_run(store.graph(), tasks.view(), lifted_values(store.graph(), values.view()), sym, theta, event),
                         Some(seq![interpreted(entry, transition, sym, theta, event)])),
+        decreases if state is Ok { interp_work(store.graph(), tasks.view()) + 1 } else { 0 },
     ))]
     while !tasks.is_empty() && state.is_ok() {
         proof_decl! { let ghost before = store.graph(); let ghost pending = tasks.view(); let ghost prior = values.view(); }
@@ -1414,6 +1472,169 @@ pub(crate) mod verify {
 
     pub open spec fn derivative_tasks_wf(g: model::Graph, tasks: Seq<(RegexId, bool)>) -> bool {
         forall|i: int| 0 <= i < tasks.len() ==> #[trigger] tasks[i].0@ < g.regexes.len()
+    }
+
+    pub open spec fn derivative_node_work(g: model::Graph, id: nat) -> nat
+        decreases id, 1nat,
+    {
+        if id >= g.regexes.len() { 0 } else {
+            match g.regexes[id as int].kind {
+                model::RegexKindNode::Union(cs) | model::RegexKindNode::Intersect(cs) | model::RegexKindNode::Concat(cs) =>
+                    2 + derivative_children_work(g, cs, id),
+                model::RegexKindNode::Star(c) | model::RegexKindNode::Not(c) =>
+                    2 + if c < id { derivative_node_work(g, c) } else { 0 },
+                _ => 1,
+            }
+        }
+    }
+
+    pub open spec fn derivative_children_work(g: model::Graph, children: Seq<nat>, bound: nat) -> nat
+        decreases bound, 0nat, children.len(),
+    {
+        if children.len() == 0 { 0 } else {
+            derivative_children_work(g, children.skip(1), bound)
+                + if children[0] < bound { derivative_node_work(g, children[0]) } else { 0 }
+        }
+    }
+
+    pub open spec fn derivative_work(g: model::Graph, tasks: Seq<(RegexId, bool)>) -> nat
+        decreases tasks.len(),
+    {
+        if tasks.len() == 0 { 0 } else {
+            derivative_work(g, tasks.drop_last())
+                + if tasks.last().1 { 1 } else { derivative_node_work(g, tasks.last().0@) }
+        }
+    }
+
+    pub proof fn derivative_lemma_node_work_extends(a: model::Graph, b: model::Graph, id: nat)
+        requires model::graph_extends(a, b), id < a.regexes.len(),
+        ensures derivative_node_work(a, id) == derivative_node_work(b, id),
+        decreases id, 1nat,
+    {
+        assert(a.regexes[id as int] == b.regexes[id as int]);
+        match a.regexes[id as int].kind {
+            model::RegexKindNode::Union(cs) => { derivative_lemma_children_work_extends(a, b, cs, id); },
+            model::RegexKindNode::Intersect(cs) => { derivative_lemma_children_work_extends(a, b, cs, id); },
+            model::RegexKindNode::Concat(cs) => { derivative_lemma_children_work_extends(a, b, cs, id); },
+            model::RegexKindNode::Star(c) => { if c < id { derivative_lemma_node_work_extends(a, b, c); } },
+            model::RegexKindNode::Not(c) => { if c < id { derivative_lemma_node_work_extends(a, b, c); } },
+            _ => {},
+        }
+    }
+
+    pub proof fn derivative_lemma_children_work_extends(a: model::Graph, b: model::Graph, children: Seq<nat>, bound: nat)
+        requires model::graph_extends(a, b), bound <= a.regexes.len(),
+        ensures derivative_children_work(a, children, bound) == derivative_children_work(b, children, bound),
+        decreases bound, 0nat, children.len(),
+    {
+        if children.len() > 0 {
+            if children[0] < bound { derivative_lemma_node_work_extends(a, b, children[0]); }
+            derivative_lemma_children_work_extends(a, b, children.skip(1), bound);
+        }
+    }
+
+    pub proof fn derivative_lemma_work_extends(a: model::Graph, b: model::Graph, tasks: Seq<(RegexId, bool)>)
+        requires model::graph_extends(a, b), derivative_tasks_wf(a, tasks),
+        ensures derivative_work(a, tasks) == derivative_work(b, tasks),
+        decreases tasks.len(),
+    {
+        if tasks.len() > 0 {
+            assert(tasks.last() == tasks[tasks.len() - 1]);
+            if !tasks.last().1 { derivative_lemma_node_work_extends(a, b, tasks.last().0@); }
+            assert forall|i: int| 0 <= i < tasks.drop_last().len() implies #[trigger] tasks.drop_last()[i].0@ < a.regexes.len() by {
+                assert(tasks.drop_last()[i] == tasks[i]);
+            }
+            derivative_lemma_work_extends(a, b, tasks.drop_last());
+        }
+    }
+
+    pub proof fn derivative_lemma_work_push(g: model::Graph, tasks: Seq<(RegexId, bool)>, task: (RegexId, bool))
+        ensures derivative_work(g, tasks.push(task))
+            == derivative_work(g, tasks) + if task.1 { 1 } else { derivative_node_work(g, task.0@) },
+    {
+        assert(tasks.push(task).drop_last() =~= tasks);
+    }
+
+    /// Concat schedules only its nullable prefix, so the scheduled tasks are a prefix of the children.
+    pub proof fn derivative_lemma_work_schedule_prefix(g: model::Graph, tasks: Seq<(RegexId, bool)>,
+        scheduled: Seq<(RegexId, bool)>, children: Seq<nat>, bound: nat)
+        requires scheduled.len() <= children.len(), model::bounded(children, bound),
+            forall|i: int| 0 <= i < scheduled.len() ==> #[trigger] scheduled[i].0@ == children[i] && !scheduled[i].1,
+        ensures derivative_work(g, tasks + scheduled) <= derivative_work(g, tasks) + derivative_children_work(g, children, bound),
+        decreases scheduled.len(),
+    {
+        if scheduled.len() == 0 {
+            assert(tasks + scheduled =~= tasks);
+        } else {
+            let rest = scheduled.skip(1);
+            assert(tasks + scheduled =~= tasks.push(scheduled[0]) + rest);
+            assert(children[0] < bound);
+            assert forall|i: int| 0 <= i < rest.len() implies #[trigger] rest[i].0@ == children.skip(1)[i] && !rest[i].1 by {
+                assert(rest[i] == scheduled[i + 1]);
+            }
+            assert forall|i: int| 0 <= i < children.skip(1).len() implies #[trigger] children.skip(1)[i] < bound by {
+                assert(children.skip(1)[i] == children[i + 1]);
+            }
+            derivative_lemma_work_schedule_prefix(g, tasks.push(scheduled[0]), rest, children.skip(1), bound);
+            derivative_lemma_work_push(g, tasks, scheduled[0]);
+        }
+    }
+
+    pub proof fn derivative_lemma_work_unary(g: model::Graph, id: RegexId, pending: Seq<(RegexId, bool)>, inner: RegexId)
+        requires model::graph_wf(g), id@ < g.regexes.len(), derivative_tasks_wf(g, pending),
+            g.regexes[id@ as int].kind == model::RegexKindNode::Star(inner@)
+                || g.regexes[id@ as int].kind == model::RegexKindNode::Not(inner@),
+        ensures derivative_tasks_wf(g, pending.push((id, true)).push((inner, false))),
+            derivative_work(g, pending.push((id, true)).push((inner, false))) < derivative_work(g, pending.push((id, false))),
+    {
+        model::lemma_graph_regex_wf(g, id@);
+        derivative_lemma_work_push(g, pending, (id, true));
+        derivative_lemma_work_push(g, pending.push((id, true)), (inner, false));
+        derivative_lemma_work_push(g, pending, (id, false));
+        let all = pending.push((id, true)).push((inner, false));
+        assert forall|i: int| 0 <= i < all.len() implies #[trigger] all[i].0@ < g.regexes.len() by {
+            if i < pending.len() { assert(all[i] == pending[i]); }
+        }
+    }
+
+    pub proof fn derivative_lemma_work_branch(g: model::Graph, id: RegexId, pending: Seq<(RegexId, bool)>, tasks: Seq<(RegexId, bool)>)
+        requires model::graph_wf(g), id@ < g.regexes.len(), derivative_tasks_wf(g, pending),
+            g.regexes[id@ as int].kind is Union || g.regexes[id@ as int].kind is Intersect
+                || g.regexes[id@ as int].kind is Concat,
+            pending.push((id, true)).is_prefix_of(tasks),
+            tasks.len() <= pending.len() + 1 + derivative_children_ids(g, id).len(),
+            forall|j: int| pending.len() + 1 <= j < tasks.len() ==> #[trigger] tasks[j].0@
+                == derivative_children_ids(g, id)[j - pending.len() - 1] && !tasks[j].1,
+        ensures derivative_tasks_wf(g, tasks),
+            derivative_work(g, tasks) < derivative_work(g, pending.push((id, false))),
+    {
+        model::lemma_graph_regex_wf(g, id@);
+        let cs = derivative_children_ids(g, id);
+        let base = pending.push((id, true));
+        let scheduled = tasks.subrange(base.len() as int, tasks.len() as int);
+        assert(tasks =~= base + scheduled);
+        assert forall|i: int| 0 <= i < scheduled.len() implies #[trigger] scheduled[i].0@ == cs[i] && !scheduled[i].1 by {
+            assert(scheduled[i] == tasks[base.len() + i]);
+        }
+        derivative_lemma_work_schedule_prefix(g, base, scheduled, cs, id@);
+        derivative_lemma_work_push(g, pending, (id, true));
+        derivative_lemma_work_push(g, pending, (id, false));
+        assert forall|i: int| 0 <= i < tasks.len() implies #[trigger] tasks[i].0@ < g.regexes.len() by {
+            if i < pending.len() { assert(tasks[i] == base[i]); assert(base[i] == pending[i]); }
+            else if i > pending.len() { assert(tasks[i].0@ == cs[i - pending.len() - 1]); }
+            else { assert(tasks[i] == base[i]); }
+        }
+    }
+
+    pub proof fn derivative_lemma_step_post(before: model::Graph, after: model::Graph, id: RegexId, finish: bool,
+        pending: Seq<(RegexId, bool)>, tasks: Seq<(RegexId, bool)>)
+        requires model::graph_extends(before, after), id@ < before.regexes.len(), derivative_tasks_wf(before, pending),
+            tasks == pending || (derivative_tasks_wf(before, tasks)
+                && derivative_work(before, tasks) < derivative_work(before, pending.push((id, finish)))),
+        ensures derivative_work(after, tasks) < derivative_work(before, pending.push((id, finish))),
+    {
+        derivative_lemma_work_push(before, pending, (id, finish));
+        derivative_lemma_work_extends(before, after, tasks);
     }
 
     pub open spec fn derivative_children_ids(g: model::Graph, root: RegexId) -> Seq<nat> {
@@ -2060,6 +2281,34 @@ pub(crate) mod verify {
         forall|i: int| 0 <= i < tasks.len() ==> tasks[i].0@ < g.tests.len()
     }
 
+    /// `evaluate_test` reuses the `test_not` measure: both worklists schedule the same nodes.
+    pub proof fn test_lemma_eval_branch_work(g: model::Graph, id: TestId, pending: Seq<(TestId, bool)>)
+        requires model::graph_wf(g), id@ < g.tests.len(),
+            g.tests[id@ as int] is And || g.tests[id@ as int] is Or,
+        ensures norm::test_not_work(g, pending.push((id, true)) + child_test_tasks(g, id, 0))
+            < norm::test_not_work(g, pending.push((id, false))),
+    {
+        model::lemma_graph_test_wf(g, id@);
+        let cs = test_children(g, id);
+        let scheduled = child_test_tasks(g, id, 0);
+        assert forall|i: int| 0 <= i < scheduled.len()
+            implies #[trigger] scheduled[i].0@ == cs[cs.len() as int - 1 - i] && !scheduled[i].1 by {
+            assert(cs[cs.len() as int - 1 - i] < id@);
+        }
+        norm::test_lemma_not_work_schedule(g, pending.push((id, true)), scheduled, cs, id@);
+        assert(pending.push((id, true)).drop_last() =~= pending);
+        assert(pending.push((id, false)).drop_last() =~= pending);
+    }
+
+    pub proof fn test_lemma_eval_step_work(g: model::Graph, id: TestId, finish: bool,
+        pending: Seq<(TestId, bool)>, tasks: Seq<(TestId, bool)>)
+        requires id@ < g.tests.len(),
+            tasks == pending || norm::test_not_work(g, tasks) < norm::test_not_work(g, pending.push((id, finish))),
+        ensures norm::test_not_work(g, tasks) < norm::test_not_work(g, pending.push((id, finish))),
+    {
+        assert(pending.push((id, finish)).drop_last() =~= pending);
+    }
+
     pub open(crate) spec fn child_test_tasks(g: model::Graph, id: TestId, remaining: nat) -> Seq<(TestId, bool)> {
         Seq::new((test_children(g, id).len() - remaining) as nat, |i: int| (TestId(test_children(g, id)[test_children(g, id).len() - 1 - i] as u32), false))
     }
@@ -2265,6 +2514,174 @@ pub(crate) mod verify {
 
     pub open spec fn interp_tasks_wf(g: model::Graph, tasks: Seq<(TransitionId, bool)>) -> bool {
         forall|i: int| 0 <= i < tasks.len() ==> tasks[i].0@ < g.transitions.len()
+    }
+
+    pub open spec fn interp_node_work(g: model::Graph, id: nat) -> nat
+        decreases id, 1nat,
+    {
+        if id >= g.transitions.len() { 0 } else {
+            match g.transitions[id as int] {
+                model::TransitionNode::Const(_) => 1,
+                model::TransitionNode::If(_, a, b) => 1 + (if a < id { interp_node_work(g, a) } else { 0 })
+                    + (if b < id { interp_node_work(g, b) } else { 0 }),
+                model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => 2 + interp_children_work(g, cs, id),
+                model::TransitionNode::Not(c) | model::TransitionNode::Append(c, _) =>
+                    2 + if c < id { interp_node_work(g, c) } else { 0 },
+            }
+        }
+    }
+
+    pub open spec fn interp_children_work(g: model::Graph, children: Seq<nat>, bound: nat) -> nat
+        decreases bound, 0nat, children.len(),
+    {
+        if children.len() == 0 { 0 } else {
+            interp_children_work(g, children.skip(1), bound)
+                + if children[0] < bound { interp_node_work(g, children[0]) } else { 0 }
+        }
+    }
+
+    /// `interpret_step` ignores `finish` on `If` nodes, so an `If` task always weighs its whole node.
+    pub open spec fn interp_task_work(g: model::Graph, task: (TransitionId, bool)) -> nat {
+        if task.1 && !(task.0@ < g.transitions.len() && g.transitions[task.0@ as int] is If) { 1 }
+        else { interp_node_work(g, task.0@) }
+    }
+
+    pub open spec fn interp_work(g: model::Graph, tasks: Seq<(TransitionId, bool)>) -> nat
+        decreases tasks.len(),
+    {
+        if tasks.len() == 0 { 0 } else { interp_work(g, tasks.drop_last()) + interp_task_work(g, tasks.last()) }
+    }
+
+    pub proof fn interp_lemma_node_work_extends(a: model::Graph, b: model::Graph, id: nat)
+        requires model::graph_extends(a, b), id < a.transitions.len(),
+        ensures interp_node_work(a, id) == interp_node_work(b, id),
+        decreases id, 1nat,
+    {
+        assert(a.transitions[id as int] == b.transitions[id as int]);
+        match a.transitions[id as int] {
+            model::TransitionNode::If(_, x, y) => {
+                if x < id { interp_lemma_node_work_extends(a, b, x); }
+                if y < id { interp_lemma_node_work_extends(a, b, y); }
+            },
+            model::TransitionNode::Union(cs) => { interp_lemma_children_work_extends(a, b, cs, id); },
+            model::TransitionNode::Intersect(cs) => { interp_lemma_children_work_extends(a, b, cs, id); },
+            model::TransitionNode::Not(c) => { if c < id { interp_lemma_node_work_extends(a, b, c); } },
+            model::TransitionNode::Append(c, _) => { if c < id { interp_lemma_node_work_extends(a, b, c); } },
+            _ => {},
+        }
+    }
+
+    pub proof fn interp_lemma_children_work_extends(a: model::Graph, b: model::Graph, children: Seq<nat>, bound: nat)
+        requires model::graph_extends(a, b), bound <= a.transitions.len(),
+        ensures interp_children_work(a, children, bound) == interp_children_work(b, children, bound),
+        decreases bound, 0nat, children.len(),
+    {
+        if children.len() > 0 {
+            if children[0] < bound { interp_lemma_node_work_extends(a, b, children[0]); }
+            interp_lemma_children_work_extends(a, b, children.skip(1), bound);
+        }
+    }
+
+    pub proof fn interp_lemma_work_extends(a: model::Graph, b: model::Graph, tasks: Seq<(TransitionId, bool)>)
+        requires model::graph_extends(a, b), interp_tasks_wf(a, tasks),
+        ensures interp_work(a, tasks) == interp_work(b, tasks),
+        decreases tasks.len(),
+    {
+        if tasks.len() > 0 {
+            let last = tasks.last();
+            assert(last.0@ < a.transitions.len());
+            assert(a.transitions[last.0@ as int] == b.transitions[last.0@ as int]);
+            interp_lemma_node_work_extends(a, b, last.0@);
+            assert forall|i: int| 0 <= i < tasks.drop_last().len() implies tasks.drop_last()[i].0@ < a.transitions.len() by {
+                assert(tasks.drop_last()[i] == tasks[i]);
+            }
+            interp_lemma_work_extends(a, b, tasks.drop_last());
+        }
+    }
+
+    pub proof fn interp_lemma_work_schedule(g: model::Graph, tasks: Seq<(TransitionId, bool)>,
+        scheduled: Seq<(TransitionId, bool)>, children: Seq<nat>, bound: nat)
+        requires scheduled.len() == children.len(), model::bounded(children, bound),
+            forall|i: int| 0 <= i < scheduled.len()
+                ==> #[trigger] scheduled[i].0@ == children[children.len() as int - 1 - i] && !scheduled[i].1,
+        ensures interp_work(g, tasks + scheduled) == interp_work(g, tasks) + interp_children_work(g, children, bound),
+        decreases scheduled.len(),
+    {
+        if scheduled.len() == 0 {
+            assert(tasks + scheduled =~= tasks);
+        } else {
+            assert((tasks + scheduled).drop_last() =~= tasks + scheduled.drop_last());
+            assert((tasks + scheduled).last() == scheduled.last());
+            interp_lemma_work_schedule(g, tasks, scheduled.drop_last(), children.skip(1), bound);
+        }
+    }
+
+    pub proof fn interp_lemma_work_push(g: model::Graph, tasks: Seq<(TransitionId, bool)>, task: (TransitionId, bool))
+        ensures interp_work(g, tasks.push(task)) == interp_work(g, tasks) + interp_task_work(g, task),
+    {
+        assert(tasks.push(task).drop_last() =~= tasks);
+    }
+
+    pub proof fn interp_lemma_work_if(g: model::Graph, id: TransitionId, finish: bool,
+        pending: Seq<(TransitionId, bool)>, chosen: TransitionId)
+        requires model::graph_wf(g), id@ < g.transitions.len(), interp_tasks_wf(g, pending),
+            match g.transitions[id@ as int] { model::TransitionNode::If(_, a, b) => chosen@ == a || chosen@ == b, _ => false },
+        ensures interp_tasks_wf(g, pending.push((chosen, false))),
+            interp_work(g, pending.push((chosen, false))) < interp_work(g, pending.push((id, finish))),
+    {
+        model::lemma_graph_transition_wf(g, id@);
+        interp_lemma_work_push(g, pending, (chosen, false));
+        interp_lemma_work_push(g, pending, (id, finish));
+    }
+
+    pub proof fn interp_lemma_work_unary(g: model::Graph, id: TransitionId, pending: Seq<(TransitionId, bool)>, inner: TransitionId)
+        requires model::graph_wf(g), id@ < g.transitions.len(), interp_tasks_wf(g, pending),
+            match g.transitions[id@ as int] {
+                model::TransitionNode::Not(c) => inner@ == c,
+                model::TransitionNode::Append(c, _) => inner@ == c,
+                _ => false,
+            },
+        ensures interp_tasks_wf(g, pending.push((id, true)).push((inner, false))),
+            interp_work(g, pending.push((id, true)).push((inner, false))) < interp_work(g, pending.push((id, false))),
+    {
+        model::lemma_graph_transition_wf(g, id@);
+        interp_lemma_work_push(g, pending, (id, true));
+        interp_lemma_work_push(g, pending.push((id, true)), (inner, false));
+        interp_lemma_work_push(g, pending, (id, false));
+    }
+
+    pub proof fn interp_lemma_work_branch(g: model::Graph, id: TransitionId, pending: Seq<(TransitionId, bool)>)
+        requires model::graph_wf(g), id@ < g.transitions.len(), interp_tasks_wf(g, pending),
+            g.transitions[id@ as int] is Union || g.transitions[id@ as int] is Intersect,
+        ensures interp_tasks_wf(g, pending.push((id, true)) + child_interp_tasks(g, id, 0)),
+            interp_work(g, pending.push((id, true)) + child_interp_tasks(g, id, 0)) < interp_work(g, pending.push((id, false))),
+    {
+        model::lemma_graph_transition_wf(g, id@);
+        let cs = transition_children(g, id);
+        let scheduled = child_interp_tasks(g, id, 0);
+        assert forall|i: int| 0 <= i < scheduled.len()
+            implies #[trigger] scheduled[i].0@ == cs[cs.len() as int - 1 - i] && !scheduled[i].1 by {
+            assert(cs[cs.len() as int - 1 - i] < id@);
+        }
+        interp_lemma_work_schedule(g, pending.push((id, true)), scheduled, cs, id@);
+        interp_lemma_work_push(g, pending, (id, true));
+        interp_lemma_work_push(g, pending, (id, false));
+        let all = pending.push((id, true)) + scheduled;
+        assert forall|i: int| 0 <= i < all.len() implies all[i].0@ < g.transitions.len() by {
+            if i < pending.len() { assert(all[i] == pending[i]); }
+            else if i > pending.len() { assert(all[i] == scheduled[i - pending.len() - 1]); }
+        }
+    }
+
+    pub proof fn interp_lemma_step_post(before: model::Graph, after: model::Graph, id: TransitionId, finish: bool,
+        pending: Seq<(TransitionId, bool)>, tasks: Seq<(TransitionId, bool)>)
+        requires model::graph_extends(before, after), id@ < before.transitions.len(), interp_tasks_wf(before, pending),
+            tasks == pending || (interp_tasks_wf(before, tasks)
+                && interp_work(before, tasks) < interp_work(before, pending.push((id, finish)))),
+        ensures interp_work(after, tasks) < interp_work(before, pending.push((id, finish))),
+    {
+        interp_lemma_work_push(before, pending, (id, finish));
+        interp_lemma_work_extends(before, after, tasks);
     }
 
     pub open spec fn transition_children(g: model::Graph, id: TransitionId) -> Seq<nat> {

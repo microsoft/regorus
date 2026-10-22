@@ -109,7 +109,6 @@ fn marker(value: &Value, path: &str) -> KernelResult<()> {
     }
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result => ensures result matches Ok(value) ==> {
     (exists|candidate: Value| object@.contains_key(candidate) && value_view(candidate) == Data::String(key@) && object@[candidate] == *value)
     && (forall|k1: Value, k2: Value| object@.contains_key(k1) && object@.contains_key(k2)
@@ -300,7 +299,6 @@ impl SymbolBuilder {
                 && final(self).symbols@.paths[id@ as int] == values_data(values@)
                 && forall|i: int| 0 <= i < values@.len() ==> value_view(values@[i]) != Data::Undefined,
     )]
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     fn path<S: Storage>(
         &mut self,
         values: &Array,
@@ -551,7 +549,6 @@ enum PatternWork<'a> {
 }
 #[verus_verify]
 impl CompiledPattern {
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires builder_wf(*old(symbols)), model::graph_wf(old(kernel).graph()), old(kernel).valid_store(),
             pattern_task_valid(task@), pattern_compile_work_valid(pattern_compile_work(old(work).view())),
@@ -859,7 +856,6 @@ impl CompiledPattern {
             }
         })
     }
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires builder_wf(*old(symbols)), old(symbols).symbols@.variables.len() == 0,
             model::graph_wf(old(kernel).graph()), old(kernel).valid_store(),
@@ -906,6 +902,7 @@ impl CompiledPattern {
                     ==> out.len() == 1 && language::decodes_head(value_view(*source), out[0]),
             ensures work.view().len() == 0,
                 kernel.restoration() == old(kernel).restoration(),
+            decreases pattern_compile_measure(pattern_compile_work(work.view())),
         ))]
         while let Some(task) = work.pop() {
             proof_decl! {
@@ -939,6 +936,7 @@ impl CompiledPattern {
                 vstd::std_specs::vec::axiom_spec_len(&nodes);
                 lemma_source_symbols_transitive(initial_symbols, previous_symbols, symbols.symbols@);
                 lemma_pattern_compile_transfer(previous_nodes, previous_symbols, symbols.symbols@, job, previous_results, results.view(), pending, pattern_compile_work(work.view()), node);
+                lemma_pattern_compile_measure_step(job, previous_symbols, symbols.symbols@, previous_results, results.view(), pending, pattern_compile_work(work.view()), node);
                 assert forall|out: Seq<language::Head>| pattern_compile_run(pattern_compile_work(work.view()), pattern_heads(next_nodes, symbols.symbols@, next_ids), out)
                     implies out.len() == 1 && language::decodes_head(value_view(*source), out[0]) by {
                     assert(pattern_compile_run(pending.push(job), pattern_heads(previous_nodes, previous_symbols, previous_results), out));
@@ -991,7 +989,6 @@ impl CompiledPattern {
         }
         Ok(Self { nodes, root })
     }
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires pattern_nodes_wf(self.nodes@, symbols@), task.0 < self.nodes@.len(),
             pattern_work_valid(*self, old(work).view()), old(bindings)@.len() == symbols@.variables.len(),
@@ -999,6 +996,7 @@ impl CompiledPattern {
             result matches Ok(matched) ==> forall|theta: language::Subst|
                 #[trigger] pattern_match_state(*self, symbols@, old(work).view().push(task), old(bindings)@, theta)
                     == (matched && pattern_match_state(*self, symbols@, final(work).view(), final(bindings)@, theta)),
+            result matches Ok(true) ==> pattern_match_work(self.nodes@, final(work).view()) < pattern_match_work(self.nodes@, old(work).view().push(task)),
     )]
     fn matches_step<'value>(
         &self,
@@ -1159,6 +1157,7 @@ impl CompiledPattern {
                         lemma_pattern_array_pending(*self, symbols@, initial_work, work.view(), children@, values@, children@.len() as int, theta);
                         lemma_pattern_array_match(self.nodes@, symbols@, task.0 as int, *children, values@, theta);
                     }
+                    lemma_pattern_match_work_expand(self.nodes@, initial_work, task, work.view(), pattern_array_ids(children@));
                 }
             }
             PatternNode::Object(children) => {
@@ -1240,12 +1239,17 @@ impl CompiledPattern {
                         lemma_pattern_object_pending(*self, symbols@, initial_work, work.view(), children@, value_view(*value)->Object_0, children@.len() as int, theta);
                         lemma_pattern_object_match(self.nodes@, symbols@, task.0 as int, *children, value_view(*value)->Object_0, theta);
                     }
+                    lemma_pattern_match_work_expand(self.nodes@, initial_work, task, work.view(), pattern_object_ids(children@));
                 }
+            }
+        }
+        proof! {
+            if work.view() == initial_work {
+                lemma_pattern_match_work_push(self.nodes@, initial_work, task);
             }
         }
         Ok(true)
     }
-    #[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
     #[verus_spec(result =>
         requires exists|head: language::Head| pattern_represents(*self, symbols@, head),
         ensures forall|head: language::Head| pattern_represents(*self, symbols@, head) ==> match result {
@@ -1293,6 +1297,7 @@ impl CompiledPattern {
                     Err(_) => true,
                 },
             ensures matches!(matched, Ok(true)) ==> work.view().len() == 0,
+            decreases if matches!(matched, Ok(true)) { pattern_match_work(self.nodes@, work.view()) + 1 } else { 0 },
         ))]
         while matches!(matched, Ok(true)) {
             proof_decl! { let ghost previous_work = work.view(); let ghost previous_bindings = bindings@; }
@@ -1422,7 +1427,8 @@ fn decode_regex_many<S: Storage>(
             && (forall|source: Data| source_state(old(kernel).graph(), old(symbols).symbols@,
                 source_work_view(old(work).view()).push(task@), old(regexes).view(), old(tests).view(), source)
                 ==> source_state(final(kernel).graph(), final(symbols).symbols@,
-                    source_work_view(final(work).view()), final(regexes).view(), final(tests).view(), source)),
+                    source_work_view(final(work).view()), final(regexes).view(), final(tests).view(), source))
+            && source_work_measure(source_work_view(final(work).view())) < source_work_measure(source_work_view(old(work).view()).push(task@)),
 )]
 fn decode_step<'source, S: Storage>(
     task: SourceWork<'source>,
@@ -1472,6 +1478,8 @@ fn decode_step<'source, S: Storage>(
                         lemma_source_unary_expansion_effect(kernel.graph(), symbols.symbols@, pending, initial_regexes, initial_tests, value_view(*value), tag@, value_view(*payload));
                         assert(source_effect(kernel.graph(), symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
                             source_work_view(work.view()), regexes.view(), tests.view()));
+                        assert(source_work_view(work.view()) =~= pending.push(PendingSourceWork::LiftTest) + source_jobs(seq![value_view(*payload)], false));
+                        lemma_source_measure_expand(pending, incoming, value_view(*value), tag@, value_view(*payload), PendingSourceWork::LiftTest, seq![value_view(*payload)], false);
                     }
                 }
                 "star" | "not" => {
@@ -1482,6 +1490,8 @@ fn decode_step<'source, S: Storage>(
                         lemma_source_unary_expansion_effect(kernel.graph(), symbols.symbols@, pending, initial_regexes, initial_tests, value_view(*value), tag@, value_view(*payload));
                         assert(source_effect(kernel.graph(), symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
                             source_work_view(work.view()), regexes.view(), tests.view()));
+                        assert(source_work_view(work.view()) =~= pending.push(PendingSourceWork::RegexOne(tag@)) + source_jobs(seq![value_view(*payload)], true));
+                        lemma_source_measure_expand(pending, incoming, value_view(*value), tag@, value_view(*payload), PendingSourceWork::RegexOne(tag@), seq![value_view(*payload)], true);
                     }
                 }
                 "union" | "concat" | "intersect" => {
@@ -1531,6 +1541,8 @@ fn decode_step<'source, S: Storage>(
                         lemma_source_expansion_effect(kernel.graph(), symbols.symbols@, pending, initial_regexes, initial_tests, value_view(*value), tag@, values_data(children@), true);
                         assert(source_effect(kernel.graph(), symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
                             source_work_view(work.view()), regexes.view(), tests.view()));
+                        lemma_source_measure_expand(pending, incoming, value_view(*value), tag@, value_view(*payload),
+                            PendingSourceWork::RegexMany(tag@, initial_regexes.len()), values_data(children@), true);
                     }
                 }
                 _ => return Err(invalid(&at, "unknown history regex tag")),
@@ -1550,6 +1562,7 @@ fn decode_step<'source, S: Storage>(
                     lemma_source_test_leaf_effect(kernel.graph(), symbols.symbols@, pending, initial_regexes, initial_tests, Data::Bool(*value), id, language::SrcTest::Bool(*value));
                     lemma_source_step_frame(initial_graph, kernel.graph(), initial_symbols, symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
                         source_work_view(work.view()), regexes.view(), tests.view());
+                    lemma_source_work_measure_push(pending, incoming);
                 }
                 return Ok(());
             }
@@ -1602,6 +1615,8 @@ fn decode_step<'source, S: Storage>(
                         lemma_source_expansion_effect(kernel.graph(), symbols.symbols@, pending, initial_regexes, initial_tests, value_view(*value), tag@, values_data(children@), false);
                         assert(source_effect(kernel.graph(), symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
                             source_work_view(work.view()), regexes.view(), tests.view()));
+                        lemma_source_measure_expand(pending, incoming, value_view(*value), tag@, value_view(*payload),
+                            PendingSourceWork::TestMany(tag@ == "and"@, initial_tests.len()), values_data(children@), false);
                     }
                 }
                 "eq" | "neq" => {
@@ -1722,11 +1737,13 @@ fn decode_step<'source, S: Storage>(
             source_work_view(work.view()), regexes.view(), tests.view()));
         lemma_source_step_frame(initial_graph, kernel.graph(), initial_symbols, symbols.symbols@, pending.push(incoming), initial_regexes, initial_tests,
             source_work_view(work.view()), regexes.view(), tests.view());
+        if source_work_view(work.view()) == pending {
+            lemma_source_work_measure_push(pending, incoming);
+        }
     }
     Ok(())
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 #[verus_spec(result =>
     requires builder_wf(*old(symbols)), model::graph_wf(old(kernel).graph()), old(kernel).valid_store(),
     ensures builder_wf(*final(symbols)), symbols_extends(old(symbols).symbols@, final(symbols).symbols@),
@@ -1760,6 +1777,7 @@ fn decode_history<S: Storage>(
             source_state(kernel.graph(), symbols.symbols@, source_work_view(pending_work), regexes.view(), tests.view(), value_view(*source)),
         ensures work.view().len() == 0, pending_work.len() == 0,
             kernel.restoration() == old(kernel).restoration(),
+        decreases source_work_measure(source_work_view(work.view())),
     ))]
     while let Some(task) = work.pop() {
         proof! {
@@ -4193,6 +4211,376 @@ pub(crate) mod verify {
             }
         }
         assert(values_data(original) =~= values_data(copied));
+    }
+
+    // Termination measures for the source worklists. `data_work` is the structural size of
+    // policy/request data; set elements and object keys are never traversed, so they weigh nothing.
+    pub open spec fn data_work(d: Data) -> nat
+        decreases d, 1nat, 0nat,
+    {
+        match d {
+            Data::Array(cs) => 1 + data_seq_work(d, cs),
+            Data::Object(fs) => 1 + data_map_work(d, fs, fs.dom()),
+            _ => 1,
+        }
+    }
+
+    pub open spec fn data_seq_work(bound: Data, cs: Seq<Data>) -> nat
+        decreases bound, 0nat, cs.len(),
+        when forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], bound)
+    {
+        if cs.len() == 0 { 0 } else { data_work(cs[0]) + data_seq_work(bound, cs.drop_first()) }
+    }
+
+    pub open spec fn data_map_work(bound: Data, fs: Map<Data, Data>, keys: Set<Data>) -> nat
+        decreases bound, 0nat, keys.len(),
+        when keys.subset_of(fs.dom()) && forall|k: Data| fs.dom().contains(k) ==> is_smaller_than(fs[k], bound)
+    {
+        if keys.is_empty() { 0 } else {
+            let k = keys.choose();
+            1 + data_work(fs[k]) + data_map_work(bound, fs, keys.remove(k))
+        }
+    }
+
+    pub open spec fn data_list_work(cs: Seq<Data>) -> nat
+        decreases cs.len(),
+    {
+        if cs.len() == 0 { 0 } else { data_work(cs[0]) + data_list_work(cs.drop_first()) }
+    }
+
+    pub proof fn lemma_data_seq_work(bound: Data, cs: Seq<Data>)
+        requires forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], bound),
+        ensures data_seq_work(bound, cs) == data_list_work(cs),
+        decreases cs.len(),
+    {
+        if cs.len() > 0 {
+            assert forall|i: int| 0 <= i < cs.drop_first().len() implies is_smaller_than(cs.drop_first()[i], bound) by {
+                assert(cs.drop_first()[i] == cs[i + 1]);
+            }
+            lemma_data_seq_work(bound, cs.drop_first());
+        }
+    }
+
+    pub proof fn lemma_data_map_work_remove(bound: Data, fs: Map<Data, Data>, keys: Set<Data>, k: Data)
+        requires keys.subset_of(fs.dom()), keys.contains(k),
+            forall|key: Data| fs.dom().contains(key) ==> is_smaller_than(fs[key], bound),
+        ensures data_map_work(bound, fs, keys) == 1 + data_work(fs[k]) + data_map_work(bound, fs, keys.remove(k)),
+        decreases keys.len(),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        let c = keys.choose();
+        if c != k {
+            lemma_data_map_work_remove(bound, fs, keys.remove(c), k);
+            lemma_data_map_work_remove(bound, fs, keys.remove(k), c);
+            assert(keys.remove(c).remove(k) =~= keys.remove(k).remove(c));
+        }
+    }
+
+    pub proof fn lemma_data_map_work_values(bound: Data, fs: Map<Data, Data>, keys: Set<Data>, ks: Seq<Data>, children: Seq<Data>)
+        requires keys.subset_of(fs.dom()), forall|key: Data| fs.dom().contains(key) ==> is_smaller_than(fs[key], bound),
+            ks.no_duplicates(), forall|i: int| 0 <= i < ks.len() ==> keys.contains(ks[i]),
+            children.len() == ks.len(), forall|i: int| 0 <= i < ks.len() ==> children[i] == fs[ks[i]],
+        ensures data_list_work(children) <= data_map_work(bound, fs, keys),
+        decreases ks.len(),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        if ks.len() > 0 {
+            let k = ks[0];
+            let rest = ks.drop_first();
+            lemma_data_map_work_remove(bound, fs, keys, k);
+            assert forall|i: int, j: int| 0 <= i < rest.len() && 0 <= j < rest.len() && i != j implies rest[i] != rest[j] by {
+                assert(rest[i] == ks[i + 1] && rest[j] == ks[j + 1]);
+            }
+            assert forall|i: int| 0 <= i < rest.len() implies keys.remove(k).contains(rest[i]) && children.drop_first()[i] == fs[rest[i]] by {
+                assert(rest[i] == ks[i + 1] && ks[i + 1] != ks[0]);
+            }
+            lemma_data_map_work_values(bound, fs, keys.remove(k), rest, children.drop_first());
+        }
+    }
+
+    pub proof fn lemma_data_work_array(cs: Seq<Data>)
+        ensures data_work(Data::Array(cs)) == 1 + data_list_work(cs),
+    {
+        let bound = Data::Array(cs);
+        let field: Seq<Data> = get_variant_field(bound, "Array", "0");
+        assert(is_smaller_than(field, bound));
+        assert forall|i: int| 0 <= i < cs.len() implies is_smaller_than(cs[i], bound) by {
+            assert(is_smaller_than(cs[i], cs));
+        }
+        lemma_data_seq_work(bound, cs);
+    }
+
+    pub proof fn lemma_data_object_smaller(fs: Map<Data, Data>)
+        ensures forall|key: Data| fs.dom().contains(key) ==> is_smaller_than(fs[key], Data::Object(fs)),
+    {
+        let bound = Data::Object(fs);
+        let field: Map<Data, Data> = get_variant_field(bound, "Object", "0");
+        assert(is_smaller_than(field, bound));
+        assert forall|key: Data| fs.dom().contains(key) implies is_smaller_than(fs[key], bound) by {
+            vstd::map::axiom_map_index_decreases(fs, key);
+            assert(is_smaller_than(fs[key], fs));
+        }
+    }
+
+    pub proof fn lemma_data_work_object(fs: Map<Data, Data>, ks: Seq<Data>, children: Seq<Data>)
+        requires ks.no_duplicates(), forall|i: int| 0 <= i < ks.len() ==> fs.dom().contains(ks[i]),
+            children.len() == ks.len(), forall|i: int| 0 <= i < ks.len() ==> children[i] == fs[ks[i]],
+        ensures data_list_work(children) < data_work(Data::Object(fs)),
+    {
+        lemma_data_object_smaller(fs);
+        lemma_data_map_work_values(Data::Object(fs), fs, fs.dom(), ks, children);
+    }
+
+    pub proof fn lemma_tagged_payload_work(d: Data, tag: Seq<char>, payload: Data)
+        requires language::tagged_payload(d, tag) == Some(payload),
+        ensures data_work(d) == 2 + data_work(payload),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        let fs = d->Object_0;
+        let key = Data::String(tag);
+        lemma_data_object_smaller(fs);
+        lemma_data_map_work_remove(d, fs, fs.dom(), key);
+        assert(fs.dom().remove(key) =~= Set::empty());
+    }
+
+    pub open spec fn pattern_task_work(task: PendingPatternWork) -> nat {
+        match task { PendingPatternWork::Enter(d) => data_work(d), _ => 1 }
+    }
+
+    pub open spec fn pattern_compile_measure(work: Seq<PendingPatternWork>) -> nat
+        decreases work.len(),
+    {
+        if work.len() == 0 { 0 } else { pattern_compile_measure(work.drop_last()) + pattern_task_work(work.last()) }
+    }
+
+    pub proof fn lemma_pattern_compile_measure_append(a: Seq<PendingPatternWork>, b: Seq<PendingPatternWork>)
+        ensures pattern_compile_measure(a + b) == pattern_compile_measure(a) + pattern_compile_measure(b),
+        decreases b.len(),
+    {
+        if b.len() > 0 {
+            assert((a + b).drop_last() =~= a + b.drop_last());
+            lemma_pattern_compile_measure_append(a, b.drop_last());
+        } else {
+            assert(a + b =~= a);
+        }
+    }
+
+    pub proof fn lemma_pattern_jobs_measure(children: Seq<Data>)
+        ensures pattern_compile_measure(pattern_jobs(children)) == data_list_work(children),
+        decreases children.len(),
+    {
+        if children.len() > 0 {
+            lemma_pattern_jobs_prepend(children);
+            lemma_pattern_jobs_measure(children.drop_first());
+            let rest = pattern_jobs(children.drop_first());
+            assert(rest.push(PendingPatternWork::Enter(children[0])).drop_last() =~= rest);
+        } else {
+            assert(pattern_jobs(children) =~= Seq::empty());
+        }
+    }
+
+    pub proof fn lemma_pattern_compile_measure_expand(pending: Seq<PendingPatternWork>, marker: PendingPatternWork, children: Seq<Data>)
+        requires pattern_task_work(marker) == 1,
+        ensures pattern_compile_measure(pending.push(marker) + pattern_jobs(children)) == pattern_compile_measure(pending) + 1 + data_list_work(children),
+    {
+        assert(pending.push(marker).drop_last() =~= pending);
+        lemma_pattern_compile_measure_append(pending.push(marker), pattern_jobs(children));
+        lemma_pattern_jobs_measure(children);
+    }
+
+    pub(super) proof fn lemma_pattern_compile_measure_step(task: PendingPatternWork, before: model::Symbols, after: model::Symbols,
+        inputs: Seq<usize>, results: Seq<usize>, pending: Seq<PendingPatternWork>, work: Seq<PendingPatternWork>, output: Option<PatternNode>)
+        requires pattern_compile_step_effect(task, before, after, inputs, results, pending, work, output),
+        ensures pattern_compile_measure(work) < pattern_compile_measure(pending.push(task)),
+    {
+        assert(pending.push(task).drop_last() =~= pending);
+        if let PendingPatternWork::Enter(data) = task {
+            if output is None {
+                if exists|children: Seq<Data>| language::tagged_payload(data, "array"@) == Some(Data::Array(children))
+                    && work == pending.push(PendingPatternWork::Array(children.len(), inputs.len())) + pattern_jobs(children) {
+                    let children = choose|children: Seq<Data>| language::tagged_payload(data, "array"@) == Some(Data::Array(children))
+                        && work == pending.push(PendingPatternWork::Array(children.len(), inputs.len())) + pattern_jobs(children);
+                    lemma_tagged_payload_work(data, "array"@, Data::Array(children));
+                    lemma_data_work_array(children);
+                    lemma_pattern_compile_measure_expand(pending, PendingPatternWork::Array(children.len(), inputs.len()), children);
+                } else {
+                    let (fields, keys, children) = choose|fields: Map<Data, Data>, keys: Seq<Data>, children: Seq<Data>|
+                        language::tagged_payload(data, "object"@) == Some(Data::Object(fields))
+                        && keys.no_duplicates() && keys.to_set() == fields.dom() && children.len() == keys.len()
+                        && (forall|i: int| 0 <= i < keys.len() ==> children[i] == fields[keys[i]])
+                        && work == pending.push(PendingPatternWork::Object(keys, inputs.len())) + pattern_jobs(children);
+                    assert forall|i: int| 0 <= i < keys.len() implies fields.dom().contains(keys[i]) by {
+                        assert(keys.to_set().contains(keys[i]));
+                    }
+                    lemma_tagged_payload_work(data, "object"@, Data::Object(fields));
+                    lemma_data_work_object(fields, keys, children);
+                    lemma_pattern_compile_measure_expand(pending, PendingPatternWork::Object(keys, inputs.len()), children);
+                }
+            }
+        }
+    }
+
+    pub(super) open spec fn pattern_array_ids(children: Seq<usize>) -> Seq<nat> {
+        children.map_values(|child: usize| child as nat)
+    }
+
+    pub(super) open spec fn pattern_object_ids(fields: Seq<(Value, usize)>) -> Seq<nat> {
+        fields.map_values(|field: (Value, usize)| field.1 as nat)
+    }
+
+    pub(super) open spec fn pattern_work_ids(work: Seq<(usize, &Value)>) -> Seq<nat> {
+        work.map_values(|task: (usize, &Value)| task.0 as nat)
+    }
+
+    /// Size of the compiled-pattern subtree at `id`; children always precede their parent.
+    pub(super) open spec fn pattern_node_work(nodes: Seq<PatternNode>, id: nat) -> nat
+        decreases id, 1nat, 0nat,
+    {
+        if id >= nodes.len() { 0 } else {
+            match nodes[id as int] {
+                PatternNode::Array(children) => 1 + pattern_children_work(nodes, pattern_array_ids(children@), id),
+                PatternNode::Object(fields) => 1 + pattern_children_work(nodes, pattern_object_ids(fields@), id),
+                _ => 1,
+            }
+        }
+    }
+
+    pub(super) open spec fn pattern_children_work(nodes: Seq<PatternNode>, children: Seq<nat>, bound: nat) -> nat
+        decreases bound, 0nat, children.len(),
+    {
+        if children.len() == 0 { 0 } else {
+            pattern_children_work(nodes, children.drop_last(), bound)
+                + if children.last() < bound { pattern_node_work(nodes, children.last()) } else { 0 }
+        }
+    }
+
+    pub(super) open spec fn pattern_match_work(nodes: Seq<PatternNode>, work: Seq<(usize, &Value)>) -> nat {
+        pattern_children_work(nodes, pattern_work_ids(work), nodes.len())
+    }
+
+    pub(super) proof fn lemma_pattern_children_work_append(nodes: Seq<PatternNode>, a: Seq<nat>, b: Seq<nat>, bound: nat)
+        ensures pattern_children_work(nodes, a + b, bound) == pattern_children_work(nodes, a, bound) + pattern_children_work(nodes, b, bound),
+        decreases b.len(),
+    {
+        if b.len() > 0 {
+            assert((a + b).drop_last() =~= a + b.drop_last());
+            lemma_pattern_children_work_append(nodes, a, b.drop_last(), bound);
+        } else {
+            assert(a + b =~= a);
+        }
+    }
+
+    pub(super) proof fn lemma_pattern_children_work_bound(nodes: Seq<PatternNode>, children: Seq<nat>, b1: nat, b2: nat)
+        requires forall|i: int| 0 <= i < children.len() ==> children[i] < b1 && children[i] < b2,
+        ensures pattern_children_work(nodes, children, b1) == pattern_children_work(nodes, children, b2),
+        decreases children.len(),
+    {
+        if children.len() > 0 {
+            assert forall|i: int| 0 <= i < children.drop_last().len() implies children.drop_last()[i] < b1 && children.drop_last()[i] < b2 by {
+                assert(children.drop_last()[i] == children[i]);
+            }
+            lemma_pattern_children_work_bound(nodes, children.drop_last(), b1, b2);
+        }
+    }
+
+    pub(super) proof fn lemma_pattern_match_work_push(nodes: Seq<PatternNode>, work: Seq<(usize, &Value)>, task: (usize, &Value))
+        requires task.0 < nodes.len(),
+        ensures pattern_match_work(nodes, work.push(task)) == pattern_match_work(nodes, work) + pattern_node_work(nodes, task.0 as nat),
+            pattern_node_work(nodes, task.0 as nat) >= 1,
+    {
+        let ids = pattern_work_ids(work);
+        assert(pattern_work_ids(work.push(task)) =~= ids.push(task.0 as nat));
+        assert(ids.push(task.0 as nat).drop_last() =~= ids);
+    }
+
+    /// A matcher step replaces a node by exactly its children.
+    pub(super) proof fn lemma_pattern_match_work_expand(nodes: Seq<PatternNode>, initial: Seq<(usize, &Value)>, task: (usize, &Value),
+        after: Seq<(usize, &Value)>, children: Seq<nat>)
+        requires task.0 < nodes.len(),
+            pattern_node_work(nodes, task.0 as nat) == 1 + pattern_children_work(nodes, children, task.0 as nat),
+            forall|i: int| 0 <= i < children.len() ==> children[i] < task.0,
+            after.len() == initial.len() + children.len(), after.take(initial.len() as int) == initial,
+            forall|i: int| 0 <= i < children.len() ==> after[initial.len() + i].0 as nat == children[i],
+        ensures pattern_match_work(nodes, after) < pattern_match_work(nodes, initial.push(task)),
+    {
+        let ids = pattern_work_ids(initial);
+        assert(pattern_work_ids(after) =~= ids + children) by {
+            assert forall|i: int| 0 <= i < initial.len() implies after[i] == initial[i] by {
+                assert(after.take(initial.len() as int)[i] == after[i]);
+            }
+        }
+        lemma_pattern_match_work_push(nodes, initial, task);
+        lemma_pattern_children_work_append(nodes, ids, children, nodes.len());
+        lemma_pattern_children_work_bound(nodes, children, task.0 as nat, nodes.len());
+    }
+
+    pub open spec fn source_task_work(task: PendingSourceWork) -> nat {
+        match task {
+            PendingSourceWork::Regex(d) => data_work(d),
+            PendingSourceWork::Test(d) => data_work(d),
+            _ => 1,
+        }
+    }
+
+    pub open spec fn source_work_measure(work: Seq<PendingSourceWork>) -> nat
+        decreases work.len(),
+    {
+        if work.len() == 0 { 0 } else { source_work_measure(work.drop_last()) + source_task_work(work.last()) }
+    }
+
+    pub proof fn lemma_source_work_measure_push(work: Seq<PendingSourceWork>, task: PendingSourceWork)
+        ensures source_work_measure(work.push(task)) == source_work_measure(work) + source_task_work(task),
+            source_task_work(task) >= 1,
+    {
+        assert(work.push(task).drop_last() =~= work);
+    }
+
+    pub proof fn lemma_source_work_measure_append(a: Seq<PendingSourceWork>, b: Seq<PendingSourceWork>)
+        ensures source_work_measure(a + b) == source_work_measure(a) + source_work_measure(b),
+        decreases b.len(),
+    {
+        if b.len() > 0 {
+            assert((a + b).drop_last() =~= a + b.drop_last());
+            lemma_source_work_measure_append(a, b.drop_last());
+        } else {
+            assert(a + b =~= a);
+        }
+    }
+
+    pub proof fn lemma_source_jobs_measure(children: Seq<Data>, regex: bool)
+        ensures source_work_measure(source_jobs(children, regex)) == data_list_work(children),
+        decreases children.len(),
+    {
+        if children.len() > 0 {
+            lemma_source_jobs_prepend(children, regex);
+            lemma_source_jobs_measure(children.drop_first(), regex);
+            let task = if regex { PendingSourceWork::Regex(children[0]) } else { PendingSourceWork::Test(children[0]) };
+            lemma_source_work_measure_push(source_jobs(children.drop_first(), regex), task);
+        } else {
+            assert(source_jobs(children, regex) =~= Seq::empty());
+        }
+    }
+
+    /// A decoder step replaces a tagged source by a reduction marker and the payload's children.
+    pub(super) proof fn lemma_source_measure_expand(pending: Seq<PendingSourceWork>, incoming: PendingSourceWork, d: Data, tag: Seq<char>,
+        payload: Data, marker: PendingSourceWork, children: Seq<Data>, regex: bool)
+        requires source_task_work(incoming) == data_work(d), language::tagged_payload(d, tag) == Some(payload),
+            source_task_work(marker) == 1, children == seq![payload] || payload == Data::Array(children),
+        ensures source_work_measure(pending.push(marker) + source_jobs(children, regex)) < source_work_measure(pending.push(incoming)),
+    {
+        lemma_tagged_payload_work(d, tag, payload);
+        lemma_source_work_measure_push(pending, incoming);
+        lemma_source_work_measure_push(pending, marker);
+        lemma_source_work_measure_append(pending.push(marker), source_jobs(children, regex));
+        lemma_source_jobs_measure(children, regex);
+        if payload == Data::Array(children) {
+            lemma_data_work_array(children);
+        } else {
+            assert(children[0] == payload);
+            assert(children.drop_first() =~= Seq::<Data>::empty());
+            assert(data_list_work(children.drop_first()) == 0);
+            assert(data_list_work(children) == data_work(payload));
+        }
     }
 
         }
