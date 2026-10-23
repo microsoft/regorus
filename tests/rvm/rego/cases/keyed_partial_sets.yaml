@@ -1780,3 +1780,316 @@ cases:
     query: data.test.main
     want_error: "partial object rules with nested bracket keys are not yet supported by the RVM compiler"
     allow_interpreter_success: true
+
+  - note: keyed_set_some_declared_key_before_dependency
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { some z; n := count(values.a); z = "b" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_some_declared_key_before_dependency_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { some z; n := count(values.a); z = "b" }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_some_declared_matching_key_still_recurses
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { some z; n := count(values.a); z = "a" }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_some_declared_matching_key_still_recurses_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { some z; n := count(values.a); z = "a" }
+    query: data.test.values.a
+    want_error: "Runtime recursion detected"
+
+  - note: keyed_set_inner_head_loop_needs_body_binding
+    input: {groups: [{keys: [a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains 2 if { field := "keys" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_inner_head_loop_needs_body_binding_suspendable
+    execution_mode: suspendable
+    input: {groups: [{keys: [a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains 2 if { field := "keys" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_inner_head_loop_body_local_array
+    input: {groups: [{x: a}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][arr[k]]] contains 2 if { arr := ["x", "y"] }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_inner_head_loop_body_local_array_suspendable
+    execution_mode: suspendable
+    input: {groups: [{x: a}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][arr[k]]] contains 2 if { arr := ["x", "y"] }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_deferred_inner_head_loop_filters_before_dependency
+    input: {groups: [{keys: [b]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_deferred_inner_head_loop_filters_before_dependency_suspendable
+    execution_mode: suspendable
+    input: {groups: [{keys: [b]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_deferred_inner_head_loop_matching_key
+    input: {groups: [{keys: [c]}, {keys: [b, a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; n := 2 }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_deferred_inner_head_loop_matching_key_suspendable
+    execution_mode: suspendable
+    input: {groups: [{keys: [c]}, {keys: [b, a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; n := 2 }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_deferred_head_loop_multiple_statements_after_binding
+    data: {}
+    input: {groups: [{keys: [b]}, {keys: [c]}, {keys: [a]}], other: [{keys: [b]}, {keys: [c]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; x := 1; y := x + 1; n := y + 1 }
+        values[input.other[i][field][j]] contains n if { field := "keys"; x := 1; y := x; n := count(values.a) + y }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 3]
+
+  - note: keyed_set_deferred_head_loop_multiple_statements_after_binding_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {groups: [{keys: [b]}, {keys: [c]}, {keys: [a]}], other: [{keys: [b]}, {keys: [c]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[i][field][j]] contains n if { field := "keys"; x := 1; y := x + 1; n := y + 1 }
+        values[input.other[i][field][j]] contains n if { field := "keys"; x := 1; y := x; n := count(values.a) + y }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 3]
+
+  - note: keyed_set_deferred_inner_head_loop_wildcard_indices
+    data: {}
+    input: {groups: [{keys: [a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[_][field][_]] contains 2 if { field := "keys" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_deferred_inner_head_loop_wildcard_indices_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {groups: [{keys: [a]}]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[input.groups[_][field][_]] contains 2 if { field := "keys" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_key_loop_hoisted_before_some_in
+    data: {}
+    input: {m: [a], xs: [2]}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[x[i]] contains v if { x := input.m; some v in input.xs }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 2]
+
+  - note: keyed_set_key_loop_hoisted_before_some_in_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {m: [a], xs: [2]}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[x[i]] contains v if { x := input.m; some v in input.xs }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 2]
+
+  - note: keyed_set_key_loop_hoisted_before_with_rejected
+    data: {}
+    input: {m: [a], ok: false}
+    modules:
+      - |
+        package test
+        p if input.ok
+        values.a contains 0
+        values[x[i]] contains 1 if { x := input.m; not p with input.ok as true }
+    query: data.test.values.a
+    want_error: "the `with` keyword is not supported by the compiler yet"
+    allow_interpreter_success: true
+
+  - note: keyed_set_key_loop_hoisted_before_with_rejected_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {m: [a], ok: false}
+    modules:
+      - |
+        package test
+        p if input.ok
+        values.a contains 0
+        values[x[i]] contains 1 if { x := input.m; not p with input.ok as true }
+    query: data.test.values.a
+    want_error: "the `with` keyword is not supported by the compiler yet"
+    allow_interpreter_success: true
+
+  - note: keyed_set_key_loop_hoisted_before_statement_loop
+    data: {}
+    input: {m: [a], xs: [2, 3]}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[x[i]] contains v if { x := input.m; v := input.xs[_] }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 2, 3]
+
+  - note: keyed_set_key_loop_hoisted_before_statement_loop_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {m: [a], xs: [2, 3]}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[x[i]] contains v if { x := input.m; v := input.xs[_] }
+    query: data.test.values.a
+    want_result:
+      set!: [0, 2, 3]
+
+  - note: keyed_set_head_loop_recheck_after_body_backtrack
+    data: {}
+    input: {groups: [[b], [c]]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[g[_]] contains n if { g := input.groups[_]; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_head_loop_recheck_after_body_backtrack_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {groups: [[b], [c]]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[g[_]] contains n if { g := input.groups[_]; n := count(values.a) }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_head_loop_recheck_after_some_in_backtrack
+    data: {}
+    input: {groups: [[a], [b], [c]]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[g[_]] contains n if { some g in input.groups; g[0] != "a"; n := count(values.a) }
+        values[g[_]] contains 2 if { some g in input.groups; g[0] == "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]
+
+  - note: keyed_set_head_loop_recheck_after_some_in_backtrack_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {groups: [[a], [b], [c]]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[g[_]] contains n if { some g in input.groups; g[0] != "a"; n := count(values.a) }
+        values[g[_]] contains 2 if { some g in input.groups; g[0] == "a" }
+    query: data.test.values.a
+    want_result:
+      set!: [1, 2]

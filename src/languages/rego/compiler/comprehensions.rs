@@ -47,7 +47,7 @@ impl<'a> Compiler<'a> {
             multi_value: false,
             value_expr: value_expr.cloned(),
             span: span.clone(),
-            key_loops_hoisted: false,
+            hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
             output_query: Some(query.qidx),
         };

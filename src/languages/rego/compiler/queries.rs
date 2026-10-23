@@ -93,7 +93,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         stmts: &[&LiteralStmt],
     ) -> Result<()> {
-        if self.hoist_projected_key_loops_before_body(stmts)? {
+        if self.hoist_ready_key_loops(stmts)? {
             return Ok(());
         }
         if let Some(context) = self.context_stack.last() {
@@ -107,7 +107,7 @@ impl<'a> Compiler<'a> {
             let loop_exprs = self.get_statement_loops(stmt)?;
 
             if !loop_exprs.is_empty() {
-                self.compile_hoisted_loops(&stmts[idx..], &loop_exprs)?;
+                self.compile_hoisted_loops(&stmts[idx..], &loop_exprs, true)?;
                 self.emit_key_filter_guard(&stmt.span)?;
                 return Ok(());
             }
@@ -152,46 +152,69 @@ impl<'a> Compiler<'a> {
 
             self.compile_single_statement(stmt)?;
             self.emit_key_filter_guard(&stmt.span)?;
+            if self.hoist_ready_key_loops(
+                stmts
+                    .get(idx..)
+                    .and_then(|rest| rest.get(1..))
+                    .unwrap_or_default(),
+            )? {
+                return Ok(());
+            }
         }
 
         self.hoist_loops_and_emit_context_yield()
     }
 
-    fn hoist_projected_key_loops_before_body(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
-        let key_expr = match self.context_stack.last() {
+    /// Hoists projected head-key loops as soon as their collections are bound,
+    /// so nonmatching keys are rejected before dependent body statements run.
+    /// Loops whose collections need later body bindings stay pending.
+    fn hoist_ready_key_loops(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        let (key_expr, start) = match self.context_stack.last() {
             Some(context)
                 if matches!(context.context_type, ContextType::Rule(_))
                     && context.key_filter.is_some()
-                    && !context.key_loops_hoisted =>
+                    && !context.key_value_loops_hoisted =>
             {
-                context.key_expr.clone()
+                (context.key_expr.clone(), context.hoisted_key_loops)
             }
-            _ => None,
+            _ => (None, 0),
         };
         let Some(key_expr) = key_expr else {
             return Ok(false);
         };
         let loops = self.get_expr_loops(&key_expr)?;
-        if loops.is_empty() {
-            return Ok(false);
+        let mut ready = loops.len();
+        for (idx, loop_info) in loops.iter().enumerate().skip(start) {
+            let prefix = loops.get(..idx).unwrap_or_default();
+            let is_ready = crate::compiler::hoist::key_expr_is_ready(
+                &loop_info.collection,
+                |node| {
+                    Ok(self.loop_expr_register_map.contains_key(node)
+                        || prefix.iter().any(|l| {
+                            l.loop_expr.as_ref() == Some(node) || l.key.as_ref() == Some(node)
+                        }))
+                },
+                |span| {
+                    self.lookup_variable(span.text()).is_some()
+                        || prefix.iter().any(|l| {
+                            matches!(l.key.as_deref(), Some(Expr::Var { span: key, .. }) if key.text() == span.text())
+                        })
+                },
+                |call| self.is_safe_projected_key_call(call).map_err(Into::into),
+            )
+            .map_err(CompilerError::from)?;
+            if !is_ready {
+                ready = idx;
+                break;
+            }
         }
-        let Some(first_loop) = loops.first() else {
-            return Ok(false);
-        };
-        if !crate::compiler::hoist::key_expr_is_ready(
-            &first_loop.collection,
-            |node| Ok(self.loop_expr_register_map.contains_key(node)),
-            |span| self.lookup_variable(span.text()).is_some(),
-            |call| self.is_safe_projected_key_call(call).map_err(Into::into),
-        )
-        .map_err(CompilerError::from)?
-        {
+        if ready <= start {
             return Ok(false);
         }
         if let Some(context) = self.context_stack.last_mut() {
-            context.key_loops_hoisted = true;
+            context.hoisted_key_loops = ready;
         }
-        self.compile_hoisted_loops(stmts, &loops)?;
+        self.compile_hoisted_loops(stmts, loops.get(start..ready).unwrap_or_default(), false)?;
         Ok(true)
     }
 
@@ -289,12 +312,16 @@ impl<'a> Compiler<'a> {
         let mut key_value_loops = Vec::new();
 
         if let Some(expr) = key_expr.as_ref() {
-            let key_loops_hoisted = self
+            let hoisted_key_loops = self
                 .context_stack
                 .last()
-                .is_some_and(|context| context.key_loops_hoisted);
-            if !key_loops_hoisted && !Self::is_simple_literal(expr) {
-                key_value_loops.extend(self.get_expr_loops(expr)?);
+                .map_or(0, |context| context.hoisted_key_loops);
+            if !Self::is_simple_literal(expr) {
+                key_value_loops.extend(
+                    self.get_expr_loops(expr)?
+                        .into_iter()
+                        .skip(hoisted_key_loops),
+                );
             }
         }
 
@@ -311,7 +338,7 @@ impl<'a> Compiler<'a> {
             if let Some(context) = self.context_stack.last_mut() {
                 context.key_value_loops_hoisted = true;
             }
-            self.compile_hoisted_loops(&[], &key_value_loops)
+            self.compile_hoisted_loops(&[], &key_value_loops, true)
         } else {
             self.emit_context_yield()
         }

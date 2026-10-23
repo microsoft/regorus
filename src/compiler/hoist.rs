@@ -138,18 +138,21 @@ pub fn prioritize_key_binding(
             }
         }
         if let Some(idx) = binding_idx {
-            let mut referenced_earlier = false;
-            for stmt in statements.iter().take(idx) {
-                if stmt_references_var(stmt, &key_name)? {
-                    referenced_earlier = true;
+            // A `some` declaration must stay ahead of the binding; any other
+            // earlier use of the key variable blocks reordering.
+            let mut insert_at = Some(0);
+            for (pos, stmt) in statements.iter().take(idx).enumerate() {
+                if matches!(&stmt.literal, Literal::SomeVars { vars, .. } if vars.iter().any(|var| var.text() == key_name))
+                {
+                    insert_at = Some(pos + 1);
+                } else if stmt_references_var(stmt, &key_name)? {
+                    insert_at = None;
                     break;
                 }
             }
-            if idx != 0 && !referenced_earlier {
-                if let Some(stmt) = statements.get(idx).copied() {
-                    statements.remove(idx);
-                    statements.insert(0, stmt);
-                }
+            if let Some(insert_at) = insert_at.filter(|&at| at < idx) {
+                let stmt = statements.remove(idx);
+                statements.insert(insert_at, stmt);
             }
         }
     }

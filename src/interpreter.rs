@@ -38,7 +38,10 @@ use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
-type ExprLookup = Lookup<Value>;
+// Each slot is tagged with the rule-invocation frame that wrote it; other
+// frames treat it as unbound.
+type LoopVarSlot = (u64, Option<Value>);
+type ExprLookup = Lookup<LoopVarSlot>;
 
 #[cfg(feature = "azure_policy")]
 pub mod error;
@@ -114,6 +117,10 @@ pub struct Interpreter {
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: ExprLookup,
+    loop_var_frame: u64,
+    loop_var_frame_counter: u64,
+    // Caller slots overwritten by nested frames, restored when they return.
+    loop_var_undo: Vec<(u32, u32, Option<LoopVarSlot>)>,
     contexts: Vec<Context>,
 
     processed: BTreeSet<Ref<Rule>>,
@@ -159,6 +166,9 @@ impl Clone for Interpreter {
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
             loop_var_values: ExprLookup::new(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
             scopes: Vec::default(),
             rule_values: BTreeMap::default(),
 
@@ -193,6 +203,9 @@ struct Context {
     early_return: bool,
     output_query: Option<u32>,
     key_filter: Option<Value>,
+    // Head-key loops could not be checked before the body ran because a
+    // collection depends on a body binding; recheck as bindings appear.
+    head_key_loops_pending: bool,
 }
 
 impl Default for Context {
@@ -211,6 +224,7 @@ impl Default for Context {
             output_constness_determined: false,
             early_return: false,
             output_query: None,
+            head_key_loops_pending: false,
             key_filter: None,
         }
     }
@@ -241,6 +255,9 @@ impl Interpreter {
             scopes: Vec::default(),
             contexts: Vec::default(),
             loop_var_values: Lookup::default(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -280,6 +297,9 @@ impl Interpreter {
             scopes: Vec::default(),
             contexts: Vec::default(),
             loop_var_values: Lookup::default(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -473,23 +493,42 @@ impl Interpreter {
     fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) -> Result<()> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values
-            .set_checked(module_idx, expr_idx, value)
-            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
+        let frame = self.loop_var_frame;
+        let old = self
+            .loop_var_values
+            .replace_checked(module_idx, expr_idx, Some((frame, Some(value))))
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))?;
+        if frame != 0 && !matches!(old, Some((owner, _)) if owner == frame) {
+            self.loop_var_undo.push((module_idx, expr_idx, old));
+        }
+        Ok(())
     }
 
     fn get_loop_var_value(&self, expr: &ExprRef) -> Result<Option<&Value>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values
+        let slot = self
+            .loop_var_values
             .get_checked(module_idx, expr_idx)
-            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))?;
+        Ok(match slot {
+            Some((owner, value)) if *owner == self.loop_var_frame => value.as_ref(),
+            _ => None,
+        })
     }
 
     fn remove_loop_var_value(&mut self, expr: &ExprRef) {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.clear(module_idx, expr_idx);
+        let frame = self.loop_var_frame;
+        if matches!(
+            self.loop_var_values.get_checked(module_idx, expr_idx),
+            Ok(Some((owner, _))) if *owner == frame
+        ) {
+            let _ = self
+                .loop_var_values
+                .set_checked(module_idx, expr_idx, (frame, None));
+        }
     }
 
     #[inline]
@@ -1035,6 +1074,7 @@ impl Interpreter {
     ) -> Result<bool> {
         self.check_execution_time()?;
         let scope_saved = self.current_scope()?.clone();
+        let pending_saved = self.head_key_loops_pending();
         let mut count: usize = 0;
 
         // Fetch the binding plan for this some..in expression
@@ -1057,6 +1097,7 @@ impl Interpreter {
             Value::Array(a) => {
                 for (idx, value) in a.iter().enumerate() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, &Value::from(idx))?
@@ -1099,6 +1140,7 @@ impl Interpreter {
             Value::Set(s) => {
                 for value in s.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, value)? == Value::from(true)
@@ -1141,6 +1183,7 @@ impl Interpreter {
             Value::Object(o) => {
                 for (key, value) in o.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, key)? == Value::from(true)
@@ -1187,6 +1230,7 @@ impl Interpreter {
             }
         }
 
+        self.set_head_key_loops_pending(pending_saved);
         Ok(count > 0)
     }
 
@@ -1623,7 +1667,32 @@ impl Interpreter {
         }
     }
 
+    fn head_key_loops_pending(&self) -> bool {
+        self.contexts
+            .last()
+            .is_some_and(|context| context.head_key_loops_pending)
+    }
+
+    fn set_head_key_loops_pending(&mut self, pending: bool) {
+        if let Some(context) = self.contexts.last_mut() {
+            context.head_key_loops_pending = pending;
+        }
+    }
+
+    // A resolved head-key recheck only holds for the current bindings, so
+    // each loop iteration restores the pending state on exit.
     fn eval_stmts_in_loop(
+        &mut self,
+        stmts: &[&LiteralStmt],
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
+        let pending = self.head_key_loops_pending();
+        let result = self.eval_stmts_in_loop_impl(stmts, loops);
+        self.set_head_key_loops_pending(pending);
+        result
+    }
+
+    fn eval_stmts_in_loop_impl(
         &mut self,
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
@@ -2458,6 +2527,13 @@ impl Interpreter {
             },
             |call| self.is_safe_projected_key_call(call),
         )? {
+            if self
+                .contexts
+                .last()
+                .is_some_and(|context| context.head_key_loops_pending)
+            {
+                return Ok(self.projected_head_key_loops_match()? == Some(false));
+            }
             return Ok(false);
         }
         Ok(self.eval_expr(&key_expr)? != filter)
@@ -2490,6 +2566,9 @@ impl Interpreter {
         self.scopes.push(Scope::default());
         let result = self.key_matches_in_hoisted_loops(&loops, &key_expr, &filter);
         self.scopes.pop();
+        if let (Ok(resolved), Some(context)) = (&result, self.contexts.last_mut()) {
+            context.head_key_loops_pending = resolved.is_none();
+        }
         result
     }
 
@@ -2513,6 +2592,14 @@ impl Interpreter {
             }
             return Ok(Some(self.eval_expr(key_expr)? == *filter));
         };
+        // An enclosing output loop already bound this iteration; reuse it
+        // instead of overwriting and then clearing the live binding.
+        if self
+            .get_loop_var_value(Self::loop_assignment_expr(loop_info))?
+            .is_some()
+        {
+            return self.key_matches_in_hoisted_loops(remaining, key_expr, filter);
+        }
         if !crate::compiler::hoist::key_expr_is_ready(
             &loop_info.collection,
             |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
@@ -2533,11 +2620,11 @@ impl Interpreter {
         let loop_target = Self::loop_assignment_expr(loop_info).clone();
         self.scopes.push(Scope::default());
         let result = (|| {
-            let mut unresolved = false;
             match collection {
                 Value::Array(values) => {
                     for (index, value) in values.iter().enumerate() {
                         self.memory_check()?;
+                        self.check_execution_time()?;
                         match self.key_matches_for_hoisted_loop_item(
                             &loop_target,
                             &index_plan,
@@ -2549,13 +2636,16 @@ impl Interpreter {
                         )? {
                             Some(true) => return Ok(Some(true)),
                             Some(false) => {}
-                            None => unresolved = true,
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
                         }
                     }
                 }
                 Value::Set(values) => {
                     for value in values.iter() {
                         self.memory_check()?;
+                        self.check_execution_time()?;
                         match self.key_matches_for_hoisted_loop_item(
                             &loop_target,
                             &index_plan,
@@ -2567,13 +2657,16 @@ impl Interpreter {
                         )? {
                             Some(true) => return Ok(Some(true)),
                             Some(false) => {}
-                            None => unresolved = true,
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
                         }
                     }
                 }
                 Value::Object(values) => {
                     for (key, value) in values.iter() {
                         self.memory_check()?;
+                        self.check_execution_time()?;
                         match self.key_matches_for_hoisted_loop_item(
                             &loop_target,
                             &index_plan,
@@ -2585,14 +2678,16 @@ impl Interpreter {
                         )? {
                             Some(true) => return Ok(Some(true)),
                             Some(false) => {}
-                            None => unresolved = true,
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
                         }
                     }
                 }
                 Value::Undefined => {}
                 _ => {}
             }
-            Ok(if unresolved { None } else { Some(false) })
+            Ok(Some(false))
         })();
         self.scopes.pop();
         self.remove_loop_var_value(&loop_target);
@@ -4034,6 +4129,7 @@ impl Interpreter {
                 }
                 if let Some(context) = self.contexts.last_mut() {
                     context.output_query = Some(body.query.qidx);
+                    context.head_key_loops_pending = false;
                 }
                 result = match self.projected_head_key_loops_match() {
                     Ok(Some(false)) => Ok(false),
@@ -4638,14 +4734,23 @@ impl Interpreter {
         // the local variables of callee function.
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
-        let loop_var_values = core::mem::take(&mut self.loop_var_values);
-        self.ensure_loop_var_values_capacity();
+        // Give the callee an empty view of hoisted-expression bindings without
+        // copying the table; only slots it overwrites are restored afterwards.
+        let parent_frame = self.loop_var_frame;
+        let undo_len = self.loop_var_undo.len();
+        self.loop_var_frame_counter = self.loop_var_frame_counter.wrapping_add(1).max(1);
+        self.loop_var_frame = self.loop_var_frame_counter;
 
         let res = self.eval_rule_impl(module, rule, key_filter);
 
+        for (module_idx, expr_idx, old) in self.loop_var_undo.drain(undo_len..).rev() {
+            let _ = self
+                .loop_var_values
+                .replace_checked(module_idx, expr_idx, old);
+        }
+        self.loop_var_frame = parent_frame;
         let restore_module = self.set_current_module(prev_module);
         self.scopes = scopes;
-        self.loop_var_values = loop_var_values;
         restore_module?;
         match self.active_rules.pop() {
             Some(ref r) if r == &invocation => res,

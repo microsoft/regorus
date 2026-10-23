@@ -78,12 +78,19 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// Compiles `loops` around `stmts`. When `first_stmt_owns_loops` is set,
+    /// the loops were hoisted from `stmts[0]`, which is compiled directly in
+    /// the innermost loop; otherwise every statement is compiled normally.
     pub(super) fn compile_hoisted_loops(
         &mut self,
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
+        first_stmt_owns_loops: bool,
     ) -> Result<()> {
         if loops.is_empty() {
+            if !first_stmt_owns_loops {
+                return self.hoist_loops_and_compile_statements(stmts);
+            }
             if !stmts.is_empty() {
                 self.compile_single_statement(stmts[0])?;
                 self.emit_key_filter_guard(&stmts[0].span)?;
@@ -101,10 +108,10 @@ impl<'a> Compiler<'a> {
                 self.compile_index_iteration_loop(
                     &current_loop.loop_expr,
                     &current_loop.key,
-                    &current_loop.value,
                     &current_loop.collection,
                     stmts,
                     remaining_loops,
+                    first_stmt_owns_loops,
                 )?;
                 Ok(())
             }
@@ -168,7 +175,7 @@ impl<'a> Compiler<'a> {
             multi_value: false,
             value_expr: None,
             span: span.clone(),
-            key_loops_hoisted: false,
+            hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
             output_query: Some(query.qidx),
         };
@@ -229,10 +236,10 @@ impl<'a> Compiler<'a> {
         &mut self,
         loop_expr: &Option<ExprRef>,
         key_var: &Option<ExprRef>,
-        _value_var: &ExprRef,
         collection: &ExprRef,
         remaining_stmts: &[&LiteralStmt],
         remaining_loops: &[HoistedLoop],
+        first_stmt_owns_loops: bool,
     ) -> Result<()> {
         let collection_reg = self.compile_rego_expr(collection)?;
 
@@ -311,7 +318,7 @@ impl<'a> Compiler<'a> {
         self.emit_key_filter_guard(collection.span())?;
 
         let body_stmts = &remaining_stmts[0..];
-        self.compile_hoisted_loops(body_stmts, remaining_loops)?;
+        self.compile_hoisted_loops(body_stmts, remaining_loops, first_stmt_owns_loops)?;
 
         self.emit_instruction(
             Instruction::LoopNext {
