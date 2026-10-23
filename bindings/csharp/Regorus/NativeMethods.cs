@@ -883,7 +883,7 @@ namespace Regorus.Internal
         /// </summary>
         MemoryBudgetExceeded,
         /// <summary>
-        /// An RVM memory budget was used with suspendable execution.
+        /// Reserved for native ABI compatibility.
         /// </summary>
         MemoryBudgetUnsupportedInSuspendableExecution,
     }

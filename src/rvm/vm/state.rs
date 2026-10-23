@@ -9,12 +9,6 @@ use super::execution_model::ExecutionState;
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Reset all execution state and return objects to pools for reuse
-    pub(super) fn reset_execution_state(&mut self) {
-        self.release_previous_execution_state();
-        self.initialize_execution_state();
-    }
-
     /// Release values retained by the previous execution before capturing a new memory baseline.
     pub(super) fn reset_run_to_completion_state(&mut self) -> Result<()> {
         self.release_previous_execution_state();
@@ -34,7 +28,7 @@ impl RegoVM {
         Ok(())
     }
 
-    fn release_previous_execution_state(&mut self) {
+    pub(super) fn release_previous_execution_state(&mut self) {
         self.evaluated = Value::Undefined;
         self.execution_state = ExecutionState::Ready;
         self.execution_stack.clear();
@@ -59,7 +53,51 @@ impl RegoVM {
         error
     }
 
-    fn initialize_execution_state(&mut self) {
+    /// Publish an initial suspendable execution error without discarding legacy unbudgeted state.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
+        if self.active_memory_budget_config.is_some() {
+            return self.fail_suspendable_execution(error);
+        }
+
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
+        error
+    }
+
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
+        error
+    }
+
+    /// Release state after a failed budgeted suspendable execution.
+    ///
+    /// Unbudgeted executions preserve their legacy error state.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        if self.active_memory_budget_config.is_none() {
+            return error;
+        }
+
+        self.release_previous_execution_state();
+        self.finish_active_memory_budget_execution();
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
+        error
+    }
+
+    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
+    #[allow(clippy::unused_self)]
+    pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        error
+    }
+
+    pub(super) fn initialize_execution_state(&mut self) {
         // Reset basic execution state
         self.executed_instructions = 0;
         self.pc = 0;
