@@ -31,6 +31,8 @@ use crate::{Rc, Value};
 pub(crate) use error::HistoryError;
 pub(crate) use graph::ObservationWorld;
 #[cfg(verus_keep_ghost)]
+use progress::verify as progress_model;
+#[cfg(verus_keep_ghost)]
 use verify::*;
 use vstd::prelude::*;
 
@@ -157,8 +159,8 @@ impl HistoryMatchState {
                     let ghost selected = before[index as int];
                     let ghost (head, tail) = choose|head: language::Head, tail: language::Regex<language::SrcTest>|
                         language::decodes_policy(value_view(selected.policy), head, tail)
-                            && progress::verify::pair_represents(selected.pair, head, tail);
-                    progress::verify::lemma_pair_represents_wf(selected.pair, head, tail);
+                            && progress_model::pair_represents(selected.pair, head, tail);
+                    progress_model::lemma_pair_represents_wf(selected.pair, head, tail);
                 }
                 let pairs = self.pairs.as_mut_slice();
                 let entry = pairs
@@ -168,7 +170,7 @@ impl HistoryMatchState {
                 let result = entry.pair.evaluate(history, request, timer, world);
                 proof! {
                     assert(language::decodes_policy(value_view(self.pairs@[index as int].policy), head, tail));
-                    assert(progress::verify::pair_represents(self.pairs@[index as int].pair, head, tail));
+                    assert(progress_model::pair_represents(self.pairs@[index as int].pair, head, tail));
                     assert(retained_pair_wf(self.pairs@[index as int]));
                     assert forall|j: int| 0 <= j < self.pairs@.len()
                         implies retained_pair_wf(self.pairs@[j]) by {
@@ -218,7 +220,7 @@ impl HistoryMatchState {
         proof_decl! {
             let ghost (head, tail) = choose|head: language::Head, tail: language::Regex<language::SrcTest>|
                 language::decodes_policy(value_view(*policy), head, tail)
-                    && progress::verify::pair_represents(pair, head, tail);
+                    && progress_model::pair_represents(pair, head, tail);
         }
         let answer = match pair.evaluate(history, request, timer, world) {
             Ok(answer) => answer,
@@ -259,7 +261,7 @@ impl HistoryMatchState {
             );
             proof! {
                 assert(language::decodes_policy(value_view(self.pairs@[0].policy), head, tail));
-                assert(progress::verify::pair_represents(self.pairs@[0].pair, head, tail));
+                assert(progress_model::pair_represents(self.pairs@[0].pair, head, tail));
                 assert(retained_pair_wf(self.pairs@[0]));
                 assert forall|j: int| 0 <= j < self.pairs@.len()
                     implies retained_pair_wf(self.pairs@[j]) by {
@@ -288,7 +290,7 @@ pub(crate) mod verify {
         pub(super) open spec fn retained_pair_wf(entry: RetainedPair) -> bool {
             exists|head: language::Head, tail: language::Regex<language::SrcTest>|
                 language::decodes_policy(value_view(entry.policy), head, tail)
-                    && progress::verify::pair_represents(entry.pair, head, tail)
+                    && progress_model::pair_represents(entry.pair, head, tail)
         }
 
         impl HistoryMatchState {

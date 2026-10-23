@@ -3,6 +3,8 @@
 
 #[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
+#[cfg(verus_keep_ghost)]
+use super::normalize::verify as norm;
 use super::{
     error::HistoryError,
     graph::{
@@ -21,7 +23,9 @@ use crate::verify::history_specs as language;
 #[cfg(verus_keep_ghost)]
 use crate::verify::value_assumptions::object_iter_remaining;
 #[cfg(verus_keep_ghost)]
-use crate::verify::value_specs::{value_view, Data};
+use crate::verify::value_specs::{
+    lemma_value_view_array, lemma_value_view_object, lemma_value_view_set, value_view, Data,
+};
 use crate::{
     utils::limits::ExecutionTimer,
     value::{Array, Object},
@@ -77,7 +81,7 @@ fn tagged<'a>(value: &'a Value, path: &str) -> KernelResult<(&'a str, &'a Value)
         return Err(invalid(path, "tag must be a string"));
     };
     proof! {
-        crate::verify::value_specs::lemma_value_view_object(*object);
+        lemma_value_view_object(*object);
         assert forall|candidate: Value| object@.contains_key(candidate) implies candidate == *key by {
             let i = choose|i: int| 0 <= i < entries.len() && entries[i].0 == candidate;
             assert(i == 0);
@@ -652,7 +656,7 @@ impl CompiledPattern {
                         )?;
                         let mut pending: WorkVec<(&Value, String)> = WorkVec::new();
                         let mut it = children.iter_sorted();
-                        proof_decl! { let ghost entries = crate::verify::value_assumptions::object_iter_remaining(it); }
+                        proof_decl! { let ghost entries = object_iter_remaining(it); }
                         proof! { assert(pattern_object_entries(*children, entries)); }
                         let mut index = 0_usize;
                         #[cfg_attr(verus_keep_ghost, verus_spec(
@@ -665,7 +669,7 @@ impl CompiledPattern {
                             pattern_compile_work_valid(pattern_compile_work(work.view())),
                             pattern_compile_work_valid(initial_pending),
                                 work.view() == initial_work, pattern_object_entries(*children, entries),
-                                crate::verify::value_assumptions::object_iter_remaining(it) == entries.skip(index as int),
+                                object_iter_remaining(it) == entries.skip(index as int),
                                 keys@.len() == index, pending.view().len() == index,
                                 forall|i: int| 0 <= i < index ==> value_view(keys@[i]) == value_view(entries[i].0)
                                     && *pending.view()[i].0 == entries[i].1,
@@ -1090,7 +1094,7 @@ impl CompiledPattern {
                     return Ok(false);
                 };
                 proof! {
-                    crate::verify::value_specs::lemma_value_view_array(*values);
+                    lemma_value_view_array(*values);
                     assert(value_view(*value)->Array_0 =~= values_data(values@));
                 }
                 if values.len() != children.len() {
@@ -1198,7 +1202,7 @@ impl CompiledPattern {
                     loop_try!(checkpoint(timer, world), failure);
                     let selected = values.get(key);
                     proof! {
-                        crate::verify::value_specs::lemma_value_view_object(*values);
+                        lemma_value_view_object(*values);
                         if let Some(selected) = selected {
                             let raw = choose|raw: Value| values@.contains_key(raw) && value_view(raw) == value_view(*key) && *selected == values@[raw];
                             assert((value_view(*value)->Object_0)[value_view(*key)] == value_view(*selected));
@@ -1380,7 +1384,7 @@ fn decode_regex_many<S: Storage>(
             assert forall|sym: model::Symbols, bindings: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
                 implies model::regex_lang(kernel.graph(), sym, bindings, id@, word)
                     == (exists|i: int| 0 <= i < children@.len() && model::regex_lang(kernel.graph(), sym, bindings, children@[i]@, word)) by {
-                assert(normalize::verify::regex_combo(kernel.graph(), sym, bindings, children@, word, false)
+                assert(norm::regex_combo(kernel.graph(), sym, bindings, children@, word, false)
                     == (exists|i: int| 0 <= i < children@.len() && model::regex_lang(kernel.graph(), sym, bindings, children@[i]@, word)));
             }
             assert(source_native_many(kernel.graph(), id, children@, tag@));
@@ -1393,7 +1397,7 @@ fn decode_regex_many<S: Storage>(
             assert forall|sym: model::Symbols, bindings: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
                 implies model::regex_lang(kernel.graph(), sym, bindings, id@, word)
                     == language::lang(model::gsem(sym, bindings), language::Regex::Concat(model::lift_regexes(kernel.graph(), model::regex_ids(children@))), word) by {
-                assert(normalize::verify::concat_combo(kernel.graph(), sym, bindings, children@, word)
+                assert(norm::concat_combo(kernel.graph(), sym, bindings, children@, word)
                     == language::lang(model::gsem(sym, bindings), language::Regex::Concat(model::lift_regexes(kernel.graph(), model::regex_ids(children@))), word));
             }
             assert(source_native_many(kernel.graph(), id, children@, tag@));
@@ -1406,7 +1410,7 @@ fn decode_regex_many<S: Storage>(
             assert forall|sym: model::Symbols, bindings: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
                 implies model::regex_lang(kernel.graph(), sym, bindings, id@, word)
                     == (forall|i: int| 0 <= i < children@.len() ==> model::regex_lang(kernel.graph(), sym, bindings, children@[i]@, word)) by {
-                assert(normalize::verify::regex_combo(kernel.graph(), sym, bindings, children@, word, true)
+                assert(norm::regex_combo(kernel.graph(), sym, bindings, children@, word, true)
                     == (forall|i: int| 0 <= i < children@.len() ==> model::regex_lang(kernel.graph(), sym, bindings, children@[i]@, word)));
             }
             assert(source_native_many(kernel.graph(), id, children@, tag@));
@@ -1631,7 +1635,7 @@ fn decode_step<'source, S: Storage>(
                     proof! {
                         lemma_member_deep(*fields, "path"@, *path_value);
                         lemma_member_deep(*fields, "term"@, *term_value);
-                        crate::verify::value_specs::lemma_value_view_object(*fields);
+                        lemma_value_view_object(*fields);
                         let raw_path = choose|key: Value| fields@.contains_key(key) && value_view(key) == Data::String("path"@) && fields@[key] == *path_value;
                         let raw_term = choose|key: Value| fields@.contains_key(key) && value_view(key) == Data::String("term"@) && fields@[key] == *term_value;
                         let deep = value_view(*payload)->Object_0;
@@ -1886,7 +1890,7 @@ pub(crate) fn compile_pair(
     let request = member(fields, "request", "$", timer, world)?;
     let history = member(fields, "history", "$", timer, world)?;
     proof! {
-        crate::verify::value_specs::lemma_value_view_object(*fields);
+        lemma_value_view_object(*fields);
         lemma_member_deep(*fields, "request"@, *request);
         lemma_member_deep(*fields, "history"@, *history);
         let request_key = choose|key: Value| fields@.contains_key(key) && value_view(key) == Data::String("request"@) && fields@[key] == *request;
@@ -2012,11 +2016,11 @@ fn select<'a>(
         checkpoint(timer, world)?;
         let next = match current {
             Value::Object(values) => {
-                proof! { crate::verify::value_specs::lemma_value_view_object(*values); }
+                proof! { lemma_value_view_object(*values); }
                 values.get(key)
             }
             Value::Set(values) => {
-                proof! { crate::verify::value_specs::lemma_value_view_set(*values); }
+                proof! { lemma_value_view_set(*values); }
                 values.get(key)
             }
             Value::Array(values) => {
@@ -3034,10 +3038,6 @@ pub(crate) mod verify {
         })
     }
 
-    pub open spec fn vec_of(theta: language::Subst, sym: model::Symbols) -> Seq<Data> {
-        sym.variables.map(|i: int, name: Seq<char>| theta[name])
-    }
-
     pub enum PendingPatternWork {
         Enter(Data), Array(nat, nat), Object(Seq<Data>, nat),
     }
@@ -3180,7 +3180,7 @@ pub(crate) mod verify {
         ensures keys.no_duplicates(), keys.to_set() == (value_view(Value::Object(object))->Object_0).dom(),
             forall|i: int| 0 <= i < keys.len() ==> children[i] == (value_view(Value::Object(object))->Object_0)[keys[i]],
     {
-        crate::verify::value_specs::lemma_value_view_object(object);
+        lemma_value_view_object(object);
         keys.to_set_ensures();
         let fields = value_view(Value::Object(object))->Object_0;
         assert forall|i: int, j: int| 0 <= i < j < keys.len() implies keys[i] != keys[j] by {
@@ -3949,7 +3949,7 @@ pub(crate) mod verify {
             _ => false,
         },
     {
-        crate::verify::value_specs::lemma_value_view_object(object);
+        lemma_value_view_object(object);
         let candidate = choose|candidate: Value| object@.contains_key(candidate)
             && value_view(candidate) == Data::String(key) && object@[candidate] == value;
     }
@@ -4027,7 +4027,7 @@ pub(crate) mod verify {
     pub proof fn lemma_array_data(array: crate::Rc<Array>)
         ensures value_view(Value::Array(array)) == Data::Array(values_data(array@)),
     {
-        crate::verify::value_specs::lemma_value_view_array(array);
+        lemma_value_view_array(array);
         let data = match value_view(Value::Array(array)) { Data::Array(data) => data, _ => Seq::empty() };
         assert(data =~= values_data(array@));
     }

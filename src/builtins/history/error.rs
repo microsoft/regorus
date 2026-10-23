@@ -3,9 +3,7 @@
 
 use crate::utils::limits::LimitError;
 use alloc::string::String;
-#[cfg(verus_keep_ghost)]
-use vstd::prelude::verus_spec;
-use vstd::prelude::verus_verify;
+use vstd::prelude::{verus_spec, verus_verify};
 
 #[verus_verify]
 #[verus_verify(external_derive)]
@@ -63,7 +61,7 @@ pub(crate) const fn invalid_truth_assignment() -> HistoryError {
     }
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verus_spec(result => ensures result is Invariant))]
+#[verus_spec(result => ensures result is Invariant)]
 #[inline]
 pub(crate) const fn graph_id_overflow() -> HistoryError {
     HistoryError::Invariant {
@@ -71,7 +69,7 @@ pub(crate) const fn graph_id_overflow() -> HistoryError {
     }
 }
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verus_spec(result => ensures result is GraphLimit))]
+#[verus_spec(result => ensures result is GraphLimit)]
 #[inline]
 pub(crate) const fn graph_index_overflow() -> HistoryError {
     HistoryError::GraphLimit { limit: 100 * 1024 }

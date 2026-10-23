@@ -551,45 +551,6 @@ pub proof fn lemma_derive_word_nullable<L>(sem: spec_fn(L, Data) -> bool, w: Seq
     assert(w + Seq::<Data>::empty() =~= w);
 }
 
-pub proof fn lemma_derivative_concat_bound<L>(sem: spec_fn(L, Data) -> bool, e: Data, b1: Regex<L>, b2: Regex<L>, cs: Seq<Regex<L>>)
-    requires
-        forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], b1),
-        forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], b2),
-    ensures derivative_concat(sem, e, b1, cs) == derivative_concat(sem, e, b2, cs),
-    decreases cs.len(),
-{
-    if cs.len() > 0 {
-        assert forall|i: int| 0 <= i < cs.drop_first().len() implies is_smaller_than(cs.drop_first()[i], b1) && is_smaller_than(cs.drop_first()[i], b2) by {
-            assert(cs.drop_first()[i] == cs[i + 1]);
-        }
-        lemma_derivative_concat_bound(sem, e, b1, b2, cs.drop_first());
-    }
-}
-
-pub proof fn lemma_derivative_concat_unfold<L>(sem: spec_fn(L, Data) -> bool, e: Data, cs: Seq<Regex<L>>)
-    ensures derivative(sem, e, Regex::Concat(cs)) == if cs.len() == 0 { Regex::Empty } else {
-        Regex::Union(seq![Regex::Concat(seq![derivative(sem, e, cs[0])] + cs.drop_first())]
-            + if nullable(cs[0]) { seq![derivative(sem, e, Regex::Concat(cs.drop_first()))] } else { Seq::empty() })
-    },
-{
-    reveal_with_fuel(derivative, 2);
-    reveal_with_fuel(derivative_concat, 2);
-    assert forall|i: int| 0 <= i < cs.len() implies is_smaller_than(cs[i], Regex::Concat(cs)) by { }
-    if cs.len() > 0 {
-        let rest = cs.drop_first();
-        assert(rest.len() == cs.len() - 1);
-        assert forall|i: int| 0 <= i < rest.len() implies is_smaller_than(rest[i], Regex::Concat(cs)) by {
-            assert(rest[i] == cs[i + 1]);
-        }
-        assert forall|i: int| 0 <= i < rest.len() implies is_smaller_than(rest[i], Regex::Concat(rest)) by { }
-        lemma_derivative_concat_bound(sem, e, Regex::Concat(cs), Regex::Concat(rest), rest);
-        assert(derivative(sem, e, Regex::Concat(rest)) == derivative_concat(sem, e, Regex::Concat(rest), rest));
-        let expected = seq![Regex::Concat(seq![derivative(sem, e, cs[0])] + rest)]
-            + if nullable(cs[0]) { seq![derivative(sem, e, Regex::Concat(rest))] } else { Seq::empty() };
-        assert(derivative(sem, e, Regex::Concat(cs))->Union_0 =~= expected);
-    }
-}
-
 pub proof fn lemma_interp_const<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>)
     ensures interp_transition(sem, e, Transition::Const(r)) == r,
 { }

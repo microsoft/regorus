@@ -144,7 +144,7 @@ fn schedule_derivative_children<G: KernelStore>(
     requires model::graph_wf(store.graph()), start <= count,
         id@ < store.graph().regexes.len(), count == derivative_children_ids(store.graph(), id).len(),
     ensures match result { Ok(suffix) =>
-        super::normalize::verify::regex_ids_valid(store.graph(), suffix.view())
+        norm::regex_ids_valid(store.graph(), suffix.view())
         && model::regex_ids(suffix.view()) == derivative_children_ids(store.graph(), id).subrange(start as int, count as int),
         Err(_) => true },
 )]
@@ -162,7 +162,7 @@ fn concat_suffix<G: KernelStore>(
         model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
         count == derivative_children_ids(store.graph(), id).len(),
         model::regex_node_wf_at(store.graph(), store.graph().regexes[id@ as int], id@),
-        super::normalize::verify::regex_ids_valid(store.graph(), suffix.view()),
+        norm::regex_ids_valid(store.graph(), suffix.view()),
         suffix.view().len() == i - start,
         forall|j: int| 0 <= j < suffix.view().len() ==> suffix.view()[j]@ == derivative_children_ids(store.graph(), id)[start as int + j],
         ensures failure.is_none() ==> i == count, decreases count - i))]
@@ -1452,7 +1452,7 @@ pub(crate) mod verify {
     pub open spec fn derivative_correct(g: model::Graph, root: nat, out: TransitionId) -> bool {
         root < g.regexes.len() && out@ < g.transitions.len()
         && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            model::symbols_wf(sym) ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+            model::symbols_wf(sym) ==> norm::transition_lang(g, sym, theta, out, event, word)
                 == model::regex_lang(g, sym, theta, root, seq![event] + word)
     }
 
@@ -1685,9 +1685,9 @@ pub(crate) mod verify {
     pub open spec fn derivative_results(
         g: model::Graph, root: RegexId, concat: bool, count: nat, results: Seq<TransitionId>,
     ) -> bool {
-        super::super::normalize::verify::transition_ids_valid(g, results)
+        norm::transition_ids_valid(g, results)
         && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>, intersect: bool|
-            model::symbols_wf(sym) ==> super::super::normalize::verify::transition_combo(g, sym, theta, results, event, word, intersect)
+            model::symbols_wf(sym) ==> norm::transition_combo(g, sym, theta, results, event, word, intersect)
                 == derivative_factor_combo(g, root, concat, count, intersect, sym, theta, event, word)
     }
 
@@ -1723,13 +1723,13 @@ pub(crate) mod verify {
         model::lemma_graph_wf_elim(a);
         model::lemma_lift_stable_under_extends(a, b);
         assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>, intersect: bool|
-            model::symbols_wf(sym) implies super::super::normalize::verify::transition_combo(b, sym, theta, results, event, word, intersect)
+            model::symbols_wf(sym) implies norm::transition_combo(b, sym, theta, results, event, word, intersect)
                 == derivative_factor_combo(b, root, concat, count, intersect, sym, theta, event, word) by {
             assert forall|i: int| 0 <= i < results.len() implies
-                super::super::normalize::verify::transition_lang(a, sym, theta, results[i], event, word)
-                    == super::super::normalize::verify::transition_lang(b, sym, theta, results[i], event, word) by {}
-            assert(super::super::normalize::verify::transition_combo(a, sym, theta, results, event, word, intersect)
-                == super::super::normalize::verify::transition_combo(b, sym, theta, results, event, word, intersect));
+                norm::transition_lang(a, sym, theta, results[i], event, word)
+                    == norm::transition_lang(b, sym, theta, results[i], event, word) by {}
+            assert(norm::transition_combo(a, sym, theta, results, event, word, intersect)
+                == norm::transition_combo(b, sym, theta, results, event, word, intersect));
             assert(derivative_factor_combo(a, root, concat, count, intersect, sym, theta, event, word)
                 == derivative_factor_combo(b, root, concat, count, intersect, sym, theta, event, word));
         }
@@ -1744,9 +1744,9 @@ pub(crate) mod verify {
         model::lemma_lift_regex_stable(a, b, root);
         model::lemma_lift_transition_stable(a, b, out@);
         assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies super::super::normalize::verify::transition_lang(b, sym, theta, out, event, word)
+            implies norm::transition_lang(b, sym, theta, out, event, word)
                 == model::regex_lang(b, sym, theta, root, seq![event] + word) by {
-            assert(super::super::normalize::verify::transition_lang(a, sym, theta, out, event, word)
+            assert(norm::transition_lang(a, sym, theta, out, event, word)
                 == model::regex_lang(a, sym, theta, root, seq![event] + word));
         }
     }
@@ -1831,52 +1831,52 @@ pub(crate) mod verify {
         requires derivative_results(g, root, concat, index, prior), out@ < g.transitions.len(),
             !concat || derivative_prefix(g, root, index),
             forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                ==> norm::transition_lang(g, sym, theta, out, event, word)
                     == derivative_factor_language(g, root, concat, index as int, sym, theta, event, word),
         ensures derivative_results(g, root, concat, index + 1, prior.push(out)),
     {
         hide(language::lang); hide(language::derivative); hide(language::interp_transition);
-        hide(super::super::normalize::verify::transition_lang); hide(derivative_factor_language);
+        hide(norm::transition_lang); hide(derivative_factor_language);
         assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>, intersect: bool|
-            model::symbols_wf(sym) implies super::super::normalize::verify::transition_combo(g, sym, theta, prior.push(out), event, word, intersect)
+            model::symbols_wf(sym) implies norm::transition_combo(g, sym, theta, prior.push(out), event, word, intersect)
                 == derivative_factor_combo(g, root, concat, index + 1, intersect, sym, theta, event, word) by {
             if intersect {
                 assert forall|i: int| 0 <= i < prior.push(out).len() implies
-                    super::super::normalize::verify::transition_lang(g, sym, theta, prior.push(out)[i], event, word)
-                        == if i < prior.len() { super::super::normalize::verify::transition_lang(g, sym, theta, prior[i], event, word) }
-                            else { super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word) } by {}
+                    norm::transition_lang(g, sym, theta, prior.push(out)[i], event, word)
+                        == if i < prior.len() { norm::transition_lang(g, sym, theta, prior[i], event, word) }
+                            else { norm::transition_lang(g, sym, theta, out, event, word) } by {}
                 assert(prior.push(out)[prior.len() as int] == out);
-                if super::super::normalize::verify::transition_combo(g, sym, theta, prior.push(out), event, word, true) {
+                if norm::transition_combo(g, sym, theta, prior.push(out), event, word, true) {
                     assert forall|i: int| 0 <= i < prior.len() implies
-                        super::super::normalize::verify::transition_lang(g, sym, theta, prior[i], event, word) by {
+                        norm::transition_lang(g, sym, theta, prior[i], event, word) by {
                         assert(prior.push(out)[i] == prior[i]);
                     }
                 }
-                if super::super::normalize::verify::transition_combo(g, sym, theta, prior, event, word, true)
-                    && super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word) {
+                if norm::transition_combo(g, sym, theta, prior, event, word, true)
+                    && norm::transition_lang(g, sym, theta, out, event, word) {
                     assert forall|i: int| 0 <= i < prior.push(out).len() implies
-                        super::super::normalize::verify::transition_lang(g, sym, theta, prior.push(out)[i], event, word) by {
+                        norm::transition_lang(g, sym, theta, prior.push(out)[i], event, word) by {
                         if i < prior.len() { assert(prior.push(out)[i] == prior[i]); } else { assert(prior.push(out)[i] == out); }
                     }
                 }
-                assert(super::super::normalize::verify::transition_combo(g, sym, theta, prior.push(out), event, word, true)
-                    == (super::super::normalize::verify::transition_combo(g, sym, theta, prior, event, word, true)
-                        && super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)));
+                assert(norm::transition_combo(g, sym, theta, prior.push(out), event, word, true)
+                    == (norm::transition_combo(g, sym, theta, prior, event, word, true)
+                        && norm::transition_lang(g, sym, theta, out, event, word)));
             } else {
-                if super::super::normalize::verify::transition_combo(g, sym, theta, prior.push(out), event, word, false) {
+                if norm::transition_combo(g, sym, theta, prior.push(out), event, word, false) {
                     let i = choose|i: int| 0 <= i < prior.push(out).len()
-                        && super::super::normalize::verify::transition_lang(g, sym, theta, prior.push(out)[i], event, word);
-                    if i < prior.len() { assert(super::super::normalize::verify::transition_combo(g, sym, theta, prior, event, word, false)); }
+                        && norm::transition_lang(g, sym, theta, prior.push(out)[i], event, word);
+                    if i < prior.len() { assert(norm::transition_combo(g, sym, theta, prior, event, word, false)); }
                 }
-                if super::super::normalize::verify::transition_combo(g, sym, theta, prior, event, word, false) {
+                if norm::transition_combo(g, sym, theta, prior, event, word, false) {
                     let i = choose|i: int| 0 <= i < prior.len()
-                        && super::super::normalize::verify::transition_lang(g, sym, theta, prior[i], event, word);
+                        && norm::transition_lang(g, sym, theta, prior[i], event, word);
                     assert(prior.push(out)[i] == prior[i]);
                 }
                 assert(prior.push(out)[prior.len() as int] == out);
-                assert(super::super::normalize::verify::transition_combo(g, sym, theta, prior.push(out), event, word, false)
-                    == (super::super::normalize::verify::transition_combo(g, sym, theta, prior, event, word, false)
-                        || super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)));
+                assert(norm::transition_combo(g, sym, theta, prior.push(out), event, word, false)
+                    == (norm::transition_combo(g, sym, theta, prior, event, word, false)
+                        || norm::transition_lang(g, sym, theta, out, event, word)));
             }
         }
     }
@@ -1893,15 +1893,15 @@ pub(crate) mod verify {
             derivative_correct(g, derivative_children_ids(g, root)[index], d),
             model::regex_ids(suffix) == derivative_children_ids(g, root).subrange(index + 1, derivative_children_ids(g, root).len() as int),
             forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
-                    == super::super::normalize::verify::transition_append_combo(g, sym, theta, d, suffix, event, word),
+                ==> norm::transition_lang(g, sym, theta, out, event, word)
+                    == norm::transition_append_combo(g, sym, theta, d, suffix, event, word),
         ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+            ==> norm::transition_lang(g, sym, theta, out, event, word)
                 == derivative_factor_language(g, root, true, index, sym, theta, event, word),
     {
         hide(language::lang); hide(language::derivative); hide(language::interp_transition);
         assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+            implies norm::transition_lang(g, sym, theta, out, event, word)
                 == derivative_factor_language(g, root, true, index, sym, theta, event, word) by {
             let sem = model::gsem(sym, theta);
             let child = model::lift_regex(g, derivative_children_ids(g, root)[index]);
@@ -1912,7 +1912,7 @@ pub(crate) mod verify {
             language::lemma_concat_prepend(sem, expected, tail, word);
             assert forall|w: Seq<Data>| language::lang(sem, actual, w) == language::lang(sem, expected, w) by {
                 language::lemma_derivative_correct(sem, event, child, w);
-                assert(super::super::normalize::verify::transition_lang(g, sym, theta, d, event, w)
+                assert(norm::transition_lang(g, sym, theta, d, event, w)
                     == model::regex_lang(g, sym, theta, derivative_children_ids(g, root)[index], seq![event] + w));
             }
         }
@@ -1987,22 +1987,22 @@ pub(crate) mod verify {
                 _ => false,
             }, out@ < g.transitions.len(),
             forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                ==> norm::transition_lang(g, sym, theta, out, event, word)
                     == derivative_factor_combo(g, root, concat, derivative_children_ids(g, root).len(), intersect, sym, theta, event, word),
         ensures derivative_correct(g, root@, out),
     {
         hide(language::lang); hide(language::derivative); hide(language::interp_transition);
         hide(model::lift_regex); hide(model::lift_transition);
         hide(language::nullable);
-        super::super::normalize::verify::regex_unfold(g, root@);
+        norm::regex_unfold(g, root@);
         let cs = derivative_children_ids(g, root);
         let rs = model::lift_regexes(g, cs);
         assert(rs.len() == cs.len());
         assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+            implies norm::transition_lang(g, sym, theta, out, event, word)
                 == model::regex_lang(g, sym, theta, root@, seq![event] + word) by {
             let sem = model::gsem(sym, theta);
-            assert(super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+            assert(norm::transition_lang(g, sym, theta, out, event, word)
                 == derivative_factor_combo(g, root, concat, cs.len(), intersect, sym, theta, event, word));
             assert forall|i: int| 0 <= i < cs.len() implies
                 #[trigger] derivative_factor_language(g, root, false, i, sym, theta, event, word)
@@ -2056,7 +2056,7 @@ pub(crate) mod verify {
                 }
                 assert(derivative_factor_combo(g, root, concat, cs.len(), intersect, sym, theta, event, word)
                     == derivative_sum(sem, event, rs, word));
-                assert(super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                assert(norm::transition_lang(g, sym, theta, out, event, word)
                     == model::regex_lang(g, sym, theta, root@, seq![event] + word));
             } else if intersect {
                 language::lemma_lang_intersect(sem, rs, seq![event] + word);
@@ -2075,7 +2075,7 @@ pub(crate) mod verify {
                 }
                 assert(derivative_factor_combo(g, root, false, cs.len(), true, sym, theta, event, word)
                     == (forall|i: int| 0 <= i < rs.len() ==> language::lang(sem, rs[i], seq![event] + word)));
-                assert(super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                assert(norm::transition_lang(g, sym, theta, out, event, word)
                     == model::regex_lang(g, sym, theta, root@, seq![event] + word));
             } else {
                 language::lemma_lang_union(sem, rs, seq![event] + word);
@@ -2091,7 +2091,7 @@ pub(crate) mod verify {
                 }
                 assert(derivative_factor_combo(g, root, false, cs.len(), false, sym, theta, event, word)
                     == (exists|i: int| 0 <= i < rs.len() && language::lang(sem, rs[i], seq![event] + word)));
-                assert(super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                assert(norm::transition_lang(g, sym, theta, out, event, word)
                     == model::regex_lang(g, sym, theta, root@, seq![event] + word));
             }
         }
@@ -2113,14 +2113,14 @@ pub(crate) mod verify {
             model::RegexKindNode::Empty | model::RegexKindNode::Epsilon => out@ == g.constants.transition_empty,
             model::RegexKindNode::All => out@ == g.constants.transition_all,
             model::RegexKindNode::Test(test) => forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-                model::symbols_wf(sym) ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                model::symbols_wf(sym) ==> norm::transition_lang(g, sym, theta, out, event, word)
                     == if model::test_holds(sym, theta, model::lift_test(g, test), event) { word.len() == 0 } else { false },
             model::RegexKindNode::Star(inner) => exists|d: TransitionId| inner < cache.len() && cache[inner as int] == Some(d)
                 && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
-                        == super::super::normalize::verify::transition_append_combo(g, sym, theta, d, seq![root], event, word),
+                    ==> norm::transition_lang(g, sym, theta, out, event, word)
+                        == norm::transition_append_combo(g, sym, theta, d, seq![root], event, word),
             model::RegexKindNode::Not(inner) => exists|d: TransitionId| inner < cache.len() && cache[inner as int] == Some(d)
-                && super::super::normalize::verify::transition_result(g, super::super::normalize::verify::ActionShape::Not(d@), out),
+                && norm::transition_result(g, norm::ActionShape::Not(d@), out),
             _ => derivative_correct(g, root@, out),
         }
     }
@@ -2132,18 +2132,18 @@ pub(crate) mod verify {
     {
         hide(language::lang); hide(language::derivative); hide(language::interp_transition);
         hide(model::lift_regex); hide(model::lift_transition);
-        super::super::normalize::verify::regex_unfold(g, root@);
+        norm::regex_unfold(g, root@);
         derivative_constants(g);
         match g.regexes[root@ as int].kind {
             model::RegexKindNode::Star(inner) => {
                 assert(model::lift_regex(g, root@) == language::Regex::Star(alloc::boxed::Box::new(model::lift_regex(g, inner))));
                 let d = choose|d: TransitionId| inner < cache.len() && cache[inner as int] == Some(d)
                     && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                        ==> super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
-                            == super::super::normalize::verify::transition_append_combo(g, sym, theta, d, seq![root], event, word);
+                        ==> norm::transition_lang(g, sym, theta, out, event, word)
+                            == norm::transition_append_combo(g, sym, theta, d, seq![root], event, word);
                 assert(derivative_correct(g, inner, d));
                 assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    implies super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                    implies norm::transition_lang(g, sym, theta, out, event, word)
                         == model::regex_lang(g, sym, theta, root@, seq![event] + word) by {
                     let sem = model::gsem(sym, theta);
                     let actual = language::interp_transition(sem, event, model::lift_transition(g, d@));
@@ -2154,7 +2154,7 @@ pub(crate) mod verify {
                     language::lemma_concat_prepend(sem, expected, tail, word);
                     assert forall|w: Seq<Data>| language::lang(sem, actual, w) == language::lang(sem, expected, w) by {
                         language::lemma_derivative_correct(sem, event, model::lift_regex(g, inner), w);
-                        assert(super::super::normalize::verify::transition_lang(g, sym, theta, d, event, w)
+                        assert(norm::transition_lang(g, sym, theta, d, event, w)
                             == model::regex_lang(g, sym, theta, inner, seq![event] + w));
                     }
                     language::lemma_derivative_correct(sem, event, model::lift_regex(g, root@), word);
@@ -2166,18 +2166,18 @@ pub(crate) mod verify {
             },
             model::RegexKindNode::Not(inner) => {
                 let d = choose|d: TransitionId| inner < cache.len() && cache[inner as int] == Some(d)
-                    && super::super::normalize::verify::transition_result(g, super::super::normalize::verify::ActionShape::Not(d@), out);
+                    && norm::transition_result(g, norm::ActionShape::Not(d@), out);
                 symbolic_not_result(g, d, out);
                 assert(derivative_correct(g, inner, d));
                 assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    implies super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                    implies norm::transition_lang(g, sym, theta, out, event, word)
                         == model::regex_lang(g, sym, theta, root@, seq![event] + word) by {
                     reveal(language::lang);
                 }
             },
             model::RegexKindNode::Empty | model::RegexKindNode::All | model::RegexKindNode::Epsilon | model::RegexKindNode::Test(_) => {
                 assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    implies super::super::normalize::verify::transition_lang(g, sym, theta, out, event, word)
+                    implies norm::transition_lang(g, sym, theta, out, event, word)
                         == model::regex_lang(g, sym, theta, root@, seq![event] + word) by {
                     reveal(language::lang); reveal(language::interp_transition);
                     assert((seq![event] + word).len() == 1 + word.len());
@@ -2210,18 +2210,18 @@ pub(crate) mod verify {
             },
         ensures forall|next: model::Graph, out: TransitionId| model::graph_extends(g, next) && model::graph_wf(next)
             && out@ < next.transitions.len()
-            && (if intersect { super::super::normalize::verify::transition_result(next, super::super::normalize::verify::ActionShape::Fold(model::transition_ids(results), 0), out) }
+            && (if intersect { norm::transition_result(next, norm::ActionShape::Fold(model::transition_ids(results), 0), out) }
                 else { forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> super::super::normalize::verify::transition_lang(next, sym, theta, out, event, word)
-                        == super::super::normalize::verify::transition_combo(next, sym, theta, results, event, word, false) })
+                    ==> norm::transition_lang(next, sym, theta, out, event, word)
+                        == norm::transition_combo(next, sym, theta, results, event, word, false) })
             ==> derivative_correct(next, root@, out),
     {
         assert forall|next: model::Graph, out: TransitionId| model::graph_extends(g, next) && model::graph_wf(next)
             && out@ < next.transitions.len()
-            && (if intersect { super::super::normalize::verify::transition_result(next, super::super::normalize::verify::ActionShape::Fold(model::transition_ids(results), 0), out) }
+            && (if intersect { norm::transition_result(next, norm::ActionShape::Fold(model::transition_ids(results), 0), out) }
                 else { forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> super::super::normalize::verify::transition_lang(next, sym, theta, out, event, word)
-                        == super::super::normalize::verify::transition_combo(next, sym, theta, results, event, word, false) })
+                    ==> norm::transition_lang(next, sym, theta, out, event, word)
+                        == norm::transition_combo(next, sym, theta, results, event, word, false) })
             implies derivative_correct(next, root@, out) by {
             derivative_extends(g, next);
             if intersect { symbolic_intersect_result(next, results, out); }
@@ -2244,34 +2244,6 @@ pub(crate) mod verify {
     pub open spec fn bool_fold(values: Seq<bool>, and: bool) -> bool {
         if and { forall|i: int| 0 <= i < values.len() ==> values[i] }
         else { exists|i: int| 0 <= i < values.len() && values[i] }
-    }
-
-    pub proof fn bool_fold_push(values: Seq<bool>, value: bool, and: bool)
-        ensures bool_fold(values.push(value), and) == (if and { bool_fold(values, and) && value } else { bool_fold(values, and) || value }),
-    {
-        if and {
-            if bool_fold(values.push(value), true) {
-                assert(values.push(value)[values.len() as int]);
-                assert forall|i: int| 0 <= i < values.len() implies values[i] by {
-                    assert(values.push(value)[i]);
-                }
-            }
-            if bool_fold(values, true) && value {
-                assert forall|i: int| 0 <= i < values.push(value).len() implies values.push(value)[i] by {
-                    if i < values.len() { assert(values[i]); }
-                }
-            }
-        } else {
-            if bool_fold(values.push(value), false) {
-                let i = choose|i: int| 0 <= i < values.push(value).len() && values.push(value)[i];
-                if i != values.len() { assert(i < values.len()); assert(values[i]); }
-            }
-            if bool_fold(values, false) {
-                let i = choose|i: int| 0 <= i < values.len() && values[i];
-                assert(values.push(value)[i]);
-            }
-            if value { assert(values.push(value)[values.len() as int]); }
-        }
     }
 
     pub open spec fn test_children(g: model::Graph, id: TestId) -> Seq<nat> {

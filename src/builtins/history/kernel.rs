@@ -1045,23 +1045,6 @@ pub(crate) mod verify {
         ensures transition_node_wf_at(g, g.transitions[id as int], id),
     { reveal(graph_wf); }
 
-    pub proof fn lemma_test_node_unique(g: Graph, a: nat, b: nat)
-        requires graph_wf(g), a < g.tests.len(), b < g.tests.len(),
-            g.tests[a as int] == g.tests[b as int],
-        ensures a == b,
-    { reveal(graph_wf); }
-
-    pub proof fn lemma_regex_node_unique(g: Graph, a: nat, b: nat)
-        requires graph_wf(g), a < g.regexes.len(), b < g.regexes.len(),
-            g.regexes[a as int] == g.regexes[b as int],
-        ensures a == b,
-    { reveal(graph_wf); }
-
-    pub proof fn lemma_transition_node_unique(g: Graph, a: nat, b: nat)
-        requires graph_wf(g), a < g.transitions.len(), b < g.transitions.len(),
-            g.transitions[a as int] == g.transitions[b as int],
-        ensures a == b,
-    { reveal(graph_wf); }
     pub open spec fn tables_extend(old: Graph, new: Graph) -> bool {
         old.tests.is_prefix_of(new.tests) && old.regexes.is_prefix_of(new.regexes) && old.transitions.is_prefix_of(new.transitions)
     }
@@ -1110,11 +1093,6 @@ pub(crate) mod verify {
         ensures !(primitive_holds(s, theta, Primitive::EqCore(path, GTerm::Constant(a)), event)
             && primitive_holds(s, theta, Primitive::EqCore(path, GTerm::Constant(b)), event)),
     {}
-
-    pub proof fn lemma_eq_core_has_value(s: Symbols, theta: Seq<Data>, path: nat, term: GTerm, event: Data)
-        ensures primitive_holds(s, theta, Primitive::EqCore(path, term), event)
-            ==> primitive_holds(s, theta, Primitive::HasValue(path), event),
-    { match term { GTerm::Constant(_) => {}, GTerm::Variable(_) => {} } }
 
     pub proof fn lemma_lift_test_stable(a: Graph, b: Graph, i: nat)
         requires tables_extend(a, b), i < a.tests.len(),

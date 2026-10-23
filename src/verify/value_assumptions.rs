@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 //! Trusted value boundary: semantic Value equality and cloning; Array reads;
-//! Object reads and sorted iteration; Set lookup; crate::Rc<Array> cloning and
-//! pointer equality; Rc<str> and string operations not already specified by vstd.
-//! BTree collections compare Value keys semantically, unlike vstd's structural
-//! collection model. No history compilation or evaluation belongs here.
+//! Object reads and sorted iteration; Set lookup; crate::Rc cloning and pointer
+//! equality; `f64::to_bits`. BTree collections compare Value keys semantically,
+//! unlike vstd's structural collection model. No history compilation or
+//! evaluation belongs here.
 
 use super::value_specs::*;
 use crate::value::{Array, Iter, Object, Set as ValueSet};

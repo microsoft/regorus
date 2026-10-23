@@ -30,7 +30,8 @@ use crate::builtins::history::graph::verify::{
 };
 use crate::builtins::history::graph::ObservationWorld;
 use crate::builtins::history::kernel::verify::{
-    graph_extends, graph_wf, regex_node_wf, tables_wf, test_node_wf, transition_node_wf, RegexNode,
+    graph_extends, graph_wf, regex_node_wf, tables_wf, test_node_wf, transition_node_wf, Graph,
+    RegexNode,
 };
 use crate::builtins::history::kernel::{
     Constants, KernelResult, RegexId, RegexKindView, RegexView, TestId, TestView, TransitionId,
@@ -256,7 +257,7 @@ pub assume_specification<T>[ core::mem::drop ](value: T);
 pub trait ExStorage {
     type ExternalTraitSpecificationFor: crate::builtins::history::graph::Storage;
 
-    spec fn graph(&self) -> crate::builtins::history::kernel::verify::Graph;
+    spec fn graph(&self) -> Graph;
     /// Bytes each backing arena can hold (0 for growable storage).
     spec fn capacity(&self) -> int;
     /// `graph_weight(graph) - bytes actually resident`; never decreases on a successful push.
@@ -344,12 +345,12 @@ pub trait ExStorage {
 pub trait ExKernelStore {
     type ExternalTraitSpecificationFor: crate::builtins::history::kernel::KernelStore;
 
-    spec fn graph(&self) -> crate::builtins::history::kernel::verify::Graph;
+    spec fn graph(&self) -> Graph;
     spec fn valid_store(&self) -> bool;
 
     // Preserve the abstract store restored when a nested mutable borrow ends.
     #[verifier::prophetic]
-    spec fn restoration(&self) -> (crate::builtins::history::kernel::verify::Graph, bool);
+    spec fn restoration(&self) -> (Graph, bool);
 
     fn checkpoint(&mut self) -> (r: KernelResult<()>)
         ensures final(self).graph() == old(self).graph(),

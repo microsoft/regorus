@@ -4,7 +4,9 @@
 #[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 #[cfg(verus_keep_ghost)]
-use super::normalize::verify::{test_lemma_dedup_properties, test_lemma_multiset_membership};
+use super::normalize::verify as norm;
+#[cfg(verus_keep_ghost)]
+use super::source::verify as source_model;
 use super::{
     graph::{
         allocation, checkpoint, invariant, sequence_bytes, ArenaStorage, CanonicalStore,
@@ -16,7 +18,13 @@ use super::{
     work::WorkVec,
 };
 #[cfg(verus_keep_ghost)]
+use crate::verify::history_algebra as algebra;
+#[cfg(verus_keep_ghost)]
 use crate::verify::history_assumptions::*;
+#[cfg(verus_keep_ghost)]
+use crate::verify::history_specs as language;
+#[cfg(verus_keep_ghost)]
+use crate::verify::value_specs::{history_view, value_view, Data};
 use crate::{utils::limits::ExecutionTimer, value::Array, Rc, Value};
 use alloc::{collections::BTreeSet, vec::Vec};
 use core::num::NonZeroUsize;
@@ -131,11 +139,11 @@ impl CompiledPair {
 
     #[verus_spec(result =>
         requires model::graph_wf(store.graph()), store.valid_store(), model::symbols_wf(symbols@), root@ < store.graph().regexes.len(),
-            exists|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(pattern, symbols@, head),
+            exists|head: language::Head| source_model::pattern_represents(pattern, symbols@, head),
         ensures pair_wf(result),
-            forall|head: crate::verify::history_specs::Head, tail: crate::verify::history_specs::Regex<crate::verify::history_specs::SrcTest>|
-                #[trigger] super::source::verify::pattern_represents(pattern, symbols@, head)
-                && #[trigger] super::source::verify::tail_represents(store.graph(), symbols@, root, tail)
+            forall|head: language::Head, tail: language::Regex<language::SrcTest>|
+                #[trigger] source_model::pattern_represents(pattern, symbols@, head)
+                && #[trigger] source_model::tail_represents(store.graph(), symbols@, root, tail)
                     ==> pair_represents(result, head, tail),
     )]
     pub(crate) const fn new(
@@ -144,7 +152,7 @@ impl CompiledPair {
         pattern: CompiledPattern,
         root: RegexId,
     ) -> Self {
-        proof_decl! { let ghost head = choose|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(pattern, symbols@, head); }
+        proof_decl! { let ghost head = choose|head: language::Head| source_model::pattern_represents(pattern, symbols@, head); }
         let pair = Self {
             store,
             symbols,
@@ -176,8 +184,8 @@ impl CompiledPair {
             assert(model::graph_wf(pair.store.graph()));
             assert(model::symbols_wf(pair.symbols@));
             assert(pair.root@ < pair.store.graph().regexes.len());
-            assert(super::source::verify::pattern_represents(pair.pattern, pair.symbols@, head));
-            assert(exists|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(pair.pattern, pair.symbols@, head));
+            assert(source_model::pattern_represents(pair.pattern, pair.symbols@, head));
+            assert(exists|head: language::Head| source_model::pattern_represents(pair.pattern, pair.symbols@, head));
             assert(symbolic::verify::derivative_cache_wf(pair.store.graph(), pair.derivatives@));
             assert(atom_cache_wf(pair.store.graph(), pair.atoms@));
             assert(cursor_cache_wf(pair));
@@ -192,10 +200,10 @@ impl CompiledPair {
     #[verus_spec(result =>
         requires pair_wf(*old(self)),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
-            forall|head: crate::verify::history_specs::Head, tail: crate::verify::history_specs::Regex<crate::verify::history_specs::SrcTest>|
+            forall|head: language::Head, tail: language::Regex<language::SrcTest>|
                 #[trigger] pair_represents(*old(self), head, tail) ==> pair_represents(*final(self), head, tail)
-                    && (result matches Ok(answer) ==> answer == crate::verify::history_specs::pair_lang(head, tail,
-                        crate::verify::value_specs::value_view(*request), crate::verify::value_specs::history_view(*history))),
+                    && (result matches Ok(answer) ==> answer == language::pair_lang(head, tail,
+                        value_view(*request), history_view(*history))),
     )]
     pub(crate) fn evaluate(
         &mut self,
@@ -205,7 +213,7 @@ impl CompiledPair {
         world: &mut ObservationWorld,
     ) -> KernelResult<bool> {
         proof_decl! { let ghost entry = *self; }
-        proof! { lemma_pair_all_frames(entry); super::source::verify::lemma_array_data(*history); }
+        proof! { lemma_pair_all_frames(entry); source_model::lemma_array_data(*history); }
         let Some(bindings) = self.pattern.matches(request, &self.symbols, timer, world)? else {
             return Ok(false);
         };
@@ -213,9 +221,9 @@ impl CompiledPair {
         {
             let answer = self.replay(history, &bindings, timer, world)?;
             proof! {
-                assert forall|head: crate::verify::history_specs::Head, tail: crate::verify::history_specs::Regex<crate::verify::history_specs::SrcTest>|
-                    pair_represents(entry, head, tail) implies answer == crate::verify::history_specs::pair_lang(head, tail, crate::verify::value_specs::value_view(*request), crate::verify::value_specs::history_view(*history)) by {
-                    lemma_bind_compile_substitutions(*self, head, tail, crate::verify::value_specs::value_view(*request), crate::verify::value_specs::history_view(*history), bindings@, answer);
+                assert forall|head: language::Head, tail: language::Regex<language::SrcTest>|
+                    pair_represents(entry, head, tail) implies answer == language::pair_lang(head, tail, value_view(*request), history_view(*history)) by {
+                    lemma_bind_compile_substitutions(*self, head, tail, value_view(*request), history_view(*history), bindings@, answer);
                 }
             }
             Ok(answer)
@@ -224,7 +232,7 @@ impl CompiledPair {
         {
             let continuous = self.validate_prefix(history, timer, world)?;
             proof! {
-                if continuous { lemma_cursor_continuity(*self, crate::verify::value_specs::history_view(*history)); }
+                if continuous { lemma_cursor_continuity(*self, history_view(*history)); }
             }
             let mut selected: Option<usize> = None;
             if continuous {
@@ -234,9 +242,9 @@ impl CompiledPair {
                 let mut index = 0;
                 #[cfg_attr(verus_keep_ghost, verus_spec(
                     invariant index <= self.cursors@.len(),
-                        forall|i: int| 0 <= i < self.cursors@.len() ==> cursor_ready(*self, self.cursors@[i], crate::verify::value_specs::history_view(*history)),
+                        forall|i: int| 0 <= i < self.cursors@.len() ==> cursor_ready(*self, self.cursors@[i], history_view(*history)),
                         selected matches Some(i) ==> i < self.cursors@.len()
-                            && super::source::verify::values_data(bindings@) == super::source::verify::values_data(self.cursors@[i as int].bindings@),
+                            && source_model::values_data(bindings@) == source_model::values_data(self.cursors@[i as int].bindings@),
                     decreases self.cursors@.len() - index,
                 ))]
                 while index < self.cursors.len() {
@@ -260,8 +268,8 @@ impl CompiledPair {
                     .get(index)
                     .ok_or_else(|| invariant("invalid progress cursor index"))?;
                 proof! {
-                    assert(cursor_ready(*self, *cursor, crate::verify::value_specs::history_view(*history)));
-                    assert(residual_after_prefix(*self, super::source::verify::values_data(history@), bindings@, cursor.consumed_len as nat, cursor.residual));
+                    assert(cursor_ready(*self, *cursor, history_view(*history)));
+                    assert(residual_after_prefix(*self, source_model::values_data(history@), bindings@, cursor.consumed_len as nat, cursor.residual));
                 }
                 (cursor.consumed_len, cursor.residual)
             } else {
@@ -270,12 +278,12 @@ impl CompiledPair {
             let residual = self.replay_suffix(history, &bindings, start, residual, timer, world)?;
             let answer = self.answer(residual, timer, world)?;
             proof! {
-                lemma_full_residual_answer(*self, crate::verify::value_specs::history_view(*history), bindings@, residual, answer);
-                assert forall|head: crate::verify::history_specs::Head, tail: crate::verify::history_specs::Regex<crate::verify::history_specs::SrcTest>|
-                    pair_represents(entry, head, tail) implies answer == crate::verify::history_specs::pair_lang(head, tail, crate::verify::value_specs::value_view(*request), crate::verify::value_specs::history_view(*history)) by {
-                    lemma_bind_compile_substitutions(*self, head, tail, crate::verify::value_specs::value_view(*request), crate::verify::value_specs::history_view(*history), bindings@, answer);
+                lemma_full_residual_answer(*self, history_view(*history), bindings@, residual, answer);
+                assert forall|head: language::Head, tail: language::Regex<language::SrcTest>|
+                    pair_represents(entry, head, tail) implies answer == language::pair_lang(head, tail, value_view(*request), history_view(*history)) by {
+                    lemma_bind_compile_substitutions(*self, head, tail, value_view(*request), history_view(*history), bindings@, answer);
                 }
-                if continuous { lemma_cursor_continuity(*self, crate::verify::value_specs::history_view(*history)); }
+                if continuous { lemma_cursor_continuity(*self, history_view(*history)); }
             }
             proof_decl! { let ghost publication = *self; }
 
@@ -315,7 +323,7 @@ impl CompiledPair {
             }
             self.snapshot = Some(Rc::clone(history));
             proof! {
-                assert forall|i: int| 0 <= i < self.cursors@.len() implies cursor_ready(*self, self.cursors@[i], crate::verify::value_specs::history_view(*history)) by {}
+                assert forall|i: int| 0 <= i < self.cursors@.len() implies cursor_ready(*self, self.cursors@[i], history_view(*history)) by {}
                 assert(cursor_cache_wf(*self));
                 lemma_publication_frame(publication, *self);
             }
@@ -328,7 +336,7 @@ impl CompiledPair {
         requires pair_wf(*old(self)),
         ensures progress_metadata_unchanged(*old(self), *final(self)), pair_frame(*old(self), *final(self)), pair_wf(*final(self)),
             result matches Ok(true) ==> old(self).snapshot is Some
-                && crate::verify::value_specs::history_view(old(self).snapshot.unwrap()).is_prefix_of(crate::verify::value_specs::history_view(*history)),
+                && history_view(old(self).snapshot.unwrap()).is_prefix_of(history_view(*history)),
     )]
     fn validate_prefix(
         &mut self,
@@ -337,8 +345,8 @@ impl CompiledPair {
         world: &mut ObservationWorld,
     ) -> KernelResult<bool> {
         proof! {
-            super::source::verify::lemma_array_data(*history);
-            if let Some(snapshot) = &self.snapshot { super::source::verify::lemma_array_data(*snapshot); }
+            source_model::lemma_array_data(*history);
+            if let Some(snapshot) = &self.snapshot { source_model::lemma_array_data(*snapshot); }
         }
         let Some(snapshot) = self.snapshot.as_ref() else {
             return Ok(false);
@@ -354,7 +362,7 @@ impl CompiledPair {
         let mut index = 0;
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant index <= snapshot@.len(), snapshot@.len() <= history@.len(),
-                prefix_equal ==> forall|i: int| 0 <= i < index ==> crate::verify::value_specs::value_view(snapshot@[i]) == crate::verify::value_specs::value_view(history@[i]),
+                prefix_equal ==> forall|i: int| 0 <= i < index ==> value_view(snapshot@[i]) == value_view(history@[i]),
             ensures failure is Some || !prefix_equal || index == snapshot@.len(),
             decreases snapshot@.len() - index,
         ))]
@@ -377,7 +385,7 @@ impl CompiledPair {
         }
         proof! {
             if prefix_equal {
-                assert(crate::verify::value_specs::history_view(*snapshot) =~= crate::verify::value_specs::history_view(*history).take(snapshot@.len() as int));
+                assert(history_view(*snapshot) =~= history_view(*history).take(snapshot@.len() as int));
             }
         }
         Ok(prefix_equal)
@@ -386,10 +394,10 @@ impl CompiledPair {
     #[verus_verify]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), bindings@.len() == pair_symbols(*old(self)).variables.len(),
-            forall|i: int| 0 <= i < bindings@.len() ==> crate::verify::value_specs::value_view(bindings@[i]) != crate::verify::value_specs::Data::Undefined,
+            forall|i: int| 0 <= i < bindings@.len() ==> value_view(bindings@[i]) != Data::Undefined,
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
             result matches Ok(answer) ==> answer == model::regex_lang(pair_graph(*final(self)), pair_symbols(*final(self)),
-                super::source::verify::values_data(bindings@), pair_root(*final(self))@, super::source::verify::values_data(history@)),
+                source_model::values_data(bindings@), pair_root(*final(self))@, source_model::values_data(history@)),
     )]
     pub(crate) fn replay(
         &mut self,
@@ -401,7 +409,7 @@ impl CompiledPair {
         let residual = self.replay_suffix(history, bindings, 0, self.root, timer, world)?;
         let answer = self.answer(residual, timer, world)?;
         proof! {
-            lemma_full_residual_answer(*self, super::source::verify::values_data(history@), bindings@, residual, answer);
+            lemma_full_residual_answer(*self, source_model::values_data(history@), bindings@, residual, answer);
         }
         Ok(answer)
     }
@@ -410,7 +418,7 @@ impl CompiledPair {
         requires pair_wf(*old(self)), residual@ < old(self).store.graph().regexes.len(),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
             final(self).store.graph() == old(self).store.graph(),
-            result matches Ok(answer) ==> answer == crate::verify::history_specs::nullable(model::lift_regex(final(self).store.graph(), residual@)),
+            result matches Ok(answer) ==> answer == language::nullable(model::lift_regex(final(self).store.graph(), residual@)),
     )]
     fn answer(
         &mut self,
@@ -430,10 +438,10 @@ impl CompiledPair {
     #[verus_verify]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), bindings@.len() == old(self).symbols@.variables.len(),
-            forall|i: int| 0 <= i < bindings@.len() ==> crate::verify::value_specs::value_view(bindings@[i]) != crate::verify::value_specs::Data::Undefined,
-            residual_after_prefix(*old(self), super::source::verify::values_data(history@), bindings@, start as nat, residual),
+            forall|i: int| 0 <= i < bindings@.len() ==> value_view(bindings@[i]) != Data::Undefined,
+            residual_after_prefix(*old(self), source_model::values_data(history@), bindings@, start as nat, residual),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
-            result matches Ok(out) ==> residual_after_prefix(*final(self), super::source::verify::values_data(history@), bindings@, history@.len(), out),
+            result matches Ok(out) ==> residual_after_prefix(*final(self), source_model::values_data(history@), bindings@, history@.len(), out),
     )]
     fn replay_suffix(
         &mut self,
@@ -456,21 +464,21 @@ impl CompiledPair {
             invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
                 index <= suffix@.len(), suffix@ == history@.subrange(start as int, history@.len() as int),
                 start <= history@.len(), bindings@.len() == self.symbols@.variables.len(),
-                forall|i: int| 0 <= i < bindings@.len() ==> crate::verify::value_specs::value_view(bindings@[i]) != crate::verify::value_specs::Data::Undefined,
-                residual_after_prefix(*self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual),
+                forall|i: int| 0 <= i < bindings@.len() ==> value_view(bindings@[i]) != Data::Undefined,
+                residual_after_prefix(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual),
                 previous matches Some((t, e, r)) ==> t@ < self.store.graph().transitions.len() && instantiation_result(*self, t, bindings@, *e, r),
             ensures pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
-                failure is Some || residual_after_prefix(*self, super::source::verify::values_data(history@), bindings@, history@.len(), residual),
+                failure is Some || residual_after_prefix(*self, source_model::values_data(history@), bindings@, history@.len(), residual),
             decreases suffix@.len() - index,
         ))]
         while index < suffix.len() {
             let event = &suffix[index];
             proof_decl! { let ghost before = *self; }
-            proof! { super::source::verify::lemma_source_graph_future(entry.store.graph(), before.store.graph()); }
+            proof! { source_model::lemma_source_graph_future(entry.store.graph(), before.store.graph()); }
             loop_try!(checkpoint(timer, world), failure);
             let constants = self.store.constants();
             if residual == constants.all || residual == constants.empty {
-                proof! { lemma_replay_absorbing(*self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual); }
+                proof! { lemma_replay_absorbing(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual); }
                 break;
             }
             #[cfg(test)]
@@ -496,7 +504,7 @@ impl CompiledPair {
             };
             proof! {
                 lemma_pair_symbolic_frame(before, *self);
-                lemma_replay_frame(before, *self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual);
+                lemma_replay_frame(before, *self, source_model::values_data(history@), bindings@, (start + index) as nat, residual);
                 if let Some((t, e, r)) = previous { lemma_previous_frame(before, *self, t, bindings@, *e, r); }
             }
             let transition = loop_try!(derivative_result, failure);
@@ -514,7 +522,7 @@ impl CompiledPair {
                                 self.work.self_loops = self.work.self_loops.saturating_add(1);
                             }
                         }
-                        proof! { lemma_replay_step(*self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
+                        proof! { lemma_replay_step(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
                         residual = successor;
                         index = index.saturating_add(1);
                         continue;
@@ -524,12 +532,12 @@ impl CompiledPair {
             proof_decl! { let ghost before_instantiate = *self; }
             let successor_result = self.instantiate(transition, event, bindings, timer, world);
             proof! {
-                lemma_replay_frame(before_instantiate, *self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual);
+                lemma_replay_frame(before_instantiate, *self, source_model::values_data(history@), bindings@, (start + index) as nat, residual);
                 if let Some((t, e, r)) = previous { lemma_previous_frame(before_instantiate, *self, t, bindings@, *e, r); }
                 symbolic::verify::derivative_correct_stable(before_instantiate.store.graph(), self.store.graph(), residual@, transition);
             }
             let successor = loop_try!(successor_result, failure);
-            proof! { lemma_replay_step(*self, super::source::verify::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
+            proof! { lemma_replay_step(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
             previous = Some((transition, event, successor));
             #[cfg(test)]
             {
@@ -560,7 +568,7 @@ impl CompiledPair {
         world: &mut ObservationWorld,
     ) -> KernelResult<()> {
         proof_decl! { let ghost entry = *self; }
-        proof_decl! { let ghost compiled_head = choose|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(self.pattern, self.symbols@, head); }
+        proof_decl! { let ghost compiled_head = choose|head: language::Head| source_model::pattern_represents(self.pattern, self.symbols@, head); }
         let index = transition.index()?;
         if matches!(self.atoms.get(index), Some(Some(_))) {
             return Ok(());
@@ -594,7 +602,7 @@ impl CompiledPair {
         proof_decl! { let ghost prior_atoms = self.atoms@; }
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
-                super::source::verify::pattern_represents(self.pattern, self.symbols@, compiled_head),
+                source_model::pattern_represents(self.pattern, self.symbols@, compiled_head),
                 self.store.graph() == old(self).store.graph() || model::graph_extends(old(self).store.graph(), self.store.graph()),
                 prior_atoms.is_prefix_of(self.atoms@),
                 forall|i: int| prior_atoms.len() <= i < self.atoms@.len() ==> self.atoms@[i] is None,
@@ -620,8 +628,8 @@ impl CompiledPair {
                 assert(self.store.valid_store());
                 assert(model::symbols_wf(self.symbols@));
                 assert(self.root@ < self.store.graph().regexes.len());
-                assert(super::source::verify::pattern_represents(self.pattern, self.symbols@, compiled_head));
-                assert(exists|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(self.pattern, self.symbols@, head));
+                assert(source_model::pattern_represents(self.pattern, self.symbols@, compiled_head));
+                assert(exists|head: language::Head| source_model::pattern_represents(self.pattern, self.symbols@, head));
                 assert(cursor_cache_wf(*self));
                 assert(match self.successors { Some(cache) => successor_entries_wf(self.store.graph(), self.atoms@, successor_cache_view(cache)), None => true });
                 assert(pair_wf(*self));
@@ -671,7 +679,7 @@ impl CompiledPair {
             if let TransitionView::Const(regex) = kernel.transition(transition)? {
                 proof! {
                     model::lemma_graph_transition_wf(self.store.graph(), transition@);
-                    super::normalize::verify::transition_unfold(self.store.graph(), transition@);
+                    norm::transition_unfold(self.store.graph(), transition@);
                     assert(instantiation_result(*self, transition, bindings@, *event, regex));
                 }
                 return Ok(regex);
@@ -713,7 +721,7 @@ impl CompiledPair {
                 atoms@ == self.atoms@[transition_index as int].unwrap()@,
                 atoms_wf(self.store.graph(), transition@, atoms@),
                 forall|j: int| 0 <= j < index ==> symbolic::verify::truth_word_bit(words.view(), j as nat)
-                    == model::test_holds(self.symbols@, super::source::verify::values_data(bindings@), model::lift_test(self.store.graph(), atoms@[j]@), crate::verify::value_specs::value_view(*event)),
+                    == model::test_holds(self.symbols@, source_model::values_data(bindings@), model::lift_test(self.store.graph(), atoms@[j]@), value_view(*event)),
                 forall|j: nat| index <= j ==> !symbolic::verify::truth_word_bit(words.view(), j),
             ensures failure is None ==> index == atoms@.len(),
             decreases atoms@.len() - index,
@@ -786,7 +794,7 @@ impl CompiledPair {
         }
         proof! {
             assert(index == atoms@.len());
-            assert(symbolic::verify::truth_words_realize(self.store.graph(), atoms@, words.view(), self.symbols@, super::source::verify::values_data(bindings@), crate::verify::value_specs::value_view(*event)));
+            assert(symbolic::verify::truth_words_realize(self.store.graph(), atoms@, words.view(), self.symbols@, source_model::values_data(bindings@), value_view(*event)));
         }
         let key = EventClass { transition, words };
         if let Some(successor) = successor_get(&mut self.successors, &key) {
@@ -816,10 +824,10 @@ impl CompiledPair {
         let successor = successor?;
         proof! {
             assert(instantiation_result(*self, transition, bindings@, *event, successor));
-            assert forall|sym: model::Symbols, theta: Seq<crate::verify::value_specs::Data>, current: crate::verify::value_specs::Data, word: Seq<crate::verify::value_specs::Data>|
+            assert forall|sym: model::Symbols, theta: Seq<Data>, current: Data, word: Seq<Data>|
                 model::symbols_wf(sym) && symbolic::verify::truth_words_realize(self.store.graph(), atoms@, key.words.view(), sym, theta, current)
                     implies model::regex_lang(self.store.graph(), sym, theta, successor@, word)
-                        == super::normalize::verify::transition_lang(self.store.graph(), sym, theta, transition, current, word) by {}
+                        == norm::transition_lang(self.store.graph(), sym, theta, transition, current, word) by {}
         }
         if self.successors.is_none() {
             let cache =
@@ -838,10 +846,10 @@ impl CompiledPair {
                 let i = other.transition@ as int;
                 other.transition@ < self.store.graph().transitions.len() && 0 <= i < self.atoms@.len() && self.atoms@[i] is Some
                     && successor_map(*self)[other]@ < self.store.graph().regexes.len()
-                    && forall|sym: model::Symbols, theta: Seq<crate::verify::value_specs::Data>, current: crate::verify::value_specs::Data, word: Seq<crate::verify::value_specs::Data>|
+                    && forall|sym: model::Symbols, theta: Seq<Data>, current: Data, word: Seq<Data>|
                         model::symbols_wf(sym) && symbolic::verify::truth_words_realize(self.store.graph(), self.atoms@[i].unwrap()@, other.words, sym, theta, current)
                             ==> model::regex_lang(self.store.graph(), sym, theta, successor_map(*self)[other]@, word)
-                                == super::normalize::verify::transition_lang(self.store.graph(), sym, theta, other.transition, current, word)
+                                == norm::transition_lang(self.store.graph(), sym, theta, other.transition, current, word)
             } by {
                 if other == class_key(key) { assert(other.transition == transition); }
                 else { assert(entries.contains_key(other)); }
@@ -855,9 +863,9 @@ impl CompiledPair {
             assert(self.root@ < self.store.graph().regexes.len());
             assert(atom_cache_wf(self.store.graph(), self.atoms@));
             assert(symbolic::verify::derivative_cache_wf(self.store.graph(), self.derivatives@));
-            let head = choose|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(entry.pattern, entry.symbols@, head);
-            assert(super::source::verify::pattern_represents(self.pattern, self.symbols@, head));
-            assert(exists|head: crate::verify::history_specs::Head| super::source::verify::pattern_represents(self.pattern, self.symbols@, head));
+            let head = choose|head: language::Head| source_model::pattern_represents(entry.pattern, entry.symbols@, head);
+            assert(source_model::pattern_represents(self.pattern, self.symbols@, head));
+            assert(exists|head: language::Head| source_model::pattern_represents(self.pattern, self.symbols@, head));
             assert(pair_wf(*self));
         }
         checkpoint(timer, world)?;
@@ -868,7 +876,7 @@ impl CompiledPair {
 #[cfg(feature = "cache")]
 #[verus_verify]
 #[verus_spec(result =>
-    ensures result matches Ok(answer) ==> answer == (super::source::verify::values_data(left@) == super::source::verify::values_data(right@)),
+    ensures result matches Ok(answer) ==> answer == (source_model::values_data(left@) == source_model::values_data(right@)),
 )]
 fn equal_bindings(
     left: &[Value],
@@ -884,8 +892,8 @@ fn equal_bindings(
     let mut index = 0;
     #[cfg_attr(verus_keep_ghost, verus_spec(
         invariant index <= left.len(), left.len() == right.len(),
-            bindings_equal ==> forall|i: int| 0 <= i < index ==> crate::verify::value_specs::value_view(left@[i]) == crate::verify::value_specs::value_view(right@[i]),
-            !bindings_equal ==> super::source::verify::values_data(left@) != super::source::verify::values_data(right@),
+            bindings_equal ==> forall|i: int| 0 <= i < index ==> value_view(left@[i]) == value_view(right@[i]),
+            !bindings_equal ==> source_model::values_data(left@) != source_model::values_data(right@),
         ensures failure is Some || !bindings_equal || index == left.len(),
         decreases left@.len() - index,
     ))]
@@ -895,7 +903,7 @@ fn equal_bindings(
         loop_try!(checkpoint(timer, world), failure);
         if !equal {
             proof! {
-                assert(super::source::verify::values_data(left@)[index as int] != super::source::verify::values_data(right@)[index as int]);
+                assert(source_model::values_data(left@)[index as int] != source_model::values_data(right@)[index as int]);
             }
             bindings_equal = false;
             break;
@@ -907,7 +915,7 @@ fn equal_bindings(
     }
     proof! {
         if bindings_equal {
-            assert(super::source::verify::values_data(left@) =~= super::source::verify::values_data(right@));
+            assert(source_model::values_data(left@) =~= source_model::values_data(right@));
         }
     }
     Ok(bindings_equal)
@@ -1130,12 +1138,12 @@ pub(crate) fn transition_atoms<G: KernelStore>(
     primitive_slice.sort_unstable();
     proof_decl! { let ghost sorted = primitives@; }
     proof! {
-        test_lemma_multiset_membership(collected, sorted);
+        norm::lemma_multiset_members(collected, sorted);
         lemma_found_membership(store.graph(), collected, sorted);
     }
     primitives.dedup();
     proof! {
-        test_lemma_dedup_properties(sorted);
+        norm::lemma_dedup_properties(sorted);
         lemma_found_membership(store.graph(), sorted, primitives@);
         assert forall|p: model::Primitive| transition_reaches_primitive(store.graph(), root@, p)
             implies has_positive(store.graph(), primitives@, p) by {
@@ -1631,10 +1639,6 @@ pub(crate) mod verify {
             }
         }
 
-    use crate::verify::history_algebra as algebra;
-    use crate::verify::{history_specs as language, value_specs::{Data, history_view}};
-    use super::super::source::verify as source_model;
-    use super::super::normalize::verify as norm;
 
     pub(super) struct ClassKey { pub transition: TransitionId, pub words: Seq<u64> }
     pub(super) open spec fn class_key(key: EventClass) -> ClassKey {
@@ -1728,7 +1732,7 @@ pub(crate) mod verify {
     ) -> bool {
         result@ < pair.store.graph().regexes.len()
             && forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), result@, word)
-                == norm::transition_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), transition, crate::verify::value_specs::value_view(event), word)
+                == norm::transition_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), transition, value_view(event), word)
     }
 
     pub open(super) spec fn residual_after_prefix(
@@ -1934,15 +1938,15 @@ pub(crate) mod verify {
         model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), residual@);
         model::lemma_lift_transition_stable(before.store.graph(), after.store.graph(), transition@);
         assert forall|word: Seq<Data>| model::regex_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), residual@, word)
-            == norm::transition_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), transition, crate::verify::value_specs::value_view(event), word) by {
+            == norm::transition_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), transition, value_view(event), word) by {
             assert(model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), residual@, word)
-                == norm::transition_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), transition, crate::verify::value_specs::value_view(event), word));
+                == norm::transition_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), transition, value_view(event), word));
         }
     }
 
     pub(super) proof fn lemma_replay_step(pair: CompiledPair, history: Seq<Data>, bindings: Seq<Value>, count: nat, residual: RegexId, transition: TransitionId, event: Value, successor: RegexId)
         requires pair_wf(pair), residual_after_prefix(pair, history, bindings, count, residual), count < history.len(),
-            crate::verify::value_specs::value_view(event) == history[count as int],
+            value_view(event) == history[count as int],
             symbolic::verify::derivative_correct(pair.store.graph(), residual@, transition),
             instantiation_result(pair, transition, bindings, event, successor),
         ensures residual_after_prefix(pair, history, bindings, count + 1, successor),
@@ -2041,7 +2045,7 @@ pub(crate) mod verify {
     #[cfg(feature = "cache")]
     pub(super) open spec fn cursor_ready(pair: CompiledPair, cursor: Cursor, history: Seq<Data>) -> bool {
         cursor.bindings@.len() == pair.symbols@.variables.len()
-            && (forall|i: int| 0 <= i < cursor.bindings@.len() ==> crate::verify::value_specs::value_view(cursor.bindings@[i]) != Data::Undefined)
+            && (forall|i: int| 0 <= i < cursor.bindings@.len() ==> value_view(cursor.bindings@[i]) != Data::Undefined)
             && residual_after_prefix(pair, history, cursor.bindings@, cursor.consumed_len as nat, cursor.residual)
     }
 
@@ -2055,8 +2059,8 @@ pub(crate) mod verify {
             let cursor = pair.cursors@[i];
             assert(residual_after_prefix(pair, snapshot, cursor.bindings@, cursor.consumed_len as nat, cursor.residual));
             assert(cursor.bindings@.len() == pair.symbols@.variables.len());
-            assert forall|j: int| 0 <= j < cursor.bindings@.len() implies crate::verify::value_specs::value_view(cursor.bindings@[j]) != Data::Undefined by {
-                assert(source_model::values_data(cursor.bindings@)[j] == crate::verify::value_specs::value_view(cursor.bindings@[j]));
+            assert forall|j: int| 0 <= j < cursor.bindings@.len() implies value_view(cursor.bindings@[j]) != Data::Undefined by {
+                assert(source_model::values_data(cursor.bindings@)[j] == value_view(cursor.bindings@[j]));
             }
             assert(snapshot.take(cursor.consumed_len as int) =~= history.take(cursor.consumed_len as int));
         }

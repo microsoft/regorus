@@ -3,11 +3,13 @@
 
 use super::error::normalization_invariant as invariant;
 #[cfg(verus_keep_ghost)]
+use super::graph::verify::lemma_id_clones;
+#[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 use super::kernel::*;
 use super::work::WorkVec;
 #[cfg(verus_keep_ghost)]
-use crate::verify::history_assumptions::{KernelStoreSpec, SmallVecSpecFns};
+use crate::verify::history_assumptions::{dedup_spec, KernelStoreSpec, SmallVecSpecFns};
 #[cfg(verus_keep_ghost)]
 use crate::verify::history_specs as language;
 #[cfg(verus_keep_ghost)]
@@ -542,7 +544,7 @@ fn collect_test_children<G: KernelStore>(
 }
 #[verus_verify]
 #[verus_spec(result =>
-    requires test_structural_eq::<T>(), read < old(values).view().len(), state.1 <= read,
+    requires structural_eq::<T>(), read < old(values).view().len(), state.1 <= read,
         read < usize::MAX,
     ensures match result {
         Ok(next) => {
@@ -596,9 +598,9 @@ fn dedup_step<T: Copy + Eq>(
 }
 #[verus_verify]
 #[verus_spec(result =>
-    requires test_structural_eq::<T>(),
+    requires structural_eq::<T>(),
     ensures result is Ok,
-        final(values).view() == crate::verify::history_assumptions::dedup_spec(old(values).view()),
+        final(values).view() == dedup_spec(old(values).view()),
         forall|v: T| final(values).view().contains(v) <==> old(values).view().contains(v),
         forall|i: int| 0 < i < final(values).view().len()
             ==> final(values).view()[i - 1] != #[trigger] final(values).view()[i],
@@ -611,7 +613,7 @@ fn dedup_ids<T: Copy + Eq>(values: &mut WorkVec<T>) -> KernelResult<()> {
     scan!(state,index,count,state.is_ok(),prior=>{
         proof! {
             if index > 0 { assert(original.subrange(0, index as int).last() == original[index as int - 1]); }
-            test_lemma_dedup_push(old(values).view().subrange(0, index as int),
+            lemma_dedup_push(old(values).view().subrange(0, index as int),
                 old(values).view()[index as int]);
             assert(old(values).view().subrange(0, index as int + 1)
                 =~= old(values).view().subrange(0, index as int).push(old(values).view()[index as int]));
@@ -619,7 +621,7 @@ fn dedup_ids<T: Copy + Eq>(values: &mut WorkVec<T>) -> KernelResult<()> {
         dedup_step(values,index,prior)
     };
         invariant
-            test_structural_eq::<T>(),
+            structural_eq::<T>(),
             count == old(values).view().len(),
             original == old(values).view(),
             values.view().len() == count,
@@ -629,14 +631,14 @@ fn dedup_ids<T: Copy + Eq>(values: &mut WorkVec<T>) -> KernelResult<()> {
                 Ok((previous, write)) => write <= index
                     && previous == (if index == 0 { None } else { Some(old(values).view()[index as int - 1]) })
                     && values.view().subrange(0, write as int)
-                        == crate::verify::history_assumptions::dedup_spec(old(values).view().subrange(0, index as int)),
+                        == dedup_spec(old(values).view().subrange(0, index as int)),
                 Err(_) => false,
             },
         decreases count - index,
     );
     let (_, len) = state?;
     values.truncate(len);
-    proof! { test_lemma_dedup_properties(old(values).view()); }
+    proof! { lemma_dedup_properties(old(values).view()); }
     Ok(())
 }
 #[verus_verify]
@@ -898,7 +900,7 @@ fn test_connective<G: KernelStore>(
     proof_decl! { let ghost sorted = flat.view(); }
     dedup_ids(&mut flat)?;
     proof! {
-        test_lemma_multiset_membership(collected, sorted);
+        lemma_multiset_members(collected, sorted);
         assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ <= sorted[j]@ by {
             assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
         }
@@ -909,13 +911,13 @@ fn test_connective<G: KernelStore>(
             assert(collected.contains(flat.view()[i]));
             let j = choose|j: int| 0 <= j < collected.len() && collected[j] == flat.view()[i];
         }
-        test_lemma_dedup_strict(sorted, |id: TestId| id@);
+        lemma_dedup_strict(sorted, |id: TestId| id@);
         assert forall|i: int, j: int| 0 <= i < j < flat.view().len()
             implies flat.view()[i]@ < flat.view()[j]@ by {
-            assert(crate::verify::history_assumptions::dedup_spec(sorted)[i] == flat.view()[i]);
-            assert(crate::verify::history_assumptions::dedup_spec(sorted)[j] == flat.view()[j]);
-            assert((|id: TestId| id@)(crate::verify::history_assumptions::dedup_spec(sorted)[i])
-                < (|id: TestId| id@)(crate::verify::history_assumptions::dedup_spec(sorted)[j]));
+            assert(dedup_spec(sorted)[i] == flat.view()[i]);
+            assert(dedup_spec(sorted)[j] == flat.view()[j]);
+            assert((|id: TestId| id@)(dedup_spec(sorted)[i])
+                < (|id: TestId| id@)(dedup_spec(sorted)[j]));
         }
         assert forall|i: int, j: int| 0 <= i < j < model::test_ids(flat.view()).len()
             implies model::test_ids(flat.view())[i] < model::test_ids(flat.view())[j] by {
@@ -1164,7 +1166,7 @@ fn finish_test_not<G: KernelStore>(
     proof_decl! { let ghost sorted = children@; }
     proof! {
         let source = original.subrange(start as int, original.len() as int);
-        test_lemma_multiset_membership(source, sorted);
+        lemma_multiset_members(source, sorted);
         source.lemma_multiset_has_no_duplicates();
         assert(sorted.no_duplicates()) by {
             sorted.lemma_multiset_has_no_duplicates_conv();
@@ -3130,7 +3132,7 @@ fn take_values(
     values: &mut WorkVec<TransitionId>,
     count: usize,
 ) -> KernelResult<WorkVec<TransitionId>> {
-    proof! { super::graph::verify::lemma_id_clones(); }
+    proof! { lemma_id_clones(); }
     let start = match values.len().checked_sub(count) {
         Some(v) => v,
         None => return Err(invariant()),
@@ -4330,7 +4332,7 @@ pub(crate) fn transition_intersect<G: KernelStore>(
     store: &mut G,
     children: &[TransitionId],
 ) -> KernelResult<TransitionId> {
-    proof! { super::graph::verify::lemma_id_clones(); }
+    proof! { lemma_id_clones(); }
     let mut xs = WorkVec::new();
     xs.extend_from_slice(children);
     transition_machine(store, Action::Fold(xs, 0))
@@ -4464,42 +4466,42 @@ pub(crate) mod verify {
         }
     }
 
-    pub open spec fn test_structural_eq<T: PartialEq>() -> bool {
+    pub open spec fn structural_eq<T: PartialEq>() -> bool {
         T::obeys_eq_spec() && forall|a: T, b: T| a.eq_spec(&b) == (a == b)
     }
 
-    pub proof fn test_lemma_dedup_push<T: PartialEq>(s: Seq<T>, value: T)
-        requires test_structural_eq::<T>(),
-        ensures crate::verify::history_assumptions::dedup_spec(s.push(value))
+    pub proof fn lemma_dedup_push<T: PartialEq>(s: Seq<T>, value: T)
+        requires structural_eq::<T>(),
+        ensures dedup_spec(s.push(value))
             == if s.len() != 0 && s.last() == value {
-                crate::verify::history_assumptions::dedup_spec(s)
+                dedup_spec(s)
             } else {
-                crate::verify::history_assumptions::dedup_spec(s).push(value)
+                dedup_spec(s).push(value)
             },
     {
-        reveal(crate::verify::history_assumptions::dedup_spec);
+        reveal(dedup_spec);
         assert(s.push(value).drop_last() =~= s);
     }
 
-    pub proof fn test_lemma_dedup_properties<T: PartialEq>(s: Seq<T>)
-        requires test_structural_eq::<T>(),
+    pub proof fn lemma_dedup_properties<T: PartialEq>(s: Seq<T>)
+        requires structural_eq::<T>(),
         ensures
-            crate::verify::history_assumptions::dedup_spec(s).len() <= s.len(),
-            crate::verify::history_assumptions::dedup_spec(s).len() == 0 <==> s.len() == 0,
-            s.len() > 0 ==> crate::verify::history_assumptions::dedup_spec(s).last() == s.last(),
-            forall|v: T| crate::verify::history_assumptions::dedup_spec(s).contains(v) <==> s.contains(v),
-            forall|i: int| 0 < i < crate::verify::history_assumptions::dedup_spec(s).len()
-                ==> crate::verify::history_assumptions::dedup_spec(s)[i - 1]
-                    != #[trigger] crate::verify::history_assumptions::dedup_spec(s)[i],
+            dedup_spec(s).len() <= s.len(),
+            dedup_spec(s).len() == 0 <==> s.len() == 0,
+            s.len() > 0 ==> dedup_spec(s).last() == s.last(),
+            forall|v: T| dedup_spec(s).contains(v) <==> s.contains(v),
+            forall|i: int| 0 < i < dedup_spec(s).len()
+                ==> dedup_spec(s)[i - 1]
+                    != #[trigger] dedup_spec(s)[i],
         decreases s.len(),
     {
         if s.len() > 0 {
             let prior = s.drop_last();
-            test_lemma_dedup_properties(prior);
-            test_lemma_dedup_push(prior, s.last());
+            lemma_dedup_properties(prior);
+            lemma_dedup_push(prior, s.last());
             assert(prior.push(s.last()) =~= s);
-            let dedup = crate::verify::history_assumptions::dedup_spec(prior);
-            let out = crate::verify::history_assumptions::dedup_spec(s);
+            let dedup = dedup_spec(prior);
+            let out = dedup_spec(s);
             assert forall|v: T| out.contains(v) <==> s.contains(v) by {
                 if out.contains(v) {
                     let i = choose|i: int| 0 <= i < out.len() && out[i] == v;
@@ -4525,26 +4527,26 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn test_lemma_dedup_ordered<T: PartialEq>(s: Seq<T>, relation: spec_fn(T, T) -> bool)
-        requires test_structural_eq::<T>(),
+    pub proof fn lemma_dedup_ordered<T: PartialEq>(s: Seq<T>, relation: spec_fn(T, T) -> bool)
+        requires structural_eq::<T>(),
             forall|i: int, j: int| 0 <= i < j < s.len() ==> relation(s[i], s[j]),
         ensures forall|i: int, j: int|
-            0 <= i < j < crate::verify::history_assumptions::dedup_spec(s).len()
-            ==> relation(crate::verify::history_assumptions::dedup_spec(s)[i],
-                crate::verify::history_assumptions::dedup_spec(s)[j]),
+            0 <= i < j < dedup_spec(s).len()
+            ==> relation(dedup_spec(s)[i],
+                dedup_spec(s)[j]),
         decreases s.len(),
     {
         if s.len() > 0 {
             let prior = s.drop_last();
-            test_lemma_dedup_properties(prior);
-            test_lemma_dedup_ordered(prior, relation);
-            test_lemma_dedup_push(prior, s.last());
+            lemma_dedup_properties(prior);
+            lemma_dedup_ordered(prior, relation);
+            lemma_dedup_push(prior, s.last());
             assert(prior.push(s.last()) =~= s);
             assert forall|i: int, j: int|
-                0 <= i < j < crate::verify::history_assumptions::dedup_spec(s).len()
-                implies relation(crate::verify::history_assumptions::dedup_spec(s)[i],
-                    crate::verify::history_assumptions::dedup_spec(s)[j]) by {
-                let dedup = crate::verify::history_assumptions::dedup_spec(prior);
+                0 <= i < j < dedup_spec(s).len()
+                implies relation(dedup_spec(s)[i],
+                    dedup_spec(s)[j]) by {
+                let dedup = dedup_spec(prior);
                 if j == dedup.len() {
                     assert(dedup.contains(dedup[i]));
                     assert(prior.contains(dedup[i]));
@@ -4555,18 +4557,18 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn test_lemma_dedup_strict<T: PartialEq>(s: Seq<T>, key: spec_fn(T) -> nat)
-        requires test_structural_eq::<T>(),
+    pub proof fn lemma_dedup_strict<T: PartialEq>(s: Seq<T>, key: spec_fn(T) -> nat)
+        requires structural_eq::<T>(),
             forall|a: T, b: T| #[trigger] key(a) == #[trigger] key(b) ==> a == b,
             forall|i: int, j: int| 0 <= i < j < s.len() ==> #[trigger] key(s[i]) <= #[trigger] key(s[j]),
         ensures forall|i: int, j: int|
-            0 <= i < j < crate::verify::history_assumptions::dedup_spec(s).len()
-            ==> #[trigger] key(crate::verify::history_assumptions::dedup_spec(s)[i])
-                < #[trigger] key(crate::verify::history_assumptions::dedup_spec(s)[j]),
+            0 <= i < j < dedup_spec(s).len()
+            ==> #[trigger] key(dedup_spec(s)[i])
+                < #[trigger] key(dedup_spec(s)[j]),
     {
-        test_lemma_dedup_properties(s);
-        test_lemma_dedup_ordered(s, |a: T, b: T| key(a) <= key(b));
-        let out = crate::verify::history_assumptions::dedup_spec(s);
+        lemma_dedup_properties(s);
+        lemma_dedup_ordered(s, |a: T, b: T| key(a) <= key(b));
+        let out = dedup_spec(s);
         assert forall|i: int, j: int| 0 <= i < j < out.len()
             implies key(out[i]) < key(out[j]) by {
             if key(out[i]) == key(out[j]) {
@@ -4604,7 +4606,7 @@ pub(crate) mod verify {
         model::lemma_graph_test_wf(g, id@);
     }
 
-    pub proof fn test_lemma_multiset_membership<T>(left: Seq<T>, right: Seq<T>)
+    pub proof fn lemma_multiset_members<T>(left: Seq<T>, right: Seq<T>)
         requires left.to_multiset() == right.to_multiset(),
         ensures forall|v: T| left.contains(v) <==> right.contains(v),
     {
@@ -4662,7 +4664,7 @@ pub(crate) mod verify {
         requires left.to_multiset() == right.to_multiset(),
         ensures test_combo(g, sym, theta, left, event, and) == test_combo(g, sym, theta, right, event, and),
     {
-        test_lemma_multiset_membership(left, right);
+        lemma_multiset_members(left, right);
         test_lemma_combo_membership(g, sym, theta, event, left, right, and);
     }
 
@@ -5681,7 +5683,7 @@ pub(crate) mod verify {
         reveal(test_negation_row);
         model::lemma_graph_test_wf(g, id@);
         model::lemma_graph_test_wf(g, out@);
-        test_lemma_multiset_membership(sorted, values);
+        lemma_multiset_members(sorted, values);
         let output = model::test_ids(sorted);
         assert forall|x: nat| origins.contains(x) implies exists|y: nat|
             output.contains(y) && relation.contains((x, y)) by {
@@ -6615,18 +6617,6 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_absorbed_prefix(g: model::Graph, a: nat, siblings: Seq<RegexId>, index: int, intersect: bool)
-        requires 0 <= index < siblings.len(),
-        ensures (exists|i: int| 0 <= i < index + 1 && regex_absorbed_by(g, a, siblings[i]@, intersect))
-            == ((exists|i: int| 0 <= i < index && regex_absorbed_by(g, a, siblings[i]@, intersect))
-                || regex_absorbed_by(g, a, siblings[index]@, intersect)),
-    {
-        if exists|i: int| 0 <= i < index + 1 && regex_absorbed_by(g, a, siblings[i]@, intersect) {
-            let i = choose|i: int| 0 <= i < index + 1 && regex_absorbed_by(g, a, siblings[i]@, intersect);
-            if i != index { assert(i < index); }
-        }
-    }
-
     pub open spec fn regex_mode_wf(g: model::Graph, mode: RegexModeModel) -> bool {
         mode.identity@ == (if mode.intersect { g.constants.all } else { g.constants.empty })
             && mode.absorber@ == (if mode.intersect { g.constants.empty } else { g.constants.all })
@@ -7116,16 +7106,6 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_nullable_set_unfold<L>(regex: language::Regex<L>)
-        ensures match regex {
-            language::Regex::Union(cs) => language::nullable(regex) == (exists|i: int| 0 <= i < cs.len() && language::nullable(cs[i])),
-            language::Regex::Intersect(cs) => language::nullable(regex) == (forall|i: int| 0 <= i < cs.len() ==> language::nullable(cs[i])),
-            _ => true,
-        },
-    {
-        match regex { language::Regex::Union(_) | language::Regex::Intersect(_) => {}, _ => {} }
-    }
-
     pub open spec fn regex_test_combo(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, tests: Seq<TestId>, word: Seq<Data>, intersect: bool) -> bool {
         if tests.len() == 0 { intersect }
         else { word.len() == 1 && test_combo(g, sym, theta, tests, word[0], intersect) }
@@ -7410,10 +7390,7 @@ pub(crate) mod verify {
         requires source.to_multiset() == target.to_multiset(),
         ensures forall|id: RegexId| source.contains(id) == target.contains(id),
     {
-        assert forall|id: RegexId| source.contains(id) == target.contains(id) by {
-            vstd::seq_lib::to_multiset_contains(source, id);
-            vstd::seq_lib::to_multiset_contains(target, id);
-        }
+        lemma_multiset_members(source, target);
     }
 
     pub proof fn regex_remove_strict(ids: Seq<RegexId>, index: int)
@@ -7466,15 +7443,15 @@ pub(crate) mod verify {
     }
 
     pub proof fn regex_dedup_strict(sorted: Seq<RegexId>, result: Seq<RegexId>)
-        requires result == crate::verify::history_assumptions::dedup_spec(sorted),
+        requires result == dedup_spec(sorted),
             forall|i: int, j: int| 0 <= i < j < sorted.len() ==> sorted[i]@ <= sorted[j]@,
         ensures model::strictly_increasing(model::regex_ids(result)),
     {
         let key: spec_fn(RegexId) -> nat = |id: RegexId| id@;
-        test_lemma_dedup_strict::<RegexId>(sorted, key);
+        lemma_dedup_strict::<RegexId>(sorted, key);
         regex_ids_shape(result);
         assert forall|i: int, j: int| 0 <= i < j < result.len() implies model::regex_ids(result)[i] < model::regex_ids(result)[j] by {
-            assert(key(crate::verify::history_assumptions::dedup_spec(sorted)[i]) < key(crate::verify::history_assumptions::dedup_spec(sorted)[j]));
+            assert(key(dedup_spec(sorted)[i]) < key(dedup_spec(sorted)[j]));
         }
     }
 
@@ -7533,28 +7510,6 @@ pub(crate) mod verify {
             model::TestNode::True => {},
             model::TestNode::False => {},
             model::TestNode::Atom(_, _) => {},
-            _ => {},
-        }
-    }
-
-    pub proof fn test_lemma_not_schedule_effect(g: model::Graph, id: TestId,
-        pending: Seq<(TestId, bool)>, tasks: Seq<(TestId, bool)>, values: Seq<TestId>, count: nat)
-        requires test_child_count(g, id, count), pending.push((id, true)).is_prefix_of(tasks),
-            tasks.len() == pending.len() + 1 + count,
-            forall|i: int| 0 <= i < count
-                ==> #[trigger] tasks[pending.len() + 1 + i].0@ == test_children(g, id)[count as int - 1 - i]
-                    && !tasks[pending.len() + 1 + i].1,
-        ensures test_not_effect(g, id, false, pending, values, tasks, values),
-    {
-        let scheduled = tasks.subrange(pending.len() as int + 1, tasks.len() as int);
-        assert forall|i: int| 0 <= i < scheduled.len()
-            implies scheduled[i].0@ == test_children(g, id)[scheduled.len() as int - 1 - i] && !scheduled[i].1 by {
-            assert(scheduled[i] == tasks[pending.len() + 1 + i]);
-        }
-        assert(test_not_schedule(g, id, scheduled));
-        match g.tests[id@ as int] {
-            model::TestNode::And(_) => {},
-            model::TestNode::Or(_) => {},
             _ => {},
         }
     }
@@ -11957,23 +11912,20 @@ pub(crate) mod verify {
         requires source.to_multiset() == target.to_multiset(),
         ensures forall|id: TransitionId| source.contains(id) == target.contains(id),
     {
-        assert forall|id: TransitionId| source.contains(id) == target.contains(id) by {
-            vstd::seq_lib::to_multiset_contains(source, id);
-            vstd::seq_lib::to_multiset_contains(target, id);
-        }
+        lemma_multiset_members(source, target);
     }
 
     pub proof fn transition_dedup_strict(sorted: Seq<TransitionId>, result: Seq<TransitionId>)
-        requires result == crate::verify::history_assumptions::dedup_spec(sorted),
+        requires result == dedup_spec(sorted),
             forall|i: int, j: int| 0 <= i < j < sorted.len() ==> sorted[i]@ <= sorted[j]@,
         ensures model::strictly_increasing(model::transition_ids(result)),
     {
         let key: spec_fn(TransitionId) -> nat = |id: TransitionId| id@;
-        test_lemma_dedup_strict::<TransitionId>(sorted, key);
+        lemma_dedup_strict::<TransitionId>(sorted, key);
         assert forall|i: int, j: int| 0 <= i < j < result.len() implies
             model::transition_ids(result)[i] < model::transition_ids(result)[j] by {
-            assert(key(crate::verify::history_assumptions::dedup_spec(sorted)[i])
-                < key(crate::verify::history_assumptions::dedup_spec(sorted)[j]));
+            assert(key(dedup_spec(sorted)[i])
+                < key(dedup_spec(sorted)[j]));
         }
     }
 
@@ -13377,19 +13329,6 @@ pub(crate) mod verify {
                 =~= seq![GuardedAction::AppendResult(combined_term), GuardedAction::Clean(term, path_term)]);
             reveal_with_fuel(guarded_run, 3);
         }
-    }
-
-
-    pub proof fn machine_unary_preserve(
-        before: model::Graph, after: model::Graph, task: ActionShape,
-        tasks: Seq<ActionShape>, values: Seq<TransitionId>,
-    )
-        requires model::graph_wf(before), model::graph_extends(before, after),
-            transition_action_valid(before, task), transition_configuration_valid(before, tasks, values),
-        ensures transition_action_valid(after, task), transition_configuration_valid(after, tasks, values),
-    {
-        transition_lemma_action_stable(before, after, task);
-        transition_lemma_program_stable(before, after, tasks, values);
     }
 
     pub proof fn machine_unary_not_result(g: model::Graph, id: TransitionId, out: TransitionId)
