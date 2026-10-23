@@ -3,6 +3,234 @@
 
 use anyhow::{bail, Result};
 use regorus::*;
+use std::collections::BTreeSet;
+
+#[test]
+fn keyed_set_expression_projection_preserves_sibling_override() -> Result<()> {
+    for head in [
+        "values[input.key] contains 2",
+        "values[input.keys[_]] contains 2",
+        "values[input.keys[_]] contains 2 if { true }",
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nvalues.a contains 1\n{head}"),
+        )?;
+        engine.set_input(Value::from_json_str(r#"{"key":"b","keys":["a","b"]}"#)?);
+        let result = engine.eval_query(
+            "[data.test.values.a, data.test.values.b] with data.test.values.b as {9}".into(),
+            false,
+        )?;
+        let first = if head.contains("keys") {
+            vec![1, 2]
+        } else {
+            vec![1]
+        };
+        let expected = Value::from(vec![
+            Value::from(first.into_iter().map(Value::from).collect::<BTreeSet<_>>()),
+            Value::from(BTreeSet::from([Value::from(9)])),
+        ]);
+        assert_eq!(result.result[0].expressions[0].value, expected, "{head}");
+    }
+    Ok(())
+}
+
+#[test]
+fn keyed_set_projection_preserves_cycle_detection() -> Result<()> {
+    for (policy, entrypoint) in [
+        (
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "a"; n := count(values.a) }"#,
+            "data.test.values.a",
+        ),
+        (
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "a"; n := count(values.a) }"#,
+            "data.test.values",
+        ),
+        (
+            r#"package test
+               values.a contains 1
+               values.b contains 2
+               values[k] contains n if { k := "a"; n := count(values.b) }
+               values[k] contains n if { k := "b"; n := count(values.a) }"#,
+            "data.test.values.a",
+        ),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".into(), policy.into())?;
+        let error = engine
+            .eval_rule(entrypoint.into())
+            .expect_err("a genuine keyed-set cycle must be rejected");
+        assert!(
+            error.to_string().contains("recursion detected"),
+            "{entrypoint}: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn keyed_set_parent_loop_projection_state_is_invocation_local() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[input.keys[_]] contains count(data.test.values.a)"#
+            .into(),
+    )?;
+
+    for keys in [r#"["b","a"]"#, r#"["a","b"]"#] {
+        engine.set_input(Value::from_json_str(&format!(r#"{{"keys":{keys}}}"#))?);
+        for path in ["data.test.values", "data.test.values.a"] {
+            let error = engine
+                .eval_rule(path.into())
+                .expect_err("matching projected recursion must be rejected");
+            assert!(
+                error.to_string().contains("recursion detected"),
+                "{path}: {error}"
+            );
+        }
+
+        engine.set_input(Value::from_json_str(r#"{"keys":["b"]}"#)?);
+        assert_eq!(
+            engine.eval_rule("data.test.values.a".into())?,
+            Value::from(BTreeSet::from([Value::from(1)]))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn keyed_set_guarded_head_arithmetic_runs_after_body_success() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { is_number(input.port); k := input.port + 1 }"#
+            .into(),
+    )?;
+
+    engine.set_input(Value::from_json_str(r#"{"port":"invalid"}"#)?);
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+
+    engine.set_input(Value::from_json_str(r#"{"port":80}"#)?);
+    let result = engine.eval_rule("data.test.values".into())?;
+    assert_eq!(
+        result,
+        Value::from(std::collections::BTreeMap::from([
+            (
+                Value::from("a"),
+                Value::from(BTreeSet::from([Value::from(1)])),
+            ),
+            (
+                Value::from(81),
+                Value::from(BTreeSet::from([Value::from(2)])),
+            ),
+        ]))
+    );
+
+    let mut guarded_engine = Engine::new();
+    guarded_engine.add_policy(
+        "guard.rego".into(),
+        r#"package guard
+           values[k] contains 2 if { input.enabled; k := input.port + 1 }"#
+            .into(),
+    )?;
+    guarded_engine.set_input(Value::from_json_str(
+        r#"{"port":"invalid","enabled":true}"#,
+    )?);
+    let error = guarded_engine
+        .eval_rule("data.guard.values".into())
+        .expect_err("a successful body must still report a failing head expression");
+    assert!(!error.to_string().contains("recursion detected"), "{error}");
+    guarded_engine.set_input(Value::from_json_str(r#"{"port":80,"enabled":true}"#)?);
+    assert_eq!(
+        guarded_engine.eval_rule("data.guard.values".into())?,
+        Value::from(std::collections::BTreeMap::from([(
+            Value::from(81),
+            Value::from(BTreeSet::from([Value::from(2)])),
+        )]))
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_set_does_not_speculate_overridden_builtin_key_calls() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_extension(
+        "lower".to_string(),
+        1,
+        Box::new(|_| Err(anyhow::anyhow!("overridden lower must not run"))),
+    )?;
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { false; k := lower("B") }"#
+            .into(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_set_multiple_bodies_remain_rejected() {
+    let mut engine = Engine::new();
+    let error = engine
+        .add_policy(
+            "test.rego".into(),
+            r#"package test
+               values.a contains 1
+               values[k] contains n if { k := "b"; n := 2 }
+                   { k := "b"; n := count(values.a) }"#
+                .into(),
+        )
+        .expect_err("multiple set bodies are unsupported");
+    assert!(
+        error
+            .to_string()
+            .contains("else cannot be used with set rules"),
+        "{error}"
+    );
+}
+
+#[test]
+fn keyed_set_child_override_preserves_dynamic_sibling_contributions() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".into(),
+        r#"package test
+           values.a contains 1
+           values[k] contains 2 if { k := "b" }
+           main := result if {
+               result := values.b with data.test.values.a as {9}
+           }"#
+        .into(),
+    )?;
+
+    assert_eq!(
+        engine.eval_rule("data.test.main".into())?,
+        Value::from(BTreeSet::from([Value::from(2)]))
+    );
+    assert_eq!(
+        engine.eval_rule("data.test.values.a".into())?,
+        Value::from(BTreeSet::from([Value::from(1)]))
+    );
+    Ok(())
+}
 
 #[test]
 fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {

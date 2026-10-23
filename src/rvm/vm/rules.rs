@@ -17,7 +17,7 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
+    /// Returns true if the error represents a fatal evaluation failure that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
@@ -27,8 +27,24 @@ impl RegoVM {
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
                 | VmError::InstructionLimitExceeded { .. }
+                | VmError::RuleRecursionDetected { .. }
                 | VmError::NumericOverflow { .. }
         )
+    }
+
+    fn check_rule_recursion(&self, rule_index: u16) -> Result<()> {
+        if self.program.needs_runtime_recursion_check
+            && self
+                .call_rule_stack
+                .iter()
+                .any(|context| context.rule_index == rule_index)
+        {
+            return Err(VmError::RuleRecursionDetected {
+                rule_index,
+                pc: self.pc,
+            });
+        }
+        Ok(())
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -250,6 +266,8 @@ impl RegoVM {
             }
         }
 
+        self.check_rule_recursion(rule_index)?;
+
         let rule_type = rule_info.rule_type.clone();
         let rule_definitions = rule_info.definitions.clone();
 
@@ -416,6 +434,8 @@ impl RegoVM {
                 return Ok(());
             }
         }
+
+        self.check_rule_recursion(rule_index)?;
 
         if rule_info.definitions.is_empty() {
             // No compiled definitions — check for a default value before returning Undefined.
@@ -709,11 +729,30 @@ impl RegoVM {
             }
         }
 
-        if let Some(definition_bodies) = rule_info
-            .definitions
+        let next_is_else = rule_info
+            .else_bodies
             .get(frame_data.current_definition_index)
+            .and_then(|bodies| {
+                frame_data
+                    .current_body_index
+                    .checked_add(1)
+                    .and_then(|next| bodies.get(next))
+            })
+            .copied()
+            .unwrap_or(false);
+        if !matches!(
+            frame_data.rule_type,
+            RuleType::PartialSet | RuleType::PartialObject
+        ) || next_is_else
         {
-            frame_data.current_body_index = definition_bodies.len();
+            if let Some(definition_bodies) = rule_info
+                .definitions
+                .get(frame_data.current_definition_index)
+            {
+                frame_data.current_body_index = definition_bodies.len();
+            } else {
+                self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
+            }
         } else {
             self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         }

@@ -507,6 +507,17 @@ fn format_instruction_readable(
             let comment = format!("Set field r{}[r{}] = r{}", obj, key, value);
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::ObjectSetAdd { obj, key, value } => {
+            let base = format!(
+                "{}ObjectSetAdd r{}[r{}].insert(r{})",
+                indent, obj, key, value
+            );
+            align_comment(
+                &base,
+                "Accumulate a keyed partial set",
+                config.comment_column,
+            )
+        }
         Instruction::ObjectCreate { params_index } => {
             let params = program
                 .instruction_data
@@ -1022,6 +1033,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::HostAwait { .. } => "HOST_AWAIT",
         Instruction::Return { .. } => "RETURN",
         Instruction::ObjectSet { .. } => "OBJ_SET",
+        Instruction::ObjectSetAdd { .. } => "OBJ_SET_ADD",
         Instruction::ObjectCreate { .. } => "OBJ_CREATE",
         Instruction::Index { .. } => "INDEX",
         Instruction::IndexLiteral { .. } => "INDEX_LIT",

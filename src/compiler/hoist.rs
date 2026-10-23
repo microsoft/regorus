@@ -16,7 +16,9 @@
 use super::destructuring_planner::{
     map_binding_error, BindingPlan, ScopingMode, VariableBindingContext,
 };
-use crate::ast::{Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, RuleHead};
+use crate::ast::{
+    AssignOp, Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, RuleHead,
+};
 use crate::compiler::context::{ContextType, ScopeContext};
 use crate::lookup::Lookup;
 use crate::lookup::LookupResult;
@@ -24,8 +26,266 @@ use crate::scheduler::compute_module_globals;
 use crate::*;
 use anyhow::{anyhow, Result};
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+
+pub fn key_expr_is_ready(
+    expr: &ExprRef,
+    mut is_bound: impl FnMut(&ExprRef) -> Result<bool>,
+    mut is_var_bound: impl FnMut(&crate::lexer::Span) -> bool,
+    mut is_safe_call: impl FnMut(&ExprRef) -> Result<bool>,
+) -> Result<bool> {
+    let mut ready = true;
+    crate::query::traversal::traverse(expr, &mut |node| {
+        if is_bound(node)? {
+            return Ok(false);
+        }
+        match node.as_ref() {
+            Expr::Var { span, .. } => {
+                ready &= is_var_bound(span);
+                Ok(false)
+            }
+            Expr::ArrayCompr { .. }
+            | Expr::SetCompr { .. }
+            | Expr::ObjectCompr { .. }
+            | Expr::BinExpr { .. }
+            | Expr::UnaryExpr { .. }
+            | Expr::ArithExpr { .. }
+            | Expr::AssignExpr { .. } => {
+                ready = false;
+                Ok(false)
+            }
+            Expr::Call { fcn, params, .. } => {
+                ready &= is_safe_literal_key_call(fcn, params)? && is_safe_call(node)?;
+                Ok(false)
+            }
+            _ => Ok(true),
+        }
+    })?;
+    Ok(ready)
+}
+
+/// Whether `key_expr` reads a variable that one of `loops` binds as its index.
+pub fn key_reads_loop_index_vars(key_expr: &ExprRef, loops: &[HoistedLoop]) -> Result<bool> {
+    fn any_var(expr: &ExprRef, mut f: impl FnMut(&str) -> Result<bool>) -> Result<bool> {
+        let mut found = false;
+        crate::query::traversal::traverse(expr, &mut |node| {
+            if let Expr::Var { span, .. } = node.as_ref() {
+                found = found || f(span.text())?;
+            }
+            Ok(!found)
+        })?;
+        Ok(found)
+    }
+    any_var(key_expr, |name| {
+        for key in loops.iter().filter_map(|l| l.key.as_ref()) {
+            if any_var(key, |index_var| Ok(index_var == name))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+}
+
+pub fn is_safe_literal_key_call(fcn: &ExprRef, params: &[ExprRef]) -> Result<bool> {
+    let name = crate::utils::get_path_string(fcn, None)?;
+    let is_string =
+        |expr: &ExprRef| matches!(expr.as_ref(), Expr::String { .. } | Expr::RawString { .. });
+    Ok(match (name.as_str(), params) {
+        ("lower", [value]) => is_string(value),
+        ("concat", [separator, values]) => {
+            is_string(separator)
+                && matches!(
+                    values.as_ref(),
+                    Expr::Array { items, .. } if items.iter().all(is_string)
+                )
+        }
+        _ => false,
+    })
+}
+
+fn is_safe_key_binding_value(
+    expr: &ExprRef,
+    is_safe_call: &mut impl FnMut(&ExprRef) -> Result<bool>,
+) -> Result<bool> {
+    match expr.as_ref() {
+        Expr::Call { fcn, params, .. } => {
+            Ok(is_safe_literal_key_call(fcn, params)? && is_safe_call(expr)?)
+        }
+        other => Ok(is_scalar_literal(other) || is_literal_input_ref(other)),
+    }
+}
+
+/// `input`, or a path into it whose segments are all literals. Such a ref
+/// reads the same value anywhere in a body, so its binding may move earlier.
+fn is_literal_input_ref(expr: &Expr) -> bool {
+    match expr {
+        Expr::Var { span, .. } => span.text() == "input",
+        Expr::RefDot { refr, .. } => is_literal_input_ref(refr),
+        Expr::RefBrack { refr, index, .. } => {
+            is_scalar_literal(index) && is_literal_input_ref(refr)
+        }
+        _ => false,
+    }
+}
+
+pub fn prioritize_key_binding(
+    statements: &mut Vec<&LiteralStmt>,
+    key_expr: Option<&ExprRef>,
+    key_filter: Option<&Value>,
+    mut is_safe_call: impl FnMut(&ExprRef) -> Result<bool>,
+) -> Result<()> {
+    if key_filter.is_none() {
+        return Ok(());
+    }
+    let Some(key_expr) = key_expr else {
+        return Ok(());
+    };
+    let mut key_names = BTreeSet::new();
+    crate::query::traversal::traverse(key_expr, &mut |node| {
+        if let Expr::Var { span, .. } = node.as_ref() {
+            let name = span.text();
+            if name != "_" && name != "input" {
+                key_names.insert(name.to_string());
+            }
+        }
+        Ok(true)
+    })?;
+    for key_name in key_names {
+        let mut binding = None;
+        for (idx, stmt) in statements.iter().enumerate() {
+            if !stmt.with_mods.is_empty() {
+                continue;
+            }
+            let Literal::Expr { expr, .. } = &stmt.literal else {
+                continue;
+            };
+            let Expr::AssignExpr { op, lhs, rhs, .. } = expr.as_ref() else {
+                continue;
+            };
+            let value = if matches!(lhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
+            {
+                rhs
+            } else if *op == AssignOp::Eq
+                && matches!(rhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
+            {
+                lhs
+            } else {
+                continue;
+            };
+            if is_safe_key_binding_value(value, &mut is_safe_call)? {
+                binding = Some((idx, is_literal_input_ref(value)));
+            }
+        }
+        if let Some((idx, reads_input)) = binding {
+            // A `some` declaration must stay ahead of the binding; any other
+            // earlier use of the key variable blocks reordering. Bindings that
+            // read `input` also stay behind earlier statements mentioning
+            // `input`, which may shadow it (Rego v0) or override it.
+            let mut insert_at = Some(0);
+            for (pos, stmt) in statements.iter().take(idx).enumerate() {
+                if matches!(&stmt.literal, Literal::SomeVars { vars, .. } if vars.iter().any(|var| var.text() == key_name))
+                {
+                    insert_at = Some(pos + 1);
+                } else if stmt_references_var(stmt, &key_name)? {
+                    insert_at = None;
+                    break;
+                } else if reads_input && stmt_references_var(stmt, "input")? {
+                    insert_at = Some(pos + 1);
+                }
+            }
+            if let Some(insert_at) = insert_at.filter(|&at| at < idx) {
+                let stmt = statements.remove(idx);
+                statements.insert(insert_at, stmt);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a body binds a local `input` (Rego v0 shadowing), in which case
+/// `input` in a projected key is unready until that binding runs.
+pub fn query_shadows_input(stmts: &[LiteralStmt]) -> Result<bool> {
+    let is_input =
+        |expr: &ExprRef| matches!(expr.as_ref(), Expr::Var { span, .. } if span.text() == "input");
+    for stmt in stmts {
+        match &stmt.literal {
+            Literal::SomeVars { vars, .. } if vars.iter().any(|var| var.text() == "input") => {
+                return Ok(true)
+            }
+            Literal::SomeIn { key, value, .. }
+                if key.as_ref().is_some_and(&is_input) || is_input(value) =>
+            {
+                return Ok(true)
+            }
+            Literal::Expr { expr, .. } => {
+                if let Expr::AssignExpr {
+                    op: AssignOp::ColEq,
+                    lhs,
+                    ..
+                } = expr.as_ref()
+                {
+                    let mut found = false;
+                    crate::query::traversal::traverse(lhs, &mut |node| {
+                        found |= is_input(node);
+                        Ok(!found)
+                    })?;
+                    if found {
+                        return Ok(true);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+fn stmt_references_var(stmt: &LiteralStmt, name: &str) -> Result<bool> {
+    let mut found = false;
+    let mut check_expr = |expr: &ExprRef| -> Result<bool> {
+        if matches!(expr.as_ref(), Expr::Var { span, .. } if span.text() == name) {
+            found = true;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    };
+    match &stmt.literal {
+        Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+            crate::query::traversal::traverse(expr, &mut check_expr)?;
+        }
+        Literal::SomeIn {
+            key,
+            value,
+            collection,
+            ..
+        } => {
+            if let Some(key) = key {
+                crate::query::traversal::traverse(key, &mut check_expr)?;
+            }
+            crate::query::traversal::traverse(value, &mut check_expr)?;
+            crate::query::traversal::traverse(collection, &mut check_expr)?;
+        }
+        Literal::SomeVars { vars, .. } => {
+            found = vars.iter().any(|var| var.text() == name);
+        }
+        Literal::Every { .. } => return Ok(true),
+    }
+    Ok(found)
+}
+
+fn is_scalar_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::String { .. }
+        | Expr::RawString { .. }
+        | Expr::Number { .. }
+        | Expr::Bool { .. }
+        | Expr::Null { .. } => true,
+        Expr::UnaryExpr { expr, .. } => matches!(expr.as_ref(), Expr::Number { .. }),
+        _ => false,
+    }
+}
 
 /// Implementation of VariableBindingContext for ScopeContext
 impl VariableBindingContext for ScopeContext {
@@ -120,6 +380,10 @@ pub struct HoistedLoopsLookup {
     /// Maps (module_index, query_index) -> ScopeContext
     /// Stores compilation contexts for queries (rules, comprehensions, every)
     query_contexts: Lookup<ScopeContext>,
+
+    // Rule heads reuse expression IDs across bodies with different bindings.
+    output_loops: BTreeMap<(u32, u32, u32), Vec<HoistedLoop>>,
+    output_binding_plans: BTreeMap<(u32, u32, u32), BindingPlan>,
 }
 
 impl HoistedLoopsLookup {
@@ -195,6 +459,37 @@ impl HoistedLoopsLookup {
         self.expr_loops.get_checked(module_idx, expr_idx)
     }
 
+    pub fn get_output_loops(
+        &self,
+        module_idx: u32,
+        query_idx: Option<u32>,
+        expr_idx: u32,
+    ) -> LookupResult<Option<&Vec<HoistedLoop>>> {
+        if let Some(query_idx) = query_idx {
+            if let Some(loops) = self.output_loops.get(&(module_idx, query_idx, expr_idx)) {
+                return Ok(Some(loops));
+            }
+        }
+        self.get_expr_loops(module_idx, expr_idx)
+    }
+
+    pub fn get_output_binding_plan(
+        &self,
+        module_idx: u32,
+        query_idx: Option<u32>,
+        expr_idx: u32,
+    ) -> LookupResult<Option<&BindingPlan>> {
+        if let Some(query_idx) = query_idx {
+            if let Some(plan) = self
+                .output_binding_plans
+                .get(&(module_idx, query_idx, expr_idx))
+            {
+                return Ok(Some(plan));
+            }
+        }
+        self.get_expr_binding_plan(module_idx, expr_idx)
+    }
+
     /// Store the compilation context for a query
     pub fn set_query_context(
         &mut self,
@@ -246,6 +541,7 @@ pub struct LoopHoister {
     lookup: HoistedLoopsLookup,
     schedule: Option<crate::Rc<crate::scheduler::Schedule>>,
     module_globals: Lookup<crate::Rc<BTreeSet<String>>>,
+    output_query: Option<u32>,
 }
 
 impl LoopHoister {
@@ -255,6 +551,7 @@ impl LoopHoister {
             lookup: HoistedLoopsLookup::new(),
             schedule: None,
             module_globals: Lookup::new(),
+            output_query: None,
         }
     }
 
@@ -264,6 +561,7 @@ impl LoopHoister {
             lookup: HoistedLoopsLookup::new(),
             schedule: Some(schedule),
             module_globals: Lookup::new(),
+            output_query: None,
         }
     }
 
@@ -432,9 +730,20 @@ impl LoopHoister {
                         };
                         (key_expr, output_expr)
                     }
-                    RuleHead::Set { key, .. } => {
-                        // For set rules, no separate key_expr, output_expr is the key
-                        (None, key.clone())
+                    RuleHead::Set { refr, key, .. } => {
+                        let key_expr = match refr.as_ref() {
+                            Expr::RefBrack { index, .. }
+                                if key.is_some()
+                                    && !matches!(
+                                        index.as_ref(),
+                                        Expr::String { .. } | Expr::RawString { .. }
+                                    ) =>
+                            {
+                                Some(index.clone())
+                            }
+                            _ => None,
+                        };
+                        (key_expr, key.clone())
                     }
                     RuleHead::Func { assign, .. } => {
                         // Function rules return the assignment value (if any)
@@ -454,7 +763,7 @@ impl LoopHoister {
                         context.current_scope_bound_vars.clone();
 
                     // Store the context for this query
-                    let populated_body_context =
+                    let mut populated_body_context =
                         self.populate_query(module_idx, &body.query, &body_context)?;
                     self.lookup
                         .ensure_query_capacity(module_idx, body.query.qidx);
@@ -466,20 +775,26 @@ impl LoopHoister {
 
                     // Process the key expression if present
                     if let Some(ref key) = key_expr {
-                        self.populate_output_expr(module_idx, key, &populated_body_context)?;
+                        self.populate_body_output_expr(
+                            module_idx,
+                            body.query.qidx,
+                            key,
+                            &mut populated_body_context,
+                        )?;
                     }
 
                     // Process the head value expression (if present)
-                    if let Some(ref head_value) = value_expr {
-                        self.populate_output_expr(module_idx, head_value, &populated_body_context)?;
-                    }
-
-                    // Process the value expression if present in the assign
-                    if let Some(ref assign) = body.assign {
-                        self.populate_output_expr(
+                    if let Some(output) = body
+                        .assign
+                        .as_ref()
+                        .map(|assign| &assign.value)
+                        .or(value_expr.as_ref())
+                    {
+                        self.populate_body_output_expr(
                             module_idx,
-                            &assign.value,
-                            &populated_body_context,
+                            body.query.qidx,
+                            output,
+                            &mut populated_body_context,
                         )?;
                     }
                 }
@@ -495,18 +810,18 @@ impl LoopHoister {
                         context.current_scope_bound_vars.clone();
 
                     if let Some(ref key) = key_expr {
-                        self.populate_output_expr(module_idx, key, &body_context)?;
+                        self.populate_output_expr(module_idx, key, &mut body_context)?;
                     }
 
                     if let Some(ref value) = value_expr {
-                        self.populate_output_expr(module_idx, value, &body_context)?;
+                        self.populate_output_expr(module_idx, value, &mut body_context)?;
                     }
                 }
             }
             Rule::Default { value, .. } => {
                 // For default rules, just process the value expression
-                let context = self.create_scope_context(module_idx)?;
-                self.populate_output_expr(module_idx, value, &context)?;
+                let mut context = self.create_scope_context(module_idx)?;
+                self.populate_output_expr(module_idx, value, &mut context)?;
             }
         }
 
@@ -515,6 +830,18 @@ impl LoopHoister {
 
     /// Populate loop information for a query (sequence of statements)
     fn populate_query(
+        &mut self,
+        module_idx: u32,
+        query: &Query,
+        parent_context: &ScopeContext,
+    ) -> Result<ScopeContext> {
+        let output_query = self.output_query.take();
+        let result = self.populate_query_impl(module_idx, query, parent_context);
+        self.output_query = output_query;
+        result
+    }
+
+    fn populate_query_impl(
         &mut self,
         module_idx: u32,
         query: &Query,
@@ -672,12 +999,17 @@ impl LoopHoister {
                     None,
                     Some(term.clone()),
                 );
-                let populated_context =
+                let mut populated_context =
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
                     .set_query_context(module_idx, query.qidx, populated_context.clone())?;
-                self.populate_output_expr_with_context(module_idx, term, &populated_context)?;
+                self.populate_body_output_expr(
+                    module_idx,
+                    query.qidx,
+                    term,
+                    &mut populated_context,
+                )?;
             }
             E::ObjectCompr {
                 key, value, query, ..
@@ -687,13 +1019,23 @@ impl LoopHoister {
                     Some(key.clone()),
                     Some(value.clone()),
                 );
-                let populated_context =
+                let mut populated_context =
                     self.populate_query(module_idx, query.as_ref(), &compr_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);
                 self.lookup
                     .set_query_context(module_idx, query.qidx, populated_context.clone())?;
-                self.populate_output_expr_with_context(module_idx, key, &populated_context)?;
-                self.populate_output_expr_with_context(module_idx, value, &populated_context)?;
+                self.populate_body_output_expr(
+                    module_idx,
+                    query.qidx,
+                    key,
+                    &mut populated_context,
+                )?;
+                self.populate_body_output_expr(
+                    module_idx,
+                    query.qidx,
+                    value,
+                    &mut populated_context,
+                )?;
             }
             E::Call { fcn, params, .. } => {
                 self.analyze_expr(module_idx, fcn, context, loops)?;
@@ -734,11 +1076,7 @@ impl LoopHoister {
                             // Immediately bind variables from the plan to context
                             Self::bind_vars_from_plan_to_context(&binding_plan, context);
 
-                            self.lookup.set_expr_binding_plan(
-                                module_idx,
-                                expr_idx,
-                                binding_plan,
-                            )?;
+                            self.set_output_binding_plan(module_idx, expr_idx, binding_plan)?;
                         }
                         Err(err) => return Err(map_binding_error(err)),
                     }
@@ -762,11 +1100,7 @@ impl LoopHoister {
                             let expr_idx = index.as_ref().eidx();
                             self.lookup.ensure_expr_capacity(module_idx, expr_idx);
                             Self::bind_vars_from_plan_to_context(&binding_plan, context);
-                            self.lookup.set_expr_binding_plan(
-                                module_idx,
-                                expr_idx,
-                                binding_plan,
-                            )?;
+                            self.set_output_binding_plan(module_idx, expr_idx, binding_plan)?;
                         }
                         Err(err) => return Err(map_binding_error(err)),
                     }
@@ -798,8 +1132,7 @@ impl LoopHoister {
                 let expr_idx = expr.as_ref().eidx();
                 self.lookup.ensure_expr_capacity(module_idx, expr_idx);
                 Self::bind_vars_from_plan_to_context(&binding_plan, context);
-                self.lookup
-                    .set_expr_binding_plan(module_idx, expr_idx, binding_plan)?;
+                self.set_output_binding_plan(module_idx, expr_idx, binding_plan)?;
 
                 self.analyze_expr(module_idx, lhs, context, loops)?;
                 self.analyze_expr(module_idx, rhs, context, loops)?;
@@ -855,28 +1188,54 @@ impl LoopHoister {
     }
 
     /// Populate loop information for output expressions (rule values, comprehension terms)
+    fn populate_body_output_expr(
+        &mut self,
+        module_idx: u32,
+        query_idx: u32,
+        expr: &ExprRef,
+        context: &mut ScopeContext,
+    ) -> Result<()> {
+        let previous = self.output_query.replace(query_idx);
+        let result = self.populate_output_expr(module_idx, expr, context);
+        self.output_query = previous;
+        result
+    }
+
+    fn set_output_binding_plan(
+        &mut self,
+        module_idx: u32,
+        expr_idx: u32,
+        plan: BindingPlan,
+    ) -> Result<()> {
+        if let Some(query_idx) = self.output_query {
+            self.lookup
+                .output_binding_plans
+                .insert((module_idx, query_idx, expr_idx), plan);
+            Ok(())
+        } else {
+            self.lookup
+                .set_expr_binding_plan(module_idx, expr_idx, plan)
+        }
+    }
+
     fn populate_output_expr(
         &mut self,
         module_idx: u32,
         expr: &ExprRef,
-        context: &ScopeContext,
-    ) -> Result<()> {
-        self.populate_output_expr_with_context(module_idx, expr, context)
-    }
-
-    fn populate_output_expr_with_context(
-        &mut self,
-        module_idx: u32,
-        expr: &ExprRef,
-        context: &ScopeContext,
+        context: &mut ScopeContext,
     ) -> Result<()> {
         let mut loops = Vec::new();
-        let mut expr_context = context.clone();
-        self.analyze_expr(module_idx, expr, &mut expr_context, &mut loops)?;
+        self.analyze_expr(module_idx, expr, context, &mut loops)?;
 
         let expr_idx = expr.as_ref().eidx();
         self.lookup.ensure_expr_capacity(module_idx, expr_idx);
-        self.lookup.set_expr_loops(module_idx, expr_idx, loops)?;
+        if let Some(query_idx) = self.output_query {
+            self.lookup
+                .output_loops
+                .insert((module_idx, query_idx, expr_idx), loops);
+        } else {
+            self.lookup.set_expr_loops(module_idx, expr_idx, loops)?;
+        }
 
         Ok(())
     }

@@ -61,9 +61,18 @@ pub struct CompilationContext {
     pub(super) context_type: ContextType,
     pub(super) dest_register: Register,
     pub(super) key_expr: Option<ExprRef>,
+    /// Requested static child when projecting a dynamic keyed-set definition.
+    pub(super) key_filter: Option<Value>,
+    pub(super) key_filter_guarded: bool,
+    pub(super) multi_value: bool,
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,
+    pub(super) hoisted_key_loops: usize,
     pub(super) key_value_loops_hoisted: bool,
+    /// Head value loops trailing the hoisted key/value loops; the projected
+    /// key is checked before entering them.
+    pub(super) value_loops: usize,
+    pub(super) output_query: Option<u32>,
 }
 
 /// Entry in the rule compilation worklist that tracks both rule path and full call stack for recursion detection

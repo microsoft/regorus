@@ -444,6 +444,46 @@ impl RegoVM {
     ) -> Result<InstructionOutcome> {
         use Instruction::*;
         match instruction {
+            ObjectSetAdd { obj, key, value } => {
+                let key_value = self.get_register(key)?.clone();
+                let value_value = self.get_register(value)?.clone();
+                let mut obj_value = self.take_register(obj)?;
+                let result = (|| {
+                    let Value::Object(ref mut fields) = obj_value else {
+                        return Err(VmError::RegisterNotObject {
+                            register: obj,
+                            value: obj_value.clone(),
+                            pc: self.pc,
+                        });
+                    };
+                    if key_value != Value::Undefined && value_value == Value::Undefined {
+                        if let Some(set) = fields.get(&key_value) {
+                            if !matches!(set, Value::Set(_)) {
+                                return Err(VmError::RegisterNotSet {
+                                    register: obj,
+                                    value: set.clone(),
+                                    pc: self.pc,
+                                });
+                            }
+                        }
+                    }
+                    if key_value != Value::Undefined && value_value != Value::Undefined {
+                        let set = crate::Rc::make_mut(fields)
+                            .get_or_insert_with(key_value, Value::new_set);
+                        let Value::Set(ref mut elements) = *set else {
+                            return Err(VmError::RegisterNotSet {
+                                register: obj,
+                                value: set.clone(),
+                                pc: self.pc,
+                            });
+                        };
+                        crate::Rc::make_mut(elements).insert(value_value);
+                    }
+                    Ok(InstructionOutcome::Continue)
+                })();
+                self.set_register(obj, obj_value)?;
+                result
+            }
             ObjectSet { obj, key, value } => {
                 let key_value = self.get_register(key)?.clone();
                 let value_value = self.get_register(value)?.clone();

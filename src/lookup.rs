@@ -114,17 +114,21 @@ impl<T: Clone> Lookup<T> {
         Ok(())
     }
 
+    /// Replace the slot contents, returning the previous contents.
+    pub(crate) fn replace_checked(
+        &mut self,
+        module_idx: u32,
+        node_idx: u32,
+        value: Option<T>,
+    ) -> LookupResult<Option<T>> {
+        let slot = self.slot_mut(module_idx, node_idx)?;
+        Ok(core::mem::replace(slot, value))
+    }
+
     /// Get data using direct indices with bounds checking.
     /// Returns Ok(None) if the entry is unset, Err if indices are out of range.
     pub(crate) fn get_checked(&self, module_idx: u32, node_idx: u32) -> LookupResult<Option<&T>> {
         self.slot_ref(module_idx, node_idx)
-    }
-
-    /// Clear data at the given indices by setting it to None.
-    pub(crate) fn clear(&mut self, module_idx: u32, node_idx: u32) {
-        if let Ok(slot) = self.slot_mut(module_idx, node_idx) {
-            *slot = None;
-        }
     }
 
     /// Validate indices and return them as usize on success.

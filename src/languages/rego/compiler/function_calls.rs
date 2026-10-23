@@ -232,7 +232,7 @@ impl<'a> Compiler<'a> {
     /// keep their prior meaning (e.g. a builtin call). OPA instead rewrites
     /// aliases unconditionally and rejects calls to a missing target at
     /// compile time.
-    fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
+    pub(super) fn resolve_fcn_path_through_imports(&self, path: &str) -> Option<String> {
         if self.policy.inner.imports.is_empty() {
             return None;
         }

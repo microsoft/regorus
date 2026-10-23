@@ -17,6 +17,8 @@ use std::fs;
 use std::sync::Arc;
 use test_generator::test_resources;
 
+mod keyed_projection_differential;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,

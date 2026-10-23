@@ -38,7 +38,10 @@ use anyhow::{anyhow, bail, Result};
 use core::ops::Bound::*;
 
 type Scope = BTreeMap<SourceStr, Value>;
-type ExprLookup = Lookup<Value>;
+// Each slot is tagged with the rule-invocation frame that wrote it; other
+// frames treat it as unbound.
+type LoopVarSlot = (u64, Option<Value>);
+type ExprLookup = Lookup<LoopVarSlot>;
 
 #[cfg(feature = "azure_policy")]
 pub mod error;
@@ -114,12 +117,17 @@ pub struct Interpreter {
     scopes: Vec<Scope>,
     // TODO: handle recursive calls where same expr could have different values.
     loop_var_values: ExprLookup,
+    loop_var_frame: u64,
+    loop_var_frame_counter: u64,
+    // Caller slots overwritten by nested frames, restored when they return.
+    loop_var_undo: Vec<(u32, u32, Option<LoopVarSlot>)>,
     contexts: Vec<Context>,
 
     processed: BTreeSet<Ref<Rule>>,
     processed_paths: Value,
     rule_values: RuleValues,
-    active_rules: Vec<Ref<Rule>>,
+    // A parent invocation and its filtered child projections have distinct identities.
+    active_rules: Vec<(Ref<Rule>, Option<Value>)>,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -158,6 +166,9 @@ impl Clone for Interpreter {
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
             loop_var_values: ExprLookup::new(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
             scopes: Vec::default(),
             rule_values: BTreeMap::default(),
 
@@ -190,6 +201,13 @@ struct Context {
     is_old_style_set: bool,
     output_constness_determined: bool,
     early_return: bool,
+    output_query: Option<u32>,
+    key_filter: Option<Value>,
+    // Head-key loops could not be checked before the body ran because a
+    // collection depends on a body binding; recheck as bindings appear.
+    head_key_loops_pending: bool,
+    // The current body binds a local `input` (Rego v0 shadowing).
+    input_shadowed: bool,
 }
 
 impl Default for Context {
@@ -207,6 +225,10 @@ impl Default for Context {
             is_old_style_set: false,
             output_constness_determined: false,
             early_return: false,
+            output_query: None,
+            head_key_loops_pending: false,
+            input_shadowed: false,
+            key_filter: None,
         }
     }
 }
@@ -236,6 +258,9 @@ impl Interpreter {
             scopes: Vec::default(),
             contexts: Vec::default(),
             loop_var_values: Lookup::default(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -275,6 +300,9 @@ impl Interpreter {
             scopes: Vec::default(),
             contexts: Vec::default(),
             loop_var_values: Lookup::default(),
+            loop_var_frame: 0,
+            loop_var_frame_counter: 0,
+            loop_var_undo: Vec::new(),
 
             processed: BTreeSet::default(),
             processed_paths: Value::new_object(),
@@ -369,6 +397,20 @@ impl Interpreter {
         }
     }
 
+    fn expression_binding_plan(
+        &self,
+        expr_idx: u32,
+    ) -> crate::lookup::LookupResult<Option<&BindingPlan>> {
+        self.loop_hoisting_table(self.current_module_index)
+            .get_output_binding_plan(
+                self.current_module_index,
+                self.contexts
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
+    }
+
     pub const fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
     }
@@ -454,23 +496,42 @@ impl Interpreter {
     fn set_loop_var_value(&mut self, expr: &ExprRef, value: Value) -> Result<()> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values
-            .set_checked(module_idx, expr_idx, value)
-            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
+        let frame = self.loop_var_frame;
+        let old = self
+            .loop_var_values
+            .replace_checked(module_idx, expr_idx, Some((frame, Some(value))))
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))?;
+        if frame != 0 && !matches!(old, Some((owner, _)) if owner == frame) {
+            self.loop_var_undo.push((module_idx, expr_idx, old));
+        }
+        Ok(())
     }
 
     fn get_loop_var_value(&self, expr: &ExprRef) -> Result<Option<&Value>> {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values
+        let slot = self
+            .loop_var_values
             .get_checked(module_idx, expr_idx)
-            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))
+            .map_err(|err| anyhow!("internal error: loop var indices out of bounds: {err}"))?;
+        Ok(match slot {
+            Some((owner, value)) if *owner == self.loop_var_frame => value.as_ref(),
+            _ => None,
+        })
     }
 
     fn remove_loop_var_value(&mut self, expr: &ExprRef) {
         let module_idx = self.current_module_index;
         let expr_idx = expr.eidx();
-        self.loop_var_values.clear(module_idx, expr_idx);
+        let frame = self.loop_var_frame;
+        if matches!(
+            self.loop_var_values.get_checked(module_idx, expr_idx),
+            Ok(Some((owner, _))) if *owner == frame
+        ) {
+            let _ = self
+                .loop_var_values
+                .set_checked(module_idx, expr_idx, (frame, None));
+        }
     }
 
     #[inline]
@@ -500,11 +561,9 @@ impl Interpreter {
 
         if let Expr::Call { params, .. } = Self::loop_assignment_expr(loop_info).as_ref() {
             if let Some(last_param) = params.last() {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
                 return match binding_plan.cloned() {
@@ -1018,15 +1077,14 @@ impl Interpreter {
     ) -> Result<bool> {
         self.check_execution_time()?;
         let scope_saved = self.current_scope()?.clone();
+        let pending_saved = self.head_key_loops_pending();
         let mut count: usize = 0;
 
         // Fetch the binding plan for this some..in expression
-        let module_idx = self.current_module_index;
         let expr_idx = collection.as_ref().eidx();
 
         let binding_plan = self
-            .loop_hoisting_table(module_idx)
-            .get_expr_binding_plan(module_idx, expr_idx)
+            .expression_binding_plan(expr_idx)
             .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
         let Some(BindingPlan::SomeIn {
@@ -1042,6 +1100,7 @@ impl Interpreter {
             Value::Array(a) => {
                 for (idx, value) in a.iter().enumerate() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, &Value::from(idx))?
@@ -1056,6 +1115,11 @@ impl Interpreter {
                             == Value::from(true);
 
                     if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
+                    if self.reject_nonmatching_child_key()? {
                         *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
@@ -1079,6 +1143,7 @@ impl Interpreter {
             Value::Set(s) => {
                 for value in s.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, value)? == Value::from(true)
@@ -1092,6 +1157,11 @@ impl Interpreter {
                             == Value::from(true);
 
                     if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
+                    if self.reject_nonmatching_child_key()? {
                         *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
@@ -1116,6 +1186,7 @@ impl Interpreter {
             Value::Object(o) => {
                 for (key, value) in o.iter() {
                     *self.current_scope_mut()? = scope_saved.clone();
+                    self.set_head_key_loops_pending(pending_saved);
 
                     let mut success = if let Some(key_plan) = &key_plan {
                         self.execute_destructuring_plan(key_plan, key)? == Value::from(true)
@@ -1129,6 +1200,11 @@ impl Interpreter {
                             == Value::from(true);
 
                     if !success {
+                        *self.current_scope_mut()? = scope_saved.clone();
+                        continue;
+                    }
+
+                    if self.reject_nonmatching_child_key()? {
                         *self.current_scope_mut()? = scope_saved.clone();
                         continue;
                     }
@@ -1157,6 +1233,7 @@ impl Interpreter {
             }
         }
 
+        self.set_head_key_loops_pending(pending_saved);
         Ok(count > 0)
     }
 
@@ -1593,7 +1670,32 @@ impl Interpreter {
         }
     }
 
+    fn head_key_loops_pending(&self) -> bool {
+        self.contexts
+            .last()
+            .is_some_and(|context| context.head_key_loops_pending)
+    }
+
+    fn set_head_key_loops_pending(&mut self, pending: bool) {
+        if let Some(context) = self.contexts.last_mut() {
+            context.head_key_loops_pending = pending;
+        }
+    }
+
+    // A resolved head-key recheck only holds for the current bindings, so
+    // each loop iteration restores the pending state on exit.
     fn eval_stmts_in_loop(
+        &mut self,
+        stmts: &[&LiteralStmt],
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
+        let pending = self.head_key_loops_pending();
+        let result = self.eval_stmts_in_loop_impl(stmts, loops);
+        self.set_head_key_loops_pending(pending);
+        result
+    }
+
+    fn eval_stmts_in_loop_impl(
         &mut self,
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
@@ -1601,9 +1703,14 @@ impl Interpreter {
         self.memory_check()?;
         self.check_execution_time()?;
         if loops.is_empty() {
+            if self.reject_nonmatching_child_key()? {
+                return Ok(false);
+            }
             if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
                 // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(first_stmt, tail_stmts)? {
+                if self.eval_stmt(first_stmt, tail_stmts)?
+                    && !self.reject_nonmatching_child_key()?
+                {
                     if !matches!(&first_stmt.literal, Literal::SomeIn { .. }) {
                         self.eval_stmts(tail_stmts)
                     } else {
@@ -1717,28 +1824,7 @@ impl Interpreter {
                 }
             }
 
-            let index_plan = if let Some(index) = index_expr {
-                let module_idx = self.current_module_index;
-                let expr_idx = index.as_ref().eidx();
-                let plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
-
-                match plan.cloned() {
-                    Some(BindingPlan::LoopIndex {
-                        destructuring_plan, ..
-                    }) => destructuring_plan,
-                    Some(other_plan) => {
-                        bail!("internal error: expected LoopIndex for loop index expression, got {:?}", other_plan);
-                    }
-                    None => {
-                        bail!("internal error: no binding plan found for loop index expression");
-                    }
-                }
-            } else {
-                bail!("internal error: no binding plan found for loop index expression");
-            };
+            let index_plan = self.get_loop_index_plan(loop_info)?;
 
             // Create a new scope.
             self.scopes.push(Scope::default());
@@ -1957,8 +2043,69 @@ impl Interpreter {
         Ok(is_const && Self::is_simple_literal(output_expr)?)
     }
 
-    fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
+    fn get_loop_index_plan(&self, loop_info: &HoistedLoop) -> Result<DestructuringPlan> {
+        let index = Self::loop_index_expr(loop_info)
+            .ok_or_else(|| anyhow!("internal error: no loop index expression"))?;
+        let plan = self
+            .expression_binding_plan(index.as_ref().eidx())
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+        match plan {
+            Some(BindingPlan::LoopIndex {
+                destructuring_plan, ..
+            }) => Ok(destructuring_plan.clone()),
+            Some(other_plan) => {
+                bail!(
+                    "internal error: expected LoopIndex for loop index expression, got {:?}",
+                    other_plan
+                )
+            }
+            None => bail!("internal error: no binding plan found for loop index expression"),
+        }
+    }
+
+    fn eval_output_loop_iteration(
+        &mut self,
+        loop_info: &HoistedLoop,
+        index_plan: &DestructuringPlan,
+        index: &Value,
+        value: &Value,
+        loops: &[HoistedLoop],
+        value_loops: usize,
+    ) -> Result<bool> {
+        self.memory_check()?;
+        self.set_loop_var_value(Self::loop_assignment_expr(loop_info), value.clone())?;
+        let result = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
+            self.eval_output_expr_in_loop(loops, value_loops)
+        } else {
+            Ok(false)
+        };
+        Self::clear_scope(self.current_scope_mut()?);
+        result
+    }
+
+    /// `loops` holds the head key loops followed by `value_loops` head value
+    /// loops.
+    fn eval_output_expr_in_loop(
+        &mut self,
+        loops: &[HoistedLoop],
+        value_loops: usize,
+    ) -> Result<bool> {
         self.check_execution_time()?;
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
+        // Once the key is fully bound, reject a nonmatching projected key
+        // before value loops evaluate collections that may read the child.
+        if value_loops > 0 && loops.len() == value_loops {
+            let ctx = self.get_current_context()?;
+            if let (Some(filter), Some(key_expr)) = (ctx.key_filter.clone(), ctx.key_expr.clone()) {
+                if !crate::compiler::hoist::key_reads_loop_index_vars(&key_expr, loops)?
+                    && self.eval_expr(&key_expr)? != filter
+                {
+                    return Ok(false);
+                }
+            }
+        }
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
 
@@ -1982,7 +2129,16 @@ impl Interpreter {
                 let mut comps = self.eval_rule_ref(&rule_ref)?;
                 if let Some(ke) = &key_expr {
                     is_const_rule = is_const_rule && Self::is_simple_literal(ke)?;
-                    comps.push(self.eval_expr(ke)?);
+                    let key = self.eval_expr(ke)?;
+                    if self
+                        .get_current_context()?
+                        .key_filter
+                        .as_ref()
+                        .is_some_and(|filter| filter != &key)
+                    {
+                        return Ok(false);
+                    }
+                    comps.push(key);
                 }
                 let output = if let Some(oe) = &output_expr {
                     // Rule is constant only if its ref, key and output are constant.
@@ -2012,7 +2168,9 @@ impl Interpreter {
                 }
 
                 if output == Value::Undefined || !comps_defined {
-                    ctx_mut.rule_value = Value::Undefined;
+                    if !is_set || key_expr.is_none() {
+                        ctx_mut.rule_value = Value::Undefined;
+                    }
                     return Ok(false);
                 }
 
@@ -2133,36 +2291,60 @@ impl Interpreter {
         let (loop_info, loop_tail) = loops
             .split_first()
             .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
-        let mut result = false;
         let loop_target_expr = Self::loop_assignment_expr(loop_info);
-        match self.eval_expr(Self::loop_collection_expr(loop_info))? {
-            Value::Array(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+        let collection = self.eval_expr(Self::loop_collection_expr(loop_info))?;
+        let index_plan = if Self::loop_index_expr(loop_info).is_some() {
+            self.get_loop_index_plan(loop_info)?
+        } else {
+            DestructuringPlan::Ignore
+        };
+        self.scopes.push(Scope::default());
+        let result = (|| {
+            let mut result = false;
+            match collection {
+                Value::Array(items) => {
+                    for (idx, value) in items.iter().enumerate() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            &Value::from(idx),
+                            value,
+                            loop_tail,
+                            value_loops,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Set(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Set(items) => {
+                    for value in items.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            value,
+                            value,
+                            loop_tail,
+                            value_loops,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Object(obj) => {
-                for (_, v) in obj.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Object(obj) => {
+                    for (key, value) in obj.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            key,
+                            value,
+                            loop_tail,
+                            value_loops,
+                        )? || result;
+                    }
                 }
+                _ => {}
             }
-            _ => {
-                let span = Self::loop_span(loop_info);
-                return Err(span
-                    .source
-                    .error(span.line, span.col, "item cannot be indexed"));
-            }
-        }
+            Ok(result)
+        })();
+        self.scopes.pop();
         self.remove_loop_var_value(loop_target_expr);
-        Ok(result)
+        result
     }
 
     fn get_current_context(&self) -> Result<&Context> {
@@ -2186,6 +2368,9 @@ impl Interpreter {
 
     fn eval_output_expr(&mut self) -> Result<bool> {
         self.check_execution_time()?;
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
         // Evaluate output expression after all the statements have been executed.
 
         let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2195,7 +2380,13 @@ impl Interpreter {
         if let Some(ke) = &key_expr {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    ke.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2207,11 +2398,18 @@ impl Interpreter {
             }
         }
 
+        let key_loops = loops.len();
         // Get pre-computed loops for output expression
         if let Some(oe) = &output_expr {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    oe.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2223,7 +2421,8 @@ impl Interpreter {
             }
         }
 
-        let r = self.eval_output_expr_in_loop(&loops[..])?;
+        let value_loops = loops.len().saturating_sub(key_loops);
+        let r = self.eval_output_expr_in_loop(&loops[..], value_loops)?;
 
         let ctx = self.get_current_context()?;
         ctx.output_expr
@@ -2232,6 +2431,9 @@ impl Interpreter {
     }
 
     fn eval_stmts(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        if self.reject_nonmatching_child_key()? {
+            return Ok(false);
+        }
         let mut eval_success = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
@@ -2271,6 +2473,9 @@ impl Interpreter {
                 .unwrap_or(&[]);
 
             eval_success = self.eval_stmt(stmt, tail)?;
+            if eval_success && self.reject_nonmatching_child_key()? {
+                eval_success = false;
+            }
 
             if matches!(&stmt.literal, Literal::SomeIn { .. }) {
                 return Ok(eval_success);
@@ -2312,8 +2517,235 @@ impl Interpreter {
         Ok(eval_success)
     }
 
+    fn is_safe_projected_key_call(&self, expr: &ExprRef) -> Result<bool> {
+        let Expr::Call { fcn, params, .. } = expr.as_ref() else {
+            return Ok(false);
+        };
+        if !crate::compiler::hoist::is_safe_literal_key_call(fcn, params)? {
+            return Ok(false);
+        }
+        let original_path = crate::utils::get_path_string(fcn, None)?;
+        let full_path = self
+            .resolve_fcn_path_through_imports(&original_path)
+            .unwrap_or_else(|| format!("{}.{}", self.current_module_path, original_path));
+        Ok(!self.extensions.contains_key(&original_path)
+            && !self.with_functions.contains_key(&original_path)
+            && !self.with_functions.contains_key(&full_path)
+            && self.lookup_function_by_name(&original_path).is_none()
+            && self.lookup_function_by_name(&full_path).is_none()
+            && Self::is_builtin(fcn.span(), &original_path))
+    }
+
+    fn projected_key_var_is_bound(&self, span: &Span) -> bool {
+        self.lookup_local_var(&span.source_str())
+            .is_some_and(|value| value != Value::Undefined)
+            || span.text() == "input"
+                && !self
+                    .contexts
+                    .last()
+                    .is_some_and(|context| context.input_shadowed)
+    }
+
+    fn reject_nonmatching_child_key(&mut self) -> Result<bool> {
+        let Some((key_expr, filter)) = self.contexts.last().and_then(|ctx| {
+            ctx.key_filter
+                .as_ref()
+                .zip(ctx.key_expr.as_ref())
+                .map(|(filter, expr)| (expr.clone(), filter.clone()))
+        }) else {
+            return Ok(false);
+        };
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &key_expr,
+            |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+            |span| self.projected_key_var_is_bound(span),
+            |call| self.is_safe_projected_key_call(call),
+        )? {
+            if self
+                .contexts
+                .last()
+                .is_some_and(|context| context.head_key_loops_pending)
+            {
+                return Ok(self.projected_head_key_loops_match()? == Some(false));
+            }
+            return Ok(false);
+        }
+        Ok(self.eval_expr(&key_expr)? != filter)
+    }
+
+    fn projected_head_key_loops_match(&mut self) -> Result<Option<bool>> {
+        let Some((key_expr, filter, query_idx)) = self.contexts.last().and_then(|context| {
+            context
+                .key_filter
+                .as_ref()
+                .zip(context.key_expr.as_ref())
+                .zip(context.output_query)
+                .map(|((filter, expr), query_idx)| (expr.clone(), filter.clone(), query_idx))
+        }) else {
+            return Ok(None);
+        };
+        let loops = self
+            .loop_hoisting_table(self.current_module_index)
+            .get_output_loops(self.current_module_index, Some(query_idx), key_expr.eidx())
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+            .cloned()
+            .unwrap_or_default();
+        if loops.is_empty()
+            || loops
+                .iter()
+                .any(|loop_info| loop_info.loop_type != LoopType::IndexIteration)
+        {
+            return Ok(None);
+        }
+        self.scopes.push(Scope::default());
+        let result = self.key_matches_in_hoisted_loops(&loops, &key_expr, &filter);
+        self.scopes.pop();
+        if let (Ok(resolved), Some(context)) = (&result, self.contexts.last_mut()) {
+            context.head_key_loops_pending = resolved.is_none();
+        }
+        result
+    }
+
+    fn key_matches_in_hoisted_loops(
+        &mut self,
+        loops: &[HoistedLoop],
+        key_expr: &ExprRef,
+        filter: &Value,
+    ) -> Result<Option<bool>> {
+        let Some((loop_info, remaining)) = loops.split_first() else {
+            if !crate::compiler::hoist::key_expr_is_ready(
+                key_expr,
+                |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+                |span| self.projected_key_var_is_bound(span),
+                |call| self.is_safe_projected_key_call(call),
+            )? {
+                return Ok(None);
+            }
+            return Ok(Some(self.eval_expr(key_expr)? == *filter));
+        };
+        // An enclosing output loop already bound this iteration; reuse it
+        // instead of overwriting and then clearing the live binding.
+        if self
+            .get_loop_var_value(Self::loop_assignment_expr(loop_info))?
+            .is_some()
+        {
+            return self.key_matches_in_hoisted_loops(remaining, key_expr, filter);
+        }
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &loop_info.collection,
+            |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
+            |span| self.projected_key_var_is_bound(span),
+            |call| self.is_safe_projected_key_call(call),
+        )? {
+            return Ok(None);
+        }
+        let collection = self.eval_expr(Self::loop_collection_expr(loop_info))?;
+        let index_plan = if Self::loop_index_expr(loop_info).is_some() {
+            self.get_loop_index_plan(loop_info)?
+        } else {
+            DestructuringPlan::Ignore
+        };
+        let loop_target = Self::loop_assignment_expr(loop_info).clone();
+        self.scopes.push(Scope::default());
+        let result = (|| {
+            match collection {
+                Value::Array(values) => {
+                    for (index, value) in values.iter().enumerate() {
+                        self.memory_check()?;
+                        self.check_execution_time()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            &Value::from(index),
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
+                        }
+                    }
+                }
+                Value::Set(values) => {
+                    for value in values.iter() {
+                        self.memory_check()?;
+                        self.check_execution_time()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            value,
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
+                        }
+                    }
+                }
+                Value::Object(values) => {
+                    for (key, value) in values.iter() {
+                        self.memory_check()?;
+                        self.check_execution_time()?;
+                        match self.key_matches_for_hoisted_loop_item(
+                            &loop_target,
+                            &index_plan,
+                            key,
+                            value,
+                            remaining,
+                            key_expr,
+                            filter,
+                        )? {
+                            Some(true) => return Ok(Some(true)),
+                            Some(false) => {}
+                            // Readiness depends on bindings, not item values,
+                            // so the remaining items are unresolved too.
+                            None => return Ok(None),
+                        }
+                    }
+                }
+                Value::Undefined => {}
+                _ => {}
+            }
+            Ok(Some(false))
+        })();
+        self.scopes.pop();
+        self.remove_loop_var_value(&loop_target);
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn key_matches_for_hoisted_loop_item(
+        &mut self,
+        loop_target: &ExprRef,
+        index_plan: &DestructuringPlan,
+        index: &Value,
+        value: &Value,
+        remaining: &[HoistedLoop],
+        key_expr: &ExprRef,
+        filter: &Value,
+    ) -> Result<Option<bool>> {
+        self.set_loop_var_value(loop_target, value.clone())?;
+        let matches = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
+            self.key_matches_in_hoisted_loops(remaining, key_expr, filter)?
+        } else {
+            Some(false)
+        };
+        Self::clear_scope(self.current_scope_mut()?);
+        Ok(matches)
+    }
+
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         self.check_execution_time()?;
+        self.get_current_context_mut()?.output_query = Some(query.qidx);
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
         let order_indices = {
@@ -2363,7 +2795,7 @@ impl Interpreter {
             }
         };
 
-        let ordered_stmts: Vec<&LiteralStmt> = match order_indices {
+        let mut ordered_stmts: Vec<&LiteralStmt> = match order_indices {
             Some(order) => {
                 let stmts_len = query.stmts.len();
                 if order.len() != stmts_len {
@@ -2390,6 +2822,14 @@ impl Interpreter {
             }
             None => query.stmts.iter().collect(),
         };
+        if let Some(context) = self.contexts.last() {
+            crate::compiler::hoist::prioritize_key_binding(
+                &mut ordered_stmts,
+                context.key_expr.as_ref(),
+                context.key_filter.as_ref(),
+                |call| self.is_safe_projected_key_call(call),
+            )?;
+        }
 
         let r = self.eval_stmts(&ordered_stmts);
         self.scopes.pop();
@@ -3118,13 +3558,11 @@ impl Interpreter {
 
             let value = self.eval_call_impl(span, expr, fcn, arg_prefix)?;
             if allow_return_arg {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 if let Some(BindingPlan::Parameter {
                     destructuring_plan, ..
                 }) = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
@@ -3239,12 +3677,20 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        if let Some(rules) = self.compiled_policy.rules.get(&path) {
+        let lookup_rules = self
+            .compiled_policy
+            .rules_for_lookup(&path)
+            .map(|rules| rules.into_owned());
+        if let Some(rules) = lookup_rules {
             matched = true;
-            for r in rules.clone() {
+            for r in rules {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
-                    self.eval_rule(&module, &r)?;
+                    let key_filter = self.compiled_policy.keyed_set_child_filter(&path, &r);
+                    self.eval_rule_with_key_filter(&module, &r, key_filter)?;
+                    if self.compiled_policy.is_projected_keyed_set_rule(&path, &r) {
+                        self.processed.remove(&r);
+                    }
                 }
             }
         }
@@ -3521,8 +3967,7 @@ impl Interpreter {
                 let expr_idx = expr.as_ref().eidx();
                 let expr_text = expr.span().text().to_string();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                     .ok_or_else(|| {
@@ -3619,11 +4064,24 @@ impl Interpreter {
             RuleHead::Set { refr, key, .. } => {
                 Parser::get_path_ref_components_into(refr, &mut path)?;
                 let is_old_style_set = key.is_none();
+                let (rule_ref, key_expr) = match refr.as_ref() {
+                    Expr::RefBrack { refr, index, .. }
+                        if !is_old_style_set
+                            && !matches!(
+                                index.as_ref(),
+                                Expr::String { .. } | Expr::RawString { .. }
+                            ) =>
+                    {
+                        (refr.clone(), Some(index.clone()))
+                    }
+                    _ => (refr.clone(), None),
+                };
                 Ok((
                     Context {
+                        key_expr,
                         output_expr: key.clone(),
                         value: Value::new_set(),
-                        rule_ref: Some(refr.clone()),
+                        rule_ref: Some(rule_ref),
                         is_set: true,
                         is_old_style_set,
                         ..Context::default()
@@ -3697,7 +4155,17 @@ impl Interpreter {
                     }
                     self.contexts.push(next_ctx);
                 }
-                result = self.eval_query(&body.query);
+                if let Some(context) = self.contexts.last_mut() {
+                    context.output_query = Some(body.query.qidx);
+                    context.head_key_loops_pending = false;
+                    context.input_shadowed = context.key_filter.is_some()
+                        && crate::compiler::hoist::query_shadows_input(&body.query.stmts)?;
+                }
+                result = match self.projected_head_key_loops_match() {
+                    Ok(Some(false)) => Ok(false),
+                    Ok(_) => self.eval_query(&body.query),
+                    Err(error) => Err(error),
+                };
                 match &result {
                     Ok(true) => {
                         any_success = true;
@@ -4123,7 +4591,12 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_rule_impl(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+    fn eval_rule_impl(
+        &mut self,
+        module: &Ref<Module>,
+        rule: &Ref<Rule>,
+        key_filter: Option<Value>,
+    ) -> Result<()> {
         self.check_execution_time()?;
         match rule.as_ref() {
             Rule::Spec {
@@ -4133,12 +4606,23 @@ impl Interpreter {
             } => {
                 match rule_head {
                     RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
-                        let (ctx, _) = self.make_rule_context(rule_head)?;
+                        let (mut ctx, _) = self.make_rule_context(rule_head)?;
+                        ctx.key_filter = key_filter;
                         let is_set = ctx.is_set;
+                        let is_keyed_set = is_set && ctx.key_expr.is_some();
                         let is_object = ctx.key_expr.is_some() && !is_set;
 
-                        let value = self.eval_rule_bodies(ctx, span, rule_body)?;
                         let package_components = self.eval_rule_ref(&module.package.refr)?;
+                        if is_keyed_set {
+                            let mut prefix = package_components.clone();
+                            prefix.extend(
+                                Self::get_rule_path_components(refr)?
+                                    .into_iter()
+                                    .map(Value::String),
+                            );
+                            self.update_rule_value(span, prefix, Value::Undefined, false)?;
+                        }
+                        let value = self.eval_rule_bodies(ctx, span, rule_body)?;
 
                         if value != Value::Undefined {
                             for (path, value_in_map) in value.as_object()? {
@@ -4152,7 +4636,7 @@ impl Interpreter {
                                     is_set,
                                 )?;
                             }
-                        } else if is_set {
+                        } else if is_set && !is_keyed_set {
                             if let Ok(mut comps) = self.eval_rule_ref(refr) {
                                 let mut full_path = package_components;
                                 full_path.append(&mut comps);
@@ -4223,6 +4707,15 @@ impl Interpreter {
     }
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
+        self.eval_rule_with_key_filter(module, rule, None)
+    }
+
+    fn eval_rule_with_key_filter(
+        &mut self,
+        module: &Ref<Module>,
+        rule: &Ref<Rule>,
+        key_filter: Option<Value>,
+    ) -> Result<()> {
         self.check_execution_time()?;
         // Set current module index
         self.current_module_index = self.find_module_index(module);
@@ -4237,10 +4730,17 @@ impl Interpreter {
             return Ok(());
         }
 
-        self.active_rules.push(rule.clone());
-        if self.active_rules.iter().filter(|&r| r == rule).count() == 2 {
+        let invocation = (rule.clone(), key_filter.clone());
+        self.active_rules.push(invocation.clone());
+        if self
+            .active_rules
+            .iter()
+            .filter(|&r| r == &invocation)
+            .count()
+            == 2
+        {
             let mut msg = String::default();
-            for r in &self.active_rules {
+            for (r, _) in &self.active_rules {
                 let refr = Self::get_rule_refr(r);
                 let span = refr.span();
                 msg.push_str(
@@ -4264,13 +4764,26 @@ impl Interpreter {
         // the local variables of callee function.
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
+        // Give the callee an empty view of hoisted-expression bindings without
+        // copying the table; only slots it overwrites are restored afterwards.
+        let parent_frame = self.loop_var_frame;
+        let undo_len = self.loop_var_undo.len();
+        self.loop_var_frame_counter = self.loop_var_frame_counter.wrapping_add(1).max(1);
+        self.loop_var_frame = self.loop_var_frame_counter;
 
-        let res = self.eval_rule_impl(module, rule);
+        let res = self.eval_rule_impl(module, rule, key_filter);
 
-        self.set_current_module(prev_module)?;
+        for (module_idx, expr_idx, old) in self.loop_var_undo.drain(undo_len..).rev() {
+            let _ = self
+                .loop_var_values
+                .replace_checked(module_idx, expr_idx, old);
+        }
+        self.loop_var_frame = parent_frame;
+        let restore_module = self.set_current_module(prev_module);
         self.scopes = scopes;
+        restore_module?;
         match self.active_rules.pop() {
-            Some(ref r) if r == rule => res,
+            Some(ref r) if r == &invocation => res,
             _ => bail!("internal error: current rule not active"),
         }
     }
@@ -4556,6 +5069,8 @@ impl Interpreter {
     fn clear_rule_registrations(&mut self) {
         let compiled_policy = self.compiled_policy_mut();
         compiled_policy.rules.clear();
+        compiled_policy.keyed_set_parent_rules.clear();
+        compiled_policy.keyed_set_child_parents.clear();
         compiled_policy.default_rules.clear();
         compiled_policy.rule_paths.clear();
         compiled_policy.rule_path_components.clear();
@@ -4656,12 +5171,77 @@ impl Interpreter {
                 self.set_current_module(prev_module)?;
                 registration_result?;
             }
-            Ok(())
+            self.record_keyed_set_children()
         })();
         if result.is_err() {
             self.clear_rule_registrations();
         }
         result
+    }
+
+    // Include dynamic contributions in child lookups without evaluating unrelated siblings.
+    fn record_keyed_set_children(&mut self) -> Result<()> {
+        let mut dynamic_sets = Map::<String, crate::compiled_policy::KeyedSetParentRules>::new();
+        for module in self.compiled_policy.modules.clone().iter() {
+            let package = get_path_string(&module.package.refr, Some("data"))?;
+            for rule in &module.policy {
+                let Rule::Spec {
+                    head:
+                        RuleHead::Set {
+                            refr, key: Some(_), ..
+                        },
+                    ..
+                } = rule.as_ref()
+                else {
+                    continue;
+                };
+                let Expr::RefBrack {
+                    refr: prefix,
+                    index,
+                    ..
+                } = refr.as_ref()
+                else {
+                    continue;
+                };
+                if matches!(index.as_ref(), Expr::String { .. } | Expr::RawString { .. }) {
+                    continue;
+                }
+                if get_rule_path_components(prefix)?
+                    .iter()
+                    .any(|component| !matches!(component, PathComponent::String(_)))
+                {
+                    continue;
+                }
+                let parent = get_path_string(prefix, Some(&package))?;
+                dynamic_sets.entry(parent).or_default().insert(rule.clone());
+                self.memory_check()?;
+            }
+        }
+        if dynamic_sets.is_empty() {
+            return Ok(());
+        }
+
+        let mut child_parents = Map::new();
+        let policy = self.compiled_policy.clone();
+        for path in policy.rules.keys() {
+            let components = policy
+                .rule_path_components
+                .get(path)
+                .ok_or_else(|| anyhow!("missing components for registered rule path {path}"))?;
+            if let Some((_, parent)) = components.split_last() {
+                let parent: Vec<&str> = parent.iter().map(String::as_str).collect();
+                let parent = format_string_path(&parent)?;
+                if dynamic_sets.contains_key(&parent) {
+                    child_parents.insert(path.clone(), parent);
+                    self.memory_check()?;
+                }
+            }
+        }
+        drop(policy);
+        let compiled_policy = self.compiled_policy_mut();
+        compiled_policy.keyed_set_parent_rules = dynamic_sets;
+        compiled_policy.keyed_set_child_parents = child_parents;
+        Ok(())
     }
 
     pub fn add_extension(

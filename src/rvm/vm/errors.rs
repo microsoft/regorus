@@ -9,6 +9,7 @@ use core::time::Duration;
 use thiserror::Error;
 
 /// VM execution errors
+#[non_exhaustive]
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum VmError {
     #[error("Execution stopped: exceeded maximum instruction limit of {limit} after {executed} instructions (pc={pc})")]
@@ -86,6 +87,9 @@ pub enum VmError {
         pc: usize,
         available: usize,
     },
+
+    #[error("Runtime recursion detected in rule {rule_index} (pc={pc})")]
+    RuleRecursionDetected { rule_index: u16, pc: usize },
 
     #[error("Invalid object create params index: {index} (pc={pc}, available={available})")]
     InvalidObjectCreateParams {

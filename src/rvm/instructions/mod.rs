@@ -17,6 +17,7 @@ pub use types::{
 use serde::{Deserialize, Serialize};
 
 /// RVM Instructions - simplified enum-based design
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Instruction {
     /// Load literal value from literal table into register
@@ -415,6 +416,14 @@ pub enum Instruction {
         mode: LogicalBlockMode,
         /// Register that accumulates the result.
         result: u8,
+    },
+
+    /// Add a defined value to the set at `obj[key]`, creating the set if absent.
+    /// Used by keyed partial-set rules (`rule[key] contains value`).
+    ObjectSetAdd {
+        obj: u8,
+        key: u8,
+        value: u8,
     },
 }
 

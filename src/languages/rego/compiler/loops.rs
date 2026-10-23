@@ -52,7 +52,13 @@ impl<'a> Compiler<'a> {
             .policy
             .inner
             .loop_hoisting_table
-            .get_expr_loops(module_idx, expr_idx)
+            .get_output_loops(
+                module_idx,
+                self.context_stack
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
             .map_err(|err| {
                 CompilerError::General {
                     message: format!("loop hoisting table out of bounds: {err}"),
@@ -72,18 +78,30 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// Compiles `loops` around `stmts`. When `first_stmt_owns_loops` is set,
+    /// the loops were hoisted from `stmts[0]`, which is compiled directly in
+    /// the innermost loop; otherwise every statement is compiled normally.
     pub(super) fn compile_hoisted_loops(
         &mut self,
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
+        first_stmt_owns_loops: bool,
     ) -> Result<()> {
         if loops.is_empty() {
+            if !first_stmt_owns_loops {
+                return self.hoist_loops_and_compile_statements(stmts);
+            }
             if !stmts.is_empty() {
                 self.compile_single_statement(stmts[0])?;
+                self.emit_key_filter_guard(&stmts[0].span)?;
                 return self.hoist_loops_and_compile_statements(&stmts[1..]);
             } else {
                 return self.hoist_loops_and_emit_context_yield();
             }
+        }
+
+        if first_stmt_owns_loops && stmts.is_empty() {
+            self.emit_projected_key_guard_before_value_loops(loops)?;
         }
 
         let current_loop = &loops[0];
@@ -94,10 +112,10 @@ impl<'a> Compiler<'a> {
                 self.compile_index_iteration_loop(
                     &current_loop.loop_expr,
                     &current_loop.key,
-                    &current_loop.value,
                     &current_loop.collection,
                     stmts,
                     remaining_loops,
+                    first_stmt_owns_loops,
                 )?;
                 Ok(())
             }
@@ -156,9 +174,15 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Every,
             dest_register: result_reg,
             key_expr: None,
+            key_filter: None,
+            key_filter_guarded: false,
+            multi_value: false,
             value_expr: None,
             span: span.clone(),
+            hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
+            value_loops: 0,
+            output_query: Some(query.qidx),
         };
         self.push_context(every_context);
 
@@ -217,10 +241,10 @@ impl<'a> Compiler<'a> {
         &mut self,
         loop_expr: &Option<ExprRef>,
         key_var: &Option<ExprRef>,
-        _value_var: &ExprRef,
         collection: &ExprRef,
         remaining_stmts: &[&LiteralStmt],
         remaining_loops: &[HoistedLoop],
+        first_stmt_owns_loops: bool,
     ) -> Result<()> {
         let collection_reg = self.compile_rego_expr(collection)?;
 
@@ -296,9 +320,10 @@ impl<'a> Compiler<'a> {
                 .apply_binding_plan(binding_plan, key_reg, plan_span)
                 .map_err(|e| CompilerError::from(e).at(plan_span))?;
         }
+        self.emit_key_filter_guard(collection.span())?;
 
         let body_stmts = &remaining_stmts[0..];
-        self.compile_hoisted_loops(body_stmts, remaining_loops)?;
+        self.compile_hoisted_loops(body_stmts, remaining_loops, first_stmt_owns_loops)?;
 
         self.emit_instruction(
             Instruction::LoopNext {
@@ -466,6 +491,7 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        self.emit_key_filter_guard(collection.span())?;
         self.hoist_loops_and_compile_statements(loop_body_stmts)?;
 
         self.emit_instruction(

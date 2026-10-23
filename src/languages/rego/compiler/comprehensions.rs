@@ -42,9 +42,15 @@ impl<'a> Compiler<'a> {
             context_type: ContextType::Comprehension(context_type),
             dest_register: result_reg,
             key_expr: key_expr.cloned(),
+            key_filter: None,
+            key_filter_guarded: false,
+            multi_value: false,
             value_expr: value_expr.cloned(),
             span: span.clone(),
+            hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
+            value_loops: 0,
+            output_query: Some(query.qidx),
         };
         self.push_context(context);
         self.compile_query(query)?;

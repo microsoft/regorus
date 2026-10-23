@@ -116,6 +116,7 @@ impl<'a> Compiler<'a> {
     pub fn reset_rule_definition_registers(&mut self) {
         self.current_input_register = None;
         self.current_data_register = None;
+        self.loop_expr_register_map.clear();
     }
 
     /// Push a new compilation context onto the context stack
@@ -198,7 +199,13 @@ impl<'a> Compiler<'a> {
         self.policy
             .inner
             .loop_hoisting_table
-            .get_expr_binding_plan(module_idx, expr_idx)
+            .get_output_binding_plan(
+                module_idx,
+                self.context_stack
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
             .map_err(|err| {
                 CompilerError::General {
                     message: format!("loop hoisting table out of bounds: {err}"),

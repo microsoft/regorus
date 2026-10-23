@@ -7,14 +7,40 @@
 )]
 
 use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
-use crate::ast::{self, LiteralStmt, Query};
+use crate::ast::{self, Expr, ExprRef, LiteralStmt, Query};
+use crate::compiler::hoist::{
+    is_safe_literal_key_call, key_reads_loop_index_vars, prioritize_key_binding, HoistedLoop,
+};
 use crate::rvm::instructions::GuardMode;
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
 use alloc::format;
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
+    fn is_safe_projected_key_call(&self, expr: &ExprRef) -> Result<bool> {
+        let Expr::Call { fcn, params, .. } = expr.as_ref() else {
+            return Ok(false);
+        };
+        if !is_safe_literal_key_call(fcn, params).map_err(CompilerError::from)? {
+            return Ok(false);
+        }
+        let original_path = crate::utils::get_path_string(fcn, None)
+            .map_err(|_| CompilerError::InvalidFunctionExpression)?;
+        let full_path = if self.policy.inner.rules.contains_key(&original_path) {
+            original_path.clone()
+        } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_path) {
+            resolved
+        } else {
+            crate::utils::get_path_string(fcn, Some(&self.current_package))
+                .map_err(|_| CompilerError::InvalidFunctionExpressionWithPackage)?
+        };
+        Ok(self.is_builtin(&original_path)
+            && !self.is_user_defined_function(&full_path)
+            && !self.host_await_builtins.contains_key(&original_path))
+    }
+
     pub(super) fn compile_query(&mut self, query: &Query) -> Result<()> {
         self.push_scope();
 
@@ -32,7 +58,7 @@ impl<'a> Compiler<'a> {
                 None => None,
             };
 
-            let ordered_stmts: Vec<&LiteralStmt> = match schedule {
+            let mut ordered_stmts: Vec<&LiteralStmt> = match schedule {
                 Some(schedule) => schedule
                     .order
                     .iter()
@@ -40,6 +66,23 @@ impl<'a> Compiler<'a> {
                     .collect(),
                 None => query.stmts.iter().collect(),
             };
+            if let Some(context) = self.context_stack.last() {
+                prioritize_key_binding(
+                    &mut ordered_stmts,
+                    context.key_expr.as_ref(),
+                    context.key_filter.as_ref(),
+                    |expr| {
+                        self.is_safe_projected_key_call(expr)
+                            .map_err(|err| anyhow::anyhow!("{err}"))
+                    },
+                )
+                .map_err(|err| {
+                    CompilerError::General {
+                        message: err.to_string(),
+                    }
+                    .at(&query.span)
+                })?;
+            }
             self.hoist_loops_and_compile_statements(&ordered_stmts)
         };
 
@@ -52,6 +95,13 @@ impl<'a> Compiler<'a> {
         &mut self,
         stmts: &[&LiteralStmt],
     ) -> Result<()> {
+        if self.hoist_ready_key_loops(stmts)? {
+            return Ok(());
+        }
+        if let Some(context) = self.context_stack.last() {
+            let span = context.span.clone();
+            self.emit_key_filter_guard(&span)?;
+        }
         for (idx, stmt) in stmts.iter().enumerate() {
             if !stmt.with_mods.is_empty() {
                 return Err(CompilerError::WithKeywordUnsupported.at(&stmt.span));
@@ -59,7 +109,9 @@ impl<'a> Compiler<'a> {
             let loop_exprs = self.get_statement_loops(stmt)?;
 
             if !loop_exprs.is_empty() {
-                return self.compile_hoisted_loops(&stmts[idx..], &loop_exprs);
+                self.compile_hoisted_loops(&stmts[idx..], &loop_exprs, true)?;
+                self.emit_key_filter_guard(&stmt.span)?;
+                return Ok(());
             }
 
             if matches!(&stmt.literal, ast::Literal::SomeIn { .. }) {
@@ -95,17 +147,180 @@ impl<'a> Compiler<'a> {
                             &stmt.span,
                         );
                     }
+                    self.emit_key_filter_guard(&stmt.span)?;
                     return Ok(());
                 }
             }
 
             self.compile_single_statement(stmt)?;
+            self.emit_key_filter_guard(&stmt.span)?;
+            if self.hoist_ready_key_loops(
+                stmts
+                    .get(idx..)
+                    .and_then(|rest| rest.get(1..))
+                    .unwrap_or_default(),
+            )? {
+                return Ok(());
+            }
         }
 
         self.hoist_loops_and_emit_context_yield()
     }
 
+    /// Hoists projected head-key loops as soon as their collections are bound,
+    /// so nonmatching keys are rejected before dependent body statements run.
+    /// Loops whose collections need later body bindings stay pending.
+    fn hoist_ready_key_loops(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        let (key_expr, start) = match self.context_stack.last() {
+            Some(context)
+                if matches!(context.context_type, ContextType::Rule(_))
+                    && context.key_filter.is_some()
+                    && !context.key_value_loops_hoisted =>
+            {
+                (context.key_expr.clone(), context.hoisted_key_loops)
+            }
+            _ => (None, 0),
+        };
+        let Some(key_expr) = key_expr else {
+            return Ok(false);
+        };
+        let loops = self.get_expr_loops(&key_expr)?;
+        let mut ready = loops.len();
+        for (idx, loop_info) in loops.iter().enumerate().skip(start) {
+            let prefix = loops.get(..idx).unwrap_or_default();
+            let is_ready = crate::compiler::hoist::key_expr_is_ready(
+                &loop_info.collection,
+                |node| {
+                    Ok(self.loop_expr_register_map.contains_key(node)
+                        || prefix.iter().any(|l| {
+                            l.loop_expr.as_ref() == Some(node) || l.key.as_ref() == Some(node)
+                        }))
+                },
+                |span| {
+                    span.text() == "input"
+                        || self.lookup_variable(span.text()).is_some()
+                        || prefix.iter().any(|l| {
+                            matches!(l.key.as_deref(), Some(Expr::Var { span: key, .. }) if key.text() == span.text())
+                        })
+                },
+                |call| self.is_safe_projected_key_call(call).map_err(Into::into),
+            )
+            .map_err(CompilerError::from)?;
+            if !is_ready {
+                ready = idx;
+                break;
+            }
+        }
+        if ready <= start {
+            return Ok(false);
+        }
+        if let Some(context) = self.context_stack.last_mut() {
+            context.hoisted_key_loops = ready;
+        }
+        self.compile_hoisted_loops(stmts, loops.get(start..ready).unwrap_or_default(), false)?;
+        Ok(true)
+    }
+
+    pub(super) fn emit_key_filter_guard(&mut self, span: &crate::lexer::Span) -> Result<()> {
+        let Some((expr, filter)) = self.context_stack.last().and_then(|context| {
+            if context.key_filter_guarded {
+                return None;
+            }
+            let (ContextType::Rule(_), Some(filter), Some(expr)) = (
+                &context.context_type,
+                context.key_filter.as_ref(),
+                context.key_expr.as_ref(),
+            ) else {
+                return None;
+            };
+            Some((expr.clone(), filter.clone()))
+        }) else {
+            return Ok(());
+        };
+        if !crate::compiler::hoist::key_expr_is_ready(
+            &expr,
+            |node| Ok(self.loop_expr_register_map.contains_key(node)),
+            |key_span| {
+                key_span.text() == "input" || self.lookup_variable(key_span.text()).is_some()
+            },
+            |call| self.is_safe_projected_key_call(call).map_err(Into::into),
+        )
+        .map_err(CompilerError::from)?
+        {
+            return Ok(());
+        }
+        let key_register = self.compile_rego_expr(&expr)?;
+        self.emit_key_match_guard(key_register, filter, span);
+        if let Some(context) = self.context_stack.last_mut() {
+            context.key_filter_guarded = true;
+        }
+        Ok(())
+    }
+
+    fn emit_key_match_guard(
+        &mut self,
+        key_register: super::Register,
+        filter: crate::Value,
+        span: &crate::lexer::Span,
+    ) {
+        let literal_idx = self.add_literal(filter);
+        let expected = self.alloc_register();
+        self.emit_instruction(
+            Instruction::Load {
+                dest: expected,
+                literal_idx,
+            },
+            span,
+        );
+        let matches = self.alloc_register();
+        self.emit_instruction(
+            Instruction::Eq {
+                dest: matches,
+                left: key_register,
+                right: expected,
+            },
+            span,
+        );
+        self.emit_instruction(
+            Instruction::Guard {
+                register: matches,
+                mode: GuardMode::Condition,
+            },
+            span,
+        );
+    }
+
+    /// Rejects a nonmatching projected key once key loops are bound and
+    /// before head value loops evaluate collections that may read the child.
+    pub(super) fn emit_projected_key_guard_before_value_loops(
+        &mut self,
+        remaining_loops: &[HoistedLoop],
+    ) -> Result<()> {
+        let Some(context) = self.context_stack.last() else {
+            return Ok(());
+        };
+        if context.value_loops == 0 || remaining_loops.len() != context.value_loops {
+            return Ok(());
+        }
+        let (Some(filter), Some(key_expr)) = (context.key_filter.clone(), context.key_expr.clone())
+        else {
+            return Ok(());
+        };
+        // A key bound by a value loop is checked once that loop binds it.
+        if key_reads_loop_index_vars(&key_expr, remaining_loops).map_err(CompilerError::from)? {
+            return Ok(());
+        }
+        let span = context.span.clone();
+        let key_register = self.compile_rego_expr(&key_expr)?;
+        self.emit_key_match_guard(key_register, filter, &span);
+        Ok(())
+    }
+
     pub(super) fn hoist_loops_and_emit_context_yield(&mut self) -> Result<()> {
+        if let Some(context) = self.context_stack.last() {
+            let span = context.span.clone();
+            self.emit_key_filter_guard(&span)?;
+        }
         if let Some(context) = self.context_stack.last() {
             match &context.context_type {
                 ContextType::Every => {
@@ -128,18 +343,37 @@ impl<'a> Compiler<'a> {
         let mut key_value_loops = Vec::new();
 
         if let Some(expr) = key_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr)?);
+            let hoisted_key_loops = self
+                .context_stack
+                .last()
+                .map_or(0, |context| context.hoisted_key_loops);
+            if !Self::is_simple_literal(expr) {
+                key_value_loops.extend(
+                    self.get_expr_loops(expr)?
+                        .into_iter()
+                        .skip(hoisted_key_loops),
+                );
+            }
         }
 
-        if let Some(expr) = value_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr)?);
+        let value_loops = match value_expr.as_ref() {
+            Some(expr) => self.get_expr_loops(expr)?,
+            None => Vec::new(),
+        };
+        let value_loop_count = value_loops.len();
+        key_value_loops.extend(value_loops);
+
+        if let Some(context) = self.context_stack.last() {
+            let span = context.span.clone();
+            self.emit_key_filter_guard(&span)?;
         }
 
         if !key_value_loops.is_empty() {
             if let Some(context) = self.context_stack.last_mut() {
                 context.key_value_loops_hoisted = true;
+                context.value_loops = value_loop_count;
             }
-            self.compile_hoisted_loops(&[], &key_value_loops)
+            self.compile_hoisted_loops(&[], &key_value_loops, true)
         } else {
             self.emit_context_yield()
         }
@@ -149,6 +383,20 @@ impl<'a> Compiler<'a> {
         if let Some(context) = self.context_stack.last().cloned() {
             let dest_register = context.dest_register;
             let span = &context.span;
+            let projected_key_register = if context.key_filter.is_some() {
+                context
+                    .key_expr
+                    .as_ref()
+                    .map(|expr| self.compile_rego_expr(expr))
+                    .transpose()?
+            } else {
+                None
+            };
+            if let (Some(key_register), Some(key)) =
+                (projected_key_register, context.key_filter.clone())
+            {
+                self.emit_key_match_guard(key_register, key, span);
+            }
             let value_register = match context.value_expr {
                 Some(expr) => self.compile_rego_expr(&expr)?,
                 None => {
@@ -164,10 +412,13 @@ impl<'a> Compiler<'a> {
                 }
             };
 
-            let key_register = context
-                .key_expr
-                .map(|key_expr| self.compile_rego_expr(&key_expr))
-                .unwrap_or(Ok(value_register))?;
+            let key_register = match projected_key_register {
+                Some(register) => register,
+                None => context
+                    .key_expr
+                    .map(|key_expr| self.compile_rego_expr(&key_expr))
+                    .unwrap_or(Ok(value_register))?,
+            };
 
             match context.context_type {
                 ContextType::Comprehension(ComprehensionType::Array) => {
@@ -208,10 +459,18 @@ impl<'a> Compiler<'a> {
                 }
                 ContextType::Rule(RuleType::PartialObject) => {
                     self.emit_instruction(
-                        Instruction::ObjectSet {
-                            obj: dest_register,
-                            key: key_register,
-                            value: value_register,
+                        if context.multi_value {
+                            Instruction::ObjectSetAdd {
+                                obj: dest_register,
+                                key: key_register,
+                                value: value_register,
+                            }
+                        } else {
+                            Instruction::ObjectSet {
+                                obj: dest_register,
+                                key: key_register,
+                                value: value_register,
+                            }
                         },
                         span,
                     );
