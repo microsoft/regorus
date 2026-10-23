@@ -337,6 +337,8 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        let saved_input_register = self.current_input_register;
+        let saved_data_register = self.current_data_register;
         if let Some((plan, plan_span)) = &out_param_plan {
             let plan_result = self
                 .apply_binding_plan(plan, dest, plan_span)
@@ -355,6 +357,9 @@ impl<'a> Compiler<'a> {
         }
 
         if let Some(branch_index) = any_of_next_patch {
+            // The output epilogue's root loads are skipped on the Undefined branch.
+            self.current_input_register = saved_input_register;
+            self.current_data_register = saved_data_register;
             let end_pc = self
                 .program
                 .instructions

@@ -679,6 +679,102 @@ fn observe_strict_probe(result: Result<Value, VmError>) -> StrictProbeOutcome {
 }
 
 #[test]
+fn registered_host_await_output_guard_restores_input_cache_run_to_completion() -> anyhow::Result<()>
+{
+    check_registered_host_await_output_guard_cache("input", "data", ExecutionMode::RunToCompletion)
+}
+
+#[test]
+fn registered_host_await_output_guard_restores_input_cache_suspendable() -> anyhow::Result<()> {
+    check_registered_host_await_output_guard_cache("input", "data", ExecutionMode::Suspendable)
+}
+
+#[test]
+fn registered_host_await_output_guard_restores_data_cache_run_to_completion() -> anyhow::Result<()>
+{
+    check_registered_host_await_output_guard_cache("data", "input", ExecutionMode::RunToCompletion)
+}
+
+#[test]
+fn registered_host_await_output_guard_restores_data_cache_suspendable() -> anyhow::Result<()> {
+    check_registered_host_await_output_guard_cache("data", "input", ExecutionMode::Suspendable)
+}
+
+fn check_registered_host_await_output_guard_cache(
+    output_root: &str,
+    argument_root: &str,
+    mode: ExecutionMode,
+) -> anyhow::Result<()> {
+    let program = compile_rule_with_host_await(
+        &format!(
+            r#"
+            package test
+            import rego.v1
+            default p := false
+            p if {{
+                not echo({argument_root}.missing, {output_root}.expected)
+                not {output_root}.blocked
+            }}
+            "#
+        ),
+        &[("echo", 1)],
+    )?;
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(mode);
+    vm.load_program(program);
+
+    for (arguments, blocked, response, expected) in [
+        ("{}", true, None, false),
+        ("{}", false, None, true),
+        (r#"{"missing":"request"}"#, true, Some("ok"), false),
+        (r#"{"missing":"request"}"#, true, Some("mismatch"), false),
+        (r#"{"missing":"request"}"#, false, Some("ok"), false),
+        (r#"{"missing":"request"}"#, false, Some("mismatch"), true),
+        ("{}", true, None, false),
+    ] {
+        let output = Value::from_json_str(&format!(r#"{{"expected":"ok","blocked":{blocked}}}"#))?;
+        let arguments = Value::from_json_str(arguments)?;
+        let (input, data) = if output_root == "input" {
+            (output, arguments)
+        } else {
+            (arguments, output)
+        };
+        vm.set_input(input);
+        vm.set_data(data)?;
+        vm.set_host_await_responses([(
+            Value::from("echo"),
+            response.map(Value::from).into_iter().collect::<Vec<_>>(),
+        )]);
+
+        let mut result = vm.execute_entry_point_by_index(0)?;
+        if let (ExecutionMode::Suspendable, Some(response)) = (mode, response) {
+            let payload = Value::from_json_str(r#"["request"]"#)?;
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended {
+                    reason: SuspendReason::HostAwait { argument, .. },
+                    ..
+                } if argument == &payload
+            ));
+            result = vm.resume(Some(Value::from(response)))?;
+        }
+        assert_eq!(
+            result,
+            Value::Bool(expected),
+            "{output_root} cache in {mode:?}: blocked={blocked}, response={response:?}"
+        );
+        if matches!(mode, ExecutionMode::Suspendable) {
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Completed { result } if result == &Value::Bool(expected)
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn registered_host_await_strict_output_division_matches_explicit_control_in_both_modes(
 ) -> anyhow::Result<()> {
     let entry_points = ["data.demo.allow", "data.demo.next"];
