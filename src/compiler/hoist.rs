@@ -90,7 +90,20 @@ fn is_safe_key_binding_value(
         Expr::Call { fcn, params, .. } => {
             Ok(is_safe_literal_key_call(fcn, params)? && is_safe_call(expr)?)
         }
-        other => Ok(is_scalar_literal(other)),
+        other => Ok(is_scalar_literal(other) || is_literal_input_ref(other)),
+    }
+}
+
+/// `input`, or a path into it whose segments are all literals. Such a ref
+/// reads the same value anywhere in a body, so its binding may move earlier.
+fn is_literal_input_ref(expr: &Expr) -> bool {
+    match expr {
+        Expr::Var { span, .. } => span.text() == "input",
+        Expr::RefDot { refr, .. } => is_literal_input_ref(refr),
+        Expr::RefBrack { refr, index, .. } => {
+            is_scalar_literal(index) && is_literal_input_ref(refr)
+        }
+        _ => false,
     }
 }
 
@@ -117,7 +130,7 @@ pub fn prioritize_key_binding(
         Ok(true)
     })?;
     for key_name in key_names {
-        let mut binding_idx = None;
+        let mut binding = None;
         for (idx, stmt) in statements.iter().enumerate() {
             if !stmt.with_mods.is_empty() {
                 continue;
@@ -128,18 +141,25 @@ pub fn prioritize_key_binding(
             let Expr::AssignExpr { op, lhs, rhs, .. } = expr.as_ref() else {
                 continue;
             };
-            if matches!(lhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
-                && is_safe_key_binding_value(rhs, &mut is_safe_call)?
-                || *op == AssignOp::Eq
-                    && matches!(rhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
-                    && is_safe_key_binding_value(lhs, &mut is_safe_call)?
+            let value = if matches!(lhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
             {
-                binding_idx = Some(idx);
+                rhs
+            } else if *op == AssignOp::Eq
+                && matches!(rhs.as_ref(), Expr::Var { span, .. } if span.text() == key_name)
+            {
+                lhs
+            } else {
+                continue;
+            };
+            if is_safe_key_binding_value(value, &mut is_safe_call)? {
+                binding = Some((idx, is_literal_input_ref(value)));
             }
         }
-        if let Some(idx) = binding_idx {
+        if let Some((idx, reads_input)) = binding {
             // A `some` declaration must stay ahead of the binding; any other
-            // earlier use of the key variable blocks reordering.
+            // earlier use of the key variable blocks reordering. Bindings that
+            // read `input` also stay behind earlier statements mentioning
+            // `input`, which may shadow it (Rego v0) or override it.
             let mut insert_at = Some(0);
             for (pos, stmt) in statements.iter().take(idx).enumerate() {
                 if matches!(&stmt.literal, Literal::SomeVars { vars, .. } if vars.iter().any(|var| var.text() == key_name))
@@ -148,6 +168,8 @@ pub fn prioritize_key_binding(
                 } else if stmt_references_var(stmt, &key_name)? {
                     insert_at = None;
                     break;
+                } else if reads_input && stmt_references_var(stmt, "input")? {
+                    insert_at = Some(pos + 1);
                 }
             }
             if let Some(insert_at) = insert_at.filter(|&at| at < idx) {

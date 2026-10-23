@@ -2093,3 +2093,124 @@ cases:
     query: data.test.values.a
     want_result:
       set!: [1, 2]
+
+  - note: keyed_set_input_alias_key_before_dependency
+    data: {}
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_input_alias_key_before_dependency_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {key: b}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_input_alias_matching_key_still_recurses
+    data: {}
+    input: {key: a}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_input_alias_matching_key_still_recurses_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {key: a}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_nested_input_alias_unify_before_dependency
+    data: {}
+    input: {cfg: {keys: [b]}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); input.cfg["keys"][0] = z }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_nested_input_alias_unify_before_dependency_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {cfg: {keys: [b]}}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); input.cfg["keys"][0] = z }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_undefined_input_alias_before_dependency
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_undefined_input_alias_before_dependency_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.key }
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_dynamic_input_alias_not_reordered
+    data: {}
+    input: {key: b, i: 0, keys: [b]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.keys[input.i] }
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_dynamic_input_alias_not_reordered_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {key: b, i: 0, keys: [b]}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        values[z] contains n if { n := count(values.a); z := input.keys[input.i] }
+    query: data.test.values.a
+    want_error: "recursion detected"

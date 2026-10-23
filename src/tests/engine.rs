@@ -981,3 +981,39 @@ fn has_declared_rule_rooted_at_handles_32_component_heads_and_cloned_load_contex
 
     Ok(())
 }
+
+fn eval_v0_shadowed_input_alias(local_key: &str, input_key: &str) -> Result<Value> {
+    let mut engine = Engine::new();
+    engine.set_rego_v0(true);
+    engine.add_policy(
+        "test.rego".to_string(),
+        format!(
+            "package test\nimport future.keywords.contains\nimport future.keywords.if\n\
+             values.a contains 1\n\
+             values[z] contains n if {{ input := {{\"key\": \"{local_key}\"}}; n := count(values.a); z := input.key }}"
+        ),
+    )?;
+    engine.set_input(Value::from_json_str(&format!(
+        "{{\"key\": \"{input_key}\"}}"
+    ))?);
+    engine.eval_rule("data.test.values.a".to_string())
+}
+
+// Key bindings that read `input` must not move above a Rego v0 local
+// `input` shadow; the RVM does not support such shadowing yet.
+#[test]
+fn keyed_set_input_alias_respects_v0_input_shadowing() -> Result<()> {
+    let result = eval_v0_shadowed_input_alias("b", "a")?;
+    anyhow::ensure!(
+        result == Value::from(alloc::collections::BTreeSet::from([Value::from(1_u64)])),
+        "nonmatching shadowed key must be filtered, got {result}"
+    );
+    let err = eval_v0_shadowed_input_alias("a", "b")
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("matching shadowed key must still recurse"))?;
+    anyhow::ensure!(
+        err.to_string().contains("recursion detected"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
