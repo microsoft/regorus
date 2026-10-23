@@ -100,6 +100,10 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        if first_stmt_owns_loops && stmts.is_empty() {
+            self.emit_projected_key_guard_before_value_loops(loops)?;
+        }
+
         let current_loop = &loops[0];
         let remaining_loops = &loops[1..];
 
@@ -177,6 +181,7 @@ impl<'a> Compiler<'a> {
             span: span.clone(),
             hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
+            value_loops: 0,
             output_query: Some(query.qidx),
         };
         self.push_context(every_context);

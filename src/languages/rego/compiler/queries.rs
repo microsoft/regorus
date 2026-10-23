@@ -8,7 +8,9 @@
 
 use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
 use crate::ast::{self, Expr, ExprRef, LiteralStmt, Query};
-use crate::compiler::hoist::{is_safe_literal_key_call, prioritize_key_binding};
+use crate::compiler::hoist::{
+    is_safe_literal_key_call, key_reads_loop_index_vars, prioritize_key_binding, HoistedLoop,
+};
 use crate::rvm::instructions::GuardMode;
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
@@ -288,6 +290,32 @@ impl<'a> Compiler<'a> {
         );
     }
 
+    /// Rejects a nonmatching projected key once key loops are bound and
+    /// before head value loops evaluate collections that may read the child.
+    pub(super) fn emit_projected_key_guard_before_value_loops(
+        &mut self,
+        remaining_loops: &[HoistedLoop],
+    ) -> Result<()> {
+        let Some(context) = self.context_stack.last() else {
+            return Ok(());
+        };
+        if context.value_loops == 0 || remaining_loops.len() != context.value_loops {
+            return Ok(());
+        }
+        let (Some(filter), Some(key_expr)) = (context.key_filter.clone(), context.key_expr.clone())
+        else {
+            return Ok(());
+        };
+        // A key bound by a value loop is checked once that loop binds it.
+        if key_reads_loop_index_vars(&key_expr, remaining_loops).map_err(CompilerError::from)? {
+            return Ok(());
+        }
+        let span = context.span.clone();
+        let key_register = self.compile_rego_expr(&key_expr)?;
+        self.emit_key_match_guard(key_register, filter, &span);
+        Ok(())
+    }
+
     pub(super) fn hoist_loops_and_emit_context_yield(&mut self) -> Result<()> {
         if let Some(context) = self.context_stack.last() {
             let span = context.span.clone();
@@ -328,9 +356,12 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        if let Some(expr) = value_expr.as_ref() {
-            key_value_loops.extend(self.get_expr_loops(expr)?);
-        }
+        let value_loops = match value_expr.as_ref() {
+            Some(expr) => self.get_expr_loops(expr)?,
+            None => Vec::new(),
+        };
+        let value_loop_count = value_loops.len();
+        key_value_loops.extend(value_loops);
 
         if let Some(context) = self.context_stack.last() {
             let span = context.span.clone();
@@ -340,6 +371,7 @@ impl<'a> Compiler<'a> {
         if !key_value_loops.is_empty() {
             if let Some(context) = self.context_stack.last_mut() {
                 context.key_value_loops_hoisted = true;
+                context.value_loops = value_loop_count;
             }
             self.compile_hoisted_loops(&[], &key_value_loops, true)
         } else {

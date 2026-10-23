@@ -710,6 +710,7 @@ impl<'a> Compiler<'a> {
                         span,
                         hoisted_key_loops: 0,
                         key_value_loops_hoisted: false,
+                        value_loops: 0,
                         output_query: None,
                     };
                     self.push_context(context);
@@ -780,6 +781,7 @@ impl<'a> Compiler<'a> {
                                 context.value_expr = body_value_expr.clone();
                                 context.hoisted_key_loops = 0;
                                 context.key_value_loops_hoisted = false;
+                                context.value_loops = 0;
                                 context.key_filter_guarded = false;
                                 context.output_query = Some(body.query.qidx);
                             }

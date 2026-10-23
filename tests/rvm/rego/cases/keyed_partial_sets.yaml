@@ -2214,3 +2214,108 @@ cases:
         values[z] contains n if { n := count(values.a); z := input.keys[input.i] }
     query: data.test.values.a
     want_error: "recursion detected"
+
+  - note: keyed_set_rule_key_checked_before_value_loops
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        target := "b"
+        values.a contains 1
+        values[target] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_rule_key_checked_before_value_loops_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        target := "b"
+        values.a contains 1
+        values[target] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_result:
+      set!: [1]
+
+  - note: keyed_set_rule_key_matching_value_loop_self_read
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        target := "a"
+        values.a contains 1
+        values[target] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_rule_key_matching_value_loop_self_read_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        target := "a"
+        values.a contains 1
+        values[target] contains [count(values.a)][_]
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_key_bound_by_value_loop
+    data: {}
+    input: {items: {a: 7, b: 8}}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[k] contains input.items[k]
+    query: data.test.values.a
+    want_result:
+      set!: [0, 7]
+
+  - note: keyed_set_key_bound_by_value_loop_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {items: {a: 7, b: 8}}
+    modules:
+      - |
+        package test
+        values.a contains 0
+        values[k] contains input.items[k]
+    query: data.test.values.a
+    want_result:
+      set!: [0, 7]
+
+  - note: keyed_set_rule_key_reading_child_before_empty_value_loop
+    # Accepted conservative behavior: the key is checked before value loops,
+    # so a key rule that reads the projected child reports recursion even
+    # when the value collection is empty.
+    data: {}
+    input: {items: []}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        target := count(values.a)
+        values[target] contains input.items[_]
+    query: data.test.values.a
+    want_error: "recursion detected"
+
+  - note: keyed_set_rule_key_reading_child_before_empty_value_loop_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {items: []}
+    modules:
+      - |
+        package test
+        values.a contains 1
+        target := count(values.a)
+        values[target] contains input.items[_]
+    query: data.test.values.a
+    want_error: "recursion detected"

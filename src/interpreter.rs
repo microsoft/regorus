@@ -2070,11 +2070,12 @@ impl Interpreter {
         index: &Value,
         value: &Value,
         loops: &[HoistedLoop],
+        value_loops: usize,
     ) -> Result<bool> {
         self.memory_check()?;
         self.set_loop_var_value(Self::loop_assignment_expr(loop_info), value.clone())?;
         let result = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
-            self.eval_output_expr_in_loop(loops)
+            self.eval_output_expr_in_loop(loops, value_loops)
         } else {
             Ok(false)
         };
@@ -2082,10 +2083,28 @@ impl Interpreter {
         result
     }
 
-    fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
+    /// `loops` holds the head key loops followed by `value_loops` head value
+    /// loops.
+    fn eval_output_expr_in_loop(
+        &mut self,
+        loops: &[HoistedLoop],
+        value_loops: usize,
+    ) -> Result<bool> {
         self.check_execution_time()?;
         if self.reject_nonmatching_child_key()? {
             return Ok(false);
+        }
+        // Once the key is fully bound, reject a nonmatching projected key
+        // before value loops evaluate collections that may read the child.
+        if value_loops > 0 && loops.len() == value_loops {
+            let ctx = self.get_current_context()?;
+            if let (Some(filter), Some(key_expr)) = (ctx.key_filter.clone(), ctx.key_expr.clone()) {
+                if !crate::compiler::hoist::key_reads_loop_index_vars(&key_expr, loops)?
+                    && self.eval_expr(&key_expr)? != filter
+                {
+                    return Ok(false);
+                }
+            }
         }
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2291,6 +2310,7 @@ impl Interpreter {
                             &Value::from(idx),
                             value,
                             loop_tail,
+                            value_loops,
                         )? || result;
                     }
                 }
@@ -2302,6 +2322,7 @@ impl Interpreter {
                             value,
                             value,
                             loop_tail,
+                            value_loops,
                         )? || result;
                     }
                 }
@@ -2313,6 +2334,7 @@ impl Interpreter {
                             key,
                             value,
                             loop_tail,
+                            value_loops,
                         )? || result;
                     }
                 }
@@ -2376,6 +2398,7 @@ impl Interpreter {
             }
         }
 
+        let key_loops = loops.len();
         // Get pre-computed loops for output expression
         if let Some(oe) = &output_expr {
             match self
@@ -2398,7 +2421,8 @@ impl Interpreter {
             }
         }
 
-        let r = self.eval_output_expr_in_loop(&loops[..])?;
+        let value_loops = loops.len().saturating_sub(key_loops);
+        let r = self.eval_output_expr_in_loop(&loops[..], value_loops)?;
 
         let ctx = self.get_current_context()?;
         ctx.output_expr

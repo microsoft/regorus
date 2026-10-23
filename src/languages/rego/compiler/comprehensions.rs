@@ -49,6 +49,7 @@ impl<'a> Compiler<'a> {
             span: span.clone(),
             hoisted_key_loops: 0,
             key_value_loops_hoisted: false,
+            value_loops: 0,
             output_query: Some(query.qidx),
         };
         self.push_context(context);

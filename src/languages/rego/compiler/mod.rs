@@ -69,6 +69,9 @@ pub struct CompilationContext {
     pub(super) span: Span,
     pub(super) hoisted_key_loops: usize,
     pub(super) key_value_loops_hoisted: bool,
+    /// Head value loops trailing the hoisted key/value loops; the projected
+    /// key is checked before entering them.
+    pub(super) value_loops: usize,
     pub(super) output_query: Option<u32>,
 }
 

@@ -65,6 +65,28 @@ pub fn key_expr_is_ready(
     Ok(ready)
 }
 
+/// Whether `key_expr` reads a variable that one of `loops` binds as its index.
+pub fn key_reads_loop_index_vars(key_expr: &ExprRef, loops: &[HoistedLoop]) -> Result<bool> {
+    fn any_var(expr: &ExprRef, mut f: impl FnMut(&str) -> Result<bool>) -> Result<bool> {
+        let mut found = false;
+        crate::query::traversal::traverse(expr, &mut |node| {
+            if let Expr::Var { span, .. } = node.as_ref() {
+                found = found || f(span.text())?;
+            }
+            Ok(!found)
+        })?;
+        Ok(found)
+    }
+    any_var(key_expr, |name| {
+        for key in loops.iter().filter_map(|l| l.key.as_ref()) {
+            if any_var(key, |index_var| Ok(index_var == name))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+}
+
 pub fn is_safe_literal_key_call(fcn: &ExprRef, params: &[ExprRef]) -> Result<bool> {
     let name = crate::utils::get_path_string(fcn, None)?;
     let is_string =
