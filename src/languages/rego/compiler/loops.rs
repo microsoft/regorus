@@ -118,9 +118,9 @@ impl<'a> Compiler<'a> {
     ) -> Result<()> {
         let collection_reg = self.compile_rego_expr(domain)?;
 
-        let key_reg = self.alloc_register();
-        let value_reg = self.alloc_register();
-        let result_reg = self.alloc_register();
+        let key_reg = self.alloc_register()?;
+        let value_reg = self.alloc_register()?;
+        let result_reg = self.alloc_register()?;
 
         let value_var_name = value.text().to_string();
         let key_var_name = key.as_ref().map(|k| k.text().to_string());
@@ -224,9 +224,9 @@ impl<'a> Compiler<'a> {
     ) -> Result<()> {
         let collection_reg = self.compile_rego_expr(collection)?;
 
-        let key_reg = self.alloc_register();
-        let value_reg = self.alloc_register();
-        let result_reg = self.alloc_register();
+        let key_reg = self.alloc_register()?;
+        let value_reg = self.alloc_register()?;
+        let result_reg = self.alloc_register()?;
 
         if let Some(loop_expr) = loop_expr {
             self.loop_expr_register_map
@@ -367,9 +367,9 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let collection_reg = self.compile_rego_expr(collection)?;
 
-        let key_reg = self.alloc_register();
-        let value_reg = self.alloc_register();
-        let result_reg = self.alloc_register();
+        let key_reg = self.alloc_register()?;
+        let value_reg = self.alloc_register()?;
+        let result_reg = self.alloc_register()?;
 
         let loop_params_index = self.program.add_loop_params(LoopStartParams {
             mode: LoopMode::ForEach,

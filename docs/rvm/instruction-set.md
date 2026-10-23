@@ -193,18 +193,39 @@ let program = Compiler::compile_from_policy_with_host_await(
 )?;
 ```
 
-Each registered name is a `(name, arg_count)` pair. When the compiler
-encounters a call to a registered name, it emits a `HostAwait` instruction
-with:
-- `arg` = the first argument register
-- `id` = a register loaded with a string literal containing the function name
+Each registered name is a `(name, arg_count)` pair. The count is the exact
+number of input arguments; the optional Rego output parameter is excluded.
+When the compiler encounters a registered call, it evaluates inputs once in
+order, packs their native values into an array, and skips the call and its
+output-binding epilogue if any input is undefined:
+
+| Registered policy call | `HostAwait` argument |
+| :--------------------- | :------------------ |
+| `lookup()` | `[]` |
+| `lookup(x)` | `[x]` |
+| `lookup(x, y)` | `[x, y]` |
+| `lookup(x, {"nested": [y]})` | `[x, {"nested": [y]}]` |
+
+The optional Rego output parameter does not appear in these arrays. Host
+responses remain unwrapped: the value supplied by the host is the value
+returned or bound by the policy.
 
 Both the explicit `__builtin_host_await(arg, id)` call and a registered
-builtin call produce the **same `HostAwait` bytecode instruction**. The only
-difference is how the `id` register is populated: explicit calls take it from
-the second user-supplied argument, while registered calls auto-generate a
-`Load` instruction for the function name string. The VM cannot distinguish
-between the two at runtime.
+builtin call converge on the same `HostAwait` bytecode instruction, but their
+payload construction differs. Explicit calls pass the supplied `arg` value
+and `id` register through unchanged. Registered calls create the ordered input
+array, guard against undefined inputs, and load the registered name as the
+identifier. Previously compiled programs retain their original raw
+registered-call payloads after deserialization. Since an old raw payload may
+itself be an array, payload shape cannot identify the program generation.
+Applications must deploy a matching program/handler/native/managed bundle or
+provide their own explicit legacy routing; no runtime format inference or
+compatibility handshake is provided.
+
+The public low-level Rust method `Compiler::alloc_register` now returns
+`Result<Register, SpannedCompilerError>` so callers must handle register-window
+overflow. This is a source-level API break; the
+`Compiler::register_host_await_builtin` signature is unchanged.
 
 **Resolution order** in `determine_call_target()`:
 1. `__builtin_host_await` (magic 2-argument form)
@@ -241,10 +262,10 @@ if a rule exists at that path it is called, otherwise compilation fails with
 all, so `data.pkg.count(x)` is always an `Unknown function` error, registered
 or not.)
 
-**Argument handling**: The `HostAwait` instruction carries a single `arg`
-register. Registered builtins must use `arg_count: 1`; the compiler rejects
-`arg_count > 1` at registration time. To pass multiple values, use object
-packing: `lookup({"user": x, "resource": y})`.
+**Undefined handling**: Registered inputs are evaluated under normal Rego
+semantics. If any input is undefined, the registered host call is skipped and
+no response is consumed. Explicit `__builtin_host_await` calls retain their
+existing raw-payload behavior.
 
 ---
 
@@ -304,4 +325,3 @@ artifacts. Some contain `Vec` fields; the compiler is responsible for ensuring
 indices remain valid and stable across serialization boundaries.
 
 ---
-

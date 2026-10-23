@@ -152,7 +152,7 @@ impl<'a> Compiler<'a> {
             let value_register = match context.value_expr {
                 Some(expr) => self.compile_rego_expr(&expr)?,
                 None => {
-                    let value_reg = self.alloc_register();
+                    let value_reg = self.alloc_register()?;
                     self.emit_instruction(
                         Instruction::LoadBool {
                             dest: value_reg,
@@ -262,7 +262,7 @@ impl<'a> Compiler<'a> {
                     compiler.compile_rego_expr_with_span(expr, expr.span(), false)
                 })?;
 
-                let negated_reg = self.alloc_register();
+                let negated_reg = self.alloc_register()?;
                 self.emit_instruction(
                     Instruction::Not {
                         dest: negated_reg,

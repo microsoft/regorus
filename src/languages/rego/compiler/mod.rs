@@ -202,9 +202,11 @@ impl<'a> Compiler<'a> {
     /// at registration: it would intercept the qualified call too and silently
     /// shadow that rule/function.
     ///
-    /// `arg_count` must be exactly 1. The `HostAwait` instruction carries a
-    /// single argument register; use object packing to pass multiple values
-    /// (e.g. `name({"key1": v1, "key2": v2})`).
+    /// The declared `arg_count` is checked against each call's input arity.
+    /// Registered calls pass an array containing those inputs to the host,
+    /// including a one-element array for a single input. The optional output
+    /// parameter supported by Rego is not included in `arg_count`. A call-site
+    /// arity mismatch is reported when the policy is compiled.
     ///
     /// Returns `Err` when:
     /// - `name` is the reserved identifier `__builtin_host_await`,
@@ -216,8 +218,7 @@ impl<'a> Compiler<'a> {
     ///   would intercept the package-qualified call and silently shadow the
     ///   user-defined rule/function at that path,
     /// - `name` is already registered (duplicate registration is rejected
-    ///   rather than silently overwritten),
-    /// - `arg_count` is not exactly 1.
+    ///   rather than silently overwritten).
     pub fn register_host_await_builtin(&mut self, name: &str, arg_count: usize) -> Result<()> {
         if name == "__builtin_host_await" {
             return Err(CompilerError::General {
@@ -249,15 +250,6 @@ impl<'a> Compiler<'a> {
                 message: format!(
                     "host-await builtin '{name}' is already registered; \
                      duplicate registration is not allowed"
-                ),
-            }
-            .into());
-        }
-        if arg_count != 1 {
-            return Err(CompilerError::General {
-                message: format!(
-                    "registered host-await builtin '{name}' must have arg_count == 1, got {arg_count}. \
-                     Use object packing to pass multiple values."
                 ),
             }
             .into());

@@ -171,7 +171,7 @@ impl<'a> Compiler<'a> {
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
-                let rule_result_reg = self.alloc_register();
+                let rule_result_reg = self.alloc_register()?;
                 self.emit_instruction(
                     Instruction::CallRule {
                         dest: rule_result_reg,
@@ -310,7 +310,7 @@ impl<'a> Compiler<'a> {
             }
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
-                let rule_result_reg = self.alloc_register();
+                let rule_result_reg = self.alloc_register()?;
                 self.emit_instruction(
                     Instruction::CallRule {
                         dest: rule_result_reg,
@@ -364,7 +364,7 @@ impl<'a> Compiler<'a> {
             // Single level access - use optimized instructions
             match &components[0] {
                 AccessComponent::Field(field) => {
-                    let dest_reg = self.alloc_register();
+                    let dest_reg = self.alloc_register()?;
                     let literal_idx = self.add_literal(Value::String(field.clone().into()));
                     self.emit_instruction(
                         Instruction::IndexLiteral {
@@ -377,7 +377,7 @@ impl<'a> Compiler<'a> {
                     Ok(dest_reg)
                 }
                 AccessComponent::Expression(expr) => {
-                    let dest_reg = self.alloc_register();
+                    let dest_reg = self.alloc_register()?;
                     let key_reg = self.compile_rego_expr_with_span(expr, expr.span(), false)?;
                     self.emit_instruction(
                         Instruction::Index {
@@ -392,7 +392,7 @@ impl<'a> Compiler<'a> {
             }
         } else {
             // Multi-level access - use ChainedIndex
-            let dest_reg = self.alloc_register();
+            let dest_reg = self.alloc_register()?;
             let mut path_components = Vec::new();
 
             for component in components {
@@ -432,7 +432,7 @@ impl<'a> Compiler<'a> {
         components: &[AccessComponent],
         span: &Span,
     ) -> Result<Register> {
-        let dest_reg = self.alloc_register();
+        let dest_reg = self.alloc_register()?;
         let mut path_components = Vec::new();
 
         for component in components {

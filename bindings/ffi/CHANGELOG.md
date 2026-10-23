@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- [**breaking**] Append the required `arg_count` field to `RegorusHostAwaitBuiltin`. Non-empty registrations using the old name-only layout now fail ABI size validation; larger aligned caller strides remain supported.
+
 ### Added
 
 - Extend per-VM memory budgets configured through `regorus_rvm_set_memory_budget_config` to

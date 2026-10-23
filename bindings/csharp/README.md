@@ -196,7 +196,7 @@ allow if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.allow" };
-var builtins = new[] { new HostAwaitBuiltin("get_account") };
+var builtins = new[] { new HostAwaitBuiltin("get_account", 1) };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();
@@ -209,7 +209,7 @@ vm.Execute();
 
 // Inspect which builtin suspended and what argument was passed
 var identifier = vm.GetHostAwaitIdentifier();  // "get_account"
-var argument = vm.GetHostAwaitArgument();       // {"id":"acct-42"}
+var argument = vm.GetHostAwaitArgument();       // [{"id":"acct-42"}]
 
 // Resolve externally, then resume
 var result = vm.Resume("""{"status": "active", "name": "Alice"}""");
@@ -234,7 +234,7 @@ greeting := msg if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.greeting" };
-var builtins = new[] { new HostAwaitBuiltin("translate") };
+var builtins = new[] { new HostAwaitBuiltin("translate", 1) };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();

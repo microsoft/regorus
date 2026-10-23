@@ -111,6 +111,11 @@ namespace Regorus
         /// <summary>
         /// Compile an RVM program from modules, entry points, and registered host-awaitable builtins.
         /// </summary>
+        /// <param name="hostAwaitBuiltins">Registrations with required input argument counts.</param>
+        /// <remarks>
+        /// Newly compiled registered calls pass an ordered array of input values to the host.
+        /// The optional Rego output parameter is not included in the declared count.
+        /// </remarks>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins)
         {
             if (hostAwaitBuiltins is null)

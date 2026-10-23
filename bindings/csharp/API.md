@@ -545,18 +545,41 @@ Declares a function name that the compiler should treat as a host-await call.
 When the VM encounters a call to this function, it suspends (suspendable mode)
 or consumes a pre-loaded response (run-to-completion mode).
 
-Registered builtins are restricted to exactly one argument at the compiler
-level (use object packing to pass multiple values), so the C# struct does not
-expose an `argCount` parameter.
+`argCount` is the exact number of input arguments in the policy call. The
+optional Rego output parameter is not included. Registered calls pass an
+ordered array to the host: zero inputs produce `[]`, one input produces
+`[value]`, and multiple inputs produce `[value1, value2, ...]`. Values remain
+native Rego values inside that array, including nested arrays and objects.
+`GetHostAwaitArgument()` returns the JSON representation of the whole array;
+it does not unwrap one-input calls. An input that evaluates to undefined skips
+the registered HostAwait without consuming a response.
 
 ```csharp
 public readonly struct HostAwaitBuiltin
 {
     public string Name { get; }
+    public int ArgCount { get; }
 
-    public HostAwaitBuiltin(string name);
+    public HostAwaitBuiltin(string name, int argCount);
 }
 ```
+
+The one-argument constructor was removed; pass the declared input count
+explicitly and reject negative counts. Removing `.ctor(string)` is a C# source
+and CLR binary break. This is a coordinated breaking change: update host
+handlers, managed and native packages, registrations, and recompiled programs
+together. New managed code with an older size-aware native library may have
+its count ignored and is unsupported; an old name-only caller with the new
+native library is rejected for non-empty registrations.
+
+Explicit `__builtin_host_await(payload, identifier)` calls and previously
+compiled programs retain raw payloads, while new registered calls send an
+ordered input array. Old raw payloads can themselves be arrays, so a handler
+cannot reliably infer the program format from payload shape. Deploy matching
+program and handler versions together or use application-owned legacy routing;
+there is no runtime handshake or universal compatibility handler. Roll back
+the matching earlier managed/native package, host handler, and program bundle
+together.
 
 ### ExecutionMode
 

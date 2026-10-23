@@ -1710,15 +1710,13 @@ fn convert_c_modules_to_rust(
 
 /// A registered host-awaitable builtin passed via FFI.
 ///
-/// The argument count is currently fixed to 1 by the compiler (see
-/// `Compiler::register_host_await_builtin`), so it is not exposed at the
-/// FFI boundary. The struct exists as a stable layout to allow future
-/// expansion (e.g. an explicit `arg_count` field) without breaking ABI
-/// when callers pin a fixed-size array of these.
+/// The registered builtin's declared input arity.
 #[repr(C)]
 pub struct RegorusHostAwaitBuiltin {
     /// Null-terminated UTF-8 builtin name.
     pub name: *const c_char,
+    /// Number of input arguments expected by the registered builtin.
+    pub arg_count: usize,
 }
 
 /// Compile an RVM program from data/modules and entry points, with registered
@@ -1728,9 +1726,9 @@ pub struct RegorusHostAwaitBuiltin {
 /// * `modules` / `modules_len` - Policy modules to compile
 /// * `entry_points` / `entry_points_len` - Entry point rule paths
 /// * `host_await_builtins` / `host_await_builtins_len` - Builtins that compile to HostAwait
-/// * `host_await_builtin_size` - `sizeof(RegorusHostAwaitBuiltin)` as seen by the
-///   caller; used as the array stride so callers built against a different struct
-///   layout still walk the array correctly (forward-compatible ABI)
+/// * `host_await_builtin_size` - caller's `sizeof(RegorusHostAwaitBuiltin)`, used as the
+///   array stride. For non-empty arrays it must include the full name-and-arity prefix;
+///   larger aligned caller layouts remain supported.
 #[allow(clippy::too_many_arguments)]
 #[no_mangle]
 pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
@@ -2040,9 +2038,7 @@ pub(crate) fn convert_c_host_await_builtins(
         let b = unsafe { &*(base.add(offset) as *const RegorusHostAwaitBuiltin) };
         let name = from_c_str(b.name)
             .map_err(|e| anyhow!("invalid host-await builtin name at index {i}: {e}"))?;
-        // Arg count is fixed to 1 by the compiler — see the doc comment
-        // on `RegorusHostAwaitBuiltin` and `Compiler::register_host_await_builtin`.
-        result.push((name, 1));
+        result.push((name, b.arg_count));
         check_memory_limit_if_needed()?;
     }
     Ok(result)
@@ -2051,7 +2047,8 @@ pub(crate) fn convert_c_host_await_builtins(
 #[cfg(test)]
 mod host_await_tests {
     use super::*;
-    use std::ffi::CString;
+    use crate::common::regorus_result_drop;
+    use std::ffi::{CStr, CString};
 
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
@@ -2064,16 +2061,21 @@ mod host_await_tests {
     #[repr(C)]
     struct WiderBuiltin {
         name: *const c_char,
+        arg_count: usize,
         _appended: u64,
     }
 
-    // A caller-supplied array laid out at the exact native element size parses fine.
+    // A caller-supplied array laid out at the exact native element size preserves arities.
     #[test]
-    fn convert_builtins_native_size_parses_names() {
+    fn convert_builtins_native_size_parses_names_and_arities() {
         let names = [c("translate"), c("fetch")];
         let builtins: Vec<RegorusHostAwaitBuiltin> = names
             .iter()
-            .map(|n| RegorusHostAwaitBuiltin { name: n.as_ptr() })
+            .enumerate()
+            .map(|(index, n)| RegorusHostAwaitBuiltin {
+                name: n.as_ptr(),
+                arg_count: index,
+            })
             .collect();
         let size = core::mem::size_of::<RegorusHostAwaitBuiltin>();
 
@@ -2082,7 +2084,7 @@ mod host_await_tests {
 
         assert_eq!(
             result,
-            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
+            vec![("translate".to_string(), 0), ("fetch".to_string(), 1)]
         );
     }
 
@@ -2093,6 +2095,7 @@ mod host_await_tests {
         let name = c("translate");
         let builtins = [RegorusHostAwaitBuiltin {
             name: name.as_ptr(),
+            arg_count: 1,
         }];
         let too_small = core::mem::size_of::<RegorusHostAwaitBuiltin>() - 1;
 
@@ -2114,8 +2117,10 @@ mod host_await_tests {
         let names = [c("translate"), c("fetch")];
         let wide: Vec<WiderBuiltin> = names
             .iter()
-            .map(|n| WiderBuiltin {
+            .enumerate()
+            .map(|(index, n)| WiderBuiltin {
                 name: n.as_ptr(),
+                arg_count: index + 2,
                 _appended: 0,
             })
             .collect();
@@ -2134,8 +2139,151 @@ mod host_await_tests {
 
         assert_eq!(
             result,
-            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
+            vec![("translate".to_string(), 2), ("fetch".to_string(), 3)]
         );
+    }
+
+    // A pre-arity name-only caller must not be accepted using the new native
+    // layout: reading its trailing bytes as `arg_count` would be invalid.
+    #[test]
+    fn convert_builtins_rejects_legacy_name_only_layout() {
+        #[repr(C)]
+        struct LegacyBuiltin {
+            name: *const c_char,
+        }
+
+        let name = c("translate");
+        let legacy = [LegacyBuiltin {
+            name: name.as_ptr(),
+        }];
+        let err = convert_c_host_await_builtins(
+            legacy.as_ptr() as *const RegorusHostAwaitBuiltin,
+            legacy.len(),
+            core::mem::size_of::<LegacyBuiltin>(),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("ABI mismatch"),
+            "expected an ABI mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn exported_compile_rejects_legacy_and_malformed_host_await_layouts_without_poisoning() {
+        #[repr(C)]
+        struct LegacyBuiltin {
+            name: *const c_char,
+        }
+
+        #[repr(align(8))]
+        struct AlignedBytes([u8; 64]);
+
+        fn expect_compile_failure(result: RegorusResult, expected_message: &str) {
+            assert_eq!(result.status, RegorusStatus::CompilationFailed);
+            assert!(!result.error_message.is_null());
+            let message = unsafe { CStr::from_ptr(result.error_message) }
+                .to_str()
+                .expect("FFI error should be UTF-8")
+                .to_string();
+            regorus_result_drop(result);
+            assert!(
+                message.contains(expected_message),
+                "expected error containing {expected_message:?}, got {message:?}"
+            );
+        }
+
+        let data = c("{}");
+        let module_id = c("test.rego");
+        let module_content = c("package test\np := true");
+        let entry_point = c("data.test.p");
+        let modules = [RegorusPolicyModule {
+            id: module_id.as_ptr(),
+            content: module_content.as_ptr(),
+        }];
+        let entry_points = [entry_point.as_ptr()];
+        let name = c("translate");
+        let native = [
+            RegorusHostAwaitBuiltin {
+                name: name.as_ptr(),
+                arg_count: 1,
+            },
+            RegorusHostAwaitBuiltin {
+                name: name.as_ptr(),
+                arg_count: 1,
+            },
+        ];
+        let compile = |builtins, builtins_len, builtin_size| {
+            regorus_program_compile_from_modules_with_host_await(
+                data.as_ptr(),
+                modules.as_ptr(),
+                modules.len(),
+                entry_points.as_ptr(),
+                entry_points.len(),
+                builtins,
+                builtins_len,
+                builtin_size,
+            )
+        };
+
+        let legacy = [LegacyBuiltin {
+            name: name.as_ptr(),
+        }];
+        expect_compile_failure(
+            compile(
+                legacy.as_ptr() as *const RegorusHostAwaitBuiltin,
+                legacy.len(),
+                core::mem::size_of::<LegacyBuiltin>(),
+            ),
+            "ABI mismatch",
+        );
+        expect_compile_failure(
+            compile(
+                native.as_ptr(),
+                1,
+                core::mem::size_of::<RegorusHostAwaitBuiltin>() - 1,
+            ),
+            "ABI mismatch",
+        );
+
+        let misaligned = AlignedBytes([0; 64]);
+        // SAFETY: the exported function rejects this address before dereferencing it.
+        let misaligned_base =
+            unsafe { misaligned.0.as_ptr().add(1) } as *const RegorusHostAwaitBuiltin;
+        expect_compile_failure(
+            compile(
+                misaligned_base,
+                1,
+                core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+            ),
+            &format!(
+                "not {}-byte aligned",
+                core::mem::align_of::<RegorusHostAwaitBuiltin>()
+            ),
+        );
+
+        let misaligned_stride = core::mem::size_of::<RegorusHostAwaitBuiltin>() + 1;
+        expect_compile_failure(
+            compile(native.as_ptr(), 2, misaligned_stride),
+            "not a multiple",
+        );
+
+        let huge_aligned_stride = (isize::MAX as usize) + 1;
+        expect_compile_failure(
+            compile(native.as_ptr(), 4, huge_aligned_stride),
+            "overflows",
+        );
+        expect_compile_failure(
+            compile(native.as_ptr(), 1, huge_aligned_stride),
+            "maximum addressable range",
+        );
+
+        let healthy = compile(core::ptr::null(), 0, 0);
+        assert_eq!(healthy.status, RegorusStatus::Ok);
+        let program = healthy.pointer_value.cast::<RegorusProgram>();
+        assert!(!program.is_null());
+        regorus_result_drop(healthy);
+        regorus_program_drop(program);
     }
 
     // The no-host-await path passes null/0; the size argument must be ignored
@@ -2189,6 +2337,7 @@ mod host_await_tests {
     fn validate_stride_accepts_native_layout() {
         let builtins = [RegorusHostAwaitBuiltin {
             name: core::ptr::null(),
+            arg_count: 0,
         }];
         validate_array_stride(
             builtins.as_ptr(),
@@ -2220,6 +2369,7 @@ mod host_await_tests {
     fn validate_stride_accepts_aligned_oversized() {
         let wide = [WiderBuiltin {
             name: core::ptr::null(),
+            arg_count: 0,
             _appended: 0,
         }];
         validate_array_stride(

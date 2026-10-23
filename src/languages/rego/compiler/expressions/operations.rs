@@ -19,7 +19,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let lhs_reg = self.compile_rego_expr_with_span(lhs, lhs.span(), false)?;
         let rhs_reg = self.compile_rego_expr_with_span(rhs, rhs.span(), false)?;
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
 
         match op {
             ArithOp::Add => self.emit_instruction(
@@ -75,7 +75,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let lhs_reg = self.compile_rego_expr_with_span(lhs, lhs.span(), false)?;
         let rhs_reg = self.compile_rego_expr_with_span(rhs, rhs.span(), false)?;
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
 
         match op {
             BoolOp::Eq => self.emit_instruction(
@@ -139,7 +139,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let lhs_reg = self.compile_rego_expr_with_span(lhs, lhs.span(), false)?;
         let rhs_reg = self.compile_rego_expr_with_span(rhs, rhs.span(), false)?;
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
 
         match op {
             BinOp::Union => {
@@ -184,7 +184,7 @@ impl<'a> Compiler<'a> {
         let collection_reg =
             self.compile_rego_expr_with_span(collection, collection.span(), false)?;
 
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
         self.emit_instruction(
             Instruction::Contains {
                 dest,
@@ -201,7 +201,7 @@ impl<'a> Compiler<'a> {
             crate::ast::Expr::Number { .. } if !expr.span().text().starts_with('-') => {
                 let operand_reg = self.compile_rego_expr_with_span(expr, expr.span(), false)?;
                 let zero_literal_idx = self.add_literal(Value::from(0));
-                let zero_reg = self.alloc_register();
+                let zero_reg = self.alloc_register()?;
                 self.emit_instruction(
                     Instruction::Load {
                         dest: zero_reg,
@@ -210,7 +210,7 @@ impl<'a> Compiler<'a> {
                     span,
                 );
 
-                let dest = self.alloc_register();
+                let dest = self.alloc_register()?;
                 self.emit_instruction(
                     Instruction::Sub {
                         dest,
@@ -235,7 +235,7 @@ impl<'a> Compiler<'a> {
         let lhs_reg = self.compile_rego_expr_with_span(lhs, lhs.span(), false)?;
         let rhs_reg = self.compile_rego_expr_with_span(rhs, rhs.span(), false)?;
 
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
         self.emit_instruction(
             Instruction::Or {
                 dest,
