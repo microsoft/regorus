@@ -140,22 +140,24 @@ fn range_step(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -
         _ => (),
     }
 
-    if strict && (!incr.is_integer() || incr <= Number::from(0u64)) {
-        bail!(params[2].span().error("step must be a positive integer"))
+    if !incr.is_integer() || incr <= Number::from(0u64) {
+        if strict {
+            bail!(params[2].span().error("step must be a positive integer"))
+        }
+        return Ok(Value::Undefined);
     }
 
-    let (incr, num_elements) = match (v2.sub(&v1)?.as_i64(), incr.as_i64()) {
-        (Some(v), Some(incr)) if v >= 0 => (incr, v / incr + 1),
-        (Some(v), Some(incr)) => (-incr, -v / incr + 1),
-        _ => bail!(span.error("could not determine number of elements")),
+    let step = if v1 <= v2 {
+        incr
+    } else {
+        Number::from(0u64).sub(&incr)?
     };
 
-    let mut values = Vec::with_capacity(num_elements as usize);
-    let incr = Number::from(incr);
+    let mut values = Vec::new();
     let mut v = v1;
-    while (v <= v2 && incr.is_positive()) || (v >= v2 && !incr.is_positive()) {
+    while (v <= v2 && step.is_positive()) || (v >= v2 && !step.is_positive()) {
         values.push(Value::from(v.clone()));
-        v.add_assign(&incr)?;
+        v.add_assign(&step)?;
         // Guard vector growth as the stepped range accumulates.
         enforce_limit()?;
     }

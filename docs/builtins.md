@@ -31,7 +31,7 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [x - y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-minus)                          | _       |
   | [x * y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-mul)                            | _       |
   | [numbers.range](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-numbersrange)           | _       |
-  | [numbers.range_step](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-numbersrange_step) | _       |
+  | [numbers.range_step](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-numbersrange_step) | Supported. When `start > stop`, step is negated automatically to produce a descending range, matching OPA behavior. |
   | [x + y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-plus)                           | _       |
   | [rand.intn](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-randintn)                   | _       |
   | [x % y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-rem)                            | _       |
