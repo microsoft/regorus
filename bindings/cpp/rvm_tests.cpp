@@ -2,8 +2,109 @@
 // Licensed under the MIT License.
 
 #include <iostream>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <memory>
 #include "regorus.hpp"
+
+struct WiderHostAwaitBuiltin {
+    RegorusHostAwaitBuiltin prefix;
+    std::uintptr_t trailing;
+};
+
+static_assert(offsetof(RegorusHostAwaitBuiltin, name) == 0);
+static_assert(offsetof(RegorusHostAwaitBuiltin, arg_count) == sizeof(const char*));
+static_assert(sizeof(RegorusHostAwaitBuiltin) == sizeof(const char*) + sizeof(std::uintptr_t));
+static_assert(sizeof(WiderHostAwaitBuiltin) > sizeof(RegorusHostAwaitBuiltin));
+static_assert(sizeof(WiderHostAwaitBuiltin) % alignof(RegorusHostAwaitBuiltin) == 0);
+
+static bool expect_ffi_ok(RegorusResult result, const char* operation, const char* expected_output = nullptr) {
+    bool success = result.status == RegorusStatus::Ok;
+    if (!success) {
+        std::cerr << operation << ": "
+                  << (result.error_message ? result.error_message : "(no error)") << std::endl;
+    } else if (expected_output &&
+               (!result.output || std::string(result.output) != expected_output)) {
+        std::cerr << operation << " returned unexpected output: "
+                  << (result.output ? result.output : "(null)") << std::endl;
+        success = false;
+    }
+    regorus_result_drop(result);
+    return success;
+}
+
+static bool test_registered_host_await_wide_stride() {
+    const char* module_text =
+        "package demo\n"
+        "import rego.v1\n"
+        "result := echo(input.left, input.right)\n";
+    RegorusPolicyModule module{"registered_host_await_stride.rego", module_text};
+    const char* entry_points[] = {"data.demo.result"};
+    WiderHostAwaitBuiltin builtins[] = {
+        {{"unused", 0}, 0},
+        {{"echo", 2}, 0},
+    };
+
+    RegorusResult compile_result = regorus_program_compile_from_modules_with_host_await(
+        "{}",
+        &module,
+        1,
+        entry_points,
+        1,
+        reinterpret_cast<const RegorusHostAwaitBuiltin*>(builtins),
+        2,
+        sizeof(WiderHostAwaitBuiltin));
+    if (compile_result.status != RegorusStatus::Ok || !compile_result.pointer_value) {
+        std::cerr << "compile registered HostAwait with wider stride: "
+                  << (compile_result.error_message ? compile_result.error_message : "(no program)")
+                  << std::endl;
+        regorus_result_drop(compile_result);
+        return false;
+    }
+    auto* program_pointer = static_cast<RegorusProgram*>(compile_result.pointer_value);
+    regorus_result_drop(compile_result);
+    std::unique_ptr<RegorusProgram, decltype(&regorus_program_drop)> program(
+        program_pointer, &regorus_program_drop);
+
+    std::unique_ptr<RegorusRvm, decltype(&regorus_rvm_drop)> vm(
+        regorus_rvm_new(), &regorus_rvm_drop);
+    if (!program || !vm) {
+        std::cerr << "failed to allocate registered HostAwait handles" << std::endl;
+        return false;
+    }
+
+    if (!expect_ffi_ok(regorus_rvm_set_execution_mode(vm.get(), 1),
+                       "set registered HostAwait execution mode") ||
+        !expect_ffi_ok(regorus_rvm_load_program(vm.get(), program.get()),
+                       "load registered HostAwait program") ||
+        !expect_ffi_ok(regorus_rvm_set_input(
+                           vm.get(),
+                           "{\"left\":\"first\",\"right\":{\"nested\":[2]}}"),
+                       "set registered HostAwait input") ||
+        !expect_ffi_ok(regorus_rvm_execute(vm.get()), "execute registered HostAwait program") ||
+        !expect_ffi_ok(regorus_rvm_get_host_await_identifier(vm.get()),
+                       "get registered HostAwait identifier",
+                       "echo") ||
+        !expect_ffi_ok(regorus_rvm_get_host_await_argument(vm.get()),
+                       "get registered HostAwait argument",
+                       R"json([
+  "first",
+  {
+    "nested": [
+      2
+    ]
+  }
+])json") ||
+        !expect_ffi_ok(regorus_rvm_resume(vm.get(), "123", true),
+                       "resume registered HostAwait program",
+                       "123")) {
+        return false;
+    }
+
+    std::cout << "Registered HostAwait wide-stride C++ ABI test passed." << std::endl;
+    return true;
+}
 
 int main() {
     const char* data_json =
@@ -254,6 +355,10 @@ int main() {
     std::cout << "HostAwait resumed result: " << host_resume_result.output() << std::endl;
     if (std::string(host_resume_result.output()) != "true") {
         std::cerr << "unexpected host await result: " << host_resume_result.output() << std::endl;
+        return 1;
+    }
+
+    if (!test_registered_host_await_wide_stride()) {
         return 1;
     }
 

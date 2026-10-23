@@ -49,7 +49,8 @@ fields to responsibilities.
   runtime policy. `set_max_instructions` replaces the limit without resetting
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
-  FIFO order when `HostAwait` executes in run-to-completion mode.
+  FIFO order when `HostAwait` executes in run-to-completion mode. A registered
+  call with an undefined input skips `HostAwait` and leaves the queue untouched.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
@@ -57,7 +58,10 @@ fields to responsibilities.
 - `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
   the argument value passed by the policy. Returns `None` if not suspended or
   suspended for a different reason. At the serialization boundary the argument
-  uses the same `Value`→JSON encoding as evaluation results.
+  uses the same `Value`→JSON encoding as evaluation results. Newly compiled
+  registered calls return the complete ordered input array (including a
+  one-element array); explicit raw calls and previously compiled programs keep
+  their original payload shape.
 - `get_host_await_identifier`: when the VM is suspended on a `HostAwait`, returns
   the identifier that triggered the suspension. Returns `None` if not applicable.
   The identifier is an arbitrary `Value` chosen by the policy — for a registered
@@ -277,4 +281,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

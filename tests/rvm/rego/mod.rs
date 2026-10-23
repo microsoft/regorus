@@ -8,7 +8,7 @@ use regorus::rvm::program::{
     generate_tabular_assembly_listing, AssemblyListingConfig, DeserializationResult, Program,
 };
 use regorus::rvm::tests::test_utils::test_round_trip_serialization;
-use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
 use regorus::test_utils::{check_output, process_value, value_or_vec_to_vec, ValueOrVec};
 use regorus::{CompiledPolicy, Engine, Rc, Value};
 use serde::{Deserialize, Serialize};
@@ -1341,6 +1341,76 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
 #[test_resources("tests/rvm/rego/cases/*.yaml")]
 fn run_rego_compiler_yaml(file: &str) {
     yaml_test_impl(file).unwrap();
+}
+
+#[test]
+fn registered_host_await_vm_reuses_after_instruction_limit() -> Result<()> {
+    const ENTRYPOINT: &str = "data.demo.result";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "host-await.rego".to_string(),
+        r#"
+        package demo
+        import rego.v1
+
+        result := echo(input.value, {"nested": input.value})
+        "#
+        .to_string(),
+    )?;
+    let entrypoint: Rc<str> = ENTRYPOINT.into();
+    let compiled = engine.compile_with_entrypoint(&entrypoint)?;
+    let program =
+        Compiler::compile_from_policy_with_host_await(&compiled, &[ENTRYPOINT], &[("echo", 2)])?;
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_data(engine.get_data())?;
+    vm.set_input(Value::from_json_str(r#"{"value":"request"}"#)?);
+    vm.set_max_instructions(usize::MAX);
+
+    vm.execute_entry_point_by_name(ENTRYPOINT)?;
+    let expected_argument = Value::from_json_str(r#"["request", {"nested":"request"}]"#)?;
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait {
+                identifier,
+                argument,
+                ..
+            },
+            ..
+        } if identifier == &Value::from("echo") && argument == &expected_argument
+    ));
+
+    vm.set_max_instructions(0);
+    assert!(matches!(
+        vm.resume(Some(Value::from("limited-response"))),
+        Err(VmError::InstructionLimitExceeded { limit: 0, .. })
+    ));
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Error {
+            error: VmError::InstructionLimitExceeded { limit: 0, .. }
+        }
+    ));
+
+    vm.set_max_instructions(usize::MAX);
+    vm.execute_entry_point_by_name(ENTRYPOINT)?;
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended {
+            reason: SuspendReason::HostAwait { argument, .. },
+            ..
+        } if argument == &expected_argument
+    ));
+    vm.resume(Some(Value::from("host-response")))?;
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Completed { result } if result == &Value::from("host-response")
+    ));
+
+    Ok(())
 }
 
 #[test]

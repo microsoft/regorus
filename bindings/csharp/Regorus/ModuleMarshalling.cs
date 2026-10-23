@@ -202,12 +202,21 @@ namespace Regorus.Internal
             {
                 for (int i = 0; i < count; i++)
                 {
-                    var namePinned = Utf8Marshaller.Pin(builtins[i].Name);
+                    var builtin = builtins[i];
+                    if (builtin.ArgCount < 0)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(builtins),
+                            $"Host-await builtin at index {i} has a negative argument count.");
+                    }
+
+                    var namePinned = Utf8Marshaller.Pin(builtin.Name);
                     pins.Add(namePinned);
 
                     buffer[i] = new RegorusHostAwaitBuiltin
                     {
                         name = namePinned.Pointer,
+                        arg_count = new UIntPtr((uint)builtin.ArgCount),
                     };
                 }
 

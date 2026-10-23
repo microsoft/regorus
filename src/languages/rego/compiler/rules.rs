@@ -279,7 +279,7 @@ impl<'a> Compiler<'a> {
 
         for &entry_point_name in entry_points {
             let instruction_index = compiler.program.instructions.len();
-            let result_reg = compiler.alloc_register();
+            let result_reg = compiler.alloc_register()?;
             let rule_path = if policy.inner.rule_paths.contains(entry_point_name) {
                 entry_point_name.to_string()
             } else {
@@ -449,7 +449,7 @@ impl<'a> Compiler<'a> {
                     self.push_scope();
                     self.register_counter = 0;
 
-                    let result_register = self.alloc_register();
+                    let result_register = self.alloc_register()?;
 
                     self.current_module_index = self.find_module_index_for_rule(rule_ref)?;
 

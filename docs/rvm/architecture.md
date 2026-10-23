@@ -259,8 +259,10 @@ include formatted state snapshots where possible.
      form.
    - **Registered**: `compile_from_policy_with_host_await` accepts a list of
      `(name, arg_count)` pairs. Calls to registered names are compiled as
-     `HostAwait` with the function name as the identifier literal. Registered
-     names take precedence over user-defined functions and standard builtins.
+     `HostAwait` with the function name as the identifier literal and the
+     ordered input values packed into an array. Registered names take
+     precedence over user-defined functions and standard builtins. Explicit
+     calls remain raw, and old serialized programs are not rewritten.
 8. **Completion**: `Return` wraps the selected register value into
    `InstructionOutcome::Return`, unwinding frames until the entry frame is
    cleared. `RuleReturn` is a specialised variant used by rule execution

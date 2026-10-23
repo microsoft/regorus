@@ -14,7 +14,7 @@ use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::{ArrayCreateParams, BuiltinCallParams, FunctionCallParams};
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
@@ -44,10 +44,13 @@ enum CallTarget {
     /// The identifier is supplied by the policy author at runtime via the
     /// second argument register.
     ExplicitHostAwait,
-    /// A registered host-awaitable builtin invoked by its registered name
-    /// (1 user arg). The identifier is the registered name itself and is
-    /// baked into the bytecode as a string literal at compile time.
-    RegisteredHostAwait { identifier: String },
+    /// A registered host-awaitable builtin invoked by its registered name.
+    /// The identifier is the registered name itself and is baked into the
+    /// bytecode as a string literal at compile time.
+    RegisteredHostAwait {
+        identifier: String,
+        arg_count: usize,
+    },
 }
 
 impl<'a> Compiler<'a> {
@@ -72,6 +75,7 @@ impl<'a> Compiler<'a> {
         };
 
         let mut out_param_plan: Option<(BindingPlan, Span)> = None;
+        let mut any_of_next_patch: Option<usize> = None;
         let mut params_to_compile = params.len();
 
         let call_target = self.determine_call_target(&original_fcn_path, &full_fcn_path, &span)?;
@@ -83,41 +87,68 @@ impl<'a> Compiler<'a> {
             // in the variant lets the rest of the compiler depend on the type
             // rather than re-matching on the magic name `__builtin_host_await`.
             CallTarget::ExplicitHostAwait => Some(2),
-            CallTarget::RegisteredHostAwait { .. } => Some(1),
+            CallTarget::RegisteredHostAwait { arg_count, .. } => Some(*arg_count),
         };
 
-        if let Some(expected) = expected_args {
-            if params.len() == expected + 1 {
-                if let Some(last_param) = params.last() {
-                    let plan = self.expect_binding_plan_for_expr(
-                        last_param,
-                        &format!("extra argument for function '{}'", original_fcn_path),
-                    )?;
+        if expected_args.and_then(|expected| expected.checked_add(1)) == Some(params.len()) {
+            if let Some(last_param) = params.last() {
+                let plan = self.expect_binding_plan_for_expr(
+                    last_param,
+                    &format!("extra argument for function '{}'", original_fcn_path),
+                )?;
 
-                    match plan {
-                        BindingPlan::Parameter { .. } => {
-                            out_param_plan = Some((plan, last_param.span().clone()));
-                            params_to_compile -= 1;
+                match plan {
+                    BindingPlan::Parameter { .. } => {
+                        out_param_plan = Some((plan, last_param.span().clone()));
+                        params_to_compile -= 1;
+                    }
+                    other => {
+                        return Err(CompilerError::UnexpectedBindingPlan {
+                            context: "function extra argument".to_string(),
+                            found: format!("{other:?}"),
                         }
-                        other => {
-                            return Err(CompilerError::UnexpectedBindingPlan {
-                                context: "function extra argument".to_string(),
-                                found: format!("{other:?}"),
-                            }
-                            .at(last_param.span()));
-                        }
+                        .at(last_param.span()));
                     }
                 }
             }
         }
 
+        if let CallTarget::RegisteredHostAwait {
+            identifier,
+            arg_count,
+        } = &call_target
+        {
+            if params_to_compile != *arg_count {
+                return Err(CompilerError::General {
+                    message: format!(
+                        "registered host-await builtin '{identifier}' expects {arg_count} input arguments, got {params_to_compile}"
+                    ),
+                }
+                .at(&span));
+            }
+
+            self.ensure_register_capacity(3)?;
+        }
+
         let mut arg_regs = Vec::new();
+        if matches!(&call_target, CallTarget::RegisteredHostAwait { .. }) {
+            arg_regs.try_reserve(params_to_compile).map_err(|_| {
+                CompilerError::General {
+                    message: format!(
+                        "failed to reserve registers for {params_to_compile} registered host-await inputs"
+                    ),
+                }
+            })?;
+        }
         for param in params.iter().take(params_to_compile) {
             let param_reg = self.compile_rego_expr_with_span(param, param.span(), false)?;
             arg_regs.push(param_reg);
         }
 
-        let dest = self.alloc_register();
+        if matches!(&call_target, CallTarget::RegisteredHostAwait { .. }) {
+            self.ensure_register_capacity(3)?;
+        }
+        let dest = self.alloc_register()?;
 
         match call_target {
             CallTarget::User { rule_index, .. } => {
@@ -170,24 +201,127 @@ impl<'a> Compiler<'a> {
                     &span,
                 );
             }
-            CallTarget::RegisteredHostAwait { identifier } => {
+            CallTarget::RegisteredHostAwait {
+                identifier,
+                arg_count,
+            } => {
                 // Registered host-awaitable builtin — the identifier is the
                 // registered name and is baked into the bytecode as a literal.
-                if arg_regs.len() != 1 {
+                // Its inputs are evaluated once, in order, and packed as an
+                // array. ArrayCreate propagates Undefined, so the guard skips
+                // the host call when any input is undefined.
+                if arg_regs.len() != arg_count {
                     return Err(CompilerError::General {
                         message: format!(
-                            "host-awaitable builtin '{}' expects exactly 1 argument, got {}",
-                            identifier,
-                            arg_regs.len()
+                            "registered host-await builtin '{identifier}' expected {arg_count} compiled inputs, got {}",
+                            arg_regs.len(),
                         ),
                     }
                     .at(&span));
                 }
-                let id_reg = self.alloc_register();
-                let literal_idx = self.add_literal(Value::String(identifier.into()));
+
+                let array_params_len = self.program.instruction_data.array_create_params.len();
+                let array_params_index = u16::try_from(array_params_len).map_err(|_| {
+                    CompilerError::General {
+                        message:
+                            "registered host-await array parameter table exceeds the RVM index limit"
+                                .to_string(),
+                    }
+                })?;
+                self.program
+                    .instruction_data
+                    .array_create_params
+                    .try_reserve(1)
+                    .map_err(|_| CompilerError::General {
+                        message: "failed to reserve registered host-await array parameters"
+                            .to_string(),
+                    })?;
+                self.program
+                    .instructions
+                    .try_reserve(6)
+                    .map_err(|_| CompilerError::General {
+                        message: "failed to reserve registered host-await instructions".to_string(),
+                    })?;
+                self.spans
+                    .try_reserve(6)
+                    .map_err(|_| CompilerError::General {
+                        message: "failed to reserve registered host-await source spans".to_string(),
+                    })?;
+
+                let argument_reg = self.alloc_register()?;
+                let params_index =
+                    self.program
+                        .instruction_data
+                        .add_array_create_params(ArrayCreateParams {
+                            dest: argument_reg,
+                            elements: arg_regs,
+                        });
+                if params_index != array_params_index {
+                    return Err(CompilerError::General {
+                        message:
+                            "registered host-await array parameter index changed during compilation"
+                                .to_string(),
+                    }
+                    .into());
+                }
+                self.emit_instruction(Instruction::ArrayCreate { params_index }, &span);
+                self.emit_instruction(
+                    Instruction::Move {
+                        dest,
+                        src: argument_reg,
+                    },
+                    &span,
+                );
+                let predicate_reg = self.alloc_register()?;
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: predicate_reg,
+                        operand: argument_reg,
+                    },
+                    &span,
+                );
+                let branch_index = self.program.instructions.len();
+                any_of_next_patch = Some(branch_index);
+                self.emit_instruction(
+                    Instruction::AnyOfNext {
+                        check: predicate_reg,
+                        result: predicate_reg,
+                        end_pc: 0,
+                    },
+                    &span,
+                );
+
+                let identifier_literal = Value::String(identifier.into());
+                let literal_idx = if let Some(index) = self
+                    .program
+                    .literals
+                    .iter()
+                    .position(|existing| existing == &identifier_literal)
+                {
+                    u16::try_from(index).map_err(|_| CompilerError::General {
+                        message: "registered host-await identifier literal table exceeds the RVM index limit"
+                            .to_string(),
+                    })?
+                } else {
+                    let index = u16::try_from(self.program.literals.len()).map_err(|_| {
+                        CompilerError::General {
+                            message: "registered host-await identifier literal table exceeds the RVM index limit"
+                                .to_string(),
+                        }
+                    })?;
+                    self.program
+                        .literals
+                        .try_reserve(1)
+                        .map_err(|_| CompilerError::General {
+                            message: "failed to reserve registered host-await identifier literal"
+                                .to_string(),
+                        })?;
+                    self.program.literals.push(identifier_literal);
+                    index
+                };
                 self.emit_instruction(
                     Instruction::Load {
-                        dest: id_reg,
+                        dest: predicate_reg,
                         literal_idx,
                     },
                     &span,
@@ -195,8 +329,8 @@ impl<'a> Compiler<'a> {
                 self.emit_instruction(
                     Instruction::HostAwait {
                         dest,
-                        arg: arg_regs[0],
-                        id: id_reg,
+                        arg: argument_reg,
+                        id: predicate_reg,
                     },
                     &span,
                 );
@@ -217,6 +351,41 @@ impl<'a> Compiler<'a> {
                 );
             } else {
                 self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+            }
+        }
+
+        if let Some(branch_index) = any_of_next_patch {
+            let end_pc = self
+                .program
+                .instructions
+                .len()
+                .checked_sub(1)
+                .and_then(|pc| u16::try_from(pc).ok())
+                .ok_or_else(|| CompilerError::General {
+                    message:
+                        "registered host-await branch target exceeds the RVM instruction limit"
+                            .to_string(),
+                })?;
+            let branch = self
+                .program
+                .instructions
+                .get_mut(branch_index)
+                .ok_or_else(|| CompilerError::General {
+                    message: "registered host-await branch instruction is missing".to_string(),
+                })?;
+            match branch {
+                Instruction::AnyOfNext {
+                    end_pc: branch_end_pc,
+                    ..
+                } => *branch_end_pc = end_pc,
+                _ => {
+                    return Err(CompilerError::General {
+                        message:
+                            "registered host-await branch patch points to a different instruction"
+                                .to_string(),
+                    }
+                    .into())
+                }
             }
         }
 
@@ -273,10 +442,8 @@ impl<'a> Compiler<'a> {
             return Ok(CallTarget::ExplicitHostAwait);
         }
 
-        // Check registered host-awaitable builtins. Registered builtins are
-        // restricted to arg_count == 1 at registration time (see
-        // `Compiler::register_host_await_builtin`), so the variant doesn't
-        // need to carry an arity — it's fixed at 1.
+        // Check registered host-awaitable builtins before resolving rules or
+        // standard builtins so their declared name retains precedence.
         //
         // We deliberately match against `original_fcn_path` only, not
         // `full_fcn_path`. Registration intercepts the *unqualified* call
@@ -287,9 +454,10 @@ impl<'a> Compiler<'a> {
         // happen to expose a rule with the same identifier. This is
         // documented on `register_host_await_builtin`; the
         // `registered_host_await.yaml` suite pins the behavior.
-        if self.host_await_builtins.contains_key(original_fcn_path) {
+        if let Some(&arg_count) = self.host_await_builtins.get(original_fcn_path) {
             return Ok(CallTarget::RegisteredHostAwait {
                 identifier: original_fcn_path.to_string(),
+                arg_count,
             });
         }
 

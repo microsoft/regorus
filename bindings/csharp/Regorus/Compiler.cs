@@ -42,9 +42,8 @@ namespace Regorus
     /// rather than regular function calls.
     /// </summary>
     /// <remarks>
-    /// Registered builtins are restricted to exactly one argument at the compiler
-    /// level (use object packing to pass multiple values). The argument count is
-    /// therefore not exposed here.
+    /// The declared argument count is the number of input arguments. A Rego
+    /// output parameter, when used, is not included in this count.
     ///
     /// Host-await builtins are not yet supported via the <c>CompileFromEngine</c>
     /// path; only <c>CompileFromModules</c> accepts them today.
@@ -57,15 +56,28 @@ namespace Regorus
         public string Name { get; }
 
         /// <summary>
+        /// Gets the number of input arguments expected by the registered function.
+        /// </summary>
+        public int ArgCount { get; }
+
+        /// <summary>
         /// Initializes a new instance of the HostAwaitBuiltin struct.
         /// </summary>
         /// <param name="name">The function name to register as host-awaitable.</param>
+        /// <param name="argCount">The number of input arguments expected by the function.</param>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
         /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> contains an embedded NUL ('\0').</exception>
-        public HostAwaitBuiltin(string name)
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="argCount"/> is negative.</exception>
+        public HostAwaitBuiltin(string name, int argCount)
         {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             Utf8Marshaller.ThrowIfContainsNul(name, nameof(name));
+            if (argCount < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(argCount), "Argument count must be non-negative.");
+            }
+
+            ArgCount = argCount;
         }
     }
 

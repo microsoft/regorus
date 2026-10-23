@@ -803,6 +803,19 @@ impl RegoVM {
                 self.execute_loop_next(body_start, loop_end)?;
                 Ok(InstructionOutcome::Continue)
             }
+            AnyOfNext {
+                check,
+                result,
+                end_pc,
+            } => {
+                let val = self.get_register(check)?;
+                if matches!(val, Value::Bool(true)) {
+                    // Child succeeded — short-circuit.
+                    self.set_register(result, Value::Bool(true))?;
+                    self.pc = usize::from(end_pc);
+                }
+                Ok(InstructionOutcome::Continue)
+            }
             Halt {} => {
                 let result = self.get_register(0)?.clone();
                 Ok(InstructionOutcome::Return(result))
@@ -821,8 +834,7 @@ impl RegoVM {
             instruction @ (Instruction::PolicyCondition { .. }
             | Instruction::LogicalBlockStart { .. }
             | Instruction::LogicalBlockEnd { .. }
-            | Instruction::AllOfNext { .. }
-            | Instruction::AnyOfNext { .. }) => Err(VmError::UnhandledInstruction {
+            | Instruction::AllOfNext { .. }) => Err(VmError::UnhandledInstruction {
                 instruction: alloc::format!("{:?} requires the azure_policy feature", instruction),
                 pc: self.pc,
             }),
@@ -1068,19 +1080,6 @@ impl RegoVM {
                 if !matches!(val, Value::Bool(true)) {
                     // Child failed — short-circuit. Ensure the block result is false.
                     self.set_register(result, Value::Bool(false))?;
-                    self.pc = usize::from(end_pc);
-                }
-                Ok(InstructionOutcome::Continue)
-            }
-            AnyOfNext {
-                check,
-                result,
-                end_pc,
-            } => {
-                let val = self.get_register(check)?;
-                if matches!(val, Value::Bool(true)) {
-                    // Child succeeded — short-circuit.
-                    self.set_register(result, Value::Bool(true))?;
                     self.pc = usize::from(end_pc);
                 }
                 Ok(InstructionOutcome::Continue)

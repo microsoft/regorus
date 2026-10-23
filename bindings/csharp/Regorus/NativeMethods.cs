@@ -1047,6 +1047,7 @@ namespace Regorus.Internal
     internal unsafe partial struct RegorusHostAwaitBuiltin
     {
         public byte* name;
+        public UIntPtr arg_count;
     }
 
     /// <summary>
