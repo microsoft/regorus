@@ -17,18 +17,22 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Returns true for engine-level failures and scoped strict builtin errors
+    /// that must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
-        matches!(
-            err,
+        match *err {
             VmError::TimeLimitExceeded { .. }
-                | VmError::MemoryLimitExceeded { .. }
-                | VmError::MemoryBudgetExceeded { .. }
-                | VmError::RegexSizeLimitExceeded { .. }
-                | VmError::InstructionLimitExceeded { .. }
-                | VmError::NumericOverflow { .. }
-        )
+            | VmError::MemoryLimitExceeded { .. }
+            | VmError::MemoryBudgetExceeded { .. }
+            | VmError::RegexSizeLimitExceeded { .. }
+            | VmError::InstructionLimitExceeded { .. }
+            | VmError::NumericOverflow { .. } => true,
+            #[cfg(feature = "history")]
+            VmError::HistoryMatchFailure { .. } | VmError::HistoryMatchValidationError { .. } => {
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Restore VM state that was swapped out for rule execution.

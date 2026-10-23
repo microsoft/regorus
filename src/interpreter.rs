@@ -123,6 +123,8 @@ pub struct Interpreter {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
+    #[cfg(feature = "history")]
+    history_match_state: builtins::history::HistoryMatchState,
 }
 
 impl Default for Interpreter {
@@ -172,6 +174,8 @@ impl Clone for Interpreter {
             module: None,
             no_rules_lookup: false,
             execution_timer: ExecutionTimer::new(self.execution_timer.config()),
+            #[cfg(feature = "history")]
+            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 }
@@ -254,6 +258,8 @@ impl Interpreter {
             gather_prints: false,
             prints: Vec::default(),
             execution_timer: ExecutionTimer::new(None),
+            #[cfg(feature = "history")]
+            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 
@@ -299,6 +305,8 @@ impl Interpreter {
                 .clone()
                 .unwrap_or_else(Value::new_object),
             execution_timer: ExecutionTimer::new(None),
+            #[cfg(feature = "history")]
+            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 
@@ -1588,7 +1596,7 @@ impl Interpreter {
 
     fn clear_scope(scope: &mut Scope) {
         // Set each value to undefined. This is equivalent to removing the key.
-        for (_, v) in scope.iter_mut() {
+        for v in scope.values_mut() {
             *v = Value::Undefined;
         }
     }
@@ -2647,17 +2655,33 @@ impl Interpreter {
             }
         }
 
-        let v = match builtin.0(
-            span,
-            params,
-            &args[..],
-            self.compiled_policy.strict_builtin_errors,
-        ) {
+        #[cfg(feature = "history")]
+        let contextual_result = (name == "history.match").then(|| {
+            builtins::history_match_with_context(
+                span,
+                params,
+                &args,
+                &mut self.history_match_state,
+                &mut self.execution_timer,
+            )
+        });
+        #[cfg(not(feature = "history"))]
+        let contextual_result = None;
+        #[cfg_attr(not(feature = "history"), allow(clippy::unnecessary_literal_unwrap))]
+        let result = contextual_result.unwrap_or_else(|| {
+            builtin.0(
+                span,
+                params,
+                &args,
+                self.compiled_policy.strict_builtin_errors,
+            )
+        });
+        let v = match result {
             Ok(v) => v,
             // Resource-limit errors must always propagate, even in non-strict
             // mode, to prevent `not builtin(...)` from silently flipping to true.
             Err(e) if !self.compiled_policy.strict_builtin_errors => {
-                if e.downcast_ref::<crate::LimitError>().is_some() {
+                if builtins::is_fatal_builtin_error(&e) {
                     return Err(e);
                 }
                 return Ok(Value::Undefined);
@@ -2985,8 +3009,14 @@ impl Interpreter {
                     // resolve paths through the wrong module's imports when
                     // the error is swallowed below in non-strict mode.
                     self.set_current_module(prev_module)?;
-                    errors.push(e);
                     self.scopes = scopes;
+                    if builtins::is_fatal_builtin_error(&e) {
+                        if let Some(with_functions) = with_functions_saved {
+                            self.with_functions = with_functions;
+                        }
+                        return Err(e);
+                    }
+                    errors.push(e);
                     continue;
                 }
             };
@@ -3027,10 +3057,7 @@ impl Interpreter {
         }
 
         if self.compiled_policy.strict_builtin_errors && !errors.is_empty() {
-            return Err(errors
-                .first()
-                .map(|e| anyhow!(e.to_string()))
-                .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
+            return Err(errors.remove(0));
         }
 
         if results.is_empty() {
@@ -3061,6 +3088,13 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
+                                Err(e) if builtins::is_fatal_builtin_error(&e) => {
+                                    self.scopes = scopes;
+                                    if let Some(with_functions) = with_functions_saved {
+                                        self.with_functions = with_functions;
+                                    }
+                                    return Err(e);
+                                }
                                 Err(e) => errors.push(e),
                             }
                         }
@@ -3078,10 +3112,7 @@ impl Interpreter {
             if errors.is_empty() {
                 return Ok(Value::Undefined);
             } else {
-                return Err(errors
-                    .first()
-                    .map(|e| anyhow!(e.to_string()))
-                    .unwrap_or_else(|| anyhow!("internal error: missing error entry")));
+                return Err(errors.remove(0));
             }
         }
 

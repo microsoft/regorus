@@ -142,6 +142,9 @@ pub struct RegoVM {
     /// Cooperative execution timer used to enforce wall-clock limits
     pub(super) execution_timer: ExecutionTimer,
 
+    #[cfg(feature = "history")]
+    pub(super) history_match_state: crate::builtins::history::HistoryMatchState,
+
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
 
@@ -243,6 +246,8 @@ impl RegoVM {
             builtins_cache: BTreeMap::new(),
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
+            #[cfg(feature = "history")]
+            history_match_state: crate::builtins::history::HistoryMatchState::default(),
             execution_timer_elapsed_at_suspend: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_config: None,
@@ -268,6 +273,10 @@ impl RegoVM {
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
         self.program = program.clone();
+        #[cfg(feature = "history")]
+        {
+            self.history_match_state = crate::builtins::history::HistoryMatchState::default();
+        }
 
         // Use the dispatch window size from the program for initial register allocation
         let dispatch_size = usize::from(program.dispatch_window_size).max(2); // Ensure at least 2 registers

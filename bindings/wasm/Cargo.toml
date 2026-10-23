@@ -39,6 +39,7 @@ default = [
 ast = ["regorus/ast"]
 cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]
+history = ["regorus/history"]
 
 [dependencies]
 regorus = { path  = "../..", default-features = false, features = ["arc", "rvm"] }

@@ -48,6 +48,7 @@ rvm = ["regorus/rvm"]
 rbac = ["regorus/azure-rbac"]
 cache = ["regorus/cache"]
 custom_allocator = []
+history = ["regorus/history"]
 
 [build-dependencies]
 cbindgen = "0.29.2"

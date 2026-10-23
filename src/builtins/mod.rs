@@ -27,6 +27,8 @@ mod encoding;
 mod glob;
 #[cfg(feature = "graph")]
 mod graph;
+#[cfg(feature = "history")]
+pub mod history;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "net")]
@@ -88,6 +90,8 @@ lazy_static! {
 
 	#[cfg(feature = "graph")]
 	graph::register(&mut m);
+	#[cfg(feature = "history")]
+	history::register(&mut m);
 
 	bitwise::register(&mut m);
 	conversions::register(&mut m);
@@ -130,4 +134,55 @@ pub fn must_cache(path: &str) -> Option<&'static str> {
         "uuid.rfc4122" => Some("uuid.rfc4122"),
         _ => None,
     }
+}
+
+/// Resource failures must retain their identity through evaluator error envelopes.
+pub fn is_fatal_builtin_error(error: &anyhow::Error) -> bool {
+    #[cfg(feature = "history")]
+    if error
+        .downcast_ref::<history::HistoryError>()
+        .is_some_and(history::HistoryError::is_fatal)
+    {
+        return true;
+    }
+    error.downcast_ref::<crate::LimitError>().is_some()
+}
+
+#[cfg(feature = "history")]
+#[allow(clippy::redundant_pub_crate)] // `HistoryMatchState` is crate-private.
+pub(crate) fn history_match_with_context(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    state: &mut history::HistoryMatchState,
+    timer: &mut crate::utils::limits::ExecutionTimer,
+) -> Result<Value> {
+    utils::ensure_args_count(span, "history.match", params, args, 3)?;
+    let Value::Array(ref events) = args[1] else {
+        return Err(span.error("`history.match` expects an array history"));
+    };
+    let mut world = history::ObservationWorld;
+    match state.evaluate(&args[0], events, &args[2], timer, &mut world) {
+        Ok(result) => Ok(Value::Bool(result)),
+        Err(history::HistoryError::Limit(error)) => Err(error.into()),
+        Err(error) if error.is_fatal() => Err(error.into()),
+        Err(error) => Err(span.error(&alloc::format!("{error}"))),
+    }
+}
+
+#[cfg(feature = "history")]
+fn history_match(
+    span: &Span,
+    params: &[Ref<Expr>],
+    args: &[Value],
+    _strict: bool,
+) -> Result<Value> {
+    use crate::utils::limits::{fallback_execution_timer_config, monotonic_now, ExecutionTimer};
+
+    let mut state = history::HistoryMatchState::default();
+    let mut timer = ExecutionTimer::new(fallback_execution_timer_config());
+    if let Some(now) = monotonic_now() {
+        timer.start(now);
+    }
+    history_match_with_context(span, params, args, &mut state, &mut timer)
 }

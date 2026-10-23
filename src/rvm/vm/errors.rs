@@ -39,6 +39,16 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
+    /// A hard failure in the native history matcher.
+    #[cfg(feature = "history")]
+    #[error("{message} (pc={pc})")]
+    HistoryMatchFailure { message: String, pc: usize },
+
+    /// An ordinary history matcher validation error raised in strict mode.
+    #[cfg(feature = "history")]
+    #[error("{message} (pc={pc})")]
+    HistoryMatchValidationError { message: String, pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 

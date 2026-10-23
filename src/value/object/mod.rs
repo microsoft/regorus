@@ -26,6 +26,7 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use crate::value::Value;
+use vstd::prelude::verus_verify;
 
 #[cfg(feature = "rvm")]
 pub use cursor::ObjectCursor;
@@ -45,11 +46,15 @@ pub use iter::{IntoIter, Iter, IterMut};
 /// - [`Object::cursor`] / [`Object::next`] — implementation-defined order,
 ///   resumable; cheapest per-step cost. Used by interpreter/RVM when iteration
 ///   must yield mid-flight.
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Default, Clone)]
 pub struct Object {
     pub(super) repr: Repr,
 }
 
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Clone)]
 pub(super) enum Repr {
     Empty,
@@ -246,5 +251,90 @@ impl From<Object> for Value {
     #[inline]
     fn from(o: Object) -> Self {
         o.into_value()
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+mod verify {
+    use super::*;
+    use vstd::prelude::*;
+
+    verus! {
+        pub open spec fn frozen_map(entries: Seq<(Value, Value)>) -> Map<Value, Value>
+            decreases entries.len(),
+        {
+            if entries.len() == 0 { Map::empty() }
+            else {
+                frozen_map(entries.drop_last()).insert(entries.last().0, entries.last().1)
+            }
+        }
+
+        proof fn lemma_frozen_entry(entries: Seq<(Value, Value)>, key: Value)
+            requires frozen_map(entries).contains_key(key),
+            ensures exists|i: int| 0 <= i < entries.len()
+                && entries[i] == (key, frozen_map(entries)[key]),
+            decreases entries.len(),
+        {
+            if entries.last().0 == key {
+                assert(entries[entries.len() - 1] == (key, frozen_map(entries)[key]));
+            } else {
+                lemma_frozen_entry(entries.drop_last(), key);
+                let i = choose|i: int| 0 <= i < entries.drop_last().len()
+                    && entries.drop_last()[i] == (key, frozen_map(entries.drop_last())[key]);
+                assert(entries[i] == (key, frozen_map(entries)[key]));
+            }
+        }
+
+        impl View for Object {
+            type V = Map<Value, Value>;
+            closed spec fn view(&self) -> Map<Value, Value> {
+                match self.repr {
+                    Repr::Empty => Map::empty(),
+                    Repr::Frozen(entries) => frozen_map(entries@),
+                    Repr::BTree(map) => map@,
+                }
+            }
+        }
+
+        impl Object {
+            pub proof fn lemma_entries_smaller(o: crate::Rc<Object>)
+                ensures forall|k: Value| o@.contains_key(k)
+                    ==> is_smaller_than(k, Value::Object(o))
+                        && is_smaller_than(o@[k], Value::Object(o)),
+            {
+                broadcast use vstd::std_specs::btree::group_btree_axioms;
+                broadcast use vstd::set::group_set_lemmas;
+                reveal(<Object as View>::view);
+                let bound = Value::Object(o);
+                let field: crate::Rc<Object> = get_variant_field(bound, "Object", "0");
+                assert(is_smaller_than(field, bound));
+                assert(is_smaller_than((*o).repr, o));
+                assert forall|k: Value| o@.contains_key(k)
+                    implies is_smaller_than(k, bound) && is_smaller_than(o@[k], bound) by {
+                    match (*o).repr {
+                        Repr::Empty => {},
+                        Repr::Frozen(entries) => {
+                            lemma_frozen_entry(entries@, k);
+                            let i = choose|i: int| 0 <= i < entries@.len()
+                                && entries@[i] == (k, frozen_map(entries@)[k]);
+                            assert(is_smaller_than(entries, (*o).repr));
+                            assert(is_smaller_than(entries@, entries));
+                            assert(is_smaller_than(entries@[i], entries@));
+                            assert(is_smaller_than(entries@[i].0, entries@[i]));
+                            assert(is_smaller_than(entries@[i].1, entries@[i]));
+                        },
+                        Repr::BTree(map) => {
+                            assert(is_smaller_than(map, (*o).repr));
+                            assert(is_smaller_than(map@, map));
+                            vstd::map::axiom_map_decreases_to_entry(map@, k);
+                            let entry = (k, map@[k]);
+                            assert(is_smaller_than(entry, map@));
+                            assert(is_smaller_than(entry.0, entry));
+                            assert(is_smaller_than(entry.1, entry));
+                        },
+                    }
+                }
+            }
+        }
     }
 }

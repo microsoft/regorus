@@ -211,7 +211,7 @@ fn rule_conflict_percent_encodes_percent_sequences_in_previous_file_label() {
     assert!(message.contains("| p := 2"));
 }
 
-mod timer_test_support {
+pub mod timer_test_support {
     use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
     #[cfg(any(test, not(feature = "std")))]
     use crate::utils::limits::set_time_source;

@@ -592,7 +592,7 @@ impl RegoVM {
                 other_kind => {
                     let message = format!(
                         "Mismatched comprehension frame: frame={:?} stack_depth={} unwound_loops={}",
-                        &other_kind,
+                        other_kind,
                         self.execution_stack.len(),
                         unwound_frames.len()
                     );
