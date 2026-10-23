@@ -425,7 +425,8 @@ fn derivative_step<G: KernelStore>(
                 assert(derivative_native_result(store.graph(), id, cache@, out));
                 assert(derivative_correct(store.graph(), id@, out));
             }
-            match cache.as_mut_slice().get_mut(index) {
+            let slots = cache.as_mut_slice();
+            match slots.get_mut(index) {
                 Some(slot) => *slot = Some(out),
                 None => return Err(invariant()),
             }

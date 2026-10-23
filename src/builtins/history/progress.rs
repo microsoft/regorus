@@ -282,9 +282,8 @@ impl CompiledPair {
             // Every fallible operation precedes metadata publication. An aborted
             // suffix may extend the pure DAG caches, never the retained prefix.
             if let Some(index) = selected {
-                let prefix = self
-                    .cursors
-                    .as_mut_slice()
+                let cursors = self.cursors.as_mut_slice();
+                let prefix = cursors
                     .get_mut(..=index)
                     .ok_or_else(|| invariant("invalid progress cursor prefix"))?;
                 let cursor = prefix
@@ -628,9 +627,8 @@ impl CompiledPair {
                 assert(pair_wf(*self));
             }
         }
-        let slot = self
-            .atoms
-            .as_mut_slice()
+        let atom_slots = self.atoms.as_mut_slice();
+        let slot = atom_slots
             .get_mut(index)
             .ok_or_else(|| invariant("invalid atom table slot"))?;
         *slot = Some(atoms);
@@ -1128,7 +1126,8 @@ pub(crate) fn transition_atoms<G: KernelStore>(
     }
     store.checkpoint()?;
     proof_decl! { let ghost collected = primitives@; }
-    primitives.as_mut_slice().sort_unstable();
+    let primitive_slice = primitives.as_mut_slice();
+    primitive_slice.sort_unstable();
     proof_decl! { let ghost sorted = primitives@; }
     proof! {
         test_lemma_multiset_membership(collected, sorted);

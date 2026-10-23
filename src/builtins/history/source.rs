@@ -808,8 +808,8 @@ impl CompiledPattern {
                     proof! {
                         assert(pattern_object_fields(previous_children) == Seq::new(position as nat, |i: int| (value_view(original_keys[i]), ids@[i])));
                     }
-                    let key = keys
-                        .as_mut_slice()
+                    let key_slice = keys.as_mut_slice();
+                    let key = key_slice
                         .get_mut(index)
                         .ok_or_else(|| invariant("invalid pattern key"))?;
                     let key = core::mem::replace(key, Value::Undefined);

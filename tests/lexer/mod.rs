@@ -78,7 +78,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
     for case in &test.cases {
         let source = Source::from_contents("case.rego".to_string(), case.rego.clone())?;
-        print!("case {} ", &case.note);
+        print!("case {} ", case.note);
 
         match get_tokens(&source) {
             Ok(tokens) => {
@@ -91,7 +91,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                         case.tokens[idx],
                         "{} Expected token `{}` not found",
                         source.message(tok.1.line, tok.1.col, "mismatch-error", &case.tokens[idx]),
-                        &case.tokens[idx]
+                        case.tokens[idx]
                     );
 
                     if let Some(k) = &case.kinds {
@@ -201,7 +201,7 @@ fn tab() -> Result<()> {
     // read next token (ident)
     let tok = lexer.next_token()?;
     check_loc(&tok)?;
-    println!("{:?}", &tok);
+    println!("{:?}", tok);
     println!("{}", source.message(tok.1.line, tok.1.col, "", ""));
     assert_eq!(
         tok.1.col, 56,

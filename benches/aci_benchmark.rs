@@ -42,7 +42,7 @@ fn aci_policy_eval(c: &mut Criterion) {
         for case in &test.cases {
             let rule = case.query.replace("=x", "");
             c.bench_with_input(
-                BenchmarkId::new("case ", format!("{} {}", &case.note, &rule)),
+                BenchmarkId::new("case ", format!("{} {}", case.note, rule)),
                 &case,
                 |b, case| {
                     let mut engine = Engine::new();

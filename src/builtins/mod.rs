@@ -138,9 +138,6 @@ pub fn must_cache(path: &str) -> Option<&'static str> {
 
 /// Resource failures must retain their identity through evaluator error envelopes.
 pub fn is_fatal_builtin_error(error: &anyhow::Error) -> bool {
-    if error.downcast_ref::<crate::LimitError>().is_some() {
-        return true;
-    }
     #[cfg(feature = "history")]
     if error
         .downcast_ref::<history::HistoryError>()
@@ -148,7 +145,7 @@ pub fn is_fatal_builtin_error(error: &anyhow::Error) -> bool {
     {
         return true;
     }
-    false
+    error.downcast_ref::<crate::LimitError>().is_some()
 }
 
 #[cfg(feature = "history")]

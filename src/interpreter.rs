@@ -1596,7 +1596,7 @@ impl Interpreter {
 
     fn clear_scope(scope: &mut Scope) {
         // Set each value to undefined. This is equivalent to removing the key.
-        for (_, v) in scope.iter_mut() {
+        for v in scope.values_mut() {
             *v = Value::Undefined;
         }
     }

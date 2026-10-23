@@ -160,9 +160,8 @@ impl HistoryMatchState {
                             && progress::verify::pair_represents(selected.pair, head, tail);
                     progress::verify::lemma_pair_represents_wf(selected.pair, head, tail);
                 }
-                let entry = self
-                    .pairs
-                    .as_mut_slice()
+                let pairs = self.pairs.as_mut_slice();
+                let entry = pairs
                     .get_mut(index)
                     .ok_or_else(|| graph::invariant("invalid retained pair index"))?;
                 proof! { assert(*entry == selected); }
@@ -182,8 +181,8 @@ impl HistoryMatchState {
                 match result {
                     Ok(answer) => {
                         proof_decl! { let ghost prior_rotation = self.pairs@; }
-                        self.pairs
-                            .as_mut_slice()
+                        let pairs = self.pairs.as_mut_slice();
+                        pairs
                             .get_mut(..=index)
                             .ok_or_else(|| graph::invariant("invalid retained pair prefix"))?
                             .rotate_right(1);

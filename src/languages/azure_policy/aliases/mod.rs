@@ -694,7 +694,6 @@ fn normalize_short_name(short: &str) -> &str {
 #[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use alloc::string::ToString as _;
     use alloc::vec;
 
     use super::*;
