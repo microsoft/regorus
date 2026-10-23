@@ -42,7 +42,7 @@ pub fn key_expr_is_ready(
         }
         match node.as_ref() {
             Expr::Var { span, .. } => {
-                ready &= span.text() == "input" || is_var_bound(span);
+                ready &= is_var_bound(span);
                 Ok(false)
             }
             Expr::ArrayCompr { .. }
@@ -179,6 +179,44 @@ pub fn prioritize_key_binding(
         }
     }
     Ok(())
+}
+
+/// Whether a body binds a local `input` (Rego v0 shadowing), in which case
+/// `input` in a projected key is unready until that binding runs.
+pub fn query_shadows_input(stmts: &[LiteralStmt]) -> Result<bool> {
+    let is_input =
+        |expr: &ExprRef| matches!(expr.as_ref(), Expr::Var { span, .. } if span.text() == "input");
+    for stmt in stmts {
+        match &stmt.literal {
+            Literal::SomeVars { vars, .. } if vars.iter().any(|var| var.text() == "input") => {
+                return Ok(true)
+            }
+            Literal::SomeIn { key, value, .. }
+                if key.as_ref().is_some_and(&is_input) || is_input(value) =>
+            {
+                return Ok(true)
+            }
+            Literal::Expr { expr, .. } => {
+                if let Expr::AssignExpr {
+                    op: AssignOp::ColEq,
+                    lhs,
+                    ..
+                } = expr.as_ref()
+                {
+                    let mut found = false;
+                    crate::query::traversal::traverse(lhs, &mut |node| {
+                        found |= is_input(node);
+                        Ok(!found)
+                    })?;
+                    if found {
+                        return Ok(true);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 fn stmt_references_var(stmt: &LiteralStmt, name: &str) -> Result<bool> {

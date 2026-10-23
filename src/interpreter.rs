@@ -206,6 +206,8 @@ struct Context {
     // Head-key loops could not be checked before the body ran because a
     // collection depends on a body binding; recheck as bindings appear.
     head_key_loops_pending: bool,
+    // The current body binds a local `input` (Rego v0 shadowing).
+    input_shadowed: bool,
 }
 
 impl Default for Context {
@@ -225,6 +227,7 @@ impl Default for Context {
             early_return: false,
             output_query: None,
             head_key_loops_pending: false,
+            input_shadowed: false,
             key_filter: None,
         }
     }
@@ -2509,6 +2512,16 @@ impl Interpreter {
             && Self::is_builtin(fcn.span(), &original_path))
     }
 
+    fn projected_key_var_is_bound(&self, span: &Span) -> bool {
+        self.lookup_local_var(&span.source_str())
+            .is_some_and(|value| value != Value::Undefined)
+            || span.text() == "input"
+                && !self
+                    .contexts
+                    .last()
+                    .is_some_and(|context| context.input_shadowed)
+    }
+
     fn reject_nonmatching_child_key(&mut self) -> Result<bool> {
         let Some((key_expr, filter)) = self.contexts.last().and_then(|ctx| {
             ctx.key_filter
@@ -2521,10 +2534,7 @@ impl Interpreter {
         if !crate::compiler::hoist::key_expr_is_ready(
             &key_expr,
             |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
-            |span| {
-                self.lookup_local_var(&span.source_str())
-                    .is_some_and(|value| value != Value::Undefined)
-            },
+            |span| self.projected_key_var_is_bound(span),
             |call| self.is_safe_projected_key_call(call),
         )? {
             if self
@@ -2582,10 +2592,7 @@ impl Interpreter {
             if !crate::compiler::hoist::key_expr_is_ready(
                 key_expr,
                 |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
-                |span| {
-                    self.lookup_local_var(&span.source_str())
-                        .is_some_and(|value| value != Value::Undefined)
-                },
+                |span| self.projected_key_var_is_bound(span),
                 |call| self.is_safe_projected_key_call(call),
             )? {
                 return Ok(None);
@@ -2603,10 +2610,7 @@ impl Interpreter {
         if !crate::compiler::hoist::key_expr_is_ready(
             &loop_info.collection,
             |expr| self.get_loop_var_value(expr).map(|value| value.is_some()),
-            |span| {
-                self.lookup_local_var(&span.source_str())
-                    .is_some_and(|value| value != Value::Undefined)
-            },
+            |span| self.projected_key_var_is_bound(span),
             |call| self.is_safe_projected_key_call(call),
         )? {
             return Ok(None);
@@ -4130,6 +4134,8 @@ impl Interpreter {
                 if let Some(context) = self.contexts.last_mut() {
                     context.output_query = Some(body.query.qidx);
                     context.head_key_loops_pending = false;
+                    context.input_shadowed = context.key_filter.is_some()
+                        && crate::compiler::hoist::query_shadows_input(&body.query.stmts)?;
                 }
                 result = match self.projected_head_key_loops_match() {
                     Ok(Some(false)) => Ok(false),

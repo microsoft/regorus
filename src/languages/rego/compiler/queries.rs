@@ -195,7 +195,8 @@ impl<'a> Compiler<'a> {
                         }))
                 },
                 |span| {
-                    self.lookup_variable(span.text()).is_some()
+                    span.text() == "input"
+                        || self.lookup_variable(span.text()).is_some()
                         || prefix.iter().any(|l| {
                             matches!(l.key.as_deref(), Some(Expr::Var { span: key, .. }) if key.text() == span.text())
                         })
@@ -237,7 +238,9 @@ impl<'a> Compiler<'a> {
         if !crate::compiler::hoist::key_expr_is_ready(
             &expr,
             |node| Ok(self.loop_expr_register_map.contains_key(node)),
-            |key_span| self.lookup_variable(key_span.text()).is_some(),
+            |key_span| {
+                key_span.text() == "input" || self.lookup_variable(key_span.text()).is_some()
+            },
             |call| self.is_safe_projected_key_call(call).map_err(Into::into),
         )
         .map_err(CompilerError::from)?
