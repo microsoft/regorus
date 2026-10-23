@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::common::{
-    from_c_str, to_ref, to_regorus_result, to_shared_ref, RegorusBuffer, RegorusResult,
-    RegorusStatus,
+    from_c_str, to_ref, to_regorus_result, to_regorus_string_result, to_shared_ref, RegorusBuffer,
+    RegorusResult, RegorusStatus,
 };
 use crate::compile::RegorusPolicyModule;
 use crate::compiled_policy::RegorusCompiledPolicy;
@@ -276,7 +276,7 @@ pub extern "C" fn regorus_program_get_builtin_names(
             Ok(serde_json::to_string(&names)?)
         }();
 
-        to_rvm_string_result(output)
+        to_regorus_string_result(output)
     })
 }
 
