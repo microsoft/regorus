@@ -334,12 +334,17 @@ errors, even through nested rules and negation. RVM hard matcher failures use
 added, and the existing RVM restriction on `with` is unchanged.
 
 With `cache`, each retained Engine or RegoVM keeps at most 16 exact policy Values
-and their owned compiled graphs. Each pair has a lazy 256-entry event-class
+and their owned compiled graphs. Each pair has a 256-entry event-class
 successor LRU; signed predicates use canonical unsigned primitive truth vectors,
-so events with different unused metadata can select the same successor. Within
-one call these derivative/event caches also work without `cache`, but the pair is
-dropped at return. Cached exploratory graph exhaustion evicts the entire pair
-and retries once from a fresh graph; a fresh graph over the cap is a hard error.
+so events with different unused metadata can select the same successor. A newly
+compiled cached pair precompiles, before its first decision, the derivatives and
+successor classes of up to 64 residual states reachable from the root (transitions
+with at most 8 primitive atoms, at most 256 classes in total); states beyond that
+budget are derived lazily. If that exploration exhausts the graph cap, the call is
+served from a freshly compiled lazy pair. Within one call these derivative/event
+caches also work without `cache`, but the pair is dropped at return and nothing is
+precompiled. Cached exploratory graph exhaustion evicts the entire pair and retries
+once from a fresh, lazily derived graph; a fresh graph over the cap is a hard error.
 Other errors are not retried. Evaluator clones start with empty matching caches;
 VM program replacement clears them. Existing `cache::clear/configure` remains
 regex/glob-only. `CompiledPolicy::eval_with_input` creates a fresh evaluator and

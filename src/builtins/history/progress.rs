@@ -46,7 +46,10 @@ struct EventClass {
 #[verus_verify(external_body)]
 #[verus_spec(result => ensures result matches Some(cache) ==> successor_cache_view(cache) == Map::<ClassKey, RegexId>::empty())]
 fn successor_cache() -> Option<LruCache<EventClass, RegexId>> {
-    NonZeroUsize::new(256).map(LruCache::new)
+    usize::try_from(SUCCESSOR_CAPACITY)
+        .ok()
+        .and_then(NonZeroUsize::new)
+        .map(LruCache::new)
 }
 
 #[verus_verify(external_body)]
@@ -83,6 +86,17 @@ fn successor_put(
     }
 }
 
+#[verus_verify]
+#[verus_spec(result =>
+    ensures result matches Ok(set) ==> transition@ < atoms@.len() && atoms@[transition@ as int] == Some(*set),
+)]
+fn atom_set(atoms: &[Option<AtomSet>], transition: TransitionId) -> KernelResult<&AtomSet> {
+    match atoms.get(transition.index()?) {
+        Some(Some(set)) => Ok(set),
+        _ => Err(invariant("missing transition atoms")),
+    }
+}
+
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct WorkCounters {
@@ -100,6 +114,16 @@ pub(crate) struct WorkCounters {
 #[cfg(feature = "cache")]
 #[verus_verify]
 const CURSOR_CAPACITY: usize = 16;
+
+/// Successor-cache capacity, also `precompile`'s class budget, so nothing it builds is evicted.
+/// `u64` because only `u64::checked_shl` is specified.
+#[verus_verify]
+const SUCCESSOR_CAPACITY: u64 = 256;
+
+/// Residual states `precompile` explores before leaving the rest to the lazy path.
+#[cfg(feature = "cache")]
+#[verus_verify]
+const PRECOMPILE_STATES: usize = 64;
 
 #[cfg(feature = "cache")]
 #[verus_verify]
@@ -691,13 +715,7 @@ impl CompiledPair {
         {
             self.work.event_classes = self.work.event_classes.saturating_add(1);
         }
-        let transition_index = transition.index()?;
-        let atoms = self
-            .atoms
-            .get(transition_index)
-            .ok_or_else(|| invariant("missing transition atoms"))?
-            .as_ref()
-            .ok_or_else(|| invariant("missing transition atoms"))?;
+        let atoms = atom_set(self.atoms.as_slice(), transition)?;
         let word_count = atoms
             .ids()
             .len()
@@ -716,9 +734,8 @@ impl CompiledPair {
                 index <= atoms@.len(), words.view().len() == word_count,
                 self.store.graph() == classified.store.graph(), self.derivatives@ == classified.derivatives@,
                 successor_map(*self) == successor_map(classified), self.atoms@ == classified.atoms@,
-                transition_index == transition@, has_atoms(*self, transition),
-                atom_cache_wf(self.store.graph(), self.atoms@),
-                atoms@ == self.atoms@[transition_index as int].unwrap()@,
+                has_atoms(*self, transition), atom_cache_wf(self.store.graph(), self.atoms@),
+                atoms@ == self.atoms@[transition@ as int].unwrap()@,
                 atoms_wf(self.store.graph(), transition@, atoms@),
                 forall|j: int| 0 <= j < index ==> symbolic::verify::truth_word_bit(words.view(), j as nat)
                     == model::test_holds(self.symbols@, source_model::values_data(bindings@), model::lift_test(self.store.graph(), atoms@[j]@), value_view(*event)),
@@ -796,7 +813,35 @@ impl CompiledPair {
             assert(index == atoms@.len());
             assert(symbolic::verify::truth_words_realize(self.store.graph(), atoms@, words.view(), self.symbols@, source_model::values_data(bindings@), value_view(*event)));
         }
-        let key = EventClass { transition, words };
+        proof_decl! { let ghost words_view = words.view(); let ghost atoms_view = atoms@; }
+        let successor = self.successor(EventClass { transition, words }, timer, world)?;
+        proof! {
+            assert(successor_map(*self).contains_key(ClassKey { transition, words: words_view }));
+            symbolic::verify::truth_words_realize_extends(classified.store.graph(), self.store.graph(), atoms_view, words_view);
+            assert(instantiation_result(*self, transition, bindings@, *event, successor));
+        }
+        Ok(successor)
+    }
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)), has_atoms(*old(self), key.transition),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            progress_metadata_unchanged(*old(self), *final(self)),
+            final(self).atoms@ == old(self).atoms@,
+            result matches Ok(id) ==> successor_map(*final(self)).contains_key(class_key(key))
+                && successor_map(*final(self))[class_key(key)] == id,
+    )]
+    /// Cached or freshly interpreted successor of `key`; every entry it publishes is covered by
+    /// `successor_entries_wf`, so callers read the language equivalence from `pair_wf`.
+    fn successor(
+        &mut self,
+        key: EventClass,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<RegexId> {
+        proof_decl! { let ghost entry = *self; }
+        let atoms = atom_set(self.atoms.as_slice(), key.transition)?;
         if let Some(successor) = successor_get(&mut self.successors, &key) {
             #[cfg(test)]
             {
@@ -814,20 +859,19 @@ impl CompiledPair {
                 timer,
                 world,
             };
-            symbolic::interpret_transition(&mut kernel, transition, atoms, &key.words)
+            symbolic::interpret_transition(&mut kernel, key.transition, atoms, &key.words)
         };
         proof! {
-            symbolic::verify::derivative_extends(classified.store.graph(), self.store.graph());
-            lemma_pair_symbolic_frame(classified, *self);
-            symbolic::verify::truth_words_realize_extends(classified.store.graph(), self.store.graph(), atoms@, key.words.view());
+            symbolic::verify::derivative_extends(entry.store.graph(), self.store.graph());
+            lemma_pair_symbolic_frame(entry, *self);
+            symbolic::verify::truth_words_realize_extends(entry.store.graph(), self.store.graph(), atoms@, key.words.view());
         }
         let successor = successor?;
         proof! {
-            assert(instantiation_result(*self, transition, bindings@, *event, successor));
             assert forall|sym: model::Symbols, theta: Seq<Data>, current: Data, word: Seq<Data>|
                 model::symbols_wf(sym) && symbolic::verify::truth_words_realize(self.store.graph(), atoms@, key.words.view(), sym, theta, current)
                     implies model::regex_lang(self.store.graph(), sym, theta, successor@, word)
-                        == norm::transition_lang(self.store.graph(), sym, theta, transition, current, word) by {}
+                        == norm::transition_lang(self.store.graph(), sym, theta, key.transition, current, word) by {}
         }
         if self.successors.is_none() {
             let cache =
@@ -851,25 +895,137 @@ impl CompiledPair {
                             ==> model::regex_lang(self.store.graph(), sym, theta, successor_map(*self)[other]@, word)
                                 == norm::transition_lang(self.store.graph(), sym, theta, other.transition, current, word)
             } by {
-                if other == class_key(key) { assert(other.transition == transition); }
+                if other == class_key(key) { assert(other.transition == key.transition); }
                 else { assert(entries.contains_key(other)); }
             }
         }
         proof! {
-            lemma_pair_cursor_frame(classified, *self);
-            assert(model::graph_wf(self.store.graph()));
-            assert(self.store.valid_store());
-            assert(model::symbols_wf(self.symbols@));
-            assert(self.root@ < self.store.graph().regexes.len());
-            assert(atom_cache_wf(self.store.graph(), self.atoms@));
-            assert(symbolic::verify::derivative_cache_wf(self.store.graph(), self.derivatives@));
+            lemma_pair_cursor_frame(entry, *self);
             let head = choose|head: language::Head| source_model::pattern_represents(entry.pattern, entry.symbols@, head);
             assert(source_model::pattern_represents(self.pattern, self.symbols@, head));
-            assert(exists|head: language::Head| source_model::pattern_represents(self.pattern, self.symbols@, head));
-            assert(pair_wf(*self));
         }
         checkpoint(timer, world)?;
         Ok(successor)
+    }
+    #[cfg(feature = "cache")]
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            progress_metadata_unchanged(*old(self), *final(self)),
+            result is Ok ==> forall|head: language::Head, tail: language::Regex<language::SrcTest>|
+                #[trigger] pair_represents(*old(self), head, tail) ==> pair_represents(*final(self), head, tail),
+    )]
+    /// Eagerly builds derivatives, atom sets and successor classes for up to `PRECOMPILE_STATES`
+    /// residual states reachable from `root`, depth-first, within the successor cache's capacity;
+    /// anything beyond the budget is left to the lazy path. Errors leave the pair well-formed;
+    /// `GraphLimit` means the caller should discard it.
+    pub(crate) fn precompile(
+        &mut self,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost entry = *self; }
+        proof! { lemma_graph_ids_obey_cmp(); }
+        let mut pending: WorkVec<RegexId> = WorkVec::new();
+        pending.push(self.root);
+        let mut seen = BTreeSet::new();
+        let mut states: usize = 0;
+        let mut used: u64 = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+                entry == *old(self),
+                forall|j: int| 0 <= j < pending.view().len() ==> pending.view()[j]@ < self.store.graph().regexes.len(),
+                states <= PRECOMPILE_STATES, used <= SUCCESSOR_CAPACITY,
+            ensures pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+            decreases pending.view().len() + 2 * (SUCCESSOR_CAPACITY - used) + 2 * (PRECOMPILE_STATES - states),
+        ))]
+        while let Some(residual) = pending.pop() {
+            if states >= PRECOMPILE_STATES {
+                break;
+            }
+            proof! { lemma_graph_ids_obey_cmp(); }
+            checkpoint(timer, world)?;
+            if !seen.insert(residual) {
+                continue;
+            }
+            states = states.saturating_add(1);
+            proof_decl! { let ghost before = *self; }
+            let derivative = {
+                let mut kernel = RuntimeKernel {
+                    store: &mut self.store,
+                    timer,
+                    world,
+                };
+                symbolic::symbolic_derivative(&mut kernel, &mut self.derivatives, residual)
+            };
+            proof! { lemma_pair_symbolic_frame(before, *self); }
+            let transition = derivative?;
+            let constant = {
+                let kernel = RuntimeKernel {
+                    store: &mut self.store,
+                    timer,
+                    world,
+                };
+                match kernel.transition(transition) {
+                    Ok(TransitionView::Const(regex)) => {
+                        proof! {
+                            model::lemma_graph_transition_wf(self.store.graph(), transition@);
+                            norm::transition_unfold(self.store.graph(), transition@);
+                        }
+                        Ok(Some(regex))
+                    }
+                    Ok(_) => Ok(None),
+                    Err(error) => Err(error),
+                }
+            };
+            if let Some(regex) = constant? {
+                pending.push(regex);
+                continue;
+            }
+            self.ensure_atoms(transition, timer, world)?;
+            let atom_count = atom_set(self.atoms.as_slice(), transition)?.ids().len();
+            // 2^atoms classes; transitions whose classes overflow the budget stay lazy.
+            let shift = match u32::try_from(atom_count) {
+                Ok(shift) => shift,
+                Err(_) => continue,
+            };
+            let classes = match 1_u64.checked_shl(shift) {
+                Some(classes) => classes,
+                None => continue,
+            };
+            used = match used.checked_add(classes) {
+                Some(total) if total <= SUCCESSOR_CAPACITY => total,
+                _ => continue,
+            };
+            proof_decl! { let ghost base_len = pending.view().len(); }
+            let mut minterm: u64 = 0;
+            #[cfg_attr(verus_keep_ghost, verus_spec(
+                invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+                    entry == *old(self), has_atoms(*self, transition),
+                    forall|j: int| 0 <= j < pending.view().len() ==> pending.view()[j]@ < self.store.graph().regexes.len(),
+                    minterm <= classes, pending.view().len() == base_len + minterm,
+                    states <= PRECOMPILE_STATES, used <= SUCCESSOR_CAPACITY,
+                decreases classes - minterm,
+            ))]
+            while minterm < classes {
+                checkpoint(timer, world)?;
+                // The class budget admits at most 8 atoms: one truth word, as `instantiate` lays out.
+                let mut words: SmallVec<[u64; 2]> = SmallVec::new();
+                if atom_count > 0 {
+                    words.push(minterm);
+                }
+                let key = EventClass { transition, words };
+                proof_decl! { let ghost class = class_key(key); }
+                let successor = self.successor(key, timer, world)?;
+                proof! { assert(successor_map(*self).contains_key(class)); }
+                pending.push(successor);
+                minterm = minterm.saturating_add(1);
+            }
+        }
+        proof! { lemma_pair_all_frames(entry); }
+        Ok(())
     }
 }
 
@@ -943,7 +1099,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
     root: TransitionId,
 ) -> KernelResult<AtomSet> {
     proof_decl! { let ghost base = store.graph(); }
-    proof! { lemma_atom_ids_obey_cmp(); }
+    proof! { lemma_graph_ids_obey_cmp(); }
     let mut work: WorkVec<Walk> = WorkVec::new();
     work.push(Walk::Transition(root));
     let mut transitions = BTreeSet::new();
@@ -989,7 +1145,7 @@ pub(crate) fn transition_atoms<G: KernelStore>(
             assert(work.view().push(task) =~= pending_work);
             assert(collector(base, root@, before_done, before_pending, before_atoms));
             assert(walk_wf(base, task));
-            lemma_atom_ids_obey_cmp();
+            lemma_graph_ids_obey_cmp();
             lemma_walk_work_push(base);
         }
         store.checkpoint()?;
@@ -1348,8 +1504,9 @@ pub(crate) mod verify {
             }
         }
 
-        pub proof fn lemma_atom_ids_obey_cmp()
+        pub proof fn lemma_graph_ids_obey_cmp()
             ensures vstd::laws_cmp::obeys_cmp::<TestId>(), vstd::laws_cmp::obeys_cmp::<TransitionId>(),
+                vstd::laws_cmp::obeys_cmp::<RegexId>(),
         {
             reveal(vstd::laws_eq::obeys_eq_spec_properties);
             reveal(vstd::laws_cmp::obeys_partial_cmp_spec_properties);
@@ -2706,5 +2863,67 @@ mod progress_tests {
         assert_eq!(retained.work.events, 0);
         assert_eq!(retained.work.prefix_comparisons, 0);
         assert!(Rc::ptr_eq(retained.snapshot.as_ref().unwrap(), &initial));
+    }
+
+    #[test]
+    fn precompile_builds_every_reachable_class_within_budget() {
+        let lock = json!({"concat":[{"all":true},
+            {"test":{"and":[{"eq":{"path":["x"],"term":{"var":"v"}}},{"eq":{"path":["a"],"term":{"value":"edit"}}}]}},
+            {"star":{"test":{"or":[{"neq":{"path":["x"],"term":{"var":"v"}}},
+                {"and":[{"neq":{"path":["a"],"term":{"value":"edit"}}},{"neq":{"path":["a"],"term":{"value":"release"}}}]}]}}}]});
+        let mut eager = compile(lock.clone());
+        let mut lazy = compile(lock);
+        let mut world = ObservationWorld;
+        eager
+            .precompile(&mut ExecutionTimer::new(None), &mut world)
+            .unwrap();
+        reset_work(&mut eager);
+        // Seven events cover every (x == v, a == edit, a == release) class the atoms distinguish.
+        let traces = [
+            (
+                json!([{"x":1,"a":"edit"},{"x":2,"a":"edit"},{"x":1,"a":"read"},{"x":1,"a":"release"},
+                    {"x":2,"a":"release"},{"x":1,"a":"edit"},{"x":2,"a":"read"}]),
+                true,
+            ),
+            (json!([{"x":1,"a":"edit"},{"x":1,"a":"release"}]), false),
+            (json!([{"x":2,"a":"edit"}]), false),
+            (json!([]), false),
+        ];
+        for (events, expected) in traces {
+            let events = history(events);
+            assert_eq!(evaluate(&mut eager, &events, &Value::from(1)), expected);
+            assert_eq!(evaluate(&mut lazy, &events, &Value::from(1)), expected);
+        }
+        assert_eq!(eager.work.events, 10);
+        assert_eq!(eager.work.derivative_misses, 0);
+        assert_eq!(eager.work.successor_misses, 0);
+        assert!(lazy.work.successor_misses > 0);
+        eager.release();
+        lazy.release();
+    }
+
+    #[test]
+    fn precompile_skips_wide_transitions_and_stops_at_the_class_budget() {
+        use alloc::string::ToString as _;
+        // Each path equality contributes two primitive atoms to the transition.
+        let eqs = |count: usize| -> Json {
+            let tests: Vec<Json> = (0..count)
+                .map(|bit| json!({"eq":{"path":[bit.to_string()],"term":{"value":1}}}))
+                .collect();
+            json!({"test":{"and":tests}})
+        };
+        let mut world = ObservationWorld;
+        let mut wide = compile(eqs(5));
+        wide.precompile(&mut ExecutionTimer::new(None), &mut world)
+            .unwrap();
+        assert!(wide.derivatives.iter().flatten().count() >= 1);
+        // 2^10 classes never fit the budget: the transition stays lazy.
+        assert!(wide.successors.is_none());
+        let mut full = compile(eqs(4));
+        full.precompile(&mut ExecutionTimer::new(None), &mut world)
+            .unwrap();
+        assert_eq!(full.successors.as_ref().map(LruCache::len), Some(256));
+        wide.release();
+        full.release();
     }
 }

@@ -60,6 +60,8 @@ pub(crate) struct HistoryMatchState {
     pub(crate) compile_attempts: usize,
     #[cfg(test)]
     pub(crate) graph_retries: usize,
+    #[cfg(all(test, feature = "cache"))]
+    pub(crate) precompile_fallbacks: usize,
 }
 
 // Verus does not model implicit destructor calls; cleanup itself is verified below.
@@ -83,6 +85,8 @@ impl Default for HistoryMatchState {
             compile_attempts: 0,
             #[cfg(test)]
             graph_retries: 0,
+            #[cfg(all(test, feature = "cache"))]
+            precompile_fallbacks: 0,
         }
     }
 }
@@ -123,6 +127,8 @@ impl HistoryMatchState {
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> core::result::Result<bool, HistoryError> {
+        #[cfg(feature = "cache")]
+        let mut precompile = true;
         #[cfg(feature = "cache")]
         {
             // ponytail: at most 16 exact policy comparisons; replace the linear
@@ -203,6 +209,9 @@ impl HistoryMatchState {
                         // Release every old ID before the single cold retry below.
                         self.pairs.remove(index).pair.release();
                         proof! { assert(self.state_wf()); }
+                        // The previous graph was exhausted; the single retry replays lazily so
+                        // exploration cannot exhaust it again.
+                        precompile = false;
                         #[cfg(test)]
                         {
                             self.graph_retries = self.graph_retries.saturating_add(1);
@@ -217,6 +226,22 @@ impl HistoryMatchState {
             self.compile_attempts = self.compile_attempts.saturating_add(1);
         }
         let mut pair = source::compile_pair(policy, timer, world)?;
+        #[cfg(feature = "cache")]
+        if precompile {
+            if let Err(error) = pair.precompile(timer, world) {
+                pair.release();
+                if !matches!(error, HistoryError::GraphLimit { .. }) {
+                    return Err(error);
+                }
+                // Exploration overran the graph payload cap: serve this call from an
+                // untouched lazy pair.
+                #[cfg(test)]
+                {
+                    self.precompile_fallbacks = self.precompile_fallbacks.saturating_add(1);
+                }
+                pair = source::compile_pair(policy, timer, world)?;
+            }
+        }
         proof_decl! {
             let ghost (head, tail) = choose|head: language::Head, tail: language::Regex<language::SrcTest>|
                 language::decodes_policy(value_view(*policy), head, tail)
@@ -414,8 +439,10 @@ mod pair_cache_tests {
         assert!(evaluate(&mut state, &policy(7), &empty, &Value::from(7)).unwrap());
         assert!(evaluate(&mut state, &p, &empty, &Value::from(1)).unwrap());
         let retained = &mut state.pairs.first_mut().expect("admitted pair").pair;
-        // Model a graph whose prior exploration has used the exact payload cap.
+        // Model a graph whose prior exploration has used the exact payload cap and
+        // whose next event needs a derivative it does not hold (cold pairs precompile).
         retained.store.set_charged_bytes(kernel::MAX_GRAPH_BYTES);
+        retained.derivatives.clear();
         retained.work.events = 999;
         let events = history(json!([{"x":1}]));
         assert!(evaluate(&mut state, &p, &events, &Value::from(1)).unwrap());
@@ -453,6 +480,51 @@ mod pair_cache_tests {
         assert_eq!(cold.compile_attempts, 1);
         assert_eq!(cold.graph_retries, 0);
         assert!(cold.pairs.is_empty());
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn cold_compile_precompiles_before_the_first_decision() {
+        let p = value(
+            json!({"request":{"var":"v"},"history":{"star":{"test":{"eq":{"path":["x"],"term":{"var":"v"}}}}}}),
+        );
+        let mut state = HistoryMatchState::default();
+        assert!(evaluate(&mut state, &p, &history(json!([])), &Value::from(1)).unwrap());
+        let misses = state
+            .pairs
+            .first()
+            .expect("admitted pair")
+            .pair
+            .work
+            .successor_misses;
+        assert!(!evaluate(
+            &mut state,
+            &p,
+            &history(json!([{"x":1},{"x":1},{"x":2}])),
+            &Value::from(1)
+        )
+        .unwrap());
+        let pair = &state.pairs.first().expect("retained pair").pair;
+        assert_eq!(pair.work.events, 3);
+        assert_eq!(pair.work.derivative_misses, 0);
+        assert_eq!(pair.work.successor_misses, misses);
+        assert_eq!(state.precompile_fallbacks, 0);
+    }
+
+    #[cfg(feature = "cache")]
+    #[test]
+    fn precompile_graph_limit_falls_back_to_an_untouched_lazy_pair() {
+        // 64 explored suffix states of a 1000-factor concat need ~64 × 4 KiB of child IDs.
+        let factors = vec![json!({"test":true}); 1000];
+        let p = value(json!({"request":{"any":true},"history":{"concat":factors}}));
+        let mut state = HistoryMatchState::default();
+        assert!(!evaluate(&mut state, &p, &history(json!([])), &Value::Null).unwrap());
+        assert_eq!(state.compile_attempts, 1);
+        assert_eq!(state.precompile_fallbacks, 1);
+        assert_eq!(state.pairs.len(), 1);
+        let pair = &state.pairs.first().expect("admitted pair").pair;
+        assert!(pair.derivatives.is_empty());
+        assert!(pair.store.bytes < kernel::MAX_GRAPH_BYTES);
     }
 
     #[cfg(feature = "cache")]
