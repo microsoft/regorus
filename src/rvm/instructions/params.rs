@@ -274,6 +274,20 @@ pub struct ComprehensionBeginParams {
     pub comprehension_end: u16,
 }
 
+/// Parameters for HistoryDecide instructions
+#[repr(C)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryDecideParams {
+    /// Destination register: first violated rule index, or Null
+    pub dest: u8,
+    /// Index into `Program::history_tables`
+    pub table: u16,
+    /// Register holding the history handle
+    pub history: u8,
+    /// Register holding the candidate request
+    pub request: u8,
+}
+
 /// Instruction data container for complex instruction parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstructionData {
@@ -295,6 +309,9 @@ pub struct InstructionData {
     pub chained_index_params: Vec<ChainedIndexParams>,
     /// Comprehension parameter table for ComprehensionBegin instructions
     pub comprehension_begin_params: Vec<ComprehensionBeginParams>,
+    /// History table decision parameter table for HistoryDecide instructions
+    #[serde(default)]
+    pub history_decide_params: Vec<HistoryDecideParams>,
 }
 
 impl InstructionData {
@@ -315,6 +332,7 @@ impl InstructionData {
             virtual_data_document_lookup_params: Vec::new(),
             chained_index_params: Vec::new(),
             comprehension_begin_params: Vec::new(),
+            history_decide_params: Vec::new(),
         }
     }
 
@@ -322,6 +340,13 @@ impl InstructionData {
     pub fn add_loop_params(&mut self, params: LoopStartParams) -> u16 {
         let index = Self::ensure_u16_index(self.loop_params.len());
         self.loop_params.push(params);
+        index
+    }
+
+    /// Add history decide parameters and return the index
+    pub fn add_history_decide_params(&mut self, params: HistoryDecideParams) -> u16 {
+        let index = Self::ensure_u16_index(self.history_decide_params.len());
+        self.history_decide_params.push(params);
         index
     }
 

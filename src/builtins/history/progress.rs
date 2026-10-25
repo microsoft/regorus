@@ -2,18 +2,22 @@
 // Licensed under the MIT License.
 
 #[cfg(verus_keep_ghost)]
+use super::intern::verify::{ids_wf, interner_frame, lemma_ids_wf_frame};
+use super::intern::{Interner, StringId};
+#[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 #[cfg(verus_keep_ghost)]
 use super::normalize::verify as norm;
 #[cfg(verus_keep_ghost)]
 use super::source::verify as source_model;
 use super::{
+    error::HistoryError,
     graph::{
         allocation, checkpoint, invariant, sequence_bytes, ArenaStorage, CanonicalStore,
         ObservationWorld, RuntimeKernel,
     },
     kernel::*,
-    source::{classify, CompiledPattern, Symbols},
+    source::{classify, CompiledPattern, PairHints, Symbols},
     symbolic,
     work::WorkVec,
 };
@@ -41,6 +45,23 @@ struct EventClass {
     transition: TransitionId,
     words: SmallVec<[u64; 2]>,
 }
+
+/// Self-loop certificate for one residual: when any atom of `transition` whose bit is set in
+/// `mask` is false on an event, the event's successor is the residual itself. `mask == 0`
+/// means "computed, nothing usable" (constant, wide, or budget-limited transition).
+#[verus_verify]
+#[verus_verify(external_derive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Guard {
+    transition: TransitionId,
+    mask: u64,
+}
+
+/// Atoms per transition the guard enumeration accepts: 2^8 = 256 `interpret_transition` runs,
+/// one truth word, the same ceiling `precompile` uses.
+// ponytail: 8 atoms = 256 interpretations per residual; raise if wider transitions show up hot.
+#[verus_verify]
+const GUARD_MAX_ATOMS: usize = 8;
 
 // Concrete LRU leaves expose semantic keys and membership, not policy semantics.
 #[verus_verify(external_body)]
@@ -107,8 +128,9 @@ pub(crate) struct WorkCounters {
     pub(crate) event_classes: usize,
     pub(crate) successor_hits: usize,
     pub(crate) successor_misses: usize,
-    pub(crate) equal_event_hits: usize,
     pub(crate) self_loops: usize,
+    pub(crate) guard_hits: usize,
+    pub(crate) skip_guards: bool,
 }
 
 #[cfg(feature = "cache")]
@@ -145,8 +167,11 @@ pub(crate) struct CompiledPair {
     pub(crate) symbols: Symbols,
     pub(crate) pattern: CompiledPattern,
     pub(crate) root: RegexId,
+    pub(crate) interner: Interner,
+    pub(crate) constant_ids: Vec<Option<StringId>>,
     pub(crate) derivatives: Vec<Option<TransitionId>>,
     atoms: Vec<Option<AtomSet>>,
+    guards: Vec<Option<Guard>>,
     successors: Option<LruCache<EventClass, RegexId>>,
     #[cfg(feature = "cache")]
     snapshot: Option<Rc<Array>>,
@@ -159,11 +184,13 @@ pub(crate) struct CompiledPair {
 impl CompiledPair {
     pub(crate) fn release(self) {
         self.store.release();
+        self.interner.free();
     }
 
     #[verus_spec(result =>
         requires model::graph_wf(store.graph()), store.valid_store(), model::symbols_wf(symbols@), root@ < store.graph().regexes.len(),
             exists|head: language::Head| source_model::pattern_represents(pattern, symbols@, head),
+            interner.inv(), ids_wf(interner, symbols.constants@, constant_ids@),
         ensures pair_wf(result),
             forall|head: language::Head, tail: language::Regex<language::SrcTest>|
                 #[trigger] source_model::pattern_represents(pattern, symbols@, head)
@@ -175,6 +202,8 @@ impl CompiledPair {
         symbols: Symbols,
         pattern: CompiledPattern,
         root: RegexId,
+        interner: Interner,
+        constant_ids: Vec<Option<StringId>>,
     ) -> Self {
         proof_decl! { let ghost head = choose|head: language::Head| source_model::pattern_represents(pattern, symbols@, head); }
         let pair = Self {
@@ -182,8 +211,11 @@ impl CompiledPair {
             symbols,
             pattern,
             root,
+            interner,
+            constant_ids,
             derivatives: Vec::new(),
             atoms: Vec::new(),
+            guards: Vec::new(),
             successors: None,
             #[cfg(feature = "cache")]
             snapshot: None,
@@ -198,8 +230,9 @@ impl CompiledPair {
                 event_classes: 0,
                 successor_hits: 0,
                 successor_misses: 0,
-                equal_event_hits: 0,
                 self_loops: 0,
+                guard_hits: 0,
+                skip_guards: false,
             },
         };
         proof! {
@@ -212,6 +245,7 @@ impl CompiledPair {
             assert(exists|head: language::Head| source_model::pattern_represents(pair.pattern, pair.symbols@, head));
             assert(symbolic::verify::derivative_cache_wf(pair.store.graph(), pair.derivatives@));
             assert(atom_cache_wf(pair.store.graph(), pair.atoms@));
+            assert(guard_cache_wf(pair.store.graph(), pair.atoms@, pair.guards@));
             assert(cursor_cache_wf(pair));
             assert(pair_wf(pair));
         }
@@ -233,17 +267,21 @@ impl CompiledPair {
         &mut self,
         history: &Rc<Array>,
         request: &Value,
+        hints: &mut PairHints,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<bool> {
         proof_decl! { let ghost entry = *self; }
         proof! { lemma_pair_all_frames(entry); source_model::lemma_array_data(*history); }
-        let Some(bindings) = self.pattern.matches(request, &self.symbols, timer, world)? else {
+        let Some(bindings) =
+            self.pattern
+                .matches(request, &self.symbols, &mut hints.pattern, timer, world)?
+        else {
             return Ok(false);
         };
         #[cfg(not(feature = "cache"))]
         {
-            let answer = self.replay(history, &bindings, timer, world)?;
+            let answer = self.replay(history, &bindings, &mut hints.paths, timer, world)?;
             proof! {
                 assert forall|head: language::Head, tail: language::Regex<language::SrcTest>|
                     pair_represents(entry, head, tail) implies answer == language::pair_lang(head, tail, value_view(*request), history_view(*history)) by {
@@ -299,7 +337,15 @@ impl CompiledPair {
             } else {
                 (0, self.root)
             };
-            let residual = self.replay_suffix(history, &bindings, start, residual, timer, world)?;
+            let residual = self.replay_suffix(
+                history,
+                &bindings,
+                start,
+                residual,
+                &mut hints.paths,
+                timer,
+                world,
+            )?;
             let answer = self.answer(residual, timer, world)?;
             proof! {
                 lemma_full_residual_answer(*self, history_view(*history), bindings@, residual, answer);
@@ -397,7 +443,6 @@ impl CompiledPair {
                 self.work.prefix_comparisons = self.work.prefix_comparisons.saturating_add(1);
             }
             let equal = snapshot.as_slice()[index] == history.as_slice()[index];
-            loop_try!(checkpoint(timer, world), failure);
             if !equal {
                 prefix_equal = false;
                 break;
@@ -427,10 +472,12 @@ impl CompiledPair {
         &mut self,
         history: &Array,
         bindings: &[Value],
+        path_hints: &mut Vec<Vec<usize>>,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<bool> {
-        let residual = self.replay_suffix(history, bindings, 0, self.root, timer, world)?;
+        let residual =
+            self.replay_suffix(history, bindings, 0, self.root, path_hints, timer, world)?;
         let answer = self.answer(residual, timer, world)?;
         proof! {
             lemma_full_residual_answer(*self, source_model::values_data(history@), bindings@, residual, answer);
@@ -439,12 +486,12 @@ impl CompiledPair {
     }
     #[verus_verify]
     #[verus_spec(result =>
-        requires pair_wf(*old(self)), residual@ < old(self).store.graph().regexes.len(),
+        requires pair_wf(*old(self)), residual@ < pair_graph(*old(self)).regexes.len(),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
-            final(self).store.graph() == old(self).store.graph(),
-            result matches Ok(answer) ==> answer == language::nullable(model::lift_regex(final(self).store.graph(), residual@)),
+            pair_graph(*final(self)) == pair_graph(*old(self)),
+            result matches Ok(answer) ==> answer == language::nullable(model::lift_regex(pair_graph(*final(self)), residual@)),
     )]
-    fn answer(
+    pub(crate) fn answer(
         &mut self,
         residual: RegexId,
         timer: &mut ExecutionTimer,
@@ -467,12 +514,17 @@ impl CompiledPair {
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
             result matches Ok(out) ==> residual_after_prefix(*final(self), source_model::values_data(history@), bindings@, history@.len(), out),
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep lookup hints separate from verified replay state."
+    )]
     fn replay_suffix(
         &mut self,
         history: &Array,
         bindings: &[Value],
         start: usize,
-        mut residual: RegexId,
+        residual: RegexId,
+        path_hints: &mut Vec<Vec<usize>>,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<RegexId> {
@@ -481,30 +533,105 @@ impl CompiledPair {
             .as_slice()
             .get(start..)
             .ok_or_else(|| invariant("invalid progress cursor length"))?;
-        let mut previous: Option<(TransitionId, &Value, RegexId)> = None;
+        proof! {
+            assert(suffix@ == history@.subrange(start as int, history@.len() as int));
+            assert(source_model::values_data(suffix@)
+                =~= source_model::values_data(history@).subrange(start as int, history@.len() as int));
+        }
+        proof_decl! { let ghost before_intern = *self; }
+        let binding_ids = self.interner.intern_values(bindings, world);
+        proof! {
+            lemma_pair_symbolic_frame(before_intern, *self);
+            lemma_replay_frame(before_intern, *self, source_model::values_data(history@), bindings@, start as nat, residual);
+        }
+        let binding_ids = binding_ids?;
+        let out = self.fold(
+            residual,
+            suffix,
+            bindings,
+            &binding_ids,
+            path_hints,
+            timer,
+            world,
+        )?;
+        proof! {
+            lemma_replay_frame(entry, *self, source_model::values_data(history@), bindings@, start as nat, residual);
+            lemma_after_prefix_fold(*self, source_model::values_data(history@), bindings@, start as nat, residual, out);
+        }
+        Ok(out)
+    }
+    /// Folds `events` into `residual`: the result denotes `events⁻¹ L(residual)`
+    /// under `bindings`. Errors publish no residual.
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)), bindings@.len() == pair_symbols(*old(self)).variables.len(),
+            forall|i: int| 0 <= i < bindings@.len() ==> value_view(bindings@[i]) != Data::Undefined,
+            residual@ < pair_graph(*old(self)).regexes.len(),
+            pair_binding_ids_wf(*old(self), bindings@, binding_ids@),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)), progress_metadata_unchanged(*old(self), *final(self)),
+            result matches Ok(out) ==> residual_folds(*final(self), bindings@, residual, source_model::values_data(events@), out),
+    )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep interned bindings separate from semantic inputs."
+    )]
+    pub(crate) fn fold(
+        &mut self,
+        residual: RegexId,
+        events: &[Value],
+        bindings: &[Value],
+        binding_ids: &[Option<StringId>],
+        path_hints: &mut Vec<Vec<usize>>,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<RegexId> {
+        proof_decl! { let ghost entry = *self; let ghost from = residual; }
+        let mut residual = residual;
+        proof! {
+            lemma_fold_start(*self, bindings@, from);
+            assert(source_model::values_data(events@).take(0) =~= Seq::<Data>::empty());
+            assert(source_model::values_data(events@).take(events@.len() as int) =~= source_model::values_data(events@));
+        }
+        let path_count = self.symbols.paths.len();
+        let mut selections: Vec<Option<Option<&Value>>> = Vec::new();
+        if !events.is_empty() {
+            allocation(world.try_reserve_exact_vec(&mut selections, path_count))?;
+        }
         let mut failure = None;
         let mut index = 0;
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
-                index <= suffix@.len(), suffix@ == history@.subrange(start as int, history@.len() as int),
-                start <= history@.len(), bindings@.len() == self.symbols@.variables.len(),
+                index <= events@.len(), bindings@.len() == self.symbols@.variables.len(),
                 forall|i: int| 0 <= i < bindings@.len() ==> value_view(bindings@[i]) != Data::Undefined,
-                residual_after_prefix(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual),
-                previous matches Some((t, e, r)) ==> t@ < self.store.graph().transitions.len() && instantiation_result(*self, t, bindings@, *e, r),
+                residual_folds(*self, bindings@, from, source_model::values_data(events@).take(index as int), residual),
+                source_model::values_data(events@).take(events@.len() as int) == source_model::values_data(events@),
+                ids_wf(self.interner, bindings@, binding_ids@),
             ensures pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
-                failure is Some || residual_after_prefix(*self, source_model::values_data(history@), bindings@, history@.len(), residual),
-            decreases suffix@.len() - index,
+                failure is Some || residual_folds(*self, bindings@, from, source_model::values_data(events@), residual),
+            decreases events@.len() - index,
         ))]
-        while index < suffix.len() {
-            let event = &suffix[index];
-            proof_decl! { let ghost before = *self; }
-            proof! { source_model::lemma_source_graph_future(entry.store.graph(), before.store.graph()); }
+        while index < events.len() {
+            let event = &events[index];
+            proof_decl! {
+                let ghost before = *self;
+                let ghost done = source_model::values_data(events@).take(index as int);
+            }
+            proof! {
+                source_model::lemma_source_graph_future(entry.store.graph(), before.store.graph());
+                assert(source_model::values_data(events@).take(index as int + 1) =~= done.push(value_view(*event)));
+            }
             loop_try!(checkpoint(timer, world), failure);
             let constants = self.store.constants();
             if residual == constants.all || residual == constants.empty {
-                proof! { lemma_replay_absorbing(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual); }
+                proof! {
+                    lemma_fold_absorbing(*self, bindings@, from, done, source_model::values_data(events@).skip(index as int), residual);
+                    assert(done + source_model::values_data(events@).skip(index as int) =~= source_model::values_data(events@));
+                }
                 break;
             }
+            selections.clear();
+            selections.resize(path_count, None);
+            proof! { assert(source_model::selections_wf(selections@, self.symbols@, value_view(*event))); }
             #[cfg(test)]
             {
                 self.work.events = self.work.events.saturating_add(1);
@@ -526,43 +653,55 @@ impl CompiledPair {
                 };
                 symbolic::symbolic_derivative(&mut kernel, &mut self.derivatives, residual)
             };
-            proof! {
-                lemma_pair_symbolic_frame(before, *self);
-                lemma_replay_frame(before, *self, source_model::values_data(history@), bindings@, (start + index) as nat, residual);
-                if let Some((t, e, r)) = previous { lemma_previous_frame(before, *self, t, bindings@, *e, r); }
-            }
+            proof! { lemma_pair_symbolic_frame(before, *self); lemma_fold_frame(before, *self, bindings@, from, done, residual); }
             let transition = loop_try!(derivative_result, failure);
-            if let Some((old_transition, old_event, successor)) = previous {
-                if old_transition == transition {
-                    loop_try!(checkpoint(timer, world), failure);
-                    let equal = old_event == event;
-                    loop_try!(checkpoint(timer, world), failure);
-                    if equal {
-                        #[cfg(test)]
-                        {
-                            self.work.equal_event_hits =
-                                self.work.equal_event_hits.saturating_add(1);
-                            if residual == successor {
-                                self.work.self_loops = self.work.self_loops.saturating_add(1);
-                            }
-                        }
-                        proof! { lemma_replay_step(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
-                        residual = successor;
-                        index = index.saturating_add(1);
-                        continue;
+            #[cfg(test)]
+            let guards_enabled = !self.work.skip_guards;
+            #[cfg(not(test))]
+            let guards_enabled = true;
+            if guards_enabled {
+                proof_decl! { let ghost before_guard = *self; }
+                let ensured = self.ensure_guard(residual, transition, timer, world);
+                proof! { lemma_fold_frame(before_guard, *self, bindings@, from, done, residual); symbolic::verify::derivative_correct_stable(before_guard.store.graph(), self.store.graph(), residual@, transition); }
+                loop_try!(ensured, failure);
+                proof_decl! { let ghost before_hit = *self; }
+                let hit = self.guard_hit(
+                    residual,
+                    transition,
+                    event,
+                    bindings,
+                    binding_ids,
+                    &mut selections,
+                    path_hints,
+                    timer,
+                    world,
+                );
+                proof! { lemma_fold_frame(before_hit, *self, bindings@, from, done, residual); symbolic::verify::derivative_correct_stable(before_hit.store.graph(), self.store.graph(), residual@, transition); lemma_ids_wf_frame(before_hit.interner, self.interner, bindings@, binding_ids@); }
+                if loop_try!(hit, failure) {
+                    #[cfg(test)]
+                    {
+                        self.work.guard_hits = self.work.guard_hits.saturating_add(1);
+                        self.work.self_loops = self.work.self_loops.saturating_add(1);
                     }
+                    proof! { lemma_fold_step(*self, bindings@, from, done, residual, transition, *event, residual); }
+                    index = index.saturating_add(1);
+                    continue;
                 }
             }
             proof_decl! { let ghost before_instantiate = *self; }
-            let successor_result = self.instantiate(transition, event, bindings, timer, world);
-            proof! {
-                lemma_replay_frame(before_instantiate, *self, source_model::values_data(history@), bindings@, (start + index) as nat, residual);
-                if let Some((t, e, r)) = previous { lemma_previous_frame(before_instantiate, *self, t, bindings@, *e, r); }
-                symbolic::verify::derivative_correct_stable(before_instantiate.store.graph(), self.store.graph(), residual@, transition);
-            }
+            let successor_result = self.instantiate(
+                transition,
+                event,
+                bindings,
+                binding_ids,
+                &mut selections,
+                path_hints,
+                timer,
+                world,
+            );
+            proof! { lemma_fold_frame(before_instantiate, *self, bindings@, from, done, residual); symbolic::verify::derivative_correct_stable(before_instantiate.store.graph(), self.store.graph(), residual@, transition); lemma_ids_wf_frame(before_instantiate.interner, self.interner, bindings@, binding_ids@); }
             let successor = loop_try!(successor_result, failure);
-            proof! { lemma_replay_step(*self, source_model::values_data(history@), bindings@, (start + index) as nat, residual, transition, *event, successor); }
-            previous = Some((transition, event, successor));
+            proof! { lemma_fold_step(*self, bindings@, from, done, residual, transition, *event, successor); }
             #[cfg(test)]
             {
                 if residual == successor {
@@ -648,6 +787,15 @@ impl CompiledPair {
                     key.transition@ < before_push.atoms@.len() && self.atoms@[key.transition@ as int] == before_push.atoms@[key.transition@ as int] by {
                     assert(successor_map(before_push).contains_key(key));
                 }
+                assert forall|r: int| 0 <= r < self.guards@.len() && self.guards@[r] is Some
+                    implies guard_wf(self.store.graph(), self.atoms@, r, self.guards@[r].unwrap()) by {
+                    let guard = self.guards@[r].unwrap();
+                    assert(guard_wf(before_push.store.graph(), before_push.atoms@, r, guard));
+                    if guard.mask != 0 {
+                        assert(self.atoms@[guard.transition@ as int] == before_push.atoms@[guard.transition@ as int]);
+                    }
+                }
+                assert(guard_cache_wf(self.store.graph(), self.atoms@, self.guards@));
                 assert(model::graph_wf(self.store.graph()));
                 assert(self.store.valid_store());
                 assert(model::symbols_wf(self.symbols@));
@@ -658,6 +806,11 @@ impl CompiledPair {
                 assert(match self.successors { Some(cache) => successor_entries_wf(self.store.graph(), self.atoms@, successor_cache_view(cache)), None => true });
                 assert(pair_wf(*self));
             }
+        }
+        proof_decl! { let ghost before_slot = *self; }
+        proof! {
+            if index < prior_atoms.len() { assert(prior_atoms[index as int] == entry.atoms@[index as int]); }
+            assert(before_slot.atoms@[index as int] is None);
         }
         let atom_slots = self.atoms.as_mut_slice();
         let slot = atom_slots
@@ -670,6 +823,16 @@ impl CompiledPair {
                 assert(entry.atoms@[key.transition@ as int] is Some);
                 assert(key.transition != transition);
             }
+            assert forall|r: int| 0 <= r < self.guards@.len() && self.guards@[r] is Some
+                implies guard_wf(self.store.graph(), self.atoms@, r, self.guards@[r].unwrap()) by {
+                let guard = self.guards@[r].unwrap();
+                assert(guard_wf(before_slot.store.graph(), before_slot.atoms@, r, guard));
+                if guard.mask != 0 {
+                    assert(guard.transition@ != index);
+                    assert(self.atoms@[guard.transition@ as int] == before_slot.atoms@[guard.transition@ as int]);
+                }
+            }
+            assert(guard_cache_wf(self.store.graph(), self.atoms@, self.guards@));
             assert(pair_wf(*self));
         }
         proof_decl! { let ghost before_charge = *self; }
@@ -681,15 +844,410 @@ impl CompiledPair {
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     #[verus_spec(result =>
         requires pair_wf(*old(self)), transition@ < old(self).store.graph().transitions.len(),
+            residual@ < old(self).store.graph().regexes.len(),
         ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            progress_metadata_unchanged(*old(self), *final(self)),
+            result is Ok ==> has_guard(*final(self), residual),
+    )]
+    /// Stores `residual`'s self-loop guard for `transition` once per residual.
+    fn ensure_guard(
+        &mut self,
+        residual: RegexId,
+        transition: TransitionId,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost entry = *self; }
+        let index = residual.index()?;
+        if matches!(self.guards.get(index), Some(Some(_))) {
+            return Ok(());
+        }
+        let constant = {
+            let kernel = RuntimeKernel {
+                store: &mut self.store,
+                timer,
+                world,
+            };
+            match kernel.transition(transition) {
+                Ok(TransitionView::Const(_)) => Ok(true),
+                Ok(_) => Ok(false),
+                Err(error) => Err(error),
+            }
+        }?;
+        let mask = if constant {
+            0
+        } else {
+            self.ensure_atoms(transition, timer, world)?;
+            self.guard_mask(residual, transition, timer, world)?
+        };
+        proof_decl! { let ghost guard = Guard { transition, mask }; let ghost certified = *self; }
+        proof! { assert(guard_wf(self.store.graph(), self.atoms@, index as int, guard)); }
+        let needed = index
+            .checked_add(1)
+            .ok_or_else(|| invariant("guard table length overflow"))?;
+        let growth = needed.saturating_sub(self.guards.len());
+        let projected = self
+            .store
+            .projected(sequence_bytes::<Option<Guard>>(growth)?)?;
+        let reserved = world.try_reserve_vec(&mut self.guards, growth);
+        proof! { lemma_pair_guard_update(certified, *self); }
+        allocation(reserved)?;
+        checkpoint(timer, world)?;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+                self.store == certified.store, self.atoms@ == certified.atoms@,
+                guard_wf(self.store.graph(), self.atoms@, index as int, guard),
+                index == residual@, needed == index + 1,
+            decreases needed - self.guards@.len(),
+        ))]
+        while self.guards.len() < needed {
+            proof_decl! { let ghost before_push = *self; }
+            self.guards.push(None);
+            proof! {
+                assert forall|r: int| 0 <= r < self.guards@.len() && self.guards@[r] is Some
+                    implies guard_wf(self.store.graph(), self.atoms@, r, self.guards@[r].unwrap()) by {
+                    assert(self.guards@[r] == before_push.guards@[r]);
+                }
+                lemma_pair_guard_update(before_push, *self);
+            }
+        }
+        proof_decl! { let ghost before_slot = *self; }
+        let guard_slots = self.guards.as_mut_slice();
+        let slot = guard_slots
+            .get_mut(index)
+            .ok_or_else(|| invariant("invalid guard table slot"))?;
+        *slot = Some(Guard { transition, mask });
+        proof! {
+            assert forall|r: int| 0 <= r < self.guards@.len() && self.guards@[r] is Some
+                implies guard_wf(self.store.graph(), self.atoms@, r, self.guards@[r].unwrap()) by {
+                if r != index { assert(self.guards@[r] == before_slot.guards@[r]); }
+            }
+            lemma_pair_guard_update(before_slot, *self);
+        }
+        proof_decl! { let ghost before_charge = *self; }
+        self.store.set_charged_bytes(projected);
+        proof! { lemma_pair_symbolic_frame(before_charge, *self); }
+        checkpoint(timer, world)
+    }
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)), has_atoms(*old(self), transition),
+            transition@ < old(self).store.graph().transitions.len(),
+            residual@ < old(self).store.graph().regexes.len(),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            progress_metadata_unchanged(*old(self), *final(self)),
+            final(self).atoms@ == old(self).atoms@, final(self).guards@ == old(self).guards@,
+            result matches Ok(mask) ==> guard_wf(final(self).store.graph(), final(self).atoms@, residual@ as int, Guard { transition, mask }),
+    )]
+    /// Atoms true in every truth word whose successor leaves `residual`: each of the 2^k words
+    /// is interpreted once and the leaving words are intersected. `GraphLimit` yields mask 0.
+    fn guard_mask(
+        &mut self,
+        residual: RegexId,
+        transition: TransitionId,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<u64> {
+        proof_decl! { let ghost entry = *self; }
+        let atoms = atom_set(self.atoms.as_slice(), transition)?;
+        let count = atoms.ids().len();
+        if count == 0 || count > GUARD_MAX_ATOMS {
+            return Ok(0);
+        }
+        let shift = u32::try_from(count).map_err(|_| invariant("invalid guard atom count"))?;
+        let classes = 1_u64
+            .checked_shl(shift)
+            .ok_or_else(|| invariant("invalid guard class count"))?;
+        proof! { assert(classes >= 2) by(bit_vector) requires classes == (1u64 << shift), 1 <= shift <= 8; }
+        // A `HasValue` guard is only worth evaluating when no `EqCore` guard exists.
+        let mut eq_bits = 0_u64;
+        let mut has_bits = 0_u64;
+        let mut index = 0_usize;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant pair_wf(*self), entry == *old(self), *self == entry,
+                index <= count, count == atoms@.len(),
+            decreases count - index,
+        ))]
+        while index < count {
+            let id = atoms
+                .ids()
+                .get(index)
+                .ok_or_else(|| invariant("invalid primitive atom index"))?;
+            let primitive = {
+                let kernel = RuntimeKernel {
+                    store: &mut self.store,
+                    timer,
+                    world,
+                };
+                match kernel.test(*id) {
+                    Ok(TestView::Atom {
+                        primitive,
+                        positive: true,
+                    }) => Ok(primitive),
+                    Ok(_) => Err(invariant("invalid primitive atom set")),
+                    Err(error) => Err(error),
+                }
+            }?;
+            let bit = 1_u64
+                .checked_shl(u32::try_from(index).map_err(|_| invariant("invalid guard bit"))?)
+                .ok_or_else(|| invariant("invalid guard bit"))?;
+            match primitive {
+                Primitive::EqCore(..) => eq_bits |= bit,
+                Primitive::HasValue(_) => has_bits |= bit,
+            }
+            index = index.saturating_add(1);
+        }
+        let mut mask = classes - 1;
+        let mut minterm = 0_u64;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant pair_wf(*self), entry == *old(self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+                self.atoms@ == entry.atoms@, self.guards@ == entry.guards@,
+                has_atoms(*self, transition), atoms@ == self.atoms@[transition@ as int].unwrap()@,
+                transition@ < self.store.graph().transitions.len(), residual@ < self.store.graph().regexes.len(),
+                count == atoms@.len(), 1 <= count <= 8, classes == (1u64 << (count as u32)), minterm <= classes,
+                mask == 0 || forall|w: u64| w < minterm && (w & mask) != mask
+                    ==> #[trigger] guard_class_covered(self.store.graph(), atoms@, residual, transition, w),
+            ensures mask == 0 || minterm == classes,
+            decreases classes - minterm,
+        ))]
+        while minterm < classes {
+            checkpoint(timer, world)?;
+            let words = [minterm];
+            proof_decl! { let ghost before = *self; }
+            let successor = {
+                let mut kernel = RuntimeKernel {
+                    store: &mut self.store,
+                    timer,
+                    world,
+                };
+                symbolic::interpret_transition(&mut kernel, transition, atoms, words.as_slice())
+            };
+            proof! {
+                symbolic::verify::derivative_extends(before.store.graph(), self.store.graph());
+                lemma_pair_symbolic_frame(before, *self);
+                symbolic::verify::truth_words_realize_extends(before.store.graph(), self.store.graph(), atoms@, seq![minterm]);
+                assert(words@ =~= seq![minterm]);
+                if mask != 0 {
+                    assert forall|w: u64| w < minterm && (w & mask) != mask
+                        implies #[trigger] guard_class_covered(self.store.graph(), atoms@, residual, transition, w) by {
+                        lemma_guard_class_covered_frame(before.store.graph(), self.store.graph(), atoms@, residual, transition, w);
+                    }
+                }
+            }
+            let successor = match successor {
+                Ok(successor) => successor,
+                Err(HistoryError::GraphLimit { .. }) => {
+                    mask = 0;
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+            if successor != residual {
+                proof! {
+                    let next = mask & minterm;
+                    if next != 0 {
+                        assert((minterm & next) == next) by(bit_vector) requires next == mask & minterm;
+                        assert forall|w: u64| w <= minterm && (w & next) != next
+                            implies #[trigger] guard_class_covered(self.store.graph(), atoms@, residual, transition, w) by {
+                            lemma_mask_shrink(w, mask, minterm);
+                            assert(mask != 0) by(bit_vector) requires next == mask & minterm, next != 0;
+                        }
+                    }
+                }
+                mask &= minterm;
+            } else if mask != 0 {
+                proof! {
+                    assert(guard_class_covered(self.store.graph(), atoms@, residual, transition, minterm));
+                    assert forall|w: u64| w <= minterm && (w & mask) != mask
+                        implies #[trigger] guard_class_covered(self.store.graph(), atoms@, residual, transition, w) by {
+                        if w == minterm {} else { assert(w < minterm); }
+                    }
+                }
+            }
+            proof! { assert(minterm < classes); }
+            minterm = minterm.saturating_add(1);
+        }
+        proof_decl! { let ghost full = mask; }
+        if mask & eq_bits != 0 {
+            mask &= !has_bits;
+        }
+        proof! {
+            assert(mask & !full == 0 && (mask != 0 ==> full != 0)) by(bit_vector)
+                requires mask == full || mask == full & !has_bits;
+            let g = self.store.graph();
+            if mask != 0 {
+                assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
+                    model::symbols_wf(sym) && guard_blocks(g, atoms@, mask, sym, theta, event)
+                    implies model::regex_lang(g, sym, theta, residual@, word)
+                        == norm::transition_lang(g, sym, theta, transition, event, word) by {
+                    lemma_guard_blocks_subset(g, atoms@, mask, full, sym, theta, event);
+                    lemma_guard_blocks_word(g, atoms@, full, sym, theta, event);
+                    let w = realized_word(g, atoms@, sym, theta, event, atoms@.len());
+                    assert(guard_class_covered(g, atoms@, residual, transition, w));
+                }
+            }
+        }
+        Ok(mask)
+    }
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)), has_guard(*old(self), residual),
+            transition@ < old(self).store.graph().transitions.len(),
+            source_model::selections_wf(old(selections)@, old(self).symbols@, value_view(*event)),
+            ids_wf(old(self).interner, bindings@, binding_ids@),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            source_model::selections_wf(final(selections)@, final(self).symbols@, value_view(*event)),
+            progress_metadata_unchanged(*old(self), *final(self)),
+            final(self).atoms@ == old(self).atoms@, final(self).guards@ == old(self).guards@,
+            successor_map(*final(self)) == successor_map(*old(self)),
+            result matches Ok(true) ==> instantiation_result(*final(self), transition, bindings@, *event, residual),
+    )]
+    /// `Ok(true)` when the stored guard for `residual` names `transition` and one of its masked
+    /// atoms is false on `event`, i.e. the event is a certified self-loop.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Share event selections without coupling them to pair state."
+    )]
+    fn guard_hit<'e>(
+        &mut self,
+        residual: RegexId,
+        transition: TransitionId,
+        event: &'e Value,
+        bindings: &[Value],
+        binding_ids: &[Option<StringId>],
+        selections: &mut Vec<Option<Option<&'e Value>>>,
+        path_hints: &mut Vec<Vec<usize>>,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> KernelResult<bool> {
+        proof_decl! { let ghost entry = *self; }
+        let guard = match self.guards.get(residual.index()?) {
+            Some(Some(guard)) => *guard,
+            _ => return Err(invariant("missing progress guard")),
+        };
+        if guard.transition != transition || guard.mask == 0 {
+            return Ok(false);
+        }
+        let atoms = atom_set(self.atoms.as_slice(), transition)?;
+        let masks = [guard.mask];
+        proof! { assert(masks@ =~= seq![guard.mask]); }
+        let mut hit = false;
+        let mut failure = None;
+        let mut index = 0_usize;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant pair_wf(*self), pair_frame(entry, *self), progress_metadata_unchanged(entry, *self),
+                self.store.graph() == entry.store.graph(), self.derivatives@ == entry.derivatives@,
+                successor_map(*self) == successor_map(entry), self.atoms@ == entry.atoms@, self.guards@ == entry.guards@,
+                index <= atoms@.len(), has_atoms(*self, transition), atoms@ == self.atoms@[transition@ as int].unwrap()@,
+                has_guard(*self, residual), self.guards@[residual@ as int] == Some(guard), guard.transition == transition, guard.mask != 0,
+                masks@ == seq![guard.mask],
+                source_model::selections_wf(selections@, self.symbols@, value_view(*event)),
+                hit ==> instantiation_result(*self, transition, bindings@, *event, residual),
+                ids_wf(self.interner, bindings@, binding_ids@),
+            decreases atoms@.len() - index,
+        ))]
+        while index < atoms.ids().len() {
+            let masked = match symbolic::atom_truth(masks.as_slice(), index) {
+                Ok(masked) => masked,
+                Err(_) => break,
+            };
+            if masked {
+                let id = loop_try!(
+                    atoms
+                        .ids()
+                        .get(index)
+                        .ok_or_else(|| invariant("invalid primitive atom index")),
+                    failure
+                );
+                let primitive = {
+                    let kernel = RuntimeKernel {
+                        store: &mut self.store,
+                        timer,
+                        world,
+                    };
+                    match kernel.test(*id) {
+                        Ok(TestView::Atom {
+                            primitive,
+                            positive: true,
+                        }) => Ok(primitive),
+                        Ok(_) => Err(invariant("invalid primitive atom set")),
+                        Err(error) => Err(error),
+                    }
+                };
+                let primitive = loop_try!(primitive, failure);
+                proof_decl! { let ghost before_classify = *self; }
+                let classified = classify(
+                    primitive,
+                    event,
+                    bindings,
+                    binding_ids,
+                    &self.symbols,
+                    &self.constant_ids,
+                    &mut self.interner,
+                    path_hints,
+                    selections,
+                    timer,
+                    world,
+                );
+                proof! {
+                    lemma_pair_symbolic_frame(before_classify, *self);
+                    lemma_ids_wf_frame(before_classify.interner, self.interner, bindings@, binding_ids@);
+                }
+                if !loop_try!(classified, failure) {
+                    proof! {
+                        let g = self.store.graph();
+                        assert(symbolic::verify::truth_word_bit(seq![guard.mask], index as nat));
+                        assert(atoms@[index as int] == *id);
+                        assert(g.tests[id@ as int] == model::TestNode::Atom(primitive@, true));
+                        assert(model::lift_test(g, atoms@[index as int]@) == model::Test::Atom(primitive@, true));
+                        assert(!model::test_holds(self.symbols@, source_model::values_data(bindings@),
+                            model::lift_test(g, atoms@[index as int]@), value_view(*event)));
+                        let i = index as int;
+                        assert(i as nat == index as nat);
+                        assert(self.atoms@[guard.transition@ as int].unwrap()@ == atoms@);
+                        assert(0 <= i < atoms@.len() && symbolic::verify::truth_word_bit(seq![guard.mask], i as nat)
+                            && !model::test_holds(self.symbols@, source_model::values_data(bindings@),
+                                model::lift_test(g, atoms@[i]@), value_view(*event)));
+                        assert(guard_blocks(g, self.atoms@[guard.transition@ as int].unwrap()@, guard.mask,
+                            self.symbols@, source_model::values_data(bindings@), value_view(*event)));
+                        lemma_guard_hit(*self, residual, guard, bindings@, *event);
+                    }
+                    hit = true;
+                    break;
+                }
+            }
+            index = index.saturating_add(1);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(hit)
+    }
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires pair_wf(*old(self)), transition@ < old(self).store.graph().transitions.len(),
+            source_model::selections_wf(old(selections)@, old(self).symbols@, value_view(*event)),
+            ids_wf(old(self).interner, bindings@, binding_ids@),
+        ensures pair_wf(*final(self)), pair_frame(*old(self), *final(self)),
+            source_model::selections_wf(final(selections)@, final(self).symbols@, value_view(*event)),
             progress_metadata_unchanged(*old(self), *final(self)),
             result matches Ok(id) ==> instantiation_result(*final(self), transition, bindings@, *event, id),
     )]
-    fn instantiate(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Share event selections without coupling them to pair state."
+    )]
+    fn instantiate<'e>(
         &mut self,
         transition: TransitionId,
-        event: &Value,
+        event: &'e Value,
         bindings: &[Value],
+        binding_ids: &[Option<StringId>],
+        selections: &mut Vec<Option<Option<&'e Value>>>,
+        path_hints: &mut Vec<Vec<usize>>,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<RegexId> {
@@ -737,9 +1295,11 @@ impl CompiledPair {
                 has_atoms(*self, transition), atom_cache_wf(self.store.graph(), self.atoms@),
                 atoms@ == self.atoms@[transition@ as int].unwrap()@,
                 atoms_wf(self.store.graph(), transition@, atoms@),
+                source_model::selections_wf(selections@, self.symbols@, value_view(*event)),
                 forall|j: int| 0 <= j < index ==> symbolic::verify::truth_word_bit(words.view(), j as nat)
                     == model::test_holds(self.symbols@, source_model::values_data(bindings@), model::lift_test(self.store.graph(), atoms@[j]@), value_view(*event)),
                 forall|j: nat| index <= j ==> !symbolic::verify::truth_word_bit(words.view(), j),
+                ids_wf(self.interner, bindings@, binding_ids@),
             ensures failure is None ==> index == atoms@.len(),
             decreases atoms@.len() - index,
         ))]
@@ -769,10 +1329,25 @@ impl CompiledPair {
                 }
             };
             let primitive = loop_try!(primitive, failure);
-            if loop_try!(
-                classify(primitive, event, bindings, &self.symbols, timer, world),
-                failure
-            ) {
+            proof_decl! { let ghost before_classify = *self; }
+            let classified = classify(
+                primitive,
+                event,
+                bindings,
+                binding_ids,
+                &self.symbols,
+                &self.constant_ids,
+                &mut self.interner,
+                path_hints,
+                selections,
+                timer,
+                world,
+            );
+            proof! {
+                lemma_pair_symbolic_frame(before_classify, *self);
+                lemma_ids_wf_frame(before_classify.interner, self.interner, bindings@, binding_ids@);
+            }
+            if loop_try!(classified, failure) {
                 let word_index = loop_try!(
                     index
                         .checked_div(64)
@@ -1056,7 +1631,6 @@ fn equal_bindings(
     while index < left.len() {
         loop_try!(checkpoint(timer, world), failure);
         let equal = left[index] == right[index];
-        loop_try!(checkpoint(timer, world), failure);
         if !equal {
             proof! {
                 assert(source_model::values_data(left@)[index as int] != source_model::values_data(right@)[index as int]);
@@ -1824,6 +2398,56 @@ pub(crate) mod verify {
         }
     }
 
+    /// Some masked atom of `atoms` is false on `event`.
+    pub(super) open spec fn guard_blocks(
+        g: model::Graph, atoms: Seq<TestId>, mask: u64, sym: model::Symbols, theta: Seq<Data>, event: Data,
+    ) -> bool {
+        exists|i: int| 0 <= i < atoms.len() && #[trigger] symbolic::verify::truth_word_bit(seq![mask], i as nat)
+            && !model::test_holds(sym, theta, model::lift_test(g, atoms[i]@), event)
+    }
+
+    pub(super) open spec fn guard_wf(g: model::Graph, atoms_cache: Seq<Option<AtomSet>>, residual: int, guard: Guard) -> bool {
+        guard.mask == 0 || {
+            let t = guard.transition@ as int;
+            0 <= residual < g.regexes.len() && guard.transition@ < g.transitions.len()
+            && 0 <= t < atoms_cache.len() && atoms_cache[t] is Some
+            && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
+                model::symbols_wf(sym) && guard_blocks(g, atoms_cache[t].unwrap()@, guard.mask, sym, theta, event)
+                    ==> model::regex_lang(g, sym, theta, residual as nat, word)
+                        == norm::transition_lang(g, sym, theta, guard.transition, event, word)
+        }
+    }
+
+    pub(super) open spec fn guard_cache_wf(g: model::Graph, atoms_cache: Seq<Option<AtomSet>>, guards: Seq<Option<Guard>>) -> bool {
+        forall|r: int| 0 <= r < guards.len() && guards[r] is Some ==> guard_wf(g, atoms_cache, r, guards[r].unwrap())
+    }
+
+    pub(super) open spec fn has_guard(pair: CompiledPair, residual: RegexId) -> bool {
+        residual@ < pair.guards@.len() && pair.guards@[residual@ as int] is Some
+    }
+
+    /// Every (sym, theta, event) realising truth word `w` of `atoms` maps `transition` to `residual`.
+    pub(super) open spec fn guard_class_covered(
+        g: model::Graph, atoms: Seq<TestId>, residual: RegexId, transition: TransitionId, w: u64,
+    ) -> bool {
+        forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
+            model::symbols_wf(sym) && symbolic::verify::truth_words_realize(g, atoms, seq![w], sym, theta, event)
+                ==> model::regex_lang(g, sym, theta, residual@, word) == norm::transition_lang(g, sym, theta, transition, event, word)
+    }
+
+    /// Truth word of the first `n` atoms on (sym, theta, event).
+    pub(super) open spec fn realized_word(
+        g: model::Graph, atoms: Seq<TestId>, sym: model::Symbols, theta: Seq<Data>, event: Data, n: nat,
+    ) -> u64
+        decreases n,
+    {
+        if n == 0 { 0 } else {
+            let m = (n - 1) as nat;
+            realized_word(g, atoms, sym, theta, event, m)
+                | (if model::test_holds(sym, theta, model::lift_test(g, atoms[m as int]@), event) { 1u64 << (m as u32) } else { 0u64 })
+        }
+    }
+
     pub(super) open spec fn cursor_cache_wf(pair: CompiledPair) -> bool {
         #[cfg(feature = "cache")]
         {
@@ -1855,6 +2479,8 @@ pub(crate) mod verify {
         && atom_cache_wf(pair.store.graph(), pair.atoms@)
         && (match pair.successors { Some(cache) => successor_entries_wf(pair.store.graph(), pair.atoms@, successor_cache_view(cache)), None => true })
         && cursor_cache_wf(pair)
+        && guard_cache_wf(pair.store.graph(), pair.atoms@, pair.guards@)
+        && pair.interner.inv() && ids_wf(pair.interner, pair.symbols.constants@, pair.constant_ids@)
     }
 
     pub open(super) spec fn pair_represents(
@@ -1867,10 +2493,16 @@ pub(crate) mod verify {
     pub open(super) spec fn pair_graph(pair: CompiledPair) -> model::Graph { pair.store.graph() }
     pub open(super) spec fn pair_symbols(pair: CompiledPair) -> model::Symbols { pair.symbols@ }
     pub open(super) spec fn pair_root(pair: CompiledPair) -> RegexId { pair.root }
+    pub open(super) spec fn pair_binding_ids_wf(pair: CompiledPair, bindings: Seq<Value>, ids: Seq<Option<StringId>>) -> bool {
+        ids_wf(pair.interner, bindings, ids)
+    }
 
     pub open(super) spec fn pair_frame(before: CompiledPair, after: CompiledPair) -> bool {
         model::graph_extends(before.store.graph(), after.store.graph()) && after.symbols@ == before.symbols@
             && after.pattern == before.pattern && after.root == before.root
+            && after.symbols.constants@ == before.symbols.constants@
+            && after.constant_ids@ == before.constant_ids@
+            && interner_frame(before.interner, after.interner)
     }
 
     pub open(super) spec fn progress_metadata_unchanged(before: CompiledPair, after: CompiledPair) -> bool {
@@ -2057,10 +2689,12 @@ pub(crate) mod verify {
     pub(super) proof fn lemma_pair_symbolic_frame(before: CompiledPair, after: CompiledPair)
         requires pair_wf(before), after.store.valid_store(), model::graph_wf(after.store.graph()),
             pair_frame(before, after), progress_metadata_unchanged(before, after),
-            after.atoms@ == before.atoms@, successor_map(after) == successor_map(before),
+            after.atoms@ == before.atoms@, after.guards@ == before.guards@, successor_map(after) == successor_map(before),
             symbolic::verify::derivative_cache_wf(after.store.graph(), after.derivatives@),
+            after.interner.inv(),
         ensures pair_wf(after),
     {
+        lemma_ids_wf_frame(before.interner, after.interner, before.symbols.constants@, before.constant_ids@);
         symbolic::verify::derivative_extends(before.store.graph(), after.store.graph());
         lemma_pair_cursor_frame(before, after);
         assert forall|i: int| 0 <= i < after.atoms@.len() && after.atoms@[i] is Some implies i < after.store.graph().transitions.len()
@@ -2068,6 +2702,209 @@ pub(crate) mod verify {
             lemma_atoms_wf_extends(before.store.graph(), after.store.graph(), i as nat, before.atoms@[i].unwrap()@);
         }
         lemma_successor_entries_frame(before.store.graph(), after.store.graph(), before.atoms@, successor_map(before));
+        lemma_guard_cache_frame(before.store.graph(), after.store.graph(), before.atoms@, before.guards@);
+    }
+
+    /// `pair_wf` survives an update of the guard table alone.
+    pub(super) proof fn lemma_pair_guard_update(before: CompiledPair, after: CompiledPair)
+        requires pair_wf(before), after.store == before.store, after.symbols == before.symbols,
+            after.pattern == before.pattern, after.root == before.root, after.derivatives@ == before.derivatives@,
+            after.atoms@ == before.atoms@, successor_map(after) == successor_map(before),
+            progress_metadata_unchanged(before, after),
+            guard_cache_wf(after.store.graph(), after.atoms@, after.guards@),
+            after.interner == before.interner, after.constant_ids@ == before.constant_ids@,
+            after.symbols.constants@ == before.symbols.constants@,
+        ensures pair_wf(after), pair_frame(before, after),
+    {
+        lemma_pair_cursor_frame(before, after);
+        let head = choose|head: language::Head| source_model::pattern_represents(before.pattern, before.symbols@, head);
+        assert(source_model::pattern_represents(after.pattern, after.symbols@, head));
+    }
+
+    pub(super) proof fn lemma_guard_cache_frame(a: model::Graph, b: model::Graph, atoms_cache: Seq<Option<AtomSet>>, guards: Seq<Option<Guard>>)
+        requires model::graph_wf(a), model::graph_extends(a, b), atom_cache_wf(a, atoms_cache), guard_cache_wf(a, atoms_cache, guards),
+        ensures guard_cache_wf(b, atoms_cache, guards),
+    {
+        assert forall|r: int| 0 <= r < guards.len() && guards[r] is Some implies guard_wf(b, atoms_cache, r, guards[r].unwrap()) by {
+            lemma_guard_wf_frame(a, b, atoms_cache, r, guards[r].unwrap());
+        }
+    }
+
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(30)]
+    pub(super) proof fn lemma_guard_wf_frame(a: model::Graph, b: model::Graph, atoms_cache: Seq<Option<AtomSet>>, r: int, guard: Guard)
+        requires model::graph_wf(a), model::graph_extends(a, b), atom_cache_wf(a, atoms_cache), guard_wf(a, atoms_cache, r, guard),
+        ensures guard_wf(b, atoms_cache, r, guard),
+    {
+        hide(language::lang);
+        hide(language::interp_transition);
+        hide(model::test_holds);
+        hide(model::lift_test);
+        hide(model::lift_regex);
+        hide(model::lift_transition);
+        if guard.mask != 0 {
+            let t = guard.transition@ as int;
+            let atoms = atoms_cache[t].unwrap()@;
+            assert(model::atom_ids_wf(a, atoms));
+            model::lemma_graph_wf_elim(a);
+            model::lemma_lift_regex_stable(a, b, r as nat);
+            model::lemma_lift_transition_stable(a, b, guard.transition@);
+            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
+                model::symbols_wf(sym) && guard_blocks(b, atoms, guard.mask, sym, theta, event)
+                implies model::regex_lang(b, sym, theta, r as nat, word)
+                    == norm::transition_lang(b, sym, theta, guard.transition, event, word) by {
+                lemma_guard_blocks_frame(a, b, atoms, guard.mask, sym, theta, event);
+                assert(model::regex_lang(a, sym, theta, r as nat, word) == norm::transition_lang(a, sym, theta, guard.transition, event, word));
+            }
+        }
+    }
+
+    pub(super) proof fn lemma_guard_blocks_frame(a: model::Graph, b: model::Graph, atoms: Seq<TestId>, mask: u64, sym: model::Symbols, theta: Seq<Data>, event: Data)
+        requires model::graph_extends(a, b), model::atom_ids_wf(a, atoms), guard_blocks(b, atoms, mask, sym, theta, event),
+        ensures guard_blocks(a, atoms, mask, sym, theta, event),
+    {
+        hide(model::test_holds);
+        let i = choose|i: int| 0 <= i < atoms.len() && #[trigger] symbolic::verify::truth_word_bit(seq![mask], i as nat)
+            && !model::test_holds(sym, theta, model::lift_test(b, atoms[i]@), event);
+        model::lemma_lift_test_stable(a, b, atoms[i]@);
+    }
+
+    pub(super) proof fn lemma_guard_class_covered_frame(
+        before: model::Graph, after: model::Graph, atoms: Seq<TestId>, residual: RegexId, transition: TransitionId, w: u64,
+    )
+        requires model::graph_extends(before, after), model::graph_wf(before), model::atom_ids_wf(before, atoms),
+            residual@ < before.regexes.len(), transition@ < before.transitions.len(),
+            guard_class_covered(before, atoms, residual, transition, w),
+        ensures guard_class_covered(after, atoms, residual, transition, w),
+    {
+        hide(language::lang);
+        hide(language::interp_transition);
+        hide(model::test_holds);
+        hide(model::lift_regex);
+        hide(model::lift_transition);
+        model::lemma_graph_wf_elim(before);
+        symbolic::verify::truth_words_realize_extends(before, after, atoms, seq![w]);
+        model::lemma_lift_regex_stable(before, after, residual@);
+        model::lemma_lift_transition_stable(before, after, transition@);
+        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
+            model::symbols_wf(sym) && symbolic::verify::truth_words_realize(after, atoms, seq![w], sym, theta, event)
+            implies model::regex_lang(after, sym, theta, residual@, word) == norm::transition_lang(after, sym, theta, transition, event, word) by {
+            assert(symbolic::verify::truth_words_realize(before, atoms, seq![w], sym, theta, event));
+            assert(model::regex_lang(before, sym, theta, residual@, word) == norm::transition_lang(before, sym, theta, transition, event, word));
+        }
+    }
+
+    pub(super) proof fn lemma_word_bit(w: u64, i: nat)
+        requires i < 64,
+        ensures symbolic::verify::truth_word_bit(seq![w], i) == (((w >> (i as u32)) & 1u64) != 0u64),
+    {
+        assert(i / 64 == 0);
+        assert(i % 64 == i);
+        assert(seq![w][0] == w);
+    }
+
+    pub(super) proof fn lemma_realized_word(g: model::Graph, atoms: Seq<TestId>, sym: model::Symbols, theta: Seq<Data>, event: Data, n: nat)
+        requires n <= atoms.len(), n <= 8,
+        ensures realized_word(g, atoms, sym, theta, event, n) < (1u64 << (n as u32)),
+            forall|i: nat| i < n ==> #[trigger] symbolic::verify::truth_word_bit(seq![realized_word(g, atoms, sym, theta, event, n)], i)
+                == model::test_holds(sym, theta, model::lift_test(g, atoms[i as int]@), event),
+            forall|i: nat| n <= i ==> !#[trigger] symbolic::verify::truth_word_bit(seq![realized_word(g, atoms, sym, theta, event, n)], i),
+        decreases n,
+    {
+        let w = realized_word(g, atoms, sym, theta, event, n);
+        if n == 0 {
+            assert(w == 0u64);
+            assert((1u64 << 0u32) == 1u64) by(bit_vector);
+            assert forall|i: nat| n <= i implies !#[trigger] symbolic::verify::truth_word_bit(seq![w], i) by {
+                if i < 64 {
+                    lemma_word_bit(w, i);
+                    let j = i as u32;
+                    assert(((0u64 >> j) & 1u64) == 0u64) by(bit_vector);
+                }
+            }
+        } else {
+            let m = (n - 1) as nat;
+            lemma_realized_word(g, atoms, sym, theta, event, m);
+            let prev = realized_word(g, atoms, sym, theta, event, m);
+            let s = m as u32;
+            let t = n as u32;
+            assert(t == s + 1);
+            assert(!symbolic::verify::truth_word_bit(seq![prev], m));
+            if model::test_holds(sym, theta, model::lift_test(g, atoms[m as int]@), event) {
+                assert(w == prev | (1u64 << s));
+                assert((prev | (1u64 << s)) < (1u64 << t)) by(bit_vector)
+                    requires prev < (1u64 << s), s < 8, t == s + 1;
+                assert forall|i: nat| i < 64 implies #[trigger] symbolic::verify::truth_word_bit(seq![w], i)
+                    == (i == m || symbolic::verify::truth_word_bit(seq![prev], i)) by {
+                    lemma_word_bit(w, i);
+                    lemma_word_bit(prev, i);
+                    let j = i as u32;
+                    if i == m {
+                        assert((((prev | (1u64 << s)) >> s) & 1u64) != 0u64) by(bit_vector) requires s < 64;
+                    } else {
+                        assert((((prev | (1u64 << s)) >> j) & 1u64) == ((prev >> j) & 1u64)) by(bit_vector)
+                            requires s < 64, j < 64, j != s;
+                    }
+                }
+            } else {
+                assert(w == prev | 0u64);
+                assert((prev | 0u64) == prev) by(bit_vector);
+                assert(prev < (1u64 << t)) by(bit_vector)
+                    requires prev < (1u64 << s), s < 8, t == s + 1;
+            }
+        }
+    }
+
+    pub(super) proof fn lemma_guard_blocks_word(g: model::Graph, atoms: Seq<TestId>, mask: u64, sym: model::Symbols, theta: Seq<Data>, event: Data)
+        requires atoms.len() <= 8, guard_blocks(g, atoms, mask, sym, theta, event),
+        ensures ({
+            let w = realized_word(g, atoms, sym, theta, event, atoms.len());
+            w < (1u64 << (atoms.len() as u32))
+                && symbolic::verify::truth_words_realize(g, atoms, seq![w], sym, theta, event)
+                && (w & mask) != mask
+        }),
+    {
+        let w = realized_word(g, atoms, sym, theta, event, atoms.len());
+        lemma_realized_word(g, atoms, sym, theta, event, atoms.len());
+        let i = choose|i: int| 0 <= i < atoms.len() && #[trigger] symbolic::verify::truth_word_bit(seq![mask], i as nat)
+            && !model::test_holds(sym, theta, model::lift_test(g, atoms[i]@), event);
+        assert(symbolic::verify::truth_word_bit(seq![w], i as nat) == model::test_holds(sym, theta, model::lift_test(g, atoms[i]@), event));
+        lemma_word_bit(w, i as nat);
+        lemma_word_bit(mask, i as nat);
+        let j = i as u32;
+        assert(((mask >> j) & 1u64) != 0u64 && ((w >> j) & 1u64) == 0u64 ==> (w & mask) != mask) by(bit_vector)
+            requires j < 64;
+        assert forall|k: int| 0 <= k < atoms.len() implies #[trigger] symbolic::verify::truth_word_bit(seq![w], k as nat)
+            == model::test_holds(sym, theta, model::lift_test(g, atoms[k]@), event) by {}
+    }
+
+    pub(super) proof fn lemma_mask_shrink(w: u64, old_mask: u64, m: u64)
+        ensures (w & (old_mask & m)) != (old_mask & m) ==> (w & old_mask) != old_mask,
+    {
+        assert((w & (old_mask & m)) != (old_mask & m) ==> (w & old_mask) != old_mask) by(bit_vector);
+    }
+
+    pub(super) proof fn lemma_guard_blocks_subset(g: model::Graph, atoms: Seq<TestId>, sub: u64, sup: u64, sym: model::Symbols, theta: Seq<Data>, event: Data)
+        requires sub & !sup == 0, guard_blocks(g, atoms, sub, sym, theta, event),
+        ensures guard_blocks(g, atoms, sup, sym, theta, event),
+    {
+        let i = choose|i: int| 0 <= i < atoms.len() && #[trigger] symbolic::verify::truth_word_bit(seq![sub], i as nat)
+            && !model::test_holds(sym, theta, model::lift_test(g, atoms[i]@), event);
+        lemma_word_bit(sub, i as nat);
+        lemma_word_bit(sup, i as nat);
+        let j = i as u32;
+        assert(((sub >> j) & 1u64) != 0u64 ==> ((sup >> j) & 1u64) != 0u64) by(bit_vector)
+            requires j < 64, sub & !sup == 0;
+        assert(symbolic::verify::truth_word_bit(seq![sup], i as nat));
+    }
+
+    pub(super) proof fn lemma_guard_hit(pair: CompiledPair, residual: RegexId, guard: Guard, bindings: Seq<Value>, event: Value)
+        requires pair_wf(pair), has_guard(pair, residual), pair.guards@[residual@ as int] == Some(guard), guard.mask != 0,
+            guard_blocks(pair.store.graph(), pair.atoms@[guard.transition@ as int].unwrap()@, guard.mask,
+                pair.symbols@, source_model::values_data(bindings), value_view(event)),
+        ensures instantiation_result(pair, guard.transition, bindings, event, residual),
+    {
+        assert(guard_wf(pair.store.graph(), pair.atoms@, residual@ as int, guard));
     }
 
     pub(super) proof fn lemma_replay_frame(before: CompiledPair, after: CompiledPair, history: Seq<Data>, bindings: Seq<Value>, count: nat, residual: RegexId)
@@ -2082,22 +2919,6 @@ pub(crate) mod verify {
             == model::regex_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), after.root@, history.take(count as int) + word) by {
             assert(model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), residual@, word)
                 == model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), before.root@, history.take(count as int) + word));
-        }
-    }
-
-    pub(super) proof fn lemma_previous_frame(before: CompiledPair, after: CompiledPair, transition: TransitionId, bindings: Seq<Value>, event: Value, residual: RegexId)
-        requires pair_wf(before), pair_frame(before, after), instantiation_result(before, transition, bindings, event, residual),
-            transition@ < before.store.graph().transitions.len(),
-        ensures instantiation_result(after, transition, bindings, event, residual), transition@ < after.store.graph().transitions.len(),
-    {
-        hide(language::lang); hide(model::lift_regex); hide(model::lift_transition); hide(model::test_holds);
-        model::lemma_graph_wf_elim(before.store.graph());
-        model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), residual@);
-        model::lemma_lift_transition_stable(before.store.graph(), after.store.graph(), transition@);
-        assert forall|word: Seq<Data>| model::regex_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), residual@, word)
-            == norm::transition_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), transition, value_view(event), word) by {
-            assert(model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), residual@, word)
-                == norm::transition_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), transition, value_view(event), word));
         }
     }
 
@@ -2154,8 +2975,10 @@ pub(crate) mod verify {
     pub(super) proof fn lemma_publication_frame(before: CompiledPair, after: CompiledPair)
         requires pair_wf(before), after.store.graph() == before.store.graph(), after.store.valid_store(),
             after.symbols@ == before.symbols@, after.pattern == before.pattern, after.root == before.root,
-            after.derivatives@ == before.derivatives@, after.atoms@ == before.atoms@,
+            after.derivatives@ == before.derivatives@, after.atoms@ == before.atoms@, after.guards@ == before.guards@,
             successor_map(after) == successor_map(before), cursor_cache_wf(after),
+            after.interner == before.interner, after.constant_ids@ == before.constant_ids@,
+            after.symbols.constants@ == before.symbols.constants@,
         ensures pair_wf(after), pair_frame(before, after),
     {
         hide(language::lang); hide(model::lift_regex); hide(model::lift_transition); hide(model::test_holds);
@@ -2173,6 +2996,83 @@ pub(crate) mod verify {
         assert(history.take(history.len() as int) + Seq::<Data>::empty() =~= history);
         assert(model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, Seq::empty())
             == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), pair.root@, history.take(history.len() as int) + Seq::empty()));
+    }
+
+    /// `to` denotes the quotient of `from` by `events`, under `bindings`.
+    pub open(super) spec fn residual_folds(
+        pair: CompiledPair, bindings: Seq<Value>, from: RegexId, events: Seq<Data>, to: RegexId,
+    ) -> bool {
+        from@ < pair.store.graph().regexes.len() && to@ < pair.store.graph().regexes.len()
+            && forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), to@, word)
+                == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, events + word)
+    }
+
+    pub(super) proof fn lemma_fold_start(pair: CompiledPair, bindings: Seq<Value>, from: RegexId)
+        requires from@ < pair.store.graph().regexes.len(),
+        ensures residual_folds(pair, bindings, from, Seq::empty(), from),
+    {
+        assert forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, word)
+            == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, Seq::<Data>::empty() + word) by {
+            assert(Seq::<Data>::empty() + word =~= word);
+        }
+    }
+
+    pub(super) proof fn lemma_fold_frame(before: CompiledPair, after: CompiledPair, bindings: Seq<Value>, from: RegexId, events: Seq<Data>, to: RegexId)
+        requires pair_wf(before), pair_frame(before, after), residual_folds(before, bindings, from, events, to),
+        ensures residual_folds(after, bindings, from, events, to),
+    {
+        hide(language::lang); hide(model::lift_regex); hide(model::lift_transition); hide(model::test_holds);
+        model::lemma_graph_wf_elim(before.store.graph());
+        model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), from@);
+        model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), to@);
+        assert forall|word: Seq<Data>| model::regex_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), to@, word)
+            == model::regex_lang(after.store.graph(), after.symbols@, source_model::values_data(bindings), from@, events + word) by {
+            assert(model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), to@, word)
+                == model::regex_lang(before.store.graph(), before.symbols@, source_model::values_data(bindings), from@, events + word));
+        }
+    }
+
+    pub(super) proof fn lemma_fold_step(pair: CompiledPair, bindings: Seq<Value>, from: RegexId, events: Seq<Data>, residual: RegexId, transition: TransitionId, event: Value, successor: RegexId)
+        requires pair_wf(pair), residual_folds(pair, bindings, from, events, residual),
+            symbolic::verify::derivative_correct(pair.store.graph(), residual@, transition),
+            instantiation_result(pair, transition, bindings, event, successor),
+        ensures residual_folds(pair, bindings, from, events.push(value_view(event)), successor),
+    {
+        assert forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), successor@, word)
+            == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, events.push(value_view(event)) + word) by {
+            assert(events.push(value_view(event)) + word =~= events + (seq![value_view(event)] + word));
+        }
+    }
+
+    pub(super) proof fn lemma_fold_absorbing(pair: CompiledPair, bindings: Seq<Value>, from: RegexId, events: Seq<Data>, rest: Seq<Data>, residual: RegexId)
+        requires pair_wf(pair), residual_folds(pair, bindings, from, events, residual),
+            residual@ == pair.store.graph().constants.all || residual@ == pair.store.graph().constants.empty,
+        ensures residual_folds(pair, bindings, from, events + rest, residual),
+    {
+        hide(language::lang); hide(model::lift_regex); hide(model::test_holds); hide(model::lift_transition);
+        lemma_absorbing_language(pair, bindings, residual);
+        assert forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, word)
+            == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, (events + rest) + word) by {
+            assert(model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, rest + word)
+                == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, word));
+            assert(model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, rest + word)
+                == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), from@, events + (rest + word)));
+            assert((events + rest) + word =~= events + (rest + word));
+        }
+    }
+
+    pub(super) proof fn lemma_after_prefix_fold(pair: CompiledPair, history: Seq<Data>, bindings: Seq<Value>, start: nat, residual: RegexId, out: RegexId)
+        requires residual_after_prefix(pair, history, bindings, start, residual),
+            residual_folds(pair, bindings, residual, history.subrange(start as int, history.len() as int), out),
+        ensures residual_after_prefix(pair, history, bindings, history.len(), out),
+    {
+        assert forall|word: Seq<Data>| model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), out@, word)
+            == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), pair.root@, history.take(history.len() as int) + word) by {
+            let rest = history.subrange(start as int, history.len() as int) + word;
+            assert(model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), residual@, rest)
+                == model::regex_lang(pair.store.graph(), pair.symbols@, source_model::values_data(bindings), pair.root@, history.take(start as int) + rest));
+            assert(history.take(start as int) + rest =~= history.take(history.len() as int) + word);
+        }
     }
 
     pub(super) proof fn lemma_pair_all_frames(before: CompiledPair)
@@ -2251,15 +3151,51 @@ mod cache_tests {
         compile_pair(&policy, &mut ExecutionTimer::new(None), &mut world).unwrap()
     }
 
-    fn replay(pair: &mut CompiledPair, events: serde_json::Value, binding: i64) -> bool {
+    fn replay(
+        pair: &mut CompiledPair,
+        events: serde_json::Value,
+        binding: impl Into<Value>,
+    ) -> bool {
         let mut world = ObservationWorld;
         pair.replay(
             &history(events),
-            &[Value::from(binding)],
+            &[binding.into()],
+            &mut Vec::new(),
             &mut ExecutionTimer::new(None),
             &mut world,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn interned_string_operands_compare_exact_bytes() {
+        let mut pair = compile(json!({"star":{"test":{"eq":{"path":["x"],"term":{"var":"v"}}}}}));
+        assert!(replay(
+            &mut pair,
+            json!([{"x":"/a/b"},{"x":"/a/b"}]),
+            "/a/b"
+        ));
+        assert!(!replay(&mut pair, json!([{"x":"/a/b/"}]), "/a/b"));
+        assert!(!replay(&mut pair, json!([{"x":"a/b"}]), "/a/b"));
+        assert!(!replay(&mut pair, json!([{"x":"/a/b"}]), 1));
+        assert!(replay(&mut pair, json!([{"x":1}]), 1));
+        assert!(!pair.interner.is_exhausted());
+        pair.release();
+    }
+
+    #[test]
+    fn interner_exhaustion_falls_back_to_value_equality() {
+        // `neq` keeps every event in the star, so all 5000 distinct strings are interned:
+        // 5000 leaves + "" + "r" > MAX_NODES.
+        let mut pair = compile(json!({"star":{"test":{"neq":{"path":["x"],"term":{"var":"v"}}}}}));
+        let events: Vec<_> = (0..5000)
+            .map(|i| json!({"x": alloc::format!("/r/{i}")}))
+            .collect();
+        assert!(replay(&mut pair, json!(events), "/r/none"));
+        assert!(pair.interner.is_exhausted());
+        assert!(!replay(&mut pair, json!([{"x":"/r/1"}]), "/r/1"));
+        assert!(replay(&mut pair, json!([{"x":"/r/1"}]), "/r/2"));
+        pair.release();
     }
 
     #[test]
@@ -2274,7 +3210,6 @@ mod cache_tests {
         assert_eq!(pair.work.event_classes, 2);
         assert_eq!(pair.work.successor_misses, 1);
         assert_eq!(pair.work.successor_hits, 1);
-        assert_eq!(pair.work.equal_event_hits, 0);
         assert_eq!(pair.work.self_loops, 2);
         assert_eq!(pair.successors.as_ref().map(LruCache::len), Some(1));
 
@@ -2291,17 +3226,11 @@ mod cache_tests {
     }
 
     #[test]
-    fn equal_event_shortcut_is_local_to_a_fixed_binding_replay() {
+    fn equal_consecutive_events_replay() {
         let mut pair = compile(json!({"star":{"test":{"eq":{"path":["x"],"term":{"var":"v"}}}}}));
         let events = json!([{"x":1},{"x":1}]);
         assert!(replay(&mut pair, events.clone(), 1));
-        assert_eq!(pair.work.events, 2);
-        assert_eq!(pair.work.event_classes, 1);
-        assert_eq!(pair.work.equal_event_hits, 1);
         assert!(!replay(&mut pair, events, 2));
-        assert_eq!(pair.work.events, 3); // Empty is absorbing after the first event.
-        assert_eq!(pair.work.event_classes, 2);
-        assert_eq!(pair.work.equal_event_hits, 1);
         pair.release();
     }
 
@@ -2387,6 +3316,27 @@ mod cache_tests {
     }
 
     #[test]
+    fn self_loop_guards_skip_classification() {
+        let regex =
+            json!({"concat":[{"all":true},{"test":{"eq":{"path":["x"],"term":{"value":1}}}}]});
+        let events = json!([{"x":2},{"x":3},{"x":5},{"x":1}]);
+        let mut pair = compile(regex.clone());
+        assert!(replay(&mut pair, events.clone(), 0));
+        assert_eq!(pair.work.events, 4);
+        assert_eq!(pair.work.guard_hits, 3);
+        assert_eq!(pair.work.event_classes, 1);
+        assert!(pair.work.self_loops >= 3);
+        pair.release();
+
+        let mut pair = compile(regex);
+        pair.work.skip_guards = true;
+        assert!(replay(&mut pair, events, 0));
+        assert_eq!(pair.work.guard_hits, 0);
+        assert_eq!(pair.work.event_classes, 4);
+        pair.release();
+    }
+
+    #[test]
     fn event_class_lru_has_a_256_entry_ceiling() {
         let tests: Vec<_> = (0..9)
             .map(|bit| json!({"eq":{"path":[bit.to_string()],"term":{"value":1}}}))
@@ -2452,8 +3402,14 @@ mod progress_tests {
 
     fn evaluate(pair: &mut CompiledPair, events: &Rc<Array>, request: &Value) -> bool {
         let mut world = ObservationWorld;
-        pair.evaluate(events, request, &mut ExecutionTimer::new(None), &mut world)
-            .unwrap()
+        pair.evaluate(
+            events,
+            request,
+            &mut PairHints::default(),
+            &mut ExecutionTimer::new(None),
+            &mut world,
+        )
+        .unwrap()
     }
 
     // Independent membership oracle for star(test(x == request)); this does not
@@ -2759,7 +3715,13 @@ mod progress_tests {
             }));
             timer.start(world.now().expect("configured test clock"));
             assert!(matches!(
-                pair.evaluate(candidate, &request, &mut timer, &mut world),
+                pair.evaluate(
+                    candidate,
+                    &request,
+                    &mut PairHints::default(),
+                    &mut timer,
+                    &mut world
+                ),
                 Err(super::super::HistoryError::Limit(
                     LimitError::TimeLimitExceeded { .. }
                 ))

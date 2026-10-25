@@ -75,6 +75,7 @@ layout is deliberately split:
 | `needs_runtime_recursion_check: bool`           | Flags when `VirtualDataDocumentLookup` requires runtime guards.  | Ensures the VM short-circuits recursion before hitting the instruction budget ceiling. |
 | `needs_recompilation: bool`                     | Indicates partial deserialization of execution data.             | Set when the extensible section fails; signals the loader to recompile. |
 | `rego_v0: bool`                                 | Records whether the policy targeted Rego v0 semantics.          | Ensures recompilation preserves language-version behaviour. |
+| `history_tables: Vec<HistoryTable>`             | Ordered rule tables judged by `HistoryDecide`.                   | Each rule is a mode plus a pair literal index; validated by `validate_limits`. |
 
 Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
@@ -87,7 +88,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `3`).
+  `7`; versions 1–6 deserialize as `Partial` and require recompilation).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper

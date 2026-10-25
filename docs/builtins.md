@@ -359,6 +359,31 @@ successful match. Failures do not commit partially consumed progress. A proven
 self-loop advances the cursor without changing its residual, but does not skip
 later events. Equal Boolean answers alone never authorize residual reuse.
 
+Compiled pairs remember one sorted object position per request-pattern field and
+event-path segment. Every hinted lookup checks the key and falls back to ordinary
+lookup on a miss; mutable BTree objects use ordinary lookup. A replay selects each
+distinct event path at most once per event, sharing present and missing results
+between guard checks and atom classification. Selection scratch is reset for each
+event and is not retained with the history snapshot. Hints affect performance only;
+the trusted `Object::get_hinted` contract is identical to `Object::get`, and hint
+construction is an external-body allocation boundary with no semantic guarantees.
+Consecutive events are not compared structurally; successor reuse uses primitive
+truth words or proven self-loop guards. Prefix, binding, and retained-policy
+comparisons checkpoint before each element; atom classification retains its entry
+and exit checkpoints.
+
+String operands of primitive equality tests use a per-pair `namespacius::PathCache`
+with delimiter `/`: constants are interned at compilation, bindings once per replay,
+and selected event strings per comparison. IDs preserve exact UTF-8 bytes, including
+leading/trailing delimiters; no path normalization occurs. Non-string operands use
+Value equality. The cache reserves 4096 trie nodes (16 KiB), 64 KiB of component
+storage, and 1024 memoized paths; index/memo metadata is additional heap storage.
+After an interning failure, that pair permanently falls back to Value equality.
+All pair-release paths free the interner arenas. Native dependency `Send`/`Sync`
+markers rely on exclusive arena ownership and read-only shared access; namespacius
+also trusts concrete index/LRU operations and deterministic hashing, not collision
+freedom. The byte-equality theorem and matcher interner bodies are verified.
+
 After policy/pattern/binding lookup, an unchanged pointer-identical history has
 an O(1) history fast path. A new array requires O(n) prefix event comparisons,
 including recursive payload-comparison costs; only automaton replay is limited
@@ -430,6 +455,7 @@ Each compiled pair keeps its hash-consed bump store for its whole lifetime: six
 are interned by `hashconsius::BHConsign`; child lists use `SliceArena` with
 `hashconsius::index::Buckets`. Failed compilation, evaluation/publication of fresh
 pairs, eviction, explicit state release, and state destruction release the chunks.
+The string-operand interner adds its separate fixed arena budget described above.
 The destructor adapter is native; the release implementation is verified.
 
 Production evaluation passes a zero-sized `ObservationWorld` capability through
@@ -467,3 +493,7 @@ request bindings sharing one snapshot, for 16/256/4096-event histories. Rego
 preparation and fixture construction/warming are outside the timed region, except
 the explicitly named COW operation. Prefix validation remains in the appended
 and reconstructed-array timings. Every timed evaluation asserts its result.
+The wide scenarios use 12-field objects, eight primitive atoms sharing three event
+paths, and alternating event kinds for 256/4096-event cold calls and a 4096-event
+same-array warm call. Compare with `-- --save-baseline before` before runtime
+changes and `-- --baseline before` afterward.

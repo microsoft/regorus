@@ -710,6 +710,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "namespacius"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "hashbrown",
+ "lru",
+ "verus-bumpalo",
+ "vstd",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1067,6 +1078,7 @@ dependencies = [
  "lazy_static",
  "lru",
  "msvc_spectre_libs",
+ "namespacius",
  "num-bigint 0.5.1",
  "num-traits",
  "parking_lot",

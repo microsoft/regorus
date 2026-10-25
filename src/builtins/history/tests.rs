@@ -200,6 +200,31 @@ fn evaluate(
         .expect("valid policy")
 }
 
+#[test]
+fn btree_event_field_lookup() {
+    use crate::value::Object;
+    use alloc::collections::BTreeMap;
+
+    let object = Object::from(BTreeMap::from([(Value::from("x"), Value::from(1))]));
+    assert_eq!(object.storage_variant_for_memory_diagnostics(), "BTree");
+    // Value::from(BTreeMap) freezes; wrap directly to exercise mutable storage.
+    let events = Rc::new(Array::from(vec![Value::Object(Rc::new(object))]));
+    let policy = value(&json!({
+        "request":{"any":true},
+        "history":{"test":{"eq":{"path":["x"],"term":{"value":1}}}}
+    }));
+    assert!(matches!(
+        HistoryMatchState::default().evaluate(
+            &policy,
+            &events,
+            &Value::Null,
+            &mut ExecutionTimer::new(None),
+            &mut super::graph::ObservationWorld,
+        ),
+        Ok(true)
+    ));
+}
+
 struct Generator(u64);
 impl Generator {
     fn next(&mut self, upper: usize) -> usize {
@@ -837,6 +862,7 @@ fn active_timer_expires_inside_compilation_and_prepared_replay() {
         prepared.replay(
             &events,
             &[Value::from(1)],
+            &mut Vec::new(),
             &mut timer,
             &mut super::graph::ObservationWorld
         ),
@@ -846,6 +872,7 @@ fn active_timer_expires_inside_compilation_and_prepared_replay() {
         .replay(
             &events,
             &[Value::from(1)],
+            &mut Vec::new(),
             &mut ExecutionTimer::new(None),
             &mut super::graph::ObservationWorld
         )

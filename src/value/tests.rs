@@ -908,6 +908,26 @@ fn object_empty_freeze_get_iter_and_cursor() {
     assert!(obj.next(&mut cursor).is_none());
 }
 
+#[cfg(feature = "history")]
+#[test]
+fn object_get_hinted_matches_get() {
+    let frozen = Object::from_iter(make_pairs(8)).freeze();
+    for key in (0..8).map(val).chain([val(8), val(99)]) {
+        let position = frozen.iter_sorted().position(|(k, _)| k == &key);
+        for initial in [0, 3, 7, usize::MAX] {
+            let mut hint = initial;
+            assert_eq!(frozen.get_hinted(&key, &mut hint), frozen.get(&key));
+            assert_eq!(hint, position.unwrap_or(initial));
+        }
+    }
+    let btree = Object::from(make_pairs(8).into_iter().collect::<BTreeMap<_, _>>());
+    for key in [val(3), val(99)] {
+        let mut hint = usize::MAX;
+        assert_eq!(btree.get_hinted(&key, &mut hint), btree.get(&key));
+        assert_eq!(hint, usize::MAX);
+    }
+}
+
 #[test]
 fn object_from_large_btreemap_into_value_is_frozen() {
     let map: BTreeMap<Value, Value> = make_pairs(3).into_iter().collect();

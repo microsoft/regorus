@@ -49,6 +49,30 @@ pub enum VmError {
     #[error("{message} (pc={pc})")]
     HistoryMatchValidationError { message: String, pc: usize },
 
+    #[cfg(feature = "history")]
+    #[error("Invalid history handle {handle:?} (pc={pc})")]
+    InvalidHistoryHandle { handle: Value, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History events must not be undefined (pc={pc})")]
+    InvalidHistoryEvent { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("HistoryDecide params index {index} out of bounds (pc={pc})")]
+    InvalidHistoryDecideParams { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table {table} rule {rule} failed to compile: {message} (pc={pc})")]
+    HistoryTableCompile {
+        table: u16,
+        rule: usize,
+        message: String,
+        pc: usize,
+    },
+
+    #[error("HistoryDecide requires the `history` feature (pc={pc})")]
+    HistoryDecideUnavailable { pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 

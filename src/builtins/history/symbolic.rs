@@ -610,7 +610,7 @@ fn positive_atom_index<G: KernelStore>(
     Ok(value) => index / 64 < words@.len() && value == truth_word_bit(words@, index as nat),
     Err(_) => index / 64 >= words@.len(),
 })]
-fn atom_truth(words: &[u64], index: usize) -> KernelResult<bool> {
+pub(crate) fn atom_truth(words: &[u64], index: usize) -> KernelResult<bool> {
     let word = match index.checked_div(64) {
         Some(v) => v,
         None => return Err(assignment_error()),

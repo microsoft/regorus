@@ -28,9 +28,11 @@ impl RegoVM {
             | VmError::InstructionLimitExceeded { .. }
             | VmError::NumericOverflow { .. } => true,
             #[cfg(feature = "history")]
-            VmError::HistoryMatchFailure { .. } | VmError::HistoryMatchValidationError { .. } => {
-                true
-            }
+            VmError::HistoryMatchFailure { .. }
+            | VmError::HistoryMatchValidationError { .. }
+            | VmError::HistoryTableCompile { .. }
+            | VmError::InvalidHistoryHandle { .. }
+            | VmError::InvalidHistoryEvent { .. } => true,
             _ => false,
         }
     }

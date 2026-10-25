@@ -7,8 +7,8 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
-    VirtualDataDocumentLookupParams,
+    FunctionCallParams, HistoryDecideParams, InstructionData, LoopStartParams, ObjectCreateParams,
+    SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
     ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
@@ -357,6 +357,12 @@ pub enum Instruction {
 
     /// End a comprehension block
     ComprehensionEnd {},
+
+    /// Decide a request against a history table (feature `history`): first violated rule index or Null.
+    HistoryDecide {
+        /// Index into program's instruction_data.history_decide_params table
+        params_index: u16,
+    },
 
     // ── Azure Policy condition operators (consolidated) ────────────────
     /// Consolidated Azure Policy condition instruction.

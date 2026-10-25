@@ -43,6 +43,14 @@ pub assume_specification<'a>[ Object::get ](o: &'a Object, key: &Value) -> (r: O
         forall|k1: Value, k2: Value| o@.contains_key(k1) && o@.contains_key(k2)
             && value_view(k1) == value_view(k2) ==> k1 == k2;
 
+pub assume_specification<'a>[ Object::get_hinted ](o: &'a Object, key: &Value, hint: &mut usize) -> (r: Option<&'a Value>)
+    ensures
+        r is Some <==> exists|k: Value| o@.contains_key(k) && value_view(k) == value_view(*key),
+        r matches Some(v) ==> exists|k: Value| o@.contains_key(k)
+            && value_view(k) == value_view(*key) && *v == o@[k],
+        forall|k1: Value, k2: Value| o@.contains_key(k1) && o@.contains_key(k2)
+            && value_view(k1) == value_view(k2) ==> k1 == k2;
+
 pub assume_specification<'a>[ ValueSet::get ](s: &'a ValueSet, key: &Value) -> (r: Option<&'a Value>)
     ensures
         r is Some <==> exists|x: Value| s@.contains(x) && value_view(x) == value_view(*key),

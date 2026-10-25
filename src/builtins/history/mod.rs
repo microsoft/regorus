@@ -7,6 +7,7 @@
 
 pub(crate) mod error;
 pub(crate) mod graph;
+pub(crate) mod intern;
 pub(crate) mod kernel;
 pub(crate) mod normalize;
 pub(crate) mod progress;
@@ -47,6 +48,7 @@ const PAIR_CACHE_CAPACITY: usize = 16;
 struct RetainedPair {
     policy: Value,
     pair: progress::CompiledPair,
+    hints: source::PairHints,
 }
 
 /// Performance state belongs to one evaluator; cloned/new evaluators start empty.
@@ -149,7 +151,6 @@ impl HistoryMatchState {
                     .ok_or_else(|| graph::invariant("invalid retained pair index"))?;
                 kernel::loop_try!(graph::checkpoint(timer, world), failure);
                 let equal = policy == &entry.policy;
-                kernel::loop_try!(graph::checkpoint(timer, world), failure);
                 if equal {
                     found = Some(index);
                     break;
@@ -173,7 +174,9 @@ impl HistoryMatchState {
                     .get_mut(index)
                     .ok_or_else(|| graph::invariant("invalid retained pair index"))?;
                 proof! { assert(*entry == selected); }
-                let result = entry.pair.evaluate(history, request, timer, world);
+                let result = entry
+                    .pair
+                    .evaluate(history, request, &mut entry.hints, timer, world);
                 proof! {
                     assert(language::decodes_policy(value_view(self.pairs@[index as int].policy), head, tail));
                     assert(progress_model::pair_represents(self.pairs@[index as int].pair, head, tail));
@@ -242,12 +245,19 @@ impl HistoryMatchState {
                 pair = source::compile_pair(policy, timer, world)?;
             }
         }
+        let mut hints = match source::pair_hints(&pair) {
+            Ok(hints) => hints,
+            Err(error) => {
+                pair.release();
+                return Err(error);
+            }
+        };
         proof_decl! {
             let ghost (head, tail) = choose|head: language::Head, tail: language::Regex<language::SrcTest>|
                 language::decodes_policy(value_view(*policy), head, tail)
                     && progress_model::pair_represents(pair, head, tail);
         }
-        let answer = match pair.evaluate(history, request, timer, world) {
+        let answer = match pair.evaluate(history, request, &mut hints, timer, world) {
             Ok(answer) => answer,
             Err(error) => {
                 pair.release();
@@ -282,6 +292,7 @@ impl HistoryMatchState {
                 RetainedPair {
                     policy: policy.clone(),
                     pair,
+                    hints,
                 },
             );
             proof! {

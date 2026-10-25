@@ -1169,6 +1169,18 @@ impl RegoVM {
                 self.execute_comprehension_end()?;
                 Ok(InstructionOutcome::Continue)
             }
+            HistoryDecide { params_index } => {
+                #[cfg(feature = "history")]
+                {
+                    self.execute_history_decide(params_index)?;
+                    Ok(InstructionOutcome::Continue)
+                }
+                #[cfg(not(feature = "history"))]
+                {
+                    let _ = params_index;
+                    Err(VmError::HistoryDecideUnavailable { pc: self.pc })
+                }
+            }
             unexpected => Err(VmError::UnhandledInstruction {
                 instruction: alloc::format!("{:?}", unexpected),
                 pc: self.pc,

@@ -187,3 +187,27 @@ impl SourceFile {
         Self { name, content }
     }
 }
+
+/// How a history table rule judges its regex.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryRuleMode {
+    /// Violated when the history is not in the rule's language.
+    Require,
+    /// Violated when the history is in the rule's language.
+    Forbid,
+}
+
+/// One rule of a history table: a mode plus a `history.match` pair literal
+/// (`{"request": …, "history": …}`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryTableRule {
+    pub mode: HistoryRuleMode,
+    pub pair_literal: u16,
+}
+
+/// Ordered rules judged by `HistoryDecide`; the first violated rule wins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryTable {
+    pub rules: Vec<HistoryTableRule>,
+}

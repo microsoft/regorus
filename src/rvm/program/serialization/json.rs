@@ -44,7 +44,8 @@ impl Program {
                 "set_create_params": self.instruction_data.set_create_params,
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
-                "comprehension_begin_params": self.instruction_data.comprehension_begin_params
+                "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
+                "history_decide_params": self.instruction_data.history_decide_params
             },
             "literals": self.literals,
             "builtin_info_table": self.builtin_info_table,
@@ -52,7 +53,8 @@ impl Program {
             "sources": self.sources,
             "rule_infos": self.rule_infos,
             "instruction_spans": self.instruction_spans,
-            "rule_tree": self.rule_tree
+            "rule_tree": self.rule_tree,
+            "history_tables": self.history_tables
         });
 
         serde_json::to_string_pretty(&json_data)
@@ -193,6 +195,13 @@ impl Program {
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| Value::new_object()))
             .unwrap_or_else(Value::new_object);
 
+        let history_tables = json_data
+            .get("history_tables")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Failed to deserialize history_tables: {}", e))?
+            .unwrap_or_default();
+
         let mut program = Program {
             instructions,
             literals,
@@ -219,6 +228,7 @@ impl Program {
             has_host_await,
             needs_recompilation,
             rego_v0,
+            history_tables,
         };
 
         // Recompute has_host_await when it was not provided in the JSON input

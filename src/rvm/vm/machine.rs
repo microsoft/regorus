@@ -145,6 +145,14 @@ pub struct RegoVM {
     #[cfg(feature = "history")]
     pub(super) history_match_state: crate::builtins::history::HistoryMatchState,
 
+    /// Lazily compiled kernels for `program.history_tables` (index-aligned).
+    #[cfg(feature = "history")]
+    pub(super) history_tables: Vec<Option<super::history_tables::HistoryTableRuntime>>,
+
+    /// Host-owned histories addressed by handle; survive `load_program`.
+    #[cfg(feature = "history")]
+    pub(super) histories: Vec<super::history_tables::VmHistory>,
+
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
 
@@ -248,6 +256,10 @@ impl RegoVM {
             execution_timer: ExecutionTimer::new(fallback_timer),
             #[cfg(feature = "history")]
             history_match_state: crate::builtins::history::HistoryMatchState::default(),
+            #[cfg(feature = "history")]
+            history_tables: Vec::new(),
+            #[cfg(feature = "history")]
+            histories: Vec::new(),
             execution_timer_elapsed_at_suspend: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_config: None,
@@ -276,6 +288,9 @@ impl RegoVM {
         #[cfg(feature = "history")]
         {
             self.history_match_state = crate::builtins::history::HistoryMatchState::default();
+            self.history_tables.clear();
+            self.history_tables
+                .resize_with(program.history_tables.len(), || None);
         }
 
         // Use the dispatch window size from the program for initial register allocation

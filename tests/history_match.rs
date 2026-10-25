@@ -96,6 +96,47 @@ fn semantic_cases() -> Result<Vec<Case>> {
         add("one-event test", read.clone(), events, expected)?;
     }
     for (events, expected) in [
+        (
+            json!([{"b":1,"action":"edit"},{"a":0,"action":"edit","z":9},{"action":"edit"}]),
+            true,
+        ),
+        (
+            json!([{"b":1,"action":"edit"},{"a":0,"act":"edit","z":9},{"action":"edit"}]),
+            false,
+        ),
+    ] {
+        add(
+            "changing object shapes",
+            json!({"concat":[edit,edit,edit]}),
+            events,
+            expected,
+        )?;
+    }
+    let eq_x1 = json!({"eq":{"path":["x"],"term":{"value":1}}});
+    for (events, expected) in [(json!([{"x":1}]), true), (json!([{"x":2}]), false)] {
+        add(
+            "shared present path with mixed comparisons",
+            json!({"test":{"and":[eq_x1,{"neq":{"path":["x"],"term":{"value":2}}}]}}),
+            events,
+            expected,
+        )?;
+    }
+    for (events, expected) in [(json!([{"y":1}]), false), (json!([{"x":2}]), true)] {
+        add(
+            "shared missing or present path",
+            json!({"test":{"or":[eq_x1,{"eq":{"path":["x"],"term":{"value":2}}}]}}),
+            events,
+            expected,
+        )?;
+    }
+    let inner = json!({"test":{"eq":{"path":["o","k"],"term":{"value":1}}}});
+    add(
+        "nested path with changing segment positions",
+        json!({"concat":[inner,inner]}),
+        json!([{"o":{"k":1,"z":0}},{"a":1,"o":{"b":0,"k":1}}]),
+        true,
+    )?;
+    for (events, expected) in [
         (json!([]), true),
         (json!([{"action":"edit"}]), true),
         (json!([{"action":"edit"},{"action":"edit"}]), true),

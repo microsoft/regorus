@@ -71,16 +71,27 @@ impl ObservationWorld {
 }
 
 #[verus_verify]
+#[inline(always)]
 pub(crate) fn checkpoint(
     timer: &mut ExecutionTimer,
     world: &mut ObservationWorld,
 ) -> KernelResult<()> {
     if timer.accumulate(1) {
-        if let Some(now) = world.now() {
-            timer.check_now(now)?;
-        }
+        deadline_check(timer, world)?;
     }
     check_memory_limit_if_needed()?;
+    Ok(())
+}
+
+/// Clock read and deadline comparison, out of line so the inlined `checkpoint`
+/// body stays a counter bump when no check is due.
+#[verus_verify]
+#[cold]
+#[inline(never)]
+fn deadline_check(timer: &mut ExecutionTimer, world: &mut ObservationWorld) -> KernelResult<()> {
+    if let Some(now) = world.now() {
+        timer.check_now(now)?;
+    }
     Ok(())
 }
 

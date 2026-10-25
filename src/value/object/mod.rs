@@ -106,6 +106,25 @@ impl Object {
         }
     }
 
+    /// `get` with a positional hint for `Repr::Frozen`: the entry at `*hint` is
+    /// compared first; on a successful binary search `*hint` is updated. The
+    /// result never depends on `*hint` (Frozen keys are strictly sorted and
+    /// deduplicated, so a `cmp == Equal` hit is the unique entry `get` returns).
+    #[cfg(feature = "history")]
+    pub(crate) fn get_hinted(&self, key: &Value, hint: &mut usize) -> Option<&Value> {
+        let Repr::Frozen(v) = &self.repr else {
+            return self.get(key);
+        };
+        if let Some((k, value)) = v.get(*hint) {
+            if k.cmp(key) == Ordering::Equal {
+                return Some(value);
+            }
+        }
+        let i = v.binary_search_by(|(k, _)| k.cmp(key)).ok()?;
+        *hint = i;
+        v.get(i).map(|(_, value)| value)
+    }
+
     #[inline]
     pub fn contains_key(&self, key: &Value) -> bool {
         self.get(key).is_some()

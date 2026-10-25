@@ -151,13 +151,13 @@ impl Program {
         }
 
         match version {
-            1..=5 => {
+            1..=6 => {
                 let mut program = Program::new();
                 program.needs_recompilation = true;
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -281,7 +281,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=7) => Ok(true),
             _ => Ok(false),
         }
     }
@@ -289,7 +289,7 @@ impl Program {
     fn legacy_rego_v0(data: &[u8], version: u32) -> Option<bool> {
         match version {
             1 => data.get(16).map(|value| *value != 0),
-            2..=5 => data.get(24).map(|value| *value != 0),
+            2..=6 => data.get(24).map(|value| *value != 0),
             _ => None,
         }
     }

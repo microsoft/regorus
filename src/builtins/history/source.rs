@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 #[cfg(verus_keep_ghost)]
+use super::intern::verify::{ids_wf, interner_frame, lemma_interned_eq, lemma_interned_frame};
+use super::intern::{Interner, StringId};
+#[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 #[cfg(verus_keep_ghost)]
 use super::normalize::verify as norm;
@@ -159,6 +162,42 @@ pub(crate) struct Symbols {
     pub(crate) constants: Vec<Value>,
     pub(crate) paths: Vec<Box<[Value]>>,
     pub(crate) variables: Vec<String>,
+}
+
+/// Positional lookup hints persisted with the retained pair. No verified fact
+/// depends on this performance oracle's contents.
+// ponytail: one-position hint; add a second slot if profiles show shape ping-pong.
+#[verus_verify]
+#[verus_verify(external_derive)]
+#[derive(Debug, Default)]
+pub(crate) struct PairHints {
+    /// Pattern node id, then object child in child order; empty for other nodes.
+    pub(crate) pattern: Vec<Vec<usize>>,
+    /// PathId, then path segment.
+    pub(crate) paths: Vec<Vec<usize>>,
+}
+
+// Iterator-driven construction; hint contents are only a performance oracle.
+#[verus_verify(external_body)]
+pub(crate) fn pair_hints(pair: &CompiledPair) -> KernelResult<PairHints> {
+    let mut hints = PairHints::default();
+    allocation(hints.paths.try_reserve_exact(pair.symbols.paths.len()))?;
+    for path in &pair.symbols.paths {
+        let mut positions = Vec::new();
+        allocation(positions.try_reserve_exact(path.len()))?;
+        positions.resize(path.len(), 0);
+        hints.paths.push(positions);
+    }
+    allocation(hints.pattern.try_reserve_exact(pair.pattern.nodes.len()))?;
+    for node in &pair.pattern.nodes {
+        let mut positions = Vec::new();
+        if let PatternNode::Object(children) = node {
+            allocation(positions.try_reserve_exact(children.len()))?;
+            positions.resize(children.len(), 0);
+        }
+        hints.pattern.push(positions);
+    }
+    Ok(hints)
 }
 #[verus_verify]
 struct SymbolBuilder {
@@ -1002,12 +1041,17 @@ impl CompiledPattern {
                     == (matched && pattern_match_state(*self, symbols@, final(work).view(), final(bindings)@, theta)),
             result matches Ok(true) ==> pattern_match_work(self.nodes@, final(work).view()) < pattern_match_work(self.nodes@, old(work).view().push(task)),
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep lookup hints separate from verified matcher state."
+    )]
     fn matches_step<'value>(
         &self,
         task: (usize, &'value Value),
         symbols: &Symbols,
         bindings: &mut [Value],
         work: &mut WorkVec<(usize, &'value Value)>,
+        pattern_hints: &mut Vec<Vec<usize>>,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<bool> {
@@ -1200,7 +1244,17 @@ impl CompiledPattern {
                         .get(index)
                         .ok_or_else(|| invariant("invalid pattern field"))?;
                     loop_try!(checkpoint(timer, world), failure);
-                    let selected = values.get(key);
+                    let nodes = pattern_hints.as_mut_slice();
+                    let selected = match nodes.get_mut(id) {
+                        Some(node_hints) => {
+                            let positions = node_hints.as_mut_slice();
+                            match positions.get_mut(index) {
+                                Some(hint) => values.get_hinted(key, hint),
+                                None => values.get(key),
+                            }
+                        }
+                        None => values.get(key),
+                    };
                     proof! {
                         lemma_value_view_object(*values);
                         if let Some(selected) = selected {
@@ -1270,6 +1324,7 @@ impl CompiledPattern {
         &self,
         request: &Value,
         symbols: &Symbols,
+        pattern_hints: &mut Vec<Vec<usize>>,
         timer: &mut ExecutionTimer,
         world: &mut ObservationWorld,
     ) -> KernelResult<Option<Vec<Value>>> {
@@ -1317,6 +1372,7 @@ impl CompiledPattern {
                 symbols,
                 bindings.as_mut_slice(),
                 &mut work,
+                pattern_hints,
                 timer,
                 world,
             );
@@ -1921,12 +1977,30 @@ pub(crate) fn compile_pair(
     if let Err(error) = checkpoint(timer, world) {
         return fail(store, error);
     }
+    let mut interner = match allocation(Interner::new()) {
+        Ok(interner) => interner,
+        Err(error) => return fail(store, error),
+    };
+    let constant_ids = match interner.intern_values(&builder.symbols.constants, world) {
+        Ok(ids) => ids,
+        Err(error) => {
+            interner.free();
+            return fail(store, error);
+        }
+    };
     proof! {
         assert(language::decodes_policy(value_view(*policy), head, tail));
         assert(pattern_represents(pattern, builder.symbols@, head));
         assert(tail_represents(store.graph(), builder.symbols@, root, tail));
     }
-    Ok(CompiledPair::new(store, builder.symbols, pattern, root))
+    Ok(CompiledPair::new(
+        store,
+        builder.symbols,
+        pattern,
+        root,
+        interner,
+        constant_ids,
+    ))
 }
 
 /// Exact array index denoted by a float: `Some(i)` iff `value == i` and `i` fits in `u64`.
@@ -1997,6 +2071,7 @@ fn float_array_index(value: f64) -> Option<u64> {
 fn select<'a>(
     event: &'a Value,
     path: &[Value],
+    hints: &mut Vec<usize>,
     timer: &mut ExecutionTimer,
     world: &mut ObservationWorld,
 ) -> KernelResult<Option<&'a Value>> {
@@ -2017,7 +2092,11 @@ fn select<'a>(
         let next = match current {
             Value::Object(values) => {
                 proof! { lemma_value_view_object(*values); }
-                values.get(key)
+                let positions = hints.as_mut_slice();
+                match positions.get_mut(index) {
+                    Some(hint) => values.get_hinted(key, hint),
+                    None => values.get(key),
+                }
             }
             Value::Set(values) => {
                 proof! { lemma_value_view_set(*values); }
@@ -2073,13 +2152,28 @@ fn select<'a>(
     })
 }
 #[verus_verify]
-#[verus_spec(result => ensures result matches Ok(answer) ==> answer == model::test_holds(
-    symbols@, values_data(bindings@), model::Test::Atom(primitive@, true), value_view(*event)))]
-pub(crate) fn classify(
+#[verus_spec(result =>
+    requires selections_wf(old(selections)@, symbols@, value_view(*event)),
+        old(interner).inv(), ids_wf(*old(interner), bindings@, binding_ids@),
+        ids_wf(*old(interner), symbols.constants@, constant_ids@),
+    ensures selections_wf(final(selections)@, symbols@, value_view(*event)),
+        final(interner).inv(), interner_frame(*old(interner), *final(interner)),
+        result matches Ok(answer) ==> answer == model::test_holds(
+            symbols@, values_data(bindings@), model::Test::Atom(primitive@, true), value_view(*event)))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep lookup accelerators separate from semantic inputs."
+)]
+pub(crate) fn classify<'e>(
     primitive: Primitive,
-    event: &Value,
+    event: &'e Value,
     bindings: &[Value],
+    binding_ids: &[Option<StringId>],
     symbols: &Symbols,
+    constant_ids: &[Option<StringId>],
+    interner: &mut Interner,
+    path_hints: &mut Vec<Vec<usize>>,
+    selections: &mut Vec<Option<Option<&'e Value>>>,
     timer: &mut ExecutionTimer,
     world: &mut ObservationWorld,
 ) -> KernelResult<bool> {
@@ -2087,30 +2181,85 @@ pub(crate) fn classify(
     let path = match primitive {
         Primitive::HasValue(path) | Primitive::EqCore(path, _) => path,
     };
+    let path_index = path.index()?;
     let path = symbols
         .paths
-        .get(path.index()?)
+        .get(path_index)
         .ok_or_else(|| invariant("invalid event path ID"))?;
-    let selected = select(event, path, timer, world)?;
+    let cached: Option<Option<&Value>> = match selections.get(path_index) {
+        Some(cached) => *cached,
+        None => None,
+    };
+    let selected = match cached {
+        Some(selected) => selected,
+        None => {
+            let paths = path_hints.as_mut_slice();
+            let selected = match paths.get_mut(path_index) {
+                Some(hints) => select(event, path, hints, timer, world)?,
+                None => {
+                    let mut none: Vec<usize> = Vec::new();
+                    select(event, path, &mut none, timer, world)?
+                }
+            };
+            let slots = selections.as_mut_slice();
+            if let Some(slot) = slots.get_mut(path_index) {
+                *slot = Some(selected);
+            }
+            selected
+        }
+    };
     let answer = match primitive {
         Primitive::HasValue(_) => selected.is_some(),
         Primitive::EqCore(_, term) => {
-            let expected = match term {
-                Term::Constant(id) => symbols
-                    .constants
-                    .get(id.index()?)
-                    .ok_or_else(|| invariant("invalid constant ID"))?,
-                Term::Variable(id) => bindings
-                    .get(id.index()?)
-                    .ok_or_else(|| invariant("invalid binding ID"))?,
+            let (expected, expected_id) = match term {
+                Term::Constant(id) => {
+                    let index = id.index()?;
+                    let expected = symbols
+                        .constants
+                        .get(index)
+                        .ok_or_else(|| invariant("invalid constant ID"))?;
+                    (
+                        expected,
+                        match constant_ids.get(index) {
+                            Some(Some(id)) => Some(*id),
+                            _ => None,
+                        },
+                    )
+                }
+                Term::Variable(id) => {
+                    let index = id.index()?;
+                    let expected = bindings
+                        .get(index)
+                        .ok_or_else(|| invariant("invalid binding ID"))?;
+                    (
+                        expected,
+                        match binding_ids.get(index) {
+                            Some(Some(id)) => Some(*id),
+                            _ => None,
+                        },
+                    )
+                }
             };
-            checkpoint(timer, world)?;
-            let equal = match selected {
-                Some(value) => value == expected,
+            match selected {
                 None => false,
-            };
-            checkpoint(timer, world)?;
-            equal
+                Some(value) => match (value, expected_id) {
+                    (Value::String(text), Some(expected_id)) => {
+                        proof_decl! { let ghost before = *interner; }
+                        match interner.intern(text) {
+                            Some(id) => {
+                                proof! {
+                                    let chars = match expected { Value::String(text) => text@, _ => Seq::empty() };
+                                    lemma_interned_frame(before, *interner, expected_id, chars);
+                                    lemma_interned_eq(*interner, text@, id, chars, expected_id);
+                                }
+                                id.0 == expected_id.0
+                            }
+                            None => value == expected,
+                        }
+                    }
+                    _ => value == expected,
+                },
+            }
         }
     };
     checkpoint(timer, world)?;
@@ -4015,6 +4164,11 @@ pub(crate) mod verify {
 
     pub open spec fn option_value_data(value: Option<&Value>) -> Option<Data> {
         match value { Some(value) => Some(value_view(*value)), None => None }
+    }
+
+    pub open spec fn selections_wf(selections: Seq<Option<Option<&Value>>>, sym: model::Symbols, event: Data) -> bool {
+        forall|i: int| 0 <= i < selections.len() && (#[trigger] selections[i]) is Some
+            ==> i < sym.paths.len() && option_value_data(selections[i].unwrap()) == language::select(event, sym.paths[i])
     }
 
     pub open spec fn selected_step_data(value: Option<&Value>) -> Option<Data> {

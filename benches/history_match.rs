@@ -15,6 +15,7 @@ const SOURCE: &str = r#"
 package history_bench
 import rego.v1
 result := history.match(data.pair, input.history, input.request)
+wide := history.match(data.wide_pair, input.history, input.request)
 "#;
 
 fn request(resource: &str) -> Value {
@@ -25,6 +26,22 @@ fn event(resource: &str, metadata: usize) -> Value {
     json!({"resource":resource,"unused":metadata}).into()
 }
 
+fn wide_event(kind: &str, i: usize) -> Value {
+    json!({
+        "a0":i,"a1":i,"a2":i,"a3":i,"event":kind,"m0":i,"m1":i,
+        "principal":"alice",
+        "resource":"/subscriptions/0000/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm",
+        "z0":i,"z1":i,"z2":i
+    }).into()
+}
+
+fn wide_request() -> Value {
+    json!({
+        "principal":"alice",
+        "resource":"/subscriptions/0000/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm"
+    }).into()
+}
+
 fn input(history: Value, request: Value) -> Value {
     Value::from(BTreeMap::from([
         (Value::from("history"), history),
@@ -33,8 +50,12 @@ fn input(history: Value, request: Value) -> Value {
 }
 
 fn evaluate(engine: &mut Engine, input: &Value, expected: bool) {
+    evaluate_rule(engine, RULE, input, expected);
+}
+
+fn evaluate_rule(engine: &mut Engine, rule: &str, input: &Value, expected: bool) {
     engine.set_input(black_box(input.clone()));
-    let actual = engine.eval_rule(black_box(RULE.to_string())).unwrap();
+    let actual = engine.eval_rule(black_box(rule.to_string())).unwrap();
     assert_eq!(black_box(actual), Value::Bool(expected));
 }
 
@@ -48,6 +69,17 @@ fn prepared_template(baseline: &Value) -> Engine {
             json!({"pair": {
                 "request":{"object":{"resource":{"var":"r"}}},
                 "history":{"star":{"test":{"eq":{"path":["resource"],"term":{"var":"r"}}}}}
+            }, "wide_pair": {
+                "request":{"object":{"principal":{"var":"p"},"resource":{"var":"r"}}},
+                "history":{"star":{"test":{"and":[
+                    {"eq":{"path":["principal"],"term":{"var":"p"}}},
+                    {"eq":{"path":["resource"],"term":{"var":"r"}}},
+                    {"or":[
+                        {"eq":{"path":["event"],"term":{"value":"read"}}},
+                        {"eq":{"path":["event"],"term":{"value":"write"}}},
+                        {"eq":{"path":["event"],"term":{"value":"list"}}}
+                    ]}
+                ]}}}
             }})
             .into(),
         )
@@ -163,6 +195,38 @@ fn history_match(c: &mut Criterion) {
                 });
             },
         );
+    }
+    for length in [256, 4096] {
+        let history = Value::from(
+            (0..length)
+                .map(|i| wide_event(["read", "write", "list"][i % 3], i))
+                .collect::<Vec<_>>(),
+        );
+        let baseline = input(history, wide_request());
+        let template = prepared_template(&input(Value::from(Vec::<Value>::new()), request("a")));
+        let rule = "data.history_bench.wide";
+        group.bench_with_input(
+            BenchmarkId::new("wide_cold_first_evaluation", length),
+            &length,
+            |b, _| {
+                b.iter_batched_ref(
+                    || template.clone(),
+                    |engine| evaluate_rule(engine, rule, &baseline, true),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        if length == 4096 {
+            group.bench_with_input(
+                BenchmarkId::new("wide_same_array_warm", length),
+                &length,
+                |b, _| {
+                    let mut engine = template.clone();
+                    evaluate_rule(&mut engine, rule, &baseline, true);
+                    b.iter(|| evaluate_rule(&mut engine, rule, &baseline, true));
+                },
+            );
+        }
     }
     group.finish();
 }

@@ -144,6 +144,29 @@ ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).
 
 ---
 
+## History table instructions
+
+| Mnemonic        | Operands / Params | Behaviour |
+| :-------------- | :---------------- | :-------- |
+| `HistoryDecide` | `params_index=pN` | Judges the request against `Program::history_tables[table]`; writes the index of the first violated rule, `null` when none, `undefined` for an undefined request. Requires feature `history` (else `HistoryDecideUnavailable`). |
+
+`HistoryDecideParams` captures `dest`, `table`, `history` (register holding a
+VM history handle from `RegoVM::history_new`) and `request`. Each table rule is a
+mode (`Forbid`: violated when the history is in the rule's language; `Require`:
+violated when it is not) plus a literal `{"request", "history"}` pair in the
+`history.match` grammar. A rule whose request pattern does not match is skipped.
+
+The VM compiles a table's pairs on first use and keeps, per rule, up to 16
+cursors keyed by `(handle, bindings)`; a decision folds only the events appended
+since the cursor through the verified kernel `fold`. Hosts own histories through
+`history_new`, `history_append`, `history_truncate` (shrinking invalidates the
+handle's cursors) and `history_len`; histories survive `load_program`, compiled
+tables do not. `regorus::languages::history_table::compile` builds a one-opcode
+program (entry point `decide`, `input = {"history": <handle>, "request": <event>}`)
+from `{"rules": [{"mode": "forbid"|"require", "request": …, "history": …}]}`.
+
+---
+
 ## Call and return instructions
 
 | Mnemonic              | Operands / Params         | Behaviour                                       |

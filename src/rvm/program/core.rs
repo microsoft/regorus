@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::metadata::ProgramMetadata;
-use super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
+use super::types::{BuiltinInfo, HistoryTable, RuleInfo, SourceFile, SpanInfo};
 use crate::builtins::BuiltinFcn;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
@@ -87,11 +87,15 @@ pub struct Program {
     /// Serialized separately in the artifact section for guaranteed availability
     #[serde(skip, default)]
     pub rego_v0: bool,
+
+    /// History tables judged by `HistoryDecide` instructions
+    #[serde(default)]
+    pub history_tables: Vec<HistoryTable>,
 }
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 6;
+    pub const SERIALIZATION_VERSION: u32 = 7;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
@@ -137,6 +141,7 @@ impl Program {
             has_host_await: false,
             needs_recompilation: false,
             rego_v0: false, // Default to Rego v1
+            history_tables: Vec::new(),
         }
     }
 
@@ -217,6 +222,20 @@ impl Program {
             }
         }
 
+        if self.history_tables.len() > usize::from(u16::MAX) {
+            return Err("Too many history tables".to_string());
+        }
+        for (t, table) in self.history_tables.iter().enumerate() {
+            for (i, rule) in table.rules.iter().enumerate() {
+                if usize::from(rule.pair_literal) >= self.literals.len() {
+                    return Err(format!(
+                        "History table {t} rule {i} references literal {} out of range",
+                        rule.pair_literal
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -255,6 +274,21 @@ impl Program {
         params: crate::rvm::instructions::FunctionCallParams,
     ) -> u16 {
         self.instruction_data.add_function_call_params(params)
+    }
+
+    /// Add history decide parameters and return the index
+    pub fn add_history_decide_params(
+        &mut self,
+        params: crate::rvm::instructions::HistoryDecideParams,
+    ) -> u16 {
+        self.instruction_data.add_history_decide_params(params)
+    }
+
+    /// Add a history table and return its index
+    pub fn add_history_table(&mut self, table: HistoryTable) -> u16 {
+        let index = self.history_tables.len();
+        self.history_tables.push(table);
+        u16::try_from(index).unwrap_or(u16::MAX)
     }
 
     /// Add builtin info and return the index

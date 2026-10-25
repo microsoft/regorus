@@ -291,6 +291,9 @@ impl core::fmt::Display for Instruction {
                 |k| format!("COMPREHENSION_YIELD R({}) R({})", k, value_reg),
             ),
             Instruction::ComprehensionEnd {} => String::from("COMPREHENSION_END"),
+            Instruction::HistoryDecide { params_index } => {
+                format!("HISTORY_DECIDE P({})", params_index)
+            }
 
             // Azure Policy consolidated instruction
             Instruction::PolicyCondition {

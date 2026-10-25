@@ -192,7 +192,7 @@ impl RegoVM {
     }
 
     #[cfg(feature = "history")]
-    fn history_match_error(error: anyhow::Error, pc: usize) -> VmError {
+    pub(super) fn history_match_error(error: anyhow::Error, pc: usize) -> VmError {
         if let Some(limit) = error.downcast_ref::<crate::LimitError>() {
             return match *limit {
                 crate::LimitError::TimeLimitExceeded { elapsed, limit } => {

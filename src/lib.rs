@@ -149,6 +149,10 @@ pub mod languages {
     #[cfg(feature = "azure-rbac")]
     pub mod azure_rbac;
 
+    #[cfg(all(feature = "rvm", feature = "history"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "rvm", feature = "history"))))]
+    pub mod history_table;
+
     #[cfg(feature = "rvm")]
     pub mod rego;
 }

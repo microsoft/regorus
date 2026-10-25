@@ -72,6 +72,7 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "AssertNotUndefined" => parse_guard(params_text, GuardMode::NotUndefined),
             "BuiltinCall" => parse_builtin_call(params_text),
             "FunctionCall" => parse_function_call(params_text),
+            "HistoryDecide" => parse_history_decide(params_text),
             "CallRule" => parse_call_rule(params_text),
             "VirtualDataDocumentLookup" => parse_virtual_data_document_lookup(params_text),
             "HostAwait" => parse_host_await(params_text),
@@ -677,6 +678,12 @@ fn parse_function_call(params_text: &str) -> Result<Instruction> {
     let params = parse_params(params_text)?;
     let params_index = get_param_u16(&params, "params_index")?;
     Ok(Instruction::FunctionCall { params_index })
+}
+
+fn parse_history_decide(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let params_index = get_param_u16(&params, "params_index")?;
+    Ok(Instruction::HistoryDecide { params_index })
 }
 
 fn parse_call_rule(params_text: &str) -> Result<Instruction> {

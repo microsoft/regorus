@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - [**breaking**] Float-promoting arithmetic now raises `numeric overflow in <operation>` instead of producing NaN or infinity, regardless of strict-builtin-error mode. Unlike OPA's wide-exponent arithmetic, finite results outside the binary64 range are rejected.
+- [**breaking**] RVM `Program::SERIALIZATION_VERSION` is now `7`; version 1–6 artifacts deserialize as `Partial` and must be recompiled.
+- *(history)* Intern string comparison operands per compiled pair with namespacius; preserve exact UTF-8 equality and fall back to Value equality after interner exhaustion.
+
+### Added
+
+- *(rvm, history)* History tables: `HistoryDecide` opcode judging a request against an ordered `{mode, request, history}` rule table, VM-owned histories (`RegoVM::history_new/append/truncate/len`) with per-rule incremental cursors over the verified kernel `fold`, and `languages::history_table::compile` (features `rvm` + `history`).
 
 ## [0.13.0](https://github.com/microsoft/regorus/compare/regorus-v0.12.0...regorus-v0.13.0) - 2026-10-14
 
