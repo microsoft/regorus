@@ -45,7 +45,9 @@ struct TestCase {
     pub host_await_responses: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_run_to_completion: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_suspendable: Option<Vec<HostAwaitResponseSpec>>,
-    pub host_await_builtins: Option<Vec<HostAwaitBuiltinSpec>>,
+    #[serde(rename = "host_await_builtins")]
+    pub host_await_builtins_v2: Option<Vec<HostAwaitBuiltinSpec>>,
+    pub legacy_host_await_builtins: Option<Vec<HostAwaitBuiltinSpec>>,
 }
 
 fn default_strict() -> bool {
@@ -77,7 +79,8 @@ struct RvmExecutionOptions {
     execution_mode: ExecutionMode,
     host_await_responses_run_to_completion: Option<Vec<(Value, Vec<Value>)>>,
     host_await_responses_suspendable: Option<HostAwaitResponseMap>,
-    host_await_builtins: Option<Vec<(String, usize)>>,
+    legacy_host_await_builtins: Option<Vec<(String, usize)>>,
+    host_await_builtins_v2: Option<Vec<(String, usize)>>,
 }
 
 impl Default for RvmExecutionOptions {
@@ -86,7 +89,8 @@ impl Default for RvmExecutionOptions {
             execution_mode: ExecutionMode::RunToCompletion,
             host_await_responses_run_to_completion: None,
             host_await_responses_suspendable: None,
-            host_await_builtins: None,
+            legacy_host_await_builtins: None,
+            host_await_builtins_v2: None,
         }
     }
 }
@@ -164,18 +168,27 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
         .map(|responses| build_host_await_response_map(responses))
         .transpose()?;
 
-    let ha_builtins = case.host_await_builtins.as_ref().map(|specs| {
+    let map_host_await_builtins = |specs: &Vec<HostAwaitBuiltinSpec>| {
         specs
             .iter()
             .map(|s| (s.name.clone(), s.arg_count))
             .collect()
-    });
+    };
+    let legacy_host_await_builtins = case
+        .legacy_host_await_builtins
+        .as_ref()
+        .map(map_host_await_builtins);
+    let host_await_builtins_v2 = case
+        .host_await_builtins_v2
+        .as_ref()
+        .map(map_host_await_builtins);
 
     Ok(RvmExecutionOptions {
         execution_mode,
         host_await_responses_run_to_completion: rtc_responses,
         host_await_responses_suspendable: suspendable_responses,
-        host_await_builtins: ha_builtins,
+        legacy_host_await_builtins,
+        host_await_builtins_v2,
     })
 }
 
@@ -274,13 +287,22 @@ fn compile_and_run_rvm_with_all_entry_points(
     listing_out: &mut Option<String>,
     execution_options: &RvmExecutionOptions,
 ) -> anyhow::Result<Vec<Value>> {
-    let ha_builtins = execution_options
-        .host_await_builtins
+    let legacy_ha_builtins = execution_options
+        .legacy_host_await_builtins
         .as_ref()
         .map(|b| b.iter().map(|(n, a)| (n.as_str(), *a)).collect::<Vec<_>>())
         .unwrap_or_default();
-    let program =
-        Compiler::compile_from_policy_with_host_await(compiled_policy, entry_points, &ha_builtins)?;
+    let host_await_builtins_v2 = execution_options
+        .host_await_builtins_v2
+        .as_ref()
+        .map(|b| b.iter().map(|(n, a)| (n.as_str(), *a)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let program = Compiler::compile_from_policy_with_host_await_v2(
+        compiled_policy,
+        entry_points,
+        &legacy_ha_builtins,
+        &host_await_builtins_v2,
+    )?;
 
     // Basic serialization sanity check keeps regressions visible in CI.
     test_round_trip_serialization(program.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
@@ -1359,8 +1381,12 @@ fn registered_host_await_vm_reuses_after_instruction_limit() -> Result<()> {
     )?;
     let entrypoint: Rc<str> = ENTRYPOINT.into();
     let compiled = engine.compile_with_entrypoint(&entrypoint)?;
-    let program =
-        Compiler::compile_from_policy_with_host_await(&compiled, &[ENTRYPOINT], &[("echo", 2)])?;
+    let program = Compiler::compile_from_policy_with_host_await_v2(
+        &compiled,
+        &[ENTRYPOINT],
+        &[],
+        &[("echo", 2)],
+    )?;
 
     let mut vm = RegoVM::new();
     vm.set_execution_mode(ExecutionMode::Suspendable);

@@ -283,6 +283,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* host_await_builtins, UIntPtr host_await_builtins_len, UIntPtr host_await_builtin_size);
 
         /// <summary>
+        /// Compile an RVM program from modules with separate legacy and v2 HostAwait registrations.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_compile_from_modules_with_host_await_v2", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_compile_from_modules_with_host_await_v2(byte* data_json, RegorusPolicyModule* modules, UIntPtr modules_len, byte** entry_points, UIntPtr entry_points_len, RegorusHostAwaitBuiltin* legacy_host_await_builtins, UIntPtr legacy_host_await_builtins_len, UIntPtr legacy_host_await_builtin_size, RegorusHostAwaitBuiltinV2* host_await_builtins_v2, UIntPtr host_await_builtins_v2_len, UIntPtr host_await_builtin_v2_size);
+
+        /// <summary>
         /// Add a policy.
         /// The policy is parsed into AST.
         /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
@@ -1040,11 +1046,16 @@ namespace Regorus.Internal
     {
     }
 
-    /// <summary>
-    /// FFI wrapper for HostAwaitBuiltin struct.
-    /// </summary>
+    /// <summary>FFI wrapper for the legacy name-only HostAwaitBuiltin descriptor.</summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct RegorusHostAwaitBuiltin
+    {
+        public byte* name;
+    }
+
+    /// <summary>FFI wrapper for the fixed-arity v2 HostAwaitBuiltin descriptor.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RegorusHostAwaitBuiltinV2
     {
         public byte* name;
         public UIntPtr arg_count;

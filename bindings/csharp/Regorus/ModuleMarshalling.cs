@@ -203,20 +203,12 @@ namespace Regorus.Internal
                 for (int i = 0; i < count; i++)
                 {
                     var builtin = builtins[i];
-                    if (builtin.ArgCount < 0)
-                    {
-                        throw new ArgumentOutOfRangeException(
-                            nameof(builtins),
-                            $"Host-await builtin at index {i} has a negative argument count.");
-                    }
-
                     var namePinned = Utf8Marshaller.Pin(builtin.Name);
                     pins.Add(namePinned);
 
                     buffer[i] = new RegorusHostAwaitBuiltin
                     {
                         name = namePinned.Pointer,
-                        arg_count = new UIntPtr((uint)builtin.ArgCount),
                     };
                 }
 
@@ -230,6 +222,90 @@ namespace Regorus.Internal
                 }
 
                 ArrayPool<RegorusHostAwaitBuiltin>.Shared.Return(buffer, clearArray: true);
+                throw;
+            }
+        }
+
+        internal sealed class PinnedHostAwaitBuiltinsV2 : IDisposable
+        {
+            private readonly List<Utf8Marshaller.PinnedUtf8> _pins;
+            private bool _disposed;
+
+            internal PinnedHostAwaitBuiltinsV2(
+                RegorusHostAwaitBuiltinV2[] buffer,
+                int length,
+                List<Utf8Marshaller.PinnedUtf8> pins)
+            {
+                Buffer = buffer;
+                Length = length;
+                _pins = pins;
+            }
+
+            internal RegorusHostAwaitBuiltinV2[] Buffer { get; }
+
+            internal int Length { get; }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                foreach (var pin in _pins)
+                {
+                    pin.Dispose();
+                }
+
+                ArrayPool<RegorusHostAwaitBuiltinV2>.Shared.Return(Buffer, clearArray: true);
+                _disposed = true;
+            }
+        }
+
+        internal static PinnedHostAwaitBuiltinsV2 PinHostAwaitBuiltinsV2(
+            IReadOnlyList<HostAwaitBuiltinV2> builtins)
+        {
+            if (builtins is null)
+            {
+                throw new ArgumentNullException(nameof(builtins));
+            }
+
+            var count = builtins.Count;
+            var buffer = ArrayPool<RegorusHostAwaitBuiltinV2>.Shared.Rent(count);
+            var pins = new List<Utf8Marshaller.PinnedUtf8>(count);
+
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var builtin = builtins[i];
+                    if (builtin.ArgCount < 0)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(builtins),
+                            $"Host-await builtin at index {i} has a negative argument count.");
+                    }
+
+                    var namePinned = Utf8Marshaller.Pin(builtin.Name);
+                    pins.Add(namePinned);
+
+                    buffer[i] = new RegorusHostAwaitBuiltinV2
+                    {
+                        name = namePinned.Pointer,
+                        arg_count = new UIntPtr((uint)builtin.ArgCount),
+                    };
+                }
+
+                return new PinnedHostAwaitBuiltinsV2(buffer, count, pins);
+            }
+            catch
+            {
+                foreach (var pin in pins)
+                {
+                    pin.Dispose();
+                }
+
+                ArrayPool<RegorusHostAwaitBuiltinV2>.Shared.Return(buffer, clearArray: true);
                 throw;
             }
         }

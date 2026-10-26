@@ -29,11 +29,74 @@ fn compile_rule_with_host_await(
     let mut engine = Engine::new();
     engine.add_policy("test.rego".to_string(), module.to_string())?;
     let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+    Ok(Compiler::compile_from_policy_with_host_await_v2(
+        &compiled,
+        &["data.test.p"],
+        &[],
+        host_await_builtins,
+    )?)
+}
+
+fn compile_rule_with_legacy_host_await(
+    module: &str,
+    host_await_builtins: &[(&str, usize)],
+) -> anyhow::Result<std::sync::Arc<Program>> {
+    let mut engine = Engine::new();
+    engine.add_policy("test.rego".to_string(), module.to_string())?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
     Ok(Compiler::compile_from_policy_with_host_await(
         &compiled,
         &["data.test.p"],
         host_await_builtins,
     )?)
+}
+
+#[test]
+fn legacy_registered_host_await_requires_one_argument() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        "package test\np := true".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+    let mut compiler = Compiler::with_policy(&compiled);
+
+    let error = compiler
+        .register_host_await_builtin("echo", 2)
+        .expect_err("legacy registration must reject non-one arity");
+
+    assert!(
+        error.to_string().contains("arg_count == 1"),
+        "unexpected registration error: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_registered_host_await_passes_array_argument_without_packing() -> anyhow::Result<()> {
+    let program = compile_rule_with_legacy_host_await(
+        r#"
+        package test
+        p := echo([1, 2])
+        "#,
+        &[("echo", 1)],
+    )?;
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.set_input(Value::new_object());
+
+    vm.execute_entry_point_by_name("data.test.p")?;
+
+    let ExecutionState::Suspended {
+        reason: SuspendReason::HostAwait { argument, .. },
+        ..
+    } = vm.execution_state()
+    else {
+        panic!("legacy registered host-await call should suspend");
+    };
+    assert_eq!(*argument, Value::from_json_str("[1, 2]")?);
+    Ok(())
 }
 
 /// Assert that the program's instruction stream contains no collection-create
@@ -631,7 +694,6 @@ fn registered_host_await_rejects_wrong_arity_before_compiling_inputs() {
             "lookup(undefined_0, undefined_1, undefined_2, undefined_3)",
             4,
         ),
-        (usize::MAX, "lookup(undefined_variable)", 1),
     ] {
         let error = compile_rule_with_host_await(
             &format!("package test\np := {call}"),
@@ -645,6 +707,16 @@ fn registered_host_await_rejects_wrong_arity_before_compiling_inputs() {
             "expected arity error, got {error}"
         );
     }
+
+    let error = compile_rule_with_host_await(
+        "package test\np := lookup(undefined_variable)",
+        &[("lookup", usize::MAX)],
+    )
+    .expect_err("arity beyond the register capacity should fail before compiling inputs");
+    assert!(
+        error.to_string().contains("register overflow"),
+        "expected register-capacity error, got {error}"
+    );
 }
 
 #[test]
@@ -659,6 +731,29 @@ fn registered_host_await_rejects_duplicate_name_with_different_arities() {
         error.to_string().contains("already registered"),
         "expected duplicate-registration error, got {error}"
     );
+}
+
+#[test]
+fn registered_host_await_rejects_duplicate_across_legacy_and_v2() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        "package test\np := true".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+    let error = Compiler::compile_from_policy_with_host_await_v2(
+        &compiled,
+        &["data.test.p"],
+        &[("lookup", 1)],
+        &[("lookup", 2)],
+    )
+    .expect_err("a builtin name must have only one registered contract");
+
+    assert!(
+        error.to_string().contains("already registered"),
+        "expected cross-mode duplicate-registration error, got {error}"
+    );
+    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
@@ -791,8 +886,12 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
         .to_string(),
     )?;
     let compiled = engine.compile_with_entrypoint(&Rc::from(entry_points[0]))?;
-    let registered_program =
-        Compiler::compile_from_policy_with_host_await(&compiled, &entry_points, &[("echo", 1)])?;
+    let registered_program = Compiler::compile_from_policy_with_host_await_v2(
+        &compiled,
+        &entry_points,
+        &[],
+        &[("echo", 1)],
+    )?;
 
     let mut explicit_engine = Engine::new();
     explicit_engine.add_policy(
@@ -997,15 +1096,11 @@ fn registered_host_await_uses_last_supported_register_window() {
         .downcast_ref::<SpannedCompilerError>()
         .map(|error| &error.error)
     {
-        Some(CompilerError::RegisterOverflow {
-            current,
-            additional,
-        }) => {
-            assert!(
-                usize::from(*current) + *additional > usize::from(u8::MAX),
-                "overflow error does not cross the register window: {current} + {additional}"
-            );
-        }
-        other => panic!("expected structured register-overflow error, got {other:?}: {error}"),
+        Some(CompilerError::General { message }) => assert!(
+            message.contains("register overflow")
+                && message.contains("within the 255-register window"),
+            "unexpected register-capacity diagnostic: {message}"
+        ),
+        other => panic!("expected explicit register-overflow diagnostic, got {other:?}: {error}"),
     }
 }
