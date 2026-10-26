@@ -615,3 +615,48 @@ cases:
     resource:
       type: "any"
     want_effect: "deny"
+
+  - note: field_count_quoted_numeric_key_collection
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.groups['123'][*]",
+            "where": {
+              "field": "properties.groups['123'][*].name",
+              "equals": "web"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        groups:
+          "123":
+            - name: "web"
+            - name: "db"
+    want_effect: "audit"
+
+  - note: field_count_quoted_numeric_key_collection_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.groups['123'][*]",
+            "where": {
+              "field": "properties.groups['123'][*].name",
+              "equals": "web"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        groups:
+          "123":
+            - name: "db"
+    want_undefined: true
