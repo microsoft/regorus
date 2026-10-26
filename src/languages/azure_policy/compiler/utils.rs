@@ -80,7 +80,7 @@ fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
 ///   - `tags['123']` -> `[Key("tags"), Key("123")]`
 ///   - `properties.ipRules[0].value` -> `[Key("properties"), Key("ipRules"), Index(0), Key("value")]`
 ///
-/// Only a bare, unquoted, all-digit subscript is an index. Dotted segments are
+/// Only a bare, unquoted, all-ASCII-digit subscript is an index. Dotted segments are
 /// always keys because Azure Policy spells array access with brackets.
 pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment>> {
     if path.trim().is_empty() {
@@ -142,9 +142,11 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment
                         bail!("empty quoted key in path: {}", path);
                     }
                     PathSegment::Key(key.to_string())
-                } else {
+                } else if raw.bytes().all(|b| b.is_ascii_digit()) {
                     raw.parse::<u64>()
                         .map_or_else(|_| PathSegment::Key(raw.to_string()), PathSegment::Index)
+                } else {
+                    PathSegment::Key(raw.to_string())
                 };
                 parts.push(segment);
                 bracket.clear();
@@ -523,6 +525,56 @@ mod tests {
     #[test]
     fn path_empty_bracket() {
         split_path_without_wildcards("a[]").unwrap_err();
+    }
+
+    #[test]
+    fn path_empty_quoted_bracket() {
+        split_path_without_wildcards("a['']").unwrap_err();
+        split_path_without_wildcards("a[\"\"]").unwrap_err();
+    }
+
+    #[test]
+    fn path_lone_quote_is_a_literal_key() {
+        assert_eq!(
+            split_path_without_wildcards("a[']").unwrap(),
+            vec![key("a"), key("'")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("a[\"]").unwrap(),
+            vec![key("a"), key("\"")]
+        );
+    }
+
+    #[test]
+    fn path_signed_subscript_is_a_key() {
+        assert_eq!(
+            split_path_without_wildcards("a[+1]").unwrap(),
+            vec![key("a"), key("+1")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("a[-1]").unwrap(),
+            vec![key("a"), key("-1")]
+        );
+    }
+
+    #[test]
+    fn path_leading_zero_subscript_is_an_index() {
+        assert_eq!(
+            split_path_without_wildcards("a[007]").unwrap(),
+            vec![key("a"), PathSegment::Index(7)]
+        );
+    }
+
+    #[test]
+    fn path_bracket_whitespace_is_trimmed() {
+        assert_eq!(
+            split_path_without_wildcards("a[ '1' ]").unwrap(),
+            vec![key("a"), key("1")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("a[ 1 ]").unwrap(),
+            vec![key("a"), PathSegment::Index(1)]
+        );
     }
 
     #[test]
