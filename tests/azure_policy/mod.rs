@@ -410,6 +410,15 @@ fn yaml_test_impl(file: &str) -> Result<()> {
             vm.set_host_await_responses(responses);
         }
 
+        if case.want_eval_error_contains.is_some()
+            && (case.want_effect.is_some() || case.want_undefined.is_some())
+        {
+            bail!(
+                "case '{}': an evaluation-error case cannot also expect an evaluation result",
+                case.note
+            );
+        }
+
         let value = match vm.execute_entry_point_by_name("main") {
             Ok(value) => {
                 if case.want_eval_error_contains.is_some() {
