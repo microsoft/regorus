@@ -32,6 +32,7 @@ pub(super) use self::core::json_unescape;
 
 pub use error::ParseError;
 
+use alloc::format;
 use alloc::string::ToString as _;
 
 use ::core::num::NonZeroU32;
@@ -197,7 +198,14 @@ pub(super) fn classify_field(
         // e.g. Tags[Dept.Name]] → tag name "Dept.Name]"
         _ if lower.starts_with("tags[") && text.ends_with(']') => {
             let tag = unwrap(text, "tags[".len(), "]".len());
-            let kind = strip_matching_outer_quotes(tag).map_or_else(
+            let quoted = strip_matching_outer_quotes(tag);
+            if quoted.unwrap_or(tag).is_empty() {
+                return Err(ParseError::Custom {
+                    span: span.clone(),
+                    message: format!("empty tag name in field: {text}"),
+                });
+            }
+            let kind = quoted.map_or_else(
                 || {
                     if text.contains("[*]") {
                         FieldKind::Alias(text.into())
@@ -306,6 +314,18 @@ mod tests {
                 Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected),
                 other => panic!("expected Tag for {field:?}, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_empty_bracket_tag_name_is_rejected() {
+        let span = dummy_span();
+
+        for field in ["tags[]", "tags['']", "tags[\"\"]"] {
+            assert!(
+                matches!(classify_field(field, &span), Err(ParseError::Custom { .. })),
+                "expected error for {field:?}"
+            );
         }
     }
 
