@@ -338,6 +338,18 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         let expects_compile_error =
             case.want_compile_error == Some(true) || case.want_compile_error_contains.is_some();
+        if case.want_compile_error == Some(false) && case.want_compile_error_contains.is_some() {
+            bail!(
+                "case '{}': want_compile_error: false contradicts want_compile_error_contains",
+                case.note
+            );
+        }
+        if expects_compile_error && (case.want_effect.is_some() || case.want_undefined.is_some()) {
+            bail!(
+                "case '{}': a compile-error case cannot also expect an evaluation result",
+                case.note
+            );
+        }
 
         let program = match compile_result {
             Ok(prog) => {

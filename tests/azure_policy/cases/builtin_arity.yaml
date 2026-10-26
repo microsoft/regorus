@@ -124,3 +124,16 @@ cases:
     resource:
       type: "any"
     want_compile_error_contains: "and() does not support more than 8 arguments (got 9)"
+
+  - note: generic_dispatch_eight_args_compiles_and_evaluates
+    policy_rule: |
+      {
+        "if": {
+          "value": "[union(createObject('a', 1), createObject('b', 2), createObject('c', 3), createObject('d', 4), createObject('e', 5), createObject('f', 6), createObject('g', 7), createObject('h', 8))]",
+          "equals": { "a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8 }
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      type: "any"
+    want_effect: "audit"
