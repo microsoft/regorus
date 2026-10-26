@@ -143,8 +143,10 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment
                     }
                     PathSegment::Key(key.to_string())
                 } else if raw.bytes().all(|b| b.is_ascii_digit()) {
-                    raw.parse::<u64>()
-                        .map_or_else(|_| PathSegment::Key(raw.to_string()), PathSegment::Index)
+                    // Bare digits are always an index. One too large for u64
+                    // saturates: it is out of range on any array and never
+                    // matches an object key, rather than becoming a key.
+                    PathSegment::Index(raw.parse::<u64>().unwrap_or(u64::MAX))
                 } else {
                     PathSegment::Key(raw.to_string())
                 };
@@ -562,6 +564,18 @@ mod tests {
         assert_eq!(
             split_path_without_wildcards("a[007]").unwrap(),
             vec![key("a"), PathSegment::Index(7)]
+        );
+    }
+
+    #[test]
+    fn path_overflowing_digit_subscript_stays_an_index() {
+        assert_eq!(
+            split_path_without_wildcards("a[18446744073709551616]").unwrap(),
+            vec![key("a"), PathSegment::Index(u64::MAX)]
+        );
+        assert_eq!(
+            split_path_without_wildcards("a['18446744073709551616']").unwrap(),
+            vec![key("a"), key("18446744073709551616")]
         );
     }
 

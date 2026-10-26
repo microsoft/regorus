@@ -397,6 +397,36 @@ cases:
           - name: "primary"
     want_undefined: true
 
+  - note: field_overflowing_digit_subscript_is_not_a_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config[18446744073709551616]",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        config:
+          "18446744073709551616": "decoy"
+    want_undefined: true
+
+  - note: field_quoted_overflowing_digits_are_a_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config['18446744073709551616']",
+          "exists": true
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        config:
+          "18446744073709551616": "v"
+    want_effect: "deny"
+
   # Quoted digits are object keys on every compiler path that splits field paths.
 
   - note: field_quoted_digit_subscript_on_array_is_not_an_index
