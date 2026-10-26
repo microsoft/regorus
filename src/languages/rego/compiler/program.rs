@@ -8,14 +8,13 @@
 )]
 
 use super::{Compiler, CompilerError, Result};
-use crate::interpreter::Interpreter;
-use crate::rvm::program::{Program, RuleType, SpanInfo};
+use crate::rvm::program::{Program, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Rc;
 use crate::Value;
 use alloc::collections::BTreeMap;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::anyhow;
@@ -145,24 +144,24 @@ impl<'a> Compiler<'a> {
             rule_infos_map.insert(rule_index as usize, rule_info);
         }
 
-        let rule_paths_to_evaluate: Vec<(String, usize)> = self
-            .rule_index_map
-            .iter()
-            .filter_map(|(rule_path, &rule_index)| {
-                let rule_type = &self.rule_types[rule_index as usize];
-                if *rule_type == RuleType::Complete {
-                    Some((rule_path.clone(), rule_index as usize))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for (rule_path, rule_index) in rule_paths_to_evaluate {
-            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path) {
-                if let Some(rule_info) = rule_infos_map.get_mut(&rule_index) {
+        for (rule_path, &rule_index) in &self.rule_index_map {
+            if let Some(rule_info) = rule_infos_map.get_mut(&(rule_index as usize)) {
+                if let Some(default_literal_index) =
+                    self.default_literal_indices.get(rule_path).copied()
+                {
                     rule_info.set_default_literal_index(default_literal_index);
+                } else if let Some(default_entry_point) =
+                    self.default_entry_points.get(rule_path).copied()
+                {
+                    rule_info.set_default_entry_point(default_entry_point);
                 }
+                let has_indexed_default = self
+                    .policy
+                    .inner
+                    .default_rules
+                    .get(rule_path)
+                    .is_some_and(|defaults| defaults.iter().any(|(_, index)| index.is_some()));
+                rule_info.set_default_is_indexed(has_indexed_default);
             }
         }
 
@@ -189,26 +188,6 @@ impl<'a> Compiler<'a> {
             .map_err(|e| CompilerError::from(anyhow!(e)))?;
 
         Ok(self.program)
-    }
-
-    fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
-        if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
-        }
-
-        let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
-
-        match interpreter.eval_default_rule_for_compiler(rule_path) {
-            Ok(computed_value) => {
-                if computed_value != Value::Undefined {
-                    let literal_index = self.add_literal(computed_value);
-                    return Some(literal_index);
-                }
-            }
-            Err(_e) => {}
-        }
-
-        None
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {

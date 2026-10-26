@@ -5,8 +5,13 @@ use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use postcard::{from_bytes, to_allocvec};
+use serde::{Deserialize, Serialize};
 
+use super::super::metadata::ProgramMetadata;
+use super::super::types::{BuiltinInfo, FunctionInfo, RuleInfo, RuleType, SpanInfo};
 use super::{DeserializationResult, Program};
+use crate::rvm::instructions::InstructionData;
+use crate::rvm::Instruction;
 use crate::value::Value;
 
 use super::value::{
@@ -16,6 +21,116 @@ use super::value::{
 /// Helper for tracking offsets with overflow checking
 struct OffsetTracker {
     current: usize,
+}
+
+/// Exact version-6 postcard layout. Keep this adapter in lockstep with the
+/// pre-runtime-default Program and RuleInfo field order.
+#[derive(Serialize, Deserialize)]
+struct ProgramV6 {
+    instructions: Vec<Instruction>,
+    instruction_data: InstructionData,
+    builtin_info_table: Vec<BuiltinInfo>,
+    rule_infos: Vec<RuleInfoV6>,
+    instruction_spans: Vec<Option<SpanInfo>>,
+    main_entry_point: u32,
+    max_rule_window_size: u8,
+    dispatch_window_size: u8,
+    metadata: ProgramMetadata,
+    needs_runtime_recursion_check: bool,
+    #[serde(default)]
+    has_host_await: bool,
+    #[serde(default)]
+    needs_recompilation: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RuleInfoV6 {
+    name: String,
+    rule_type: RuleType,
+    definitions: crate::Rc<Vec<Vec<u32>>>,
+    function_info: Option<FunctionInfo>,
+    default_literal_index: Option<u16>,
+    result_reg: u8,
+    num_registers: u8,
+    destructuring_blocks: Vec<Option<u32>>,
+    #[serde(default)]
+    else_bodies: Vec<Vec<bool>>,
+    #[serde(default)]
+    early_exit_on_first_success: bool,
+}
+
+impl From<&RuleInfo> for RuleInfoV6 {
+    fn from(rule_info: &RuleInfo) -> Self {
+        Self {
+            name: rule_info.name.clone(),
+            rule_type: rule_info.rule_type.clone(),
+            definitions: rule_info.definitions.clone(),
+            function_info: rule_info.function_info.clone(),
+            default_literal_index: rule_info.default_literal_index,
+            result_reg: rule_info.result_reg,
+            num_registers: rule_info.num_registers,
+            destructuring_blocks: rule_info.destructuring_blocks.clone(),
+            else_bodies: rule_info.else_bodies.clone(),
+            early_exit_on_first_success: rule_info.early_exit_on_first_success,
+        }
+    }
+}
+
+impl From<RuleInfoV6> for RuleInfo {
+    fn from(rule_info: RuleInfoV6) -> Self {
+        Self {
+            name: rule_info.name,
+            rule_type: rule_info.rule_type,
+            definitions: rule_info.definitions,
+            function_info: rule_info.function_info,
+            default_literal_index: rule_info.default_literal_index,
+            default_entry_point: None,
+            default_is_indexed: false,
+            result_reg: rule_info.result_reg,
+            num_registers: rule_info.num_registers,
+            destructuring_blocks: rule_info.destructuring_blocks,
+            else_bodies: rule_info.else_bodies,
+            early_exit_on_first_success: rule_info.early_exit_on_first_success,
+        }
+    }
+}
+
+impl From<&Program> for ProgramV6 {
+    fn from(program: &Program) -> Self {
+        Self {
+            instructions: program.instructions.clone(),
+            instruction_data: program.instruction_data.clone(),
+            builtin_info_table: program.builtin_info_table.clone(),
+            rule_infos: program.rule_infos.iter().map(RuleInfoV6::from).collect(),
+            instruction_spans: program.instruction_spans.clone(),
+            main_entry_point: program.main_entry_point,
+            max_rule_window_size: program.max_rule_window_size,
+            dispatch_window_size: program.dispatch_window_size,
+            metadata: program.metadata.clone(),
+            needs_runtime_recursion_check: program.needs_runtime_recursion_check,
+            has_host_await: program.has_host_await,
+            needs_recompilation: program.needs_recompilation,
+        }
+    }
+}
+
+impl ProgramV6 {
+    fn into_program(self) -> Program {
+        let mut program = Program::new();
+        program.instructions = self.instructions;
+        program.instruction_data = self.instruction_data;
+        program.builtin_info_table = self.builtin_info_table;
+        program.rule_infos = self.rule_infos.into_iter().map(RuleInfo::from).collect();
+        program.instruction_spans = self.instruction_spans;
+        program.main_entry_point = self.main_entry_point;
+        program.max_rule_window_size = self.max_rule_window_size;
+        program.dispatch_window_size = self.dispatch_window_size;
+        program.metadata = self.metadata;
+        program.needs_runtime_recursion_check = self.needs_runtime_recursion_check;
+        program.has_host_await = self.has_host_await;
+        program.needs_recompilation = self.needs_recompilation;
+        program
+    }
 }
 
 impl OffsetTracker {
@@ -76,7 +191,14 @@ impl Program {
         let mut buffer = Vec::new();
 
         buffer.extend_from_slice(&Self::MAGIC);
-        buffer.extend_from_slice(&Self::SERIALIZATION_VERSION.to_le_bytes());
+        let version: u32 = if self.rule_infos.iter().any(|rule_info| {
+            rule_info.default_entry_point.is_some() || rule_info.default_is_indexed
+        }) {
+            7
+        } else {
+            6
+        };
+        buffer.extend_from_slice(&version.to_le_bytes());
 
         let entry_points_bin = to_allocvec(&self.entry_points)
             .map_err(|e| format!("Entry points postcard serialization failed: {}", e))?;
@@ -90,8 +212,12 @@ impl Program {
         let rule_tree_bin = to_allocvec(&BinaryValueRef(&self.rule_tree))
             .map_err(|e| format!("Rule tree postcard serialization failed: {}", e))?;
 
-        let binary_data = to_allocvec(self)
-            .map_err(|e| format!("Program structure binary serialization failed: {}", e))?;
+        let binary_data = if version == 6 {
+            to_allocvec(&ProgramV6::from(self))
+        } else {
+            to_allocvec(self)
+        }
+        .map_err(|e| format!("Program structure binary serialization failed: {}", e))?;
 
         buffer.extend_from_slice(
             &u32::try_from(entry_points_bin.len())
@@ -157,7 +283,7 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            6 | 7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -235,27 +361,38 @@ impl Program {
                     }
                 };
 
-                let mut program =
-                    match from_bytes::<Program>(Self::get_slice(data, binary_start, binary_end)?) {
-                        Ok(prog) => prog,
-                        Err(_e) => {
+                let binary_program = Self::get_slice(data, binary_start, binary_end)?;
+                let mut program = if version == 6 {
+                    from_bytes::<ProgramV6>(binary_program).map_or_else(
+                        |_| {
                             needs_recompilation = true;
                             Program::new()
-                        }
-                    };
+                        },
+                        |program| program.into_program(),
+                    )
+                } else {
+                    from_bytes::<Program>(binary_program).map_err(|error| {
+                        format!("Program structure deserialization failed: {error}")
+                    })?
+                };
 
                 program.entry_points = entry_points;
                 program.sources = sources;
                 program.literals = literals;
                 program.rule_tree = rule_tree;
                 program.rego_v0 = rego_v0;
-                program.needs_recompilation = needs_recompilation;
+                program.needs_recompilation |= needs_recompilation;
 
                 if !program.builtin_info_table.is_empty() {
                     if let Err(_e) = program.initialize_resolved_builtins() {
+                        if version == 7 {
+                            return Err("Program references an unavailable builtin".to_string());
+                        }
                         program.needs_recompilation = true;
                     }
                 }
+
+                program.validate_limits()?;
 
                 if program.needs_recompilation {
                     Ok(DeserializationResult::Partial(program))
@@ -281,7 +418,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=7) => Ok(true),
             _ => Ok(false),
         }
     }

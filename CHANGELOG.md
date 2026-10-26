@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Expose compiled RVM builtin names through the C FFI and `Program.GetBuiltinNames()` in C#.
+- Compile runtime-evaluated defaults for RVM complete rules and functions. Non-literal defaults run as fallbacks after ordinary definitions and `else` branches do not produce a value, using runtime policy context rather than compile-time evaluation.
+- Support indexed rule defaults as per-key object merges: all indexed defaults contribute their keys, missing keys are filled, and ordinary object values are preserved.
 
 ### Changed
 
 - [**breaking**] Registered RVM HostAwait builtins now require a declared input arity and pass new calls to host handlers as ordered arrays; host responses remain unwrapped. The C# `HostAwaitBuiltin(string)` constructor was removed, a source and CLR binary break, and public Rust `Compiler::alloc_register` now returns `Result<Register, SpannedCompilerError>`; the registered-builtin API signature is unchanged. Explicit `__builtin_host_await` calls and previously compiled programs keep their raw payloads, which may themselves be arrays and cannot be identified by shape. Deploy a matching program/handler/native/managed bundle or provide application-owned legacy routing; no runtime handshake or universal compatibility handler is provided. New managed code with an older size-aware native library may have its count ignored and is unsupported. Roll back the matching prior package/handler/program bundle together.
+- [**breaking**] `RuleInfo` exposes optional `default_entry_point` and `default_is_indexed` metadata for dynamic and per-key defaults. These are public fields, so downstream Rust code constructing `RuleInfo` with struct literals must initialize them; constructors provide defaults. Programs without runtime or indexed defaults retain binary version 6 and flat JSON; programs with either use binary version 7 and a versioned JSON envelope. Current readers accept v6/v7 binaries and legacy flat JSON. Binary versions 1–5 deserialize as partial programs; automatic recompilation from partial artifacts is not implemented, so rebuild from policy sources when recompilation is required.
 - [**breaking**] Float-promoting arithmetic now raises `numeric overflow in <operation>` instead of producing NaN or infinity, regardless of strict-builtin-error mode. Unlike OPA's wide-exponent arithmetic, finite results outside the binary64 range are rejected.
 
 ## [0.13.0](https://github.com/microsoft/regorus/compare/regorus-v0.12.0...regorus-v0.13.0) - 2026-10-14

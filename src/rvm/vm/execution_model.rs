@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::rvm::program::RuleType;
-use crate::value::Value;
+use crate::value::{ObjectCursor, Value};
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
@@ -40,6 +40,8 @@ pub(super) enum FrameKind {
     Main { return_value_register: u8 },
     /// Rule execution frame (replaces recursive jump_to calls)
     Rule(RuleFrameData),
+    /// Private resumable state for a virtual data document lookup.
+    VirtualDataLookup(VirtualDataLookupFrame),
     /// Loop iteration frame
     Loop {
         return_pc: usize,
@@ -52,11 +54,56 @@ pub(super) enum FrameKind {
     },
 }
 
+/// State retained while a Suspendable virtual-data lookup evaluates rule leaves.
+#[derive(Debug, Clone)]
+pub(super) struct VirtualDataLookupFrame {
+    /// Original virtual-lookup instruction PC; rule finalizers may overwrite
+    /// `ExecutionFrame::pc` while child rules return.
+    pub(super) lookup_pc: usize,
+    pub(super) dest_reg: u8,
+    pub(super) kind: VirtualDataLookupKind,
+    pub(super) pending: Option<VirtualDataLookupPending>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum VirtualDataLookupKind {
+    Rule {
+        rule_index: u16,
+        suffix: Vec<Value>,
+    },
+    Subtree {
+        /// Fully evaluated path, including numeric-to-string fallbacks.
+        root_path: Vec<Value>,
+        result: Value,
+        relative_path: Vec<Value>,
+        traversal: Vec<VirtualDataLookupTraversal>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum VirtualDataLookupPending {
+    Rule {
+        register: u8,
+    },
+    Subtree {
+        register: u8,
+        parent_path_len: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct VirtualDataLookupTraversal {
+    pub(super) node: Value,
+    pub(super) cursor: ObjectCursor,
+    pub(super) path_len: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RuleFramePhase {
     Initializing,
     ExecutingDestructuring,
     ExecutingBody,
+    ExecutingDefault,
     Finalizing,
 }
 
@@ -72,6 +119,9 @@ pub(super) struct RuleFrameData {
     pub(super) accumulated_result: Option<Value>,
     pub(super) any_body_succeeded: bool,
     pub(super) rule_failed_due_to_inconsistency: bool,
+    pub(super) default_evaluated: bool,
+    /// Existing object value retained while per-key defaults are evaluated.
+    pub(super) default_base_result: Option<Value>,
     pub(super) rule_type: RuleType,
     pub(super) result_reg: u8,
     pub(super) is_function_rule: bool,

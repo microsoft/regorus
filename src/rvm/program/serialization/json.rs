@@ -6,16 +6,56 @@ use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 
 use super::super::metadata::ProgramMetadata;
-use super::super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
+use super::super::types::{BuiltinInfo, FunctionInfo, RuleInfo, RuleType, SourceFile, SpanInfo};
 use super::Program;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
 use crate::value::Value;
-use indexmap::IndexMap;
+
+#[derive(serde::Serialize)]
+struct FlatRuleInfoV6<'a> {
+    name: &'a String,
+    rule_type: &'a RuleType,
+    definitions: &'a crate::Rc<Vec<Vec<u32>>>,
+    function_info: &'a Option<FunctionInfo>,
+    default_literal_index: Option<u16>,
+    result_reg: u8,
+    num_registers: u8,
+    destructuring_blocks: &'a Vec<Option<u32>>,
+    else_bodies: &'a Vec<Vec<bool>>,
+    early_exit_on_first_success: bool,
+}
 
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        self.validate_limits()?;
+        let has_runtime_defaults = self.rule_infos.iter().any(|rule_info| {
+            rule_info.default_entry_point.is_some() || rule_info.default_is_indexed
+        });
+        let rule_infos = if has_runtime_defaults {
+            serde_json::to_value(&self.rule_infos)
+                .map_err(|error| format!("Rule info JSON serialization failed: {error}"))?
+        } else {
+            let rule_infos: Vec<_> = self
+                .rule_infos
+                .iter()
+                .map(|rule_info| FlatRuleInfoV6 {
+                    name: &rule_info.name,
+                    rule_type: &rule_info.rule_type,
+                    definitions: &rule_info.definitions,
+                    function_info: &rule_info.function_info,
+                    default_literal_index: rule_info.default_literal_index,
+                    result_reg: rule_info.result_reg,
+                    num_registers: rule_info.num_registers,
+                    destructuring_blocks: &rule_info.destructuring_blocks,
+                    else_bodies: &rule_info.else_bodies,
+                    early_exit_on_first_success: rule_info.early_exit_on_first_success,
+                })
+                .collect();
+            serde_json::to_value(rule_infos)
+                .map_err(|error| format!("Rule info JSON serialization failed: {error}"))?
+        };
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -50,19 +90,43 @@ impl Program {
             "builtin_info_table": self.builtin_info_table,
             "entry_points": self.entry_points,
             "sources": self.sources,
-            "rule_infos": self.rule_infos,
+            "rule_infos": rule_infos,
             "instruction_spans": self.instruction_spans,
             "rule_tree": self.rule_tree
         });
 
-        serde_json::to_string_pretty(&json_data)
+        let output_data = if has_runtime_defaults {
+            serde_json::json!({
+                "version": Self::SERIALIZATION_VERSION,
+                "program": json_data
+            })
+        } else {
+            json_data
+        };
+
+        serde_json::to_string_pretty(&output_data)
             .map_err(|e| format!("JSON serialization failed: {}", e))
     }
 
     /// Deserialize program from JSON format
     pub fn deserialize_json(data: &str) -> Result<Program, String> {
-        let json_data: serde_json::Value =
+        let parsed_json: serde_json::Value =
             serde_json::from_str(data).map_err(|e| format!("JSON parsing failed: {}", e))?;
+        let json_data = if let Some(version) = parsed_json.get("version") {
+            let version = version
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or("Invalid JSON program version")?;
+            if version != Self::SERIALIZATION_VERSION {
+                return Err(format!("Unsupported JSON program version {version}"));
+            }
+            parsed_json
+                .get("program")
+                .cloned()
+                .ok_or("Missing program section in versioned JSON")?
+        } else {
+            parsed_json
+        };
 
         let metadata = json_data
             .get("metadata")
@@ -168,7 +232,7 @@ impl Program {
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
             .unwrap_or_default();
 
-        let entry_points: IndexMap<String, usize> = json_data
+        let entry_points = json_data
             .get("entry_points")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
             .unwrap_or_default();
@@ -178,10 +242,11 @@ impl Program {
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
             .unwrap_or_default();
 
-        let rule_infos: Vec<RuleInfo> = json_data
-            .get("rule_infos")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
-            .unwrap_or_default();
+        let rule_infos: Vec<RuleInfo> = match json_data.get("rule_infos") {
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|error| format!("Failed to deserialize rule_infos: {error}"))?,
+            None => Vec::new(),
+        };
 
         let instruction_spans: Vec<Option<SpanInfo>> = json_data
             .get("instruction_spans")
@@ -234,6 +299,8 @@ impl Program {
         if !program.builtin_info_table.is_empty() {
             let _ = program.initialize_resolved_builtins();
         }
+
+        program.validate_limits()?;
 
         Ok(program)
     }

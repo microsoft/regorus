@@ -13,6 +13,7 @@
 use super::{CompilationContext, Compiler, CompilerError, ContextType, Result, WorklistEntry};
 use crate::ast::{Expr, ExprRef, Rule, RuleHead};
 use crate::compiler::destructuring_planner::plans::BindingPlan;
+use crate::interpreter::Interpreter;
 use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::rvm::program::{Program, RuleType};
@@ -41,7 +42,9 @@ impl<'a> Compiler<'a> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
             // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
-            if self.policy.inner.default_rules.contains_key(rule_path) {
+            if self.policy.inner.rule_paths.contains(rule_path)
+                && self.policy.inner.default_rules.contains_key(rule_path)
+            {
                 return Ok(RuleType::Complete);
             }
             return Err(CompilerError::General {
@@ -139,6 +142,34 @@ impl<'a> Compiler<'a> {
 
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
         if let Some(&index) = self.rule_index_map.get(rule_path) {
+            let current_entry =
+                WorklistEntry::new(rule_path.to_string(), self.current_call_stack.clone());
+            if current_entry.would_create_recursion(index) {
+                let mut chain = Vec::new();
+                let mut found_start = false;
+                for &rule_index in &self.current_call_stack {
+                    if rule_index == index {
+                        found_start = true;
+                    }
+                    if found_start {
+                        if let Some((path, _)) = self
+                            .rule_index_map
+                            .iter()
+                            .find(|(_, &mapped_index)| mapped_index == rule_index)
+                        {
+                            chain.push(path.clone());
+                        }
+                    }
+                }
+                chain.push(rule_path.to_string());
+                return Err(CompilerError::General {
+                    message: format!(
+                        "Compile-time recursion detected in rule call chain: {}",
+                        chain.join(" -> ")
+                    ),
+                }
+                .into());
+            }
             return Ok(index);
         }
 
@@ -263,6 +294,18 @@ impl<'a> Compiler<'a> {
         entry_points: &[&str],
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
+        for module in policy.get_modules() {
+            for rule in &module.policy {
+                if let Rule::Default { value, .. } = rule.as_ref() {
+                    Interpreter::check_default_value(value).map_err(|error| {
+                        CompilerError::General {
+                            message: error.to_string(),
+                        }
+                    })?;
+                }
+            }
+        }
+
         let mut compiler = Compiler::with_policy(policy);
         for &(name, arg_count) in host_await_builtins {
             compiler.register_host_await_builtin(name, arg_count)?;
@@ -768,7 +811,22 @@ impl<'a> Compiler<'a> {
                     self.rule_num_registers.push(0);
                 }
 
-                // Add the rule to the data tree so it is discoverable.
+                // Default-only functions are callable, but are not data
+                // documents and must not be exposed by virtual namespace
+                // traversal.
+                let is_default_function = self
+                    .policy
+                    .inner
+                    .default_rules
+                    .get(rule_path)
+                    .is_some_and(|defaults| {
+                        defaults.iter().any(|(rule_ref, _)| {
+                            matches!(
+                                rule_ref.as_ref(),
+                                Rule::Default { args, .. } if !args.is_empty()
+                            )
+                        })
+                    });
                 let components = self
                     .policy
                     .inner
@@ -786,14 +844,369 @@ impl<'a> Compiler<'a> {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
                 let package_path = package_parts.to_vec();
-                let _ =
+                if is_default_function {
                     self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                        .add_package_to_tree(&package_path)
+                        .map_err(CompilerError::from)?;
+                } else {
+                    let _ = self.program.add_rule_to_tree(
+                        &package_path,
+                        rule_name,
+                        rule_index as usize,
+                    );
+                }
             }
 
             self.register_counter = saved_register_counter;
             self.current_package = saved_package;
             self.current_module_index = saved_module_index;
+        }
+
+        self.compile_default_rule_for_path(rule_path)?;
+
+        Ok(())
+    }
+
+    fn find_default_rules_for_path(
+        &self,
+        rule_path: &str,
+    ) -> Result<Vec<(crate::ast::NodeRef<Rule>, u32, String)>> {
+        let Some(default_rules) = self.policy.inner.default_rules.get(rule_path) else {
+            return Ok(Vec::new());
+        };
+
+        let mut matching_defaults = Vec::new();
+        for (rule_ref, _) in default_rules {
+            let Rule::Default { refr, .. } = rule_ref.as_ref() else {
+                continue;
+            };
+
+            for (module_index, module) in self.policy.get_modules().iter().enumerate() {
+                if !module.policy.contains(rule_ref) {
+                    continue;
+                }
+
+                let module_package =
+                    get_path_string(&module.package.refr, Some("data")).map_err(|error| {
+                        CompilerError::General {
+                            message: format!(
+                                "Failed to get package path for default rule: {error}"
+                            ),
+                        }
+                    })?;
+                let default_refr = match refr.as_ref() {
+                    Expr::RefBrack { refr, .. } => refr,
+                    _ => refr,
+                };
+                let default_path =
+                    get_path_string(default_refr, Some(&module_package)).map_err(|error| {
+                        CompilerError::General {
+                            message: format!("Failed to get path for default rule: {error}"),
+                        }
+                    })?;
+                if default_path == rule_path {
+                    let module_index =
+                        u32::try_from(module_index).map_err(|_| CompilerError::General {
+                            message: "default rule module index exceeds u32".to_string(),
+                        })?;
+                    matching_defaults.push((rule_ref.clone(), module_index, module_package));
+                    break;
+                }
+            }
+        }
+
+        Ok(matching_defaults)
+    }
+
+    fn compile_default_rule_for_path(&mut self, rule_path: &str) -> Result<()> {
+        let default_rules = self.find_default_rules_for_path(rule_path)?;
+        let Some((rule_ref, module_index, module_package)) = default_rules.first().cloned() else {
+            return Ok(());
+        };
+
+        let has_indexed_default = default_rules.iter().any(|(rule_ref, _, _)| {
+            matches!(
+                rule_ref.as_ref(),
+                Rule::Default { refr, .. } if matches!(refr.as_ref(), Expr::RefBrack { .. })
+            )
+        });
+        if has_indexed_default {
+            let all_indexed = default_rules.iter().all(|(rule_ref, _, _)| {
+                matches!(
+                    rule_ref.as_ref(),
+                    Rule::Default { refr, .. } if matches!(refr.as_ref(), Expr::RefBrack { .. })
+                )
+            });
+            if !all_indexed {
+                return Err(CompilerError::General {
+                    message: format!(
+                        "indexed and complete defaults cannot be combined for '{rule_path}'"
+                    ),
+                }
+                .into());
+            }
+            return self.compile_indexed_defaults_for_path(rule_path, &default_rules);
+        }
+
+        let Rule::Default {
+            args, value, span, ..
+        } = rule_ref.as_ref()
+        else {
+            return Ok(());
+        };
+
+        let rule_index =
+            *self
+                .rule_index_map
+                .get(rule_path)
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("Rule index not found for default rule '{rule_path}'"),
+                })?;
+        let rule_index_usize = usize::from(rule_index);
+
+        if !args.is_empty() {
+            let expected_count = args.len();
+            match self
+                .rule_function_param_count
+                .get(rule_index_usize)
+                .copied()
+                .flatten()
+            {
+                Some(actual_count) if actual_count != expected_count => {
+                    return Err(CompilerError::General {
+                        message: format!(
+                            "default function '{rule_path}' has {} parameters but expected {}",
+                            expected_count, actual_count
+                        ),
+                    }
+                    .at(span));
+                }
+                None => {
+                    if let Some(param_count) =
+                        self.rule_function_param_count.get_mut(rule_index_usize)
+                    {
+                        *param_count = Some(expected_count);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(value) = super::expressions::try_eval_const(value.as_ref()) {
+            let literal_index = self.add_literal(value);
+            self.default_literal_indices
+                .insert(rule_path.to_string(), literal_index);
+            return Ok(());
+        }
+
+        let saved_package = self.current_package.clone();
+        let saved_module_index = self.current_module_index;
+        let saved_register_counter = self.register_counter;
+        let saved_input_register = self.current_input_register;
+        let saved_data_register = self.current_data_register;
+        let saved_loop_expr_register_map = core::mem::take(&mut self.loop_expr_register_map);
+
+        self.current_package = module_package;
+        self.current_module_index = module_index;
+        self.register_counter = 0;
+        self.current_input_register = None;
+        self.current_data_register = None;
+        self.push_scope();
+        self.reset_rule_definition_registers();
+
+        let result_register = self.alloc_register()?;
+        let entry_point =
+            u32::try_from(self.program.instructions.len()).map_err(|_| CompilerError::General {
+                message: format!("default entry point for '{rule_path}' exceeds u32"),
+            })?;
+        let value_register = self.compile_rego_expr(value)?;
+        self.emit_instruction(
+            Instruction::Move {
+                dest: result_register,
+                src: value_register,
+            },
+            value.span(),
+        );
+        self.emit_instruction(Instruction::RuleReturn {}, span);
+
+        self.default_entry_points
+            .insert(rule_path.to_string(), entry_point);
+        if let Some(num_registers) = self.rule_num_registers.get_mut(rule_index_usize) {
+            *num_registers = (*num_registers).max(self.register_counter);
+        }
+
+        self.pop_scope();
+        self.current_package = saved_package;
+        self.current_module_index = saved_module_index;
+        self.register_counter = saved_register_counter;
+        self.current_input_register = saved_input_register;
+        self.current_data_register = saved_data_register;
+        self.loop_expr_register_map = saved_loop_expr_register_map;
+
+        Ok(())
+    }
+
+    fn compile_indexed_defaults_for_path(
+        &mut self,
+        rule_path: &str,
+        defaults: &[(crate::ast::NodeRef<Rule>, u32, String)],
+    ) -> Result<()> {
+        let rule_index =
+            *self
+                .rule_index_map
+                .get(rule_path)
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("Rule index not found for default rule '{rule_path}'"),
+                })?;
+        let rule_index_usize = usize::from(rule_index);
+
+        let mut static_object = Value::new_object();
+        let mut all_static = true;
+        for (rule_ref, _, _) in defaults {
+            let Rule::Default {
+                refr,
+                args,
+                value,
+                span,
+                ..
+            } = rule_ref.as_ref()
+            else {
+                continue;
+            };
+            if !args.is_empty() {
+                return Err(CompilerError::General {
+                    message: format!("indexed default '{rule_path}' cannot be a function"),
+                }
+                .at(span));
+            }
+            let Expr::RefBrack { index, .. } = refr.as_ref() else {
+                return Err(CompilerError::General {
+                    message: format!("indexed default '{rule_path}' has no index expression"),
+                }
+                .at(span));
+            };
+            match (
+                super::expressions::try_eval_const(index.as_ref()),
+                super::expressions::try_eval_const(value.as_ref()),
+            ) {
+                (Some(key), Some(value)) => {
+                    let fields =
+                        static_object
+                            .as_object_mut()
+                            .map_err(|error| CompilerError::General {
+                                message: error.to_string(),
+                            })?;
+                    fields.insert(key, value);
+                }
+                _ => all_static = false,
+            }
+        }
+
+        if all_static {
+            let literal_index = self.add_literal(static_object);
+            self.default_literal_indices
+                .insert(rule_path.to_string(), literal_index);
+            return Ok(());
+        }
+
+        let saved_package = self.current_package.clone();
+        let saved_module_index = self.current_module_index;
+        let saved_register_counter = self.register_counter;
+        let saved_input_register = self.current_input_register;
+        let saved_data_register = self.current_data_register;
+        let saved_loop_expr_register_map = core::mem::take(&mut self.loop_expr_register_map);
+
+        self.register_counter = 0;
+        self.current_input_register = None;
+        self.current_data_register = None;
+        self.push_scope();
+        self.reset_rule_definition_registers();
+
+        let result_register = self.alloc_register()?;
+        let empty_object_index = self.add_literal(Value::new_object());
+        let entry_point =
+            u32::try_from(self.program.instructions.len()).map_err(|_| CompilerError::General {
+                message: format!("default entry point for '{rule_path}' exceeds u32"),
+            })?;
+        self.emit_instruction(
+            Instruction::Load {
+                dest: result_register,
+                literal_idx: empty_object_index,
+            },
+            defaults
+                .first()
+                .and_then(|(rule_ref, _, _)| match rule_ref.as_ref() {
+                    Rule::Default { span, .. } => Some(span),
+                    _ => None,
+                })
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("indexed default '{rule_path}' has no source span"),
+                })?,
+        );
+
+        let mut max_register_count = self.register_counter;
+        let mut return_span = None;
+        for (rule_ref, module_index, module_package) in defaults {
+            let Rule::Default {
+                refr,
+                args,
+                value,
+                span,
+                ..
+            } = rule_ref.as_ref()
+            else {
+                continue;
+            };
+            if !args.is_empty() {
+                return Err(CompilerError::General {
+                    message: format!("indexed default '{rule_path}' cannot be a function"),
+                }
+                .at(span));
+            }
+            let Expr::RefBrack { index, .. } = refr.as_ref() else {
+                return Err(CompilerError::General {
+                    message: format!("indexed default '{rule_path}' has no index expression"),
+                }
+                .at(span));
+            };
+
+            self.current_package = module_package.clone();
+            self.current_module_index = *module_index;
+            self.register_counter = 1;
+            self.push_scope();
+            self.reset_rule_definition_registers();
+            let key_register = self.compile_rego_expr(index)?;
+            let value_register = self.compile_rego_expr(value)?;
+            self.emit_instruction(
+                Instruction::ObjectSet {
+                    obj: result_register,
+                    key: key_register,
+                    value: value_register,
+                },
+                span,
+            );
+            max_register_count = max_register_count.max(self.register_counter);
+            return_span = Some(span);
+            self.pop_scope();
+        }
+
+        let span = return_span.ok_or_else(|| CompilerError::General {
+            message: format!("indexed default '{rule_path}' has no source span"),
+        })?;
+        self.emit_instruction(Instruction::RuleReturn {}, span);
+
+        self.pop_scope();
+        self.current_package = saved_package;
+        self.current_module_index = saved_module_index;
+        self.register_counter = saved_register_counter;
+        self.current_input_register = saved_input_register;
+        self.current_data_register = saved_data_register;
+        self.loop_expr_register_map = saved_loop_expr_register_map;
+
+        self.default_entry_points
+            .insert(rule_path.to_string(), entry_point);
+        if let Some(num_registers) = self.rule_num_registers.get_mut(rule_index_usize) {
+            *num_registers = (*num_registers).max(max_register_count);
         }
 
         Ok(())

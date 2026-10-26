@@ -64,7 +64,7 @@ impl<'a> Compiler<'a> {
             .map_err(|_| CompilerError::InvalidFunctionExpression.at(&span))?;
 
         let original_fcn_path = fcn_path.clone();
-        let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
+        let full_fcn_path = if self.is_user_defined_function(&fcn_path) {
             fcn_path
         } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_fcn_path) {
             // Resolve a leading import alias before module-prefixing and builtins.
@@ -418,11 +418,9 @@ impl<'a> Compiler<'a> {
         let import_expr = self.policy.inner.imports.get(&import_key)?;
         let mut candidate = get_path_string(import_expr.as_ref(), None).ok()?;
         candidate.push_str(suffix);
-        self.policy
-            .inner
-            .functions
-            .contains_key(&candidate)
-            .then_some(candidate)
+        (self.policy.inner.functions.contains_key(&candidate)
+            || self.is_default_function(&candidate))
+        .then_some(candidate)
     }
 
     fn lookup_builtin_arity(&self, name: &str) -> Option<usize> {
@@ -474,6 +472,7 @@ impl<'a> Compiler<'a> {
                 .functions
                 .get(full_fcn_path)
                 .map(|(_, arity, _)| *arity as usize)
+                .or_else(|| self.default_function_arity(full_fcn_path))
                 .or_else(|| {
                     self.rule_function_param_count
                         .get(rule_index as usize)

@@ -426,6 +426,8 @@ mod tests {
                 definitions: crate::Rc::new(definitions.clone()),
                 function_info: None,
                 default_literal_index: rule_info_spec.default_literal_index,
+                default_entry_point: None,
+                default_is_indexed: false,
                 result_reg,
                 num_registers: 50, // Increased to accommodate test cases with higher register indices
                 destructuring_blocks,

@@ -992,6 +992,112 @@ greeting := combined if {
 """;
 
     [TestMethod]
+    public void DynamicDefault_RawHostAwait_RoundTripsAndRunsBothModes()
+    {
+        const string policy = """
+package demo
+import rego.v1
+
+default responses := [response |
+  item := input.items[_]
+  response := __builtin_host_await(item, "lookup")
+]
+""";
+        var modules = new[] { new PolicyModule("dynamic_default_host_await.rego", policy) };
+        var entryPoints = new[] { "data.demo.responses" };
+
+        using var compiled = Program.CompileFromModules("{}", modules, entryPoints);
+        using var program = Program.DeserializeBinary(compiled.SerializeBinary(), out var isPartial);
+        Assert.IsFalse(isPartial, "runtime-default program should deserialize completely");
+
+        foreach (var mode in new[] { ExecutionMode.RunToCompletion, ExecutionMode.Suspendable })
+        {
+            using var vm = new Rvm();
+            vm.SetExecutionMode(mode);
+            vm.LoadProgram(program);
+            vm.SetInputJson("""{"items":["first","second"]}""");
+            vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["lookup"] = new[] { "\"first-result\"", "\"second-result\"" },
+            });
+
+            string? finalResult;
+            if (mode == ExecutionMode.RunToCompletion)
+            {
+                finalResult = vm.Execute();
+            }
+            else
+            {
+                _ = vm.Execute();
+                Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+                using (var firstArgument = JsonDocument.Parse(vm.GetHostAwaitArgument()!))
+                {
+                    Assert.AreEqual(JsonValueKind.String, firstArgument.RootElement.ValueKind);
+                    Assert.AreEqual("first", firstArgument.RootElement.GetString());
+                }
+
+                _ = vm.Resume("\"first-result\"");
+                Assert.AreEqual("lookup", vm.GetHostAwaitIdentifier());
+                using (var secondArgument = JsonDocument.Parse(vm.GetHostAwaitArgument()!))
+                {
+                    Assert.AreEqual(JsonValueKind.String, secondArgument.RootElement.ValueKind);
+                    Assert.AreEqual("second", secondArgument.RootElement.GetString());
+                }
+
+                finalResult = vm.Resume("\"second-result\"");
+            }
+
+            var json = finalResult
+                ?? throw new InvalidOperationException("Expected a result for the dynamic default.");
+            using var result = JsonDocument.Parse(json);
+            Assert.AreEqual(JsonValueKind.Array, result.RootElement.ValueKind);
+            Assert.AreEqual(2, result.RootElement.GetArrayLength());
+            Assert.AreEqual("first-result", result.RootElement[0].GetString());
+            Assert.AreEqual("second-result", result.RootElement[1].GetString());
+        }
+    }
+
+    [TestMethod]
+    public void DynamicDefault_UsesRuntimeRuleValue_WithCompileDataInBothModes()
+    {
+        const string policy = """
+package probe
+other := true
+default value := [x | x := other]
+""";
+        var modules = new[] { new PolicyModule("dynamic_default.rego", policy) };
+        var entryPoints = new[] { "data.probe.value" };
+        var compileDataCases = new[]
+        {
+            "{}",
+            """{"probe":{"other":false}}""",
+        };
+
+        foreach (var compileData in compileDataCases)
+        {
+            using var compiled = Program.CompileFromModules(compileData, modules, entryPoints);
+            using var program = Program.DeserializeBinary(compiled.SerializeBinary(), out var isPartial);
+            Assert.IsFalse(isPartial, "runtime-default program should deserialize completely");
+
+            foreach (var mode in new[] { ExecutionMode.RunToCompletion, ExecutionMode.Suspendable })
+            {
+                using var vm = new Rvm();
+                vm.SetExecutionMode(mode);
+                vm.LoadProgram(program);
+                vm.SetDataJson("{}");
+                vm.SetInputJson("{}");
+
+                var resultJson = vm.Execute()
+                    ?? throw new InvalidOperationException("Expected a result for the dynamic default.");
+                using var result = JsonDocument.Parse(resultJson);
+                Assert.AreEqual(JsonValueKind.Array, result.RootElement.ValueKind);
+                Assert.AreEqual(1, result.RootElement.GetArrayLength());
+                Assert.IsTrue(result.RootElement[0].GetBoolean());
+            }
+        }
+    }
+
+    [TestMethod]
     public void RegisteredHostAwait_RunToCompletion_MultipleIdentifiersInSingleCall()
     {
         var modules = new[] { new PolicyModule("multi.rego", MultiAwaitPolicy) };
