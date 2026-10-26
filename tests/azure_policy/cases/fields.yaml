@@ -507,3 +507,67 @@ cases:
           - "123": "enabled"
           - "123": "disabled"
     want_undefined: true
+
+  - note: field_dotted_numeric_segment_on_array_is_not_an_index
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipRules.1.value",
+          "equals": "10.0.0.2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        ipRules:
+          - value: "10.0.0.1"
+          - value: "10.0.0.2"
+    want_undefined: true
+
+  - note: existence_condition_quoted_numeric_key_matches
+    policy_rule: |
+      {
+        "if": { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "properties.config['123']",
+              "equals": "on"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response:
+          properties:
+            config:
+              "123": "on"
+    want_undefined: true
+
+  - note: existence_condition_quoted_numeric_key_differs
+    policy_rule: |
+      {
+        "if": { "field": "type", "equals": "Microsoft.Compute/virtualMachines" },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "properties.config['123']",
+              "equals": "on"
+            }
+          }
+        }
+      }
+    resource:
+      type: "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response:
+          properties:
+            config:
+              "123": "off"
+    want_effect: "auditIfNotExists"
