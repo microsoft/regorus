@@ -170,7 +170,7 @@ impl Compiler {
             return self.compile_from_binding(&binding, field_path, span);
         }
         if field_path.contains("[*]") {
-            return self.compile_field_wildcard_collect(field_path, span);
+            return self.compile_field_wildcard_collect(None, field_path, span);
         }
         self.compile_resource_path_value(field_path, span)
     }
@@ -206,14 +206,17 @@ impl Compiler {
 
     // -- wildcard collection -----------------------------------------------
 
+    /// Collect every value selected by a `[*]` path into a flat array.
+    /// The path is relative to `base_reg` when given, else the resource root.
     pub(super) fn compile_field_wildcard_collect(
         &mut self,
+        base_reg: Option<u8>,
         field_path: &str,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
         let result_reg = self.alloc_register()?;
         self.emit(Instruction::ArrayNew { dest: result_reg }, span);
-        self.compile_wildcard_collect_inner(None, field_path, result_reg, span)?;
+        self.compile_wildcard_collect_inner(base_reg, field_path, result_reg, span)?;
         Ok(result_reg)
     }
 
