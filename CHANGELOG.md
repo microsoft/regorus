@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/microsoft/regorus/compare/regorus-v0.13.0...regorus-v0.14.0) - 2026-10-27
+
+### Added
+
+- *(compiler)* [**breaking**] support fixed-arity host-await builtins ([#857](https://github.com/microsoft/regorus/pull/857))
+- *(bindings)* expose compiled program builtin names ([#853](https://github.com/microsoft/regorus/pull/853))
+
+### Fixed
+
+- *(number)* reject non-finite arithmetic results ([#845](https://github.com/microsoft/regorus/pull/845))
+- *(engine)* keep query loop hoisting out of the shared compiled policy ([#849](https://github.com/microsoft/regorus/pull/849))
+- *(rvm)* stop after compiling the final hoisted output loop ([#850](https://github.com/microsoft/regorus/pull/850))
+- *(number)* reject non-finite values at supported ingress boundaries ([#840](https://github.com/microsoft/regorus/pull/840))
+- *(rvm)* omit undefined values from set accumulation ([#841](https://github.com/microsoft/regorus/pull/841))
+
+### Other
+
+- Fix ARM function naming in arity errors and enhance compile-error tests ([#867](https://github.com/microsoft/regorus/pull/867))
+- Fix handling of quoted digit path segments in Azure Policy ([#866](https://github.com/microsoft/regorus/pull/866))
+- Enhance Azure Policy tests for evaluation errors and short circuits ([#865](https://github.com/microsoft/regorus/pull/865))
+- Preserve memory budgets across suspendable execution ([#830](https://github.com/microsoft/regorus/pull/830))
+- fix dependency audits and vulnerable zip dependency ([#844](https://github.com/microsoft/regorus/pull/844))
+- *(deps)* bump the github-actions group with 7 updates ([#839](https://github.com/microsoft/regorus/pull/839))
+
 ### Added
 
 - Expose compiled RVM builtin names through the C FFI and `Program.GetBuiltinNames()` in C#.

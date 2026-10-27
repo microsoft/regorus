@@ -1041,7 +1041,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regorus"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "regorusjs"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -1307,9 +1307,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "pin-project-lite",
 ]
