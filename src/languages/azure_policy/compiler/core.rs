@@ -70,6 +70,9 @@ pub(super) struct Compiler {
 
     /// When `true`, unknown aliases are silently treated as raw property paths.
     pub(super) alias_fallback_to_raw: bool,
+
+    /// ARM function currently being compiled, used for author-facing errors.
+    pub(super) current_arm_function: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +206,12 @@ impl Compiler {
         // coalesce, union).  If >8 args are needed, consider packing into an
         // array or folding/chaining associative calls.
         if args.len() > 8 {
-            bail!(span.error(&format!("builtin call {} exceeds max 8 args", name)));
+            let reported = self.current_arm_function.as_deref().unwrap_or(name);
+            bail!(span.error(&format!(
+                "{}() does not support more than 8 arguments (got {})",
+                reported,
+                args.len()
+            )));
         }
 
         let dest = self.alloc_register()?;
