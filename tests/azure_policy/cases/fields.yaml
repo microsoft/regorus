@@ -601,3 +601,569 @@ cases:
             config:
               "123": "off"
     want_effect: "auditIfNotExists"
+
+  - note: existence_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: rejected }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: approved }]
+    want_effect: auditIfNotExists
+
+  - note: existence_count_field_function_primary_approved_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: approved }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: rejected }]
+    want_undefined: true
+
+  - note: existence_count_field_and_current_read_related_element
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "deployIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "properties.matrix[*].x", "equals": "approved" },
+                    { "value": "[current().x]", "equals": "approved" },
+                    { "value": "[current('properties.matrix[*].x')]", "equals": "approved" },
+                    {
+                      "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                      "equals": false
+                    }
+                  ]
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: rejected }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: approved }, { x: rejected }]
+    want_undefined: true
+
+  - note: existence_count_field_and_current_related_rejected_audits
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "allOf": [
+                    { "field": "properties.matrix[*].x", "equals": "approved" },
+                    { "value": "[current().x]", "equals": "approved" },
+                    { "value": "[current('properties.matrix[*].x')]", "equals": "approved" }
+                  ]
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: approved }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: rejected }]
+    want_effect: auditIfNotExists
+
+  - note: existence_nested_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].cells[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ cells: [{ x: rejected }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ cells: [{ x: approved }] }]
+    want_effect: auditIfNotExists
+
+  - note: existence_nested_count_field_function_primary_approved_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].cells[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ cells: [{ x: approved }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ cells: [{ x: rejected }] }]
+    want_undefined: true
+
+  - note: existence_nested_count_outer_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].tier'), 'high')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ tier: low, cells: [{ x: 1 }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ tier: high, cells: [{ x: 1 }] }]
+    want_effect: auditIfNotExists
+
+  - note: existence_nested_count_outer_field_function_primary_high_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].tier'), 'high')]",
+                  "equals": true
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ tier: high, cells: [{ x: 1 }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ tier: low, cells: [{ x: 1 }] }]
+    want_undefined: true
+
+  - note: existence_nested_any_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].tier'), 'high')]",
+                  "equals": true
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ tier: low, cells: [{ x: 1 }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ tier: high, cells: [{ x: 1 }] }]
+    want_effect: auditIfNotExists
+
+  - note: existence_nested_any_count_field_function_primary_high_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*].cells[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].tier'), 'high')]",
+                  "equals": true
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ tier: high, cells: [{ x: 1 }] }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ tier: low, cells: [{ x: 1 }] }]
+    want_undefined: true
+
+  - note: existence_any_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: rejected }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: approved }]
+    want_effect: auditIfNotExists
+
+  - note: existence_any_count_field_function_primary_approved_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: approved }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: rejected }]
+    want_undefined: true
+
+  - note: existence_none_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: approved }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: rejected }]
+    want_effect: auditIfNotExists
+
+  - note: existence_none_count_field_function_primary_rejected_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[contains(field('properties.matrix[*].x'), 'approved')]",
+                  "equals": true
+                }
+              },
+              "equals": 0
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: rejected }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: approved }]
+    want_undefined: true
+
+  - note: existence_named_value_count_field_function_reads_primary_resource
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "value": ["westus", "eastus"],
+                "name": "location",
+                "where": {
+                  "value": "[field('location')]",
+                  "equals": "eastus"
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      location: centralus
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          location: eastus
+    want_effect: auditIfNotExists
+
+  - note: existence_named_value_count_field_function_primary_match_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "value": ["westus", "eastus"],
+                "name": "location",
+                "where": {
+                  "value": "[field('location')]",
+                  "equals": "eastus"
+                }
+              },
+              "greater": 0
+            }
+          }
+        }
+      }
+    resource:
+      location: eastus
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          location: centralus
+    want_undefined: true
+
+  - note: existence_count_field_function_exact_collects_primary_no_audit
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[field('properties.matrix[*].x')]",
+                  "equals": ["a", "b"]
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: a }, { x: b }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: z }]
+    want_undefined: true
+
+  - note: existence_count_field_function_exact_collects_primary_mismatch_audits
+    policy_rule: |
+      {
+        "if": { "value": true, "equals": true },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "field": "properties.matrix[*]",
+                "where": {
+                  "value": "[field('properties.matrix[*].x')]",
+                  "equals": ["a", "b"]
+                }
+              },
+              "equals": 1
+            }
+          }
+        }
+      }
+    resource:
+      properties:
+        matrix: [{ x: a }, { x: c }]
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            matrix: [{ x: z }]
+    want_effect: auditIfNotExists

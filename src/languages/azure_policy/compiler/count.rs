@@ -232,6 +232,7 @@ impl Compiler {
             name: None,
             field_wildcard_prefix: Some(binding_prefix.clone()),
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Recurse for the inner level(s).
@@ -382,6 +383,7 @@ impl Compiler {
             name: None,
             field_wildcard_prefix: Some(binding_prefix.clone()),
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Recurse — the inner call returns Some(result_reg) with the final
@@ -525,6 +527,7 @@ impl Compiler {
             name: binding_name,
             field_wildcard_prefix,
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Compile where clause body (if present) as a conditional increment.
@@ -739,6 +742,7 @@ impl Compiler {
             name: binding_name,
             field_wildcard_prefix,
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         if let Some(wc) = where_constraint {
@@ -779,7 +783,8 @@ impl Compiler {
         Ok(result_reg)
     }
 
-    /// Find the innermost active count binding that covers `field_path`.
+    /// Find the innermost active count binding for the current resource that
+    /// covers `field_path`.
     ///
     /// Matching rules (all case-insensitive):
     /// 1. **Named binding** — `field_path` equals the binding's `name`.
@@ -791,6 +796,9 @@ impl Compiler {
     pub(super) fn resolve_count_binding(&self, field_path: &str) -> Result<Option<CountBinding>> {
         let fp = field_path.to_ascii_lowercase();
         for binding in self.count_bindings.iter().rev() {
+            if binding.resource_override_reg != self.resource_override_reg {
+                continue;
+            }
             if let Some(name) = &binding.name {
                 if fp.eq_ignore_ascii_case(name) {
                     return Ok(Some(binding.clone()));
@@ -1080,6 +1088,7 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("a".to_string()),
             current_reg: 5,
+            resource_override_reg: None,
         });
         let binding = c.resolve_count_binding("a[*].b").unwrap().unwrap();
         assert_eq!(binding.current_reg, 5);
@@ -1093,6 +1102,7 @@ mod tests {
             name: Some("myCollection".to_string()),
             field_wildcard_prefix: None,
             current_reg: 3,
+            resource_override_reg: None,
         });
         let binding = c.resolve_count_binding("myCollection").unwrap().unwrap();
         assert_eq!(binding.current_reg, 3);
@@ -1105,6 +1115,7 @@ mod tests {
             name: Some("MyCollection".to_string()),
             field_wildcard_prefix: None,
             current_reg: 4,
+            resource_override_reg: None,
         });
         // Lookup with different casing should still match.
         let binding = c.resolve_count_binding("mycollection").unwrap().unwrap();
@@ -1121,6 +1132,7 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("Microsoft.Test/resource".to_string()),
             current_reg: 6,
+            resource_override_reg: None,
         });
         // Mixed-case lookup against the prefix.
         let binding = c
@@ -1137,11 +1149,13 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("a".to_string()),
             current_reg: 1,
+            resource_override_reg: None,
         });
         c.count_bindings.push(CountBinding {
             name: None,
             field_wildcard_prefix: Some("a[*].b".to_string()),
             current_reg: 2,
+            resource_override_reg: None,
         });
         // The inner binding (a[*].b) matches a[*].b[*].c, and since we
         // iterate in reverse, it wins.
@@ -1156,8 +1170,43 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("x".to_string()),
             current_reg: 1,
+            resource_override_reg: None,
         });
         assert!(c.resolve_count_binding("y[*].z").unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_binding_matches_resource_scope() {
+        let mut c = Compiler::new();
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 1,
+            resource_override_reg: None,
+        });
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 2,
+            resource_override_reg: Some(7),
+        });
+        assert_eq!(
+            c.resolve_count_binding("a[*].x")
+                .unwrap()
+                .unwrap()
+                .current_reg,
+            1
+        );
+        c.resource_override_reg = Some(7);
+        assert_eq!(
+            c.resolve_count_binding("a[*].x")
+                .unwrap()
+                .unwrap()
+                .current_reg,
+            2
+        );
+        c.resource_override_reg = Some(8);
+        assert!(c.resolve_count_binding("a[*].x").unwrap().is_none());
     }
 
     // -----------------------------------------------------------------------
