@@ -660,3 +660,395 @@ cases:
           "123":
             - name: "db"
     want_undefined: true
+
+  # field() inside a count `where` whose path has further `[*]` levels below
+  # the counted array collects the values selected under the current member.
+  - note: field_fn_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].v')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - v: "x"
+              - v: "y"
+    want_effect: "deny"
+
+  - note: field_fn_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].v')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - v: "x"
+              - v: "z"
+    want_undefined: true
+
+  - note: field_fn_two_level_nested_wildcard_under_bound_prefix_flattens
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].vals[*]')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+          - subs:
+              - vals: [4]
+    want_effect: "deny"
+
+  - note: field_fn_two_level_nested_wildcard_under_bound_prefix_flattens_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].vals[*]')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [4]
+          - subs:
+              - vals: [3]
+    want_undefined: true
+
+  - note: field_fn_property_of_bound_member_is_single_member_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs')]",
+              "equals": [["x", "y"]]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "y"]
+          - subs: ["z"]
+    want_effect: "deny"
+
+  # Sibling: a field condition with a nested wildcard below the counted
+  # array keeps its implicit allOf over the inner members.
+  - note: field_condition_nested_wildcard_under_bound_prefix_is_allof
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "properties.items[*].subs[*]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "x"]
+          - subs: ["x", "y"]
+    want_effect: "deny"
+
+  # Sibling: current() with further `[*]` levels below the counted array
+  # collects the selected values (missing values are skipped).
+  - note: current_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*].id'))]",
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - id: "a"
+              - other: "b"
+    want_effect: "deny"
+
+  - note: current_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*].id'))]",
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - id: "a"
+              - id: "b"
+    want_undefined: true
+
+  - note: current_property_of_bound_member_is_single_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[current('properties.items[*].subs')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "y"]
+          - subs: ["z"]
+    want_effect: "deny"
+
+  - note: current_property_of_bound_member_is_single_value_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[current('properties.items[*].subs')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x"]
+          - subs: ["z"]
+    want_undefined: true
+
+  # current() with a nested wildcard over a missing inner array collects
+  # nothing (empty collection) rather than being undefined.
+  - note: current_nested_wildcard_over_missing_inner_array_is_empty
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*]'))]",
+              "equals": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - name: "a"
+    want_effect: "deny"
+
+  - note: current_nested_wildcard_over_missing_inner_array_is_empty_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*]'))]",
+              "equals": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x"]
+    want_undefined: true
+
+  # Sibling: dynamic if() field inside a count `where` also collects the
+  # nested wildcard values relative to the current member.
+  - note: dynamic_if_field_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "[if(true(), 'properties.items[*].subs[*].vals[*]', 'properties.other')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+          - subs:
+              - vals: [4]
+    want_effect: "deny"
+
+  - note: dynamic_if_field_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "[if(true(), 'properties.items[*].subs[*].vals[*]', 'properties.other')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [4]
+          - subs:
+              - vals: [3]
+    want_undefined: true
+
+  # Nested counts: inside an inner count over `items[*].subs[*]`, field()
+  # with a further `[*]` collects relative to the current inner member.
+  - note: nested_count_field_fn_wildcard_under_inner_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "field": "properties.items[*].subs[*]",
+                "where": {
+                  "value": "[field('properties.items[*].subs[*].vals[*]')]",
+                  "equals": [1, 2]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+    want_effect: "deny"
+
+  - note: nested_count_field_fn_wildcard_under_inner_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "field": "properties.items[*].subs[*]",
+                "where": {
+                  "value": "[field('properties.items[*].subs[*].vals[*]')]",
+                  "equals": [1, 2]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1]
+              - vals: [2]
+    want_undefined: true

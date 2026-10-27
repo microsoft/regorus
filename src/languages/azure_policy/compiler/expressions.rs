@@ -294,15 +294,18 @@ impl Compiler {
                 let reg = self.compile_field_path_expression(&resolved, span)?;
                 self.resource_override_reg = saved_override;
 
-                let reg = if resolved.contains("[*]") {
-                    if self.resolve_count_binding(&resolved)?.is_some() {
-                        let arr = self.alloc_register()?;
-                        self.emit(Instruction::ArrayNew { dest: arr }, span);
-                        self.emit(Instruction::ArrayPush { arr, value: reg }, span);
-                        arr
-                    } else {
-                        reg
-                    }
+                // A wildcard path that selects only the bound element (or a
+                // property of it) still yields a one-member array; paths with
+                // further `[*]` levels are already collected into an array.
+                let wrap_single = resolved.contains("[*]")
+                    && self
+                        .resolve_count_binding(&resolved)?
+                        .is_some_and(|b| Self::binding_selects_single_value(&b, &resolved));
+                let reg = if wrap_single {
+                    let arr = self.alloc_register()?;
+                    self.emit(Instruction::ArrayNew { dest: arr }, span);
+                    self.emit(Instruction::ArrayPush { arr, value: reg }, span);
+                    arr
                 } else {
                     reg
                 };

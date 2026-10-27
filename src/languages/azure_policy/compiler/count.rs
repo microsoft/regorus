@@ -879,24 +879,45 @@ impl Compiler {
 
     /// Compile a suffix path from a binding's current register.
     ///
-    /// If the suffix contains `[*]` (from a nested count context), only the
-    /// portion before the first `[*]` is used for navigation.  The inner
-    /// count's loop will handle the iteration.
+    /// If the suffix contains further `[*]` levels, the values they select
+    /// under the current element are collected into a flat array (the same
+    /// shape an unbound wildcard `field()` produces).  Otherwise the suffix
+    /// is navigated to a single value.
     fn compile_suffix_from_binding(
         &mut self,
         base_reg: u8,
         suffix: &str,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
-        // Strip any trailing [*] or [*].suffix — we only navigate to the
-        // array itself; the count loop iterates its elements.
-        let nav_path = suffix
-            .split_once("[*]")
-            .map_or(suffix, |(prefix, _)| prefix);
+        if suffix.contains("[*]") {
+            return self.compile_field_wildcard_collect(Some(base_reg), suffix, span);
+        }
         // Lowercase to match normalizer-lowercased keys.
-        let nav_path = nav_path.to_ascii_lowercase();
+        let nav_path = suffix.to_ascii_lowercase();
         let parts = split_path_without_wildcards(&nav_path)?;
         self.emit_chained_index_segments(base_reg, &parts, span)
+    }
+
+    /// Whether `field_path` selects a single value from the current element
+    /// of `binding` (no `[*]` beyond the bound prefix).
+    pub(super) fn binding_selects_single_value(binding: &CountBinding, field_path: &str) -> bool {
+        let fp = field_path.to_ascii_lowercase();
+        if binding
+            .name
+            .as_ref()
+            .is_some_and(|name| fp.eq_ignore_ascii_case(name))
+        {
+            return true;
+        }
+        let Some(prefix) = &binding.field_wildcard_prefix else {
+            return true;
+        };
+        let lc_prefix = prefix.to_ascii_lowercase();
+        let suffix = fp
+            .strip_prefix(&format!("{}[*]", lc_prefix))
+            .or_else(|| fp.strip_prefix(&lc_prefix))
+            .unwrap_or(&fp);
+        !suffix.contains("[*]")
     }
 
     /// Compile a `current('key')` reference inside a count's where clause.
