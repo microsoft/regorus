@@ -139,7 +139,7 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment
                 }
                 let segment = if let Some(key) = strip_matching_outer_quotes(raw) {
                     if key.is_empty() {
-                        bail!("empty bracket in path: {}", path);
+                        bail!("empty quoted key in path: {}", path);
                     }
                     PathSegment::Key(key.to_string())
                 } else {
@@ -423,6 +423,16 @@ mod tests {
             split_path_without_wildcards("tags[\"123\"]").unwrap(),
             vec![key("tags"), key("123")]
         );
+    }
+
+    #[test]
+    fn path_empty_quoted_key_is_an_error() {
+        for path in ["a['']", "a[\"\"]", "a[ '' ]"] {
+            let err = split_path_without_wildcards(path).unwrap_err().to_string();
+            assert!(err.contains("empty quoted key in path"), "{path}: {err}");
+        }
+        let err = split_path_without_wildcards("a[]").unwrap_err().to_string();
+        assert!(err.contains("empty bracket in path"), "{err}");
     }
 
     #[test]
