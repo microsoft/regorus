@@ -39,39 +39,40 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
-    /// A hard failure in the native history matcher.
+    /// Typed native history failures are never ordinary rule failures.
     #[cfg(feature = "history")]
-    #[error("{message} (pc={pc})")]
-    HistoryMatchFailure { message: String, pc: usize },
-
-    /// An ordinary history matcher validation error raised in strict mode.
-    #[cfg(feature = "history")]
-    #[error("{message} (pc={pc})")]
-    HistoryMatchValidationError { message: String, pc: usize },
-
-    #[cfg(feature = "history")]
-    #[error("Invalid history handle {handle:?} (pc={pc})")]
-    InvalidHistoryHandle { handle: Value, pc: usize },
-
-    #[cfg(feature = "history")]
-    #[error("History events must not be undefined (pc={pc})")]
-    InvalidHistoryEvent { pc: usize },
-
-    #[cfg(feature = "history")]
-    #[error("HistoryDecide params index {index} out of bounds (pc={pc})")]
-    InvalidHistoryDecideParams { index: u16, pc: usize },
-
-    #[cfg(feature = "history")]
-    #[error("History table {table} rule {rule} failed to compile: {message} (pc={pc})")]
-    HistoryTableCompile {
-        table: u16,
-        rule: usize,
-        message: String,
+    #[error("{source} (pc={pc})")]
+    History {
+        source: crate::languages::history_table::HistoryError,
         pc: usize,
     },
 
-    #[error("HistoryDecide requires the `history` feature (pc={pc})")]
-    HistoryDecideUnavailable { pc: usize },
+    #[cfg(feature = "history")]
+    #[error("History attachment and typed input are required (pc={pc})")]
+    HistoryContextMissing { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History execution is active (pc={pc})")]
+    HistoryExecutionActive { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step params index {index} out of bounds (pc={pc})")]
+    InvalidHistoryStepParams { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table index {index} out of bounds (pc={pc})")]
+    InvalidHistoryTableIndex { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table {table} rule index {rule} out of bounds (pc={pc})")]
+    InvalidHistoryRuleIndex { table: u16, rule: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step batch_size {batch_size} must be greater than zero (pc={pc})")]
+    InvalidHistoryBatchSize { batch_size: u32, pc: usize },
+
+    #[error("history_step requires the `history` feature (pc={pc})")]
+    HistoryFeatureDisabled { pc: usize },
 
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },

@@ -974,6 +974,38 @@ fn yaml_test(file: &str) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(not(feature = "glob"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/glob"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "semver"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/semver"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "time"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/time"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "uuid"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/uuid"))
+    {
+        return Ok(());
+    }
+
     match yaml_test_impl(file) {
         Ok(_) => Ok(()),
         Err(e) => {

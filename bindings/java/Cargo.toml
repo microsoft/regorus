@@ -18,7 +18,6 @@ default = ["ast", "cache", "coverage", "regorus/std", "regorus/full-opa", "regor
 coverage = ["regorus/coverage"]
 ast = ["regorus/ast"]
 cache = ["regorus/cache"]
-history = ["regorus/history"]
 
 [dependencies]
 anyhow = "1.0"

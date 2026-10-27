@@ -35,6 +35,8 @@ impl RegoVM {
     }
 
     fn release_previous_execution_state(&mut self) {
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
         self.evaluated = Value::Undefined;
         self.execution_state = ExecutionState::Ready;
         self.execution_stack.clear();

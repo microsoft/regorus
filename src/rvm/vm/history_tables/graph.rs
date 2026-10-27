@@ -7,6 +7,8 @@
 #[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 use super::{error::HistoryError, kernel::*};
+#[cfg(verus_keep_ghost)]
+use crate::rvm::program::HistoryField;
 use crate::utils::limits::{check_memory_limit_if_needed, monotonic_now, ExecutionTimer};
 #[cfg(verus_keep_ghost)]
 use crate::verify::history_assumptions::{KernelStoreSpec, SmallVecSpecFns, StorageSpec};
@@ -20,7 +22,7 @@ use vstd::prelude::*;
 /// Capability for native observations made during one matcher call.
 #[expect(
     clippy::redundant_pub_crate,
-    reason = "Capability is re-exported at the builtin boundary."
+    reason = "Capability is re-exported at the opcode boundary."
 )]
 #[verus_verify]
 pub(crate) struct ObservationWorld;
@@ -30,12 +32,14 @@ pub(crate) struct ObservationWorld;
     reason = "The native ZST carries mutable observation state in extraction."
 )]
 impl ObservationWorld {
+    // Native clock reads are trusted observations; deadline enforcement remains body-checked.
     #[verus_verify(external_body)]
     #[inline]
     pub(crate) fn now(&mut self) -> Option<core::time::Duration> {
         monotonic_now()
     }
 
+    // Native reservation may fail but must preserve every existing element.
     #[verus_verify(external_body)]
     #[verus_spec(result => ensures final(values)@ == old(values)@)]
     #[inline]
@@ -47,10 +51,11 @@ impl ObservationWorld {
         values.try_reserve(additional)
     }
 
+    // Vec::try_reserve_exact is unsupported by Verus; reservation preserves elements.
     #[verus_verify(external_body)]
     #[verus_spec(result => ensures final(values)@ == old(values)@)]
     #[inline]
-    pub(crate) fn try_reserve_exact_vec<T>(
+    pub(crate) fn try_reserve_vec_exact<T>(
         &mut self,
         values: &mut Vec<T>,
         additional: usize,
@@ -68,38 +73,47 @@ impl ObservationWorld {
     ) -> Result<(), smallvec::CollectionAllocErr> {
         values.try_reserve_exact(additional)
     }
-}
-
-#[verus_verify]
-#[inline(always)]
-pub(crate) fn checkpoint(
-    timer: &mut ExecutionTimer,
-    world: &mut ObservationWorld,
-) -> KernelResult<()> {
-    if timer.accumulate(1) {
-        deadline_check(timer, world)?;
+    #[verus_verify]
+    #[inline(always)]
+    pub(crate) fn checkpoint(&mut self, timer: &mut ExecutionTimer) -> KernelResult<()> {
+        if timer.accumulate(1) {
+            self.deadline_check(timer)?;
+        }
+        check_memory_limit_if_needed()?;
+        Ok(())
     }
-    check_memory_limit_if_needed()?;
-    Ok(())
-}
 
-/// Clock read and deadline comparison, out of line so the inlined `checkpoint`
-/// body stays a counter bump when no check is due.
-#[verus_verify]
-#[cold]
-#[inline(never)]
-fn deadline_check(timer: &mut ExecutionTimer, world: &mut ObservationWorld) -> KernelResult<()> {
-    if let Some(now) = world.now() {
-        timer.check_now(now)?;
+    /// Clock read and deadline comparison, out of line so the inlined `checkpoint`
+    /// body stays a counter bump when no check is due.
+    #[verus_verify]
+    #[cold]
+    #[inline(never)]
+    fn deadline_check(&mut self, timer: &mut ExecutionTimer) -> KernelResult<()> {
+        if let Some(now) = self.now() {
+            timer.check_now(now)?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    /// Unlike periodic kernel checkpoints, lock boundaries always read the clock.
+    #[verus_verify]
+    pub(crate) fn publication_checkpoint(
+        &mut self,
+        timer: &mut ExecutionTimer,
+    ) -> KernelResult<()> {
+        if timer.config().is_some() {
+            if let Some(now) = self.now() {
+                timer.check_now(now)?;
+            }
+        }
+        self.checkpoint(timer)
+    }
 }
 
-#[verus_verify]
-#[verus_spec(result => ensures result == (HistoryError::Invariant { message }))]
-pub(crate) const fn invariant(message: &'static str) -> HistoryError {
-    HistoryError::Invariant { message }
-}
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure"
+)]
 #[verus_verify]
 #[verus_spec(result => ensures result == match value {
     Some(value) => Ok(value),
@@ -111,6 +125,10 @@ fn present<T>(value: Option<T>, message: &'static str) -> KernelResult<T> {
         None => Err(HistoryError::Invariant { message }),
     }
 }
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure"
+)]
 #[verus_verify]
 #[verus_spec(outcome => ensures outcome == match result {
     Ok(value) => Ok(value),
@@ -199,7 +217,6 @@ pub(crate) trait Storage {
         view: TransitionView<'_>,
         world: &mut ObservationWorld,
     ) -> KernelResult<TransitionId>;
-    fn release(self);
 }
 // Crate visibility lets Verus retain these payload types in the open weight specs.
 #[verus_verify]
@@ -259,35 +276,28 @@ pub(crate) enum ArenaTransition {
 vstd::prelude::verus! {
     impl View for ArenaTest {
         type V = Self;
-        open(in crate::builtins::history::graph) spec fn view(&self) -> Self { *self }
+        open(in crate::rvm::vm::history_tables::graph) spec fn view(&self) -> Self { *self }
     }
     impl View for ArenaRegex {
         type V = Self;
-        open(in crate::builtins::history::graph) spec fn view(&self) -> Self { *self }
+        open(in crate::rvm::vm::history_tables::graph) spec fn view(&self) -> Self { *self }
     }
     impl View for ArenaTransition {
         type V = Self;
-        open(in crate::builtins::history::graph) spec fn view(&self) -> Self { *self }
+        open(in crate::rvm::vm::history_tables::graph) spec fn view(&self) -> Self { *self }
     }
 
+    pub(crate) open spec fn field_key(field: HistoryField) -> u64 {
+        match field { HistoryField::Principal => 0, HistoryField::Action => 1, HistoryField::Resource => 2 }
+    }
     pub(crate) open spec fn primitive_key_hash(p: Primitive) -> u64 {
         match p {
-            Primitive::HasValue(p) => hashconsius::spec_mix(0, p.0 as u64),
-            Primitive::EqCore(p, Term::Constant(c)) => hashconsius::spec_mix(hashconsius::spec_mix(hashconsius::spec_mix(1, p.0 as u64), 0), c.0 as u64),
-            Primitive::EqCore(p, Term::Variable(v)) => hashconsius::spec_mix(hashconsius::spec_mix(hashconsius::spec_mix(1, p.0 as u64), 1), v.0 as u64),
-        }
-    }
-    fn hash_primitive_key(p: Primitive) -> (h: u64)
-        ensures h == primitive_key_hash(p),
-    {
-        match p {
-            Primitive::HasValue(p) => hashconsius::mix(0, p.0 as u64),
-            Primitive::EqCore(p, Term::Constant(c)) => hashconsius::mix(hashconsius::mix(hashconsius::mix(1, p.0 as u64), 0), c.0 as u64),
-            Primitive::EqCore(p, Term::Variable(v)) => hashconsius::mix(hashconsius::mix(hashconsius::mix(1, p.0 as u64), 1), v.0 as u64),
+            Primitive::Eq { field, term: Term::Constant(c) } => hashconsius::spec_mix(hashconsius::spec_mix(field_key(field), 0), c),
+            Primitive::Eq { field, term: Term::Variable(v) } => hashconsius::spec_mix(hashconsius::spec_mix(field_key(field), 1), field_key(v)),
         }
     }
     impl hashconsius::HashKey for ArenaTest {
-        open(in crate::builtins::history::graph) spec fn spec_hash(v: Self::V) -> u64 { match v {
+        open(in crate::rvm::vm::history_tables::graph) spec fn spec_hash(v: Self::V) -> u64 { match v {
                 ArenaTest::True => 0,
                 ArenaTest::False => 1,
                 ArenaTest::Atom { primitive, positive } => hashconsius::spec_mix(hashconsius::spec_mix(2, primitive_key_hash(primitive)), positive as u64),
@@ -301,7 +311,10 @@ vstd::prelude::verus! {
             match v {
                 ArenaTest::True => 0,
                 ArenaTest::False => 1,
-                ArenaTest::Atom { primitive, positive } => hashconsius::mix(hashconsius::mix(2, hash_primitive_key(primitive)), positive as u64),
+                ArenaTest::Atom { primitive, positive } => hashconsius::mix(hashconsius::mix(2, match primitive {
+                    Primitive::Eq { field, term: Term::Constant(c) } => hashconsius::mix(hashconsius::mix(field.index() as u64, 0), c),
+                    Primitive::Eq { field, term: Term::Variable(variable) } => hashconsius::mix(hashconsius::mix(field.index() as u64, 1), variable.index() as u64),
+                }), positive as u64),
                 ArenaTest::And(s) => hashconsius::mix(3, s as u64),
                 ArenaTest::Or(s) => hashconsius::mix(4, s as u64),
             }
@@ -310,13 +323,31 @@ vstd::prelude::verus! {
             ensures b == (self@ == other@),
         { match (*self, *other) {
                 (ArenaTest::True, ArenaTest::True) | (ArenaTest::False, ArenaTest::False) => true,
-                (ArenaTest::Atom { primitive: a, positive: p }, ArenaTest::Atom { primitive: b, positive: q }) => a == b && p == q,
+                // Full-field keys avoid the pinned verifier's early inherited-equality dependency; see verification/verus/inherited_ensures_order.rs.
+                (
+                    ArenaTest::Atom {
+                        primitive: Primitive::Eq { field: a, term: x },
+                        positive: p,
+                    },
+                    ArenaTest::Atom {
+                        primitive: Primitive::Eq { field: b, term: y },
+                        positive: q,
+                    },
+                ) => {
+                    a == b
+                        && p == q
+                        && match (x, y) {
+                            (Term::Constant(c), Term::Constant(d)) => c == d,
+                            (Term::Variable(c), Term::Variable(d)) => c == d,
+                            _ => false,
+                        }
+                },
                 (ArenaTest::And(a), ArenaTest::And(b)) | (ArenaTest::Or(a), ArenaTest::Or(b)) => a == b,
                 _ => false,
             } }
     }
     impl hashconsius::HashKey for ArenaRegex {
-        open(in crate::builtins::history::graph) spec fn spec_hash(v: Self::V) -> u64 { hashconsius::spec_mix(match v.kind {
+        open(in crate::rvm::vm::history_tables::graph) spec fn spec_hash(v: Self::V) -> u64 { hashconsius::spec_mix(match v.kind {
                 ArenaRegexKind::Empty => 0,
                 ArenaRegexKind::All => 1,
                 ArenaRegexKind::Epsilon => 2,
@@ -354,7 +385,7 @@ vstd::prelude::verus! {
             } }
     }
     impl hashconsius::HashKey for ArenaTransition {
-        open(in crate::builtins::history::graph) spec fn spec_hash(v: Self::V) -> u64 { match v {
+        open(in crate::rvm::vm::history_tables::graph) spec fn spec_hash(v: Self::V) -> u64 { match v {
                 ArenaTransition::Const(id) => hashconsius::spec_mix(0, id.0 as u64),
                 ArenaTransition::If { test, then_transition, else_transition } => hashconsius::spec_mix(hashconsius::spec_mix(hashconsius::spec_mix(1, test.0 as u64), then_transition.0 as u64), else_transition.0 as u64),
                 ArenaTransition::Union(s) => hashconsius::spec_mix(2, s as u64),
@@ -398,29 +429,29 @@ macro_rules! id_lists {
         vstd::prelude::verus! {
             impl View for $name {
                 type V = Seq<Seq<$id>>;
-                open(in crate::builtins::history::graph) spec fn view(&self) -> Self::V { self.slices@ }
+                open(in crate::rvm::vm::history_tables::graph) spec fn view(&self) -> Self::V { self.slices@ }
             }
             impl $name {
-                pub(super) open(in crate::builtins::history::graph) spec fn ids_hash_prefix(ids: Seq<$id>, n: nat) -> u64
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn ids_hash_prefix(ids: Seq<$id>, n: nat) -> u64
                     recommends n <= ids.len(),
                     decreases n,
                 {
                     if n == 0 { ids.len() as u64 }
                     else { hashconsius::spec_mix(Self::ids_hash_prefix(ids, (n - 1) as nat), ids[n - 1].0 as u64) }
                 }
-                pub(super) open(in crate::builtins::history::graph) spec fn ids_spec_hash(ids: Seq<$id>) -> u64 {
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn ids_spec_hash(ids: Seq<$id>) -> u64 {
                     Self::ids_hash_prefix(ids, ids.len())
                 }
-                pub(super) open(in crate::builtins::history::graph) spec fn hashes(self) -> Seq<u64> {
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn hashes(self) -> Seq<u64> {
                     self@.map_values(|ids: Seq<$id>| Self::ids_spec_hash(ids))
                 }
-                pub(super) open(in crate::builtins::history::graph) spec fn inv(self) -> bool {
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn inv(self) -> bool {
                     self.index.inv(self.hashes()) && self@.no_duplicates()
                         && self@.len() <= usize::MAX
                 }
-                pub(super) open(in crate::builtins::history::graph) spec fn capacity(self) -> int { self.slices.capacity() }
-                pub(super) open(in crate::builtins::history::graph) spec fn remaining(self) -> int { self.slices.remaining() }
-                pub(super) open(in crate::builtins::history::graph) spec fn aligned(self) -> bool { self.slices.aligned() }
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn capacity(self) -> int { self.slices.capacity() }
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn remaining(self) -> int { self.slices.remaining() }
+                pub(super) open(in crate::rvm::vm::history_tables::graph) spec fn aligned(self) -> bool { self.slices.aligned() }
 
                 fn ids_hash(ids: &[$id]) -> (h: u64)
                     ensures h == Self::ids_spec_hash(ids@),
@@ -452,15 +483,6 @@ macro_rules! id_lists {
                     Ok(result)
                 }
 
-                fn len(&self) -> (n: usize)
-                    ensures n == self@.len(),
-                { self.slices.len() }
-
-                fn get(&self, slot: usize) -> (r: Option<&[$id]>)
-                    ensures
-                        r matches Some(ids) ==> slot < self@.len() && ids@ == self@[slot as int],
-                        r is None ==> slot >= self@.len(),
-                { self.slices.get(slot) }
 
                 fn find(&self, ids: &[$id]) -> (r: Option<usize>)
                     requires self.inv(),
@@ -539,7 +561,7 @@ macro_rules! id_lists {
                     }
                     let h = Self::ids_hash(ids);
                     let ghost hashes = self.hashes();
-                    let slot = self.len();
+                    let slot = self.slices.len();
                     self.slices.try_push(ids)?;
                     let _count = self.slices.len();
                     proof {
@@ -574,10 +596,67 @@ struct ArenaTables {
     regex_ids: RegexIdLists,
     transitions: BHConsign<ArenaTransition>,
     transition_ids: TransitionIdLists,
+    #[cfg(test)]
+    lifetime_counts: Option<alloc::sync::Arc<ArenaLifetimeCounts>>,
 }
 #[verus_verify]
 pub(crate) struct ArenaStorage {
     tables: Option<ArenaTables>,
+}
+
+// Verus does not model implicit destruction; ArenaTables::release checks the six frees.
+#[verus_verify(external)]
+impl Drop for ArenaStorage {
+    fn drop(&mut self) {
+        if let Some(tables) = self.tables.take() {
+            tables.release();
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ArenaLifetimeCounts {
+    allocations: core::sync::atomic::AtomicUsize,
+    frees: core::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+impl ArenaLifetimeCounts {
+    pub(crate) fn snapshot(&self) -> (usize, usize) {
+        use core::sync::atomic::Ordering;
+        (
+            self.allocations.load(Ordering::Relaxed),
+            self.frees.load(Ordering::Relaxed),
+        )
+    }
+
+    fn freed(counts: &Option<alloc::sync::Arc<Self>>) {
+        if let Some(counts) = counts {
+            counts
+                .frees
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+impl ArenaStorage {
+    /// Observe this storage's six existing chunks and their individual frees.
+    pub(crate) fn track_lifetime(
+        &mut self,
+        counts: alloc::sync::Arc<ArenaLifetimeCounts>,
+    ) -> KernelResult<()> {
+        let tables = present(self.tables.as_mut(), "arena released")?;
+        if tables.lifetime_counts.is_some() {
+            return Err(HistoryError::invariant("arena lifetime already observed"));
+        }
+        counts
+            .allocations
+            .fetch_add(6, core::sync::atomic::Ordering::Relaxed);
+        tables.lifetime_counts = Some(counts);
+        Ok(())
+    }
 }
 
 #[cfg(verus_keep_ghost)]
@@ -592,6 +671,10 @@ verus! {
 
 #[verus_verify]
 impl ArenaTables {
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "Type alignments are nonzero, so these remainder checks cannot panic"
+    )]
     #[verus_spec(result => ensures result matches Ok(t) ==> verify::tables_wf(&t)
         && verify::empty_tables(verify::tables_graph(&t))
         && verify::tables_capacity(&t) == capacity && verify::tables_slack(&t) == 0)]
@@ -620,7 +703,7 @@ impl ArenaTables {
             || capacity % align_of::<RegexId>() != 0
             || capacity % align_of::<TransitionId>() != 0
         {
-            return Err(invariant("arena layout premises violated"));
+            return Err(HistoryError::invariant("arena layout premises violated"));
         }
         let tests = allocation(BHConsign::new(capacity))?;
         let test_ids = match TestIdLists::with_capacity(capacity) {
@@ -675,16 +758,11 @@ impl ArenaTables {
             regex_ids,
             transitions,
             transition_ids,
+            #[cfg(test)]
+            lifetime_counts: None,
         };
         proof! { verify::lemma_fresh_tables(&tables, capacity); }
         Ok(tables)
-    }
-    #[verus_spec(result => requires verify::tables_wf(self), ensures
-        result.0 == verify::tables_graph(self).tests.len(),
-        result.1 == verify::tables_graph(self).regexes.len(),
-        result.2 == verify::tables_graph(self).transitions.len())]
-    fn lengths(&self) -> (usize, usize, usize) {
-        (self.tests.len(), self.regexes.len(), self.transitions.len())
     }
     #[verus_spec(result => requires verify::tables_wf(self), ensures
         result matches Ok(v) ==> index < verify::tables_graph(self).tests.len()
@@ -692,7 +770,7 @@ impl ArenaTables {
         result matches Err(error) ==> error is Invariant)]
     fn test(&self, index: usize) -> KernelResult<TestView<'_>> {
         if index >= self.tests.len() {
-            return Err(invariant("invalid test ID"));
+            return Err(HistoryError::invariant("invalid test ID"));
         }
         let node = self.tests.elem(index);
         Ok(match *node {
@@ -705,12 +783,14 @@ impl ArenaTables {
                 primitive,
                 positive,
             },
-            ArenaTest::And(slot) => {
-                TestView::And(present(self.test_ids.get(slot), "invalid test children")?)
-            }
-            ArenaTest::Or(slot) => {
-                TestView::Or(present(self.test_ids.get(slot), "invalid test children")?)
-            }
+            ArenaTest::And(slot) => TestView::And(present(
+                self.test_ids.slices.get(slot),
+                "invalid test children",
+            )?),
+            ArenaTest::Or(slot) => TestView::Or(present(
+                self.test_ids.slices.get(slot),
+                "invalid test children",
+            )?),
         })
     }
     #[verus_spec(result => requires verify::tables_wf(self), ensures
@@ -719,7 +799,7 @@ impl ArenaTables {
         result matches Err(error) ==> error is Invariant)]
     fn regex(&self, index: usize) -> KernelResult<RegexView<'_>> {
         if index >= self.regexes.len() {
-            return Err(invariant("invalid regex ID"));
+            return Err(HistoryError::invariant("invalid regex ID"));
         }
         let node = self.regexes.elem(index);
         let kind = match node.kind {
@@ -727,15 +807,17 @@ impl ArenaTables {
             ArenaRegexKind::All => RegexKindView::All,
             ArenaRegexKind::Epsilon => RegexKindView::Epsilon,
             ArenaRegexKind::Test(id) => RegexKindView::Test(id),
-            ArenaRegexKind::Union(slot) => {
-                RegexKindView::Union(present(self.regex_ids.get(slot), "invalid regex children")?)
-            }
-            ArenaRegexKind::Concat(slot) => {
-                RegexKindView::Concat(present(self.regex_ids.get(slot), "invalid regex children")?)
-            }
+            ArenaRegexKind::Union(slot) => RegexKindView::Union(present(
+                self.regex_ids.slices.get(slot),
+                "invalid regex children",
+            )?),
+            ArenaRegexKind::Concat(slot) => RegexKindView::Concat(present(
+                self.regex_ids.slices.get(slot),
+                "invalid regex children",
+            )?),
             ArenaRegexKind::Star(id) => RegexKindView::Star(id),
             ArenaRegexKind::Intersect(slot) => RegexKindView::Intersect(present(
-                self.regex_ids.get(slot),
+                self.regex_ids.slices.get(slot),
                 "invalid regex children",
             )?),
             ArenaRegexKind::Not(id) => RegexKindView::Not(id),
@@ -751,7 +833,7 @@ impl ArenaTables {
         result matches Err(error) ==> error is Invariant)]
     fn transition(&self, index: usize) -> KernelResult<TransitionView<'_>> {
         if index >= self.transitions.len() {
-            return Err(invariant("invalid transition ID"));
+            return Err(HistoryError::invariant("invalid transition ID"));
         }
         let node = self.transitions.elem(index);
         Ok(match *node {
@@ -766,17 +848,17 @@ impl ArenaTables {
                 else_transition,
             },
             ArenaTransition::Union(slot) => TransitionView::Union(present(
-                self.transition_ids.get(slot),
+                self.transition_ids.slices.get(slot),
                 "invalid transition children",
             )?),
             ArenaTransition::Intersect(slot) => TransitionView::Intersect(present(
-                self.transition_ids.get(slot),
+                self.transition_ids.slices.get(slot),
                 "invalid transition children",
             )?),
             ArenaTransition::Not(id) => TransitionView::Not(id),
             ArenaTransition::Append { transition, suffix } => TransitionView::Append {
                 transition,
-                suffix: present(self.regex_ids.get(suffix), "invalid append suffix")?,
+                suffix: present(self.regex_ids.slices.get(suffix), "invalid append suffix")?,
             },
         })
     }
@@ -974,6 +1056,10 @@ impl ArenaTables {
         }
         Ok(id)
     }
+    #[allow(
+        clippy::shadow_unrelated,
+        reason = "Local node identifiers mirror the matched Verus model variants"
+    )]
     #[verus_spec(result => requires verify::tables_wf(old(self)),
         !verify::tables_graph(old(self)).regexes.contains(view@), ensures
         verify::tables_wf(final(self)),
@@ -1063,6 +1149,10 @@ impl ArenaTables {
         }
         Ok(id)
     }
+    #[allow(
+        clippy::shadow_unrelated,
+        reason = "Local node identifiers mirror the matched Verus model variants"
+    )]
     #[verus_spec(result => requires verify::tables_wf(old(self)),
         !verify::tables_graph(old(self)).transitions.contains(view@), ensures
         verify::tables_wf(final(self)),
@@ -1159,11 +1249,23 @@ impl ArenaTables {
     #[verus_spec(requires verify::tables_wf(&self))]
     fn release(self) {
         self.tests.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
         self.test_ids.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
         self.regexes.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
         self.regex_ids.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
         self.transitions.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
         self.transition_ids.free();
+        #[cfg(test)]
+        ArenaLifetimeCounts::freed(&self.lifetime_counts);
     }
 }
 #[verus_verify]
@@ -1180,6 +1282,10 @@ impl ArenaStorage {
             tables: Some(ArenaTables::with_capacity(capacity)?),
         })
     }
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
     #[verus_spec(result => ensures
         result.0 == self.graph().tests.len(),
         result.1 == self.graph().regexes.len(),
@@ -1187,7 +1293,11 @@ impl ArenaStorage {
     pub(crate) fn lengths(&self) -> (usize, usize, usize) {
         proof! { use_type_invariant(&*self); }
         match self.tables.as_ref() {
-            Some(tables) => tables.lengths(),
+            Some(tables) => (
+                tables.tests.len(),
+                tables.regexes.len(),
+                tables.transitions.len(),
+            ),
             None => (0, 0, 0),
         }
     }
@@ -1217,8 +1327,9 @@ impl Storage for ArenaStorage {
         world: &mut ObservationWorld,
     ) -> KernelResult<TestId> {
         proof! { use_type_invariant(&*self); }
+        // Restore table ownership before propagating either success or failure.
         let Some(mut tables) = self.tables.take() else {
-            return Err(invariant("arena released"));
+            return Err(HistoryError::invariant("arena released"));
         };
         let result = tables.push_test(view, world);
         self.tables = Some(tables);
@@ -1236,7 +1347,7 @@ impl Storage for ArenaStorage {
     ) -> KernelResult<RegexId> {
         proof! { use_type_invariant(&*self); }
         let Some(mut tables) = self.tables.take() else {
-            return Err(invariant("arena released"));
+            return Err(HistoryError::invariant("arena released"));
         };
         let result = tables.push_regex(view, world);
         self.tables = Some(tables);
@@ -1254,17 +1365,11 @@ impl Storage for ArenaStorage {
     ) -> KernelResult<TransitionId> {
         proof! { use_type_invariant(&*self); }
         let Some(mut tables) = self.tables.take() else {
-            return Err(invariant("arena released"));
+            return Err(HistoryError::invariant("arena released"));
         };
         let result = tables.push_transition(view, world);
         self.tables = Some(tables);
         result
-    }
-    fn release(self) {
-        proof! { use_type_invariant(&self); }
-        if let Some(tables) = self.tables {
-            tables.release();
-        }
     }
 }
 
@@ -1285,7 +1390,8 @@ impl core::fmt::Debug for ArenaStorage {
 #[derive(Debug)]
 pub(crate) struct CanonicalStore<S> {
     pub(crate) storage: S,
-    constants: Constants,
+    // Verus needs every field crate-visible for direct accounting contracts.
+    pub(crate) constants: Constants,
     pub(crate) bytes: usize,
 }
 #[verus_verify]
@@ -1312,10 +1418,7 @@ impl<S: Storage> CanonicalStore<S> {
         };
         proof! { assert(store.valid_store()); }
         proof! { verify::lemma_tables_wf_same_tables(initial_graph, store.graph()); }
-        if let Err(error) = store.intern_constants(world) {
-            store.release();
-            return Err(error);
-        }
+        store.intern_constants(world)?;
         Ok(store)
     }
 
@@ -1361,11 +1464,8 @@ impl<S: Storage> CanonicalStore<S> {
         Ok(())
     }
 
-    pub(crate) fn release(self) {
-        self.storage.release();
-    }
     #[verus_spec(result => ensures match result {
-        Ok(total) => total as int == self.charged_bytes() as int + bytes as int && total <= MAX_GRAPH_BYTES,
+        Ok(total) => total as int == (self.bytes as nat) as int + bytes as int && total <= MAX_GRAPH_BYTES,
         Err(error) => error is GraphLimit,
     })]
     pub(crate) fn projected(&self, bytes: usize) -> KernelResult<usize> {
@@ -1383,20 +1483,24 @@ impl<S: Storage> CanonicalStore<S> {
         Ok(total)
     }
     #[verus_spec(result => ensures final(self).graph() == old(self).graph(),
-        final(self).charged_bytes() >= old(self).charged_bytes(),
+        (final(self).bytes as nat) >= (old(self).bytes as nat),
         old(self).valid_store() ==> final(self).valid_store())]
     pub(crate) fn charge(&mut self, bytes: usize) -> KernelResult<()> {
         self.bytes = self.projected(bytes)?;
         Ok(())
     }
     /// Raises the byte charge to a value previously obtained from `projected` on this store.
-    /// The charge never decreases, so `graph_weight(graph) <= charged_bytes()` is preserved
+    /// The charge never decreases, so `graph_weight(graph) <= bytes` is preserved
     /// even if an intervening checkpoint or intern already charged more.
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "Keep the existing mutable operation and its Verus contract unchanged"
+    )]
     #[verus_spec(
         ensures final(self).graph() == old(self).graph(),
             old(self).valid_store() ==> final(self).valid_store(),
-            final(self).charged_bytes() >= old(self).charged_bytes(),
-            final(self).charged_bytes() >= bytes as nat,
+            (final(self).bytes as nat) >= (old(self).bytes as nat),
+            (final(self).bytes as nat) >= bytes as nat,
     )]
     pub(crate) fn set_charged_bytes(&mut self, bytes: usize) {
         if bytes > self.bytes {
@@ -1419,12 +1523,12 @@ impl<S: Storage> CanonicalStore<S> {
                 Ok(id) => id.0 < final(self).graph().tests.len()
                     && final(self).graph().tests[id.0 as int] == node@,
                 Err(_) => final(self).graph() == old(self).graph()
-                    && final(self).charged_bytes() == old(self).charged_bytes(),
+                    && (final(self).bytes as nat) == (old(self).bytes as nat),
             },
-            final(self).capacity() == old(self).capacity(),
-            result is Ok ==> final(self).slack() >= old(self).slack(),
+            final(self).storage.capacity() == old(self).storage.capacity(),
+            result is Ok ==> final(self).storage.slack() >= old(self).storage.slack(),
             result matches Err(error) ==> error is ArenaExhausted ==>
-                old(self).slack() < MAX_GRAPH_BYTES - old(self).capacity(),
+                old(self).storage.slack() < MAX_GRAPH_BYTES - old(self).storage.capacity(),
     )]
     pub(crate) fn intern_test(
         &mut self,
@@ -1451,6 +1555,7 @@ impl<S: Storage> CanonicalStore<S> {
             assert(bytes as int == verify::test_weight(node@));
             assert(verify::graph_weight(original) + verify::test_weight(node@) <= MAX_GRAPH_BYTES);
         }
+        // Publish the charge only after storage succeeds; failed pushes leave accounting unchanged.
         let id = self.storage.push_test(node, world)?;
         self.bytes = projected;
         proof! {
@@ -1475,12 +1580,12 @@ impl<S: Storage> CanonicalStore<S> {
                 Ok(id) => id.0 < final(self).graph().regexes.len()
                     && final(self).graph().regexes[id.0 as int] == (model::RegexNode { kind: kind@, nullable }),
                 Err(_) => final(self).graph() == old(self).graph()
-                    && final(self).charged_bytes() == old(self).charged_bytes(),
+                    && (final(self).bytes as nat) == (old(self).bytes as nat),
             },
-            final(self).capacity() == old(self).capacity(),
-            result is Ok ==> final(self).slack() >= old(self).slack(),
+            final(self).storage.capacity() == old(self).storage.capacity(),
+            result is Ok ==> final(self).storage.slack() >= old(self).storage.slack(),
             result matches Err(error) ==> error is ArenaExhausted ==>
-                old(self).slack() < MAX_GRAPH_BYTES - old(self).capacity(),
+                old(self).storage.slack() < MAX_GRAPH_BYTES - old(self).storage.capacity(),
     )]
     pub(crate) fn intern_regex(
         &mut self,
@@ -1535,12 +1640,12 @@ impl<S: Storage> CanonicalStore<S> {
                 Ok(id) => id.0 < final(self).graph().transitions.len()
                     && final(self).graph().transitions[id.0 as int] == node@,
                 Err(_) => final(self).graph() == old(self).graph()
-                    && final(self).charged_bytes() == old(self).charged_bytes(),
+                    && (final(self).bytes as nat) == (old(self).bytes as nat),
             },
-            final(self).capacity() == old(self).capacity(),
-            result is Ok ==> final(self).slack() >= old(self).slack(),
+            final(self).storage.capacity() == old(self).storage.capacity(),
+            result is Ok ==> final(self).storage.slack() >= old(self).storage.slack(),
             result matches Err(error) ==> error is ArenaExhausted ==>
-                old(self).slack() < MAX_GRAPH_BYTES - old(self).capacity(),
+                old(self).storage.slack() < MAX_GRAPH_BYTES - old(self).storage.capacity(),
     )]
     pub(crate) fn intern_transition(
         &mut self,
@@ -1594,7 +1699,7 @@ pub(crate) struct RuntimeKernel<'a, S> {
 #[verus_verify]
 impl<S: Storage> KernelStore for RuntimeKernel<'_, S> {
     fn checkpoint(&mut self) -> KernelResult<()> {
-        checkpoint(self.timer, self.world)
+        self.world.checkpoint(self.timer)
     }
     fn charge_aux(&mut self, bytes: usize) -> KernelResult<()> {
         self.checkpoint()?;
@@ -1648,12 +1753,91 @@ mod storage_tests {
     use super::*;
 
     #[test]
+    fn atom_key_equality_preserves_full_width_and_domains() {
+        use crate::rvm::program::HistoryField::{Action, Principal, Resource};
+
+        let fixtures = [
+            (Principal, Term::Constant(0), true),
+            (Principal, Term::Constant(1_u64 << 32), true),
+            (Principal, Term::Constant(u64::MAX), true),
+            (Action, Term::Constant(0), true),
+            (Resource, Term::Constant(0), true),
+            (Principal, Term::Variable(Principal), true),
+            (Principal, Term::Variable(Action), true),
+            (Principal, Term::Variable(Resource), true),
+            (Principal, Term::Constant(0), false),
+        ]
+        .map(|(field, term, positive)| ArenaTest::Atom {
+            primitive: Primitive::Eq { field, term },
+            positive,
+        });
+        for (i, left) in fixtures.iter().enumerate() {
+            for (j, right) in fixtures.iter().enumerate() {
+                assert_eq!(hashconsius::HashKey::key_eq(left, right), i == j);
+            }
+        }
+    }
+
+    fn tracked_store(
+        counts: &alloc::sync::Arc<ArenaLifetimeCounts>,
+    ) -> KernelResult<CanonicalStore<ArenaStorage>> {
+        let mut storage = ArenaStorage::with_capacity(512)?;
+        storage.track_lifetime(alloc::sync::Arc::clone(counts))?;
+        CanonicalStore::new(storage, &mut ObservationWorld)
+    }
+
+    #[test]
+    fn pinned_graph_survives_replacement_and_frees_only_at_last_arc() -> KernelResult<()> {
+        use alloc::sync::Arc;
+
+        let counts = Arc::new(ArenaLifetimeCounts::default());
+        let mut current = Arc::new(tracked_store(&counts)?);
+        let pinned = Arc::clone(&current);
+        assert_eq!(counts.snapshot(), (6, 0));
+
+        for generation in 2_usize..=33 {
+            current = Arc::new(tracked_store(&counts)?);
+            assert_eq!(
+                counts.snapshot(),
+                (
+                    generation.saturating_mul(6),
+                    generation.saturating_sub(2).saturating_mul(6)
+                )
+            );
+        }
+        drop(current);
+        assert_eq!(counts.snapshot(), (198, 192));
+        assert!(pinned.storage.regex(pinned.constants().all)?.nullable);
+        drop(pinned);
+        assert_eq!(counts.snapshot(), (198, 198));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_store_construction_frees_owned_arenas() -> KernelResult<()> {
+        use alloc::sync::Arc;
+
+        let counts = Arc::new(ArenaLifetimeCounts::default());
+        let mut storage = ArenaStorage::with_capacity(CHUNK_ALIGN)?;
+        storage.track_lifetime(Arc::clone(&counts))?;
+        assert!(matches!(
+            CanonicalStore::new(storage, &mut ObservationWorld),
+            Err(HistoryError::ArenaExhausted)
+        ));
+        assert_eq!(counts.snapshot(), (6, 6));
+        Ok(())
+    }
+
+    #[test]
     fn interned_nodes_keep_ids_bytes_and_derivative_semantics() -> KernelResult<()> {
         let mut world = ObservationWorld;
         let mut timer = ExecutionTimer::new(None);
         let mut store = CanonicalStore::new(ArenaStorage::new()?, &mut world)?;
         let node = TestView::Atom {
-            primitive: Primitive::HasValue(PathId(0)),
+            primitive: Primitive::Eq {
+                field: crate::rvm::program::HistoryField::Principal,
+                term: Term::Constant(0),
+            },
             positive: true,
         };
         let test = store.intern_test(node, &mut world)?;
@@ -1672,7 +1856,7 @@ mod storage_tests {
             .storage
             .tables
             .as_ref()
-            .map(|tables| tables.test_ids.len());
+            .map(|tables| tables.test_ids.slices.len());
         let or = store.intern_test(
             TestView::Or(&[test, store.constants().test_true]),
             &mut world,
@@ -1683,7 +1867,7 @@ mod storage_tests {
                 .storage
                 .tables
                 .as_ref()
-                .map(|tables| tables.test_ids.len()),
+                .map(|tables| tables.test_ids.slices.len()),
             lists
         );
         assert_eq!(
@@ -1727,15 +1911,10 @@ mod storage_tests {
             world: &mut world,
         };
         let mut derivatives = Vec::new();
-        assert_eq!(
-            super::super::symbolic::symbolic_derivative(&mut kernel, &mut derivatives, regex)?,
-            transition
-        );
-        let atoms = super::super::progress::transition_atoms(&mut kernel, transition)?;
-        let accepted =
-            super::super::symbolic::interpret_transition(&mut kernel, transition, &atoms, &[1])?;
-        assert!(super::super::normalize::nullable(&kernel, accepted)?);
-        store.release();
+        assert_eq!(regex.derivative(&mut kernel, &mut derivatives)?, transition);
+        let atoms = AtomSet::from_transition(&mut kernel, transition)?;
+        let accepted = transition.interpret(&mut kernel, &atoms, &[1])?;
+        assert!(accepted.nullable(&kernel)?);
         Ok(())
     }
 
@@ -1746,9 +1925,12 @@ mod storage_tests {
         let payload = size_of::<ArenaTest>();
         store.bytes = MAX_GRAPH_BYTES
             .checked_sub(payload)
-            .ok_or_else(|| invariant("invalid test budget"))?;
+            .ok_or_else(|| HistoryError::invariant("invalid test budget"))?;
         let node = TestView::Atom {
-            primitive: Primitive::HasValue(PathId(0)),
+            primitive: Primitive::Eq {
+                field: crate::rvm::program::HistoryField::Principal,
+                term: Term::Constant(0),
+            },
             positive: true,
         };
         let id = store.intern_test(node, &mut world)?;
@@ -1757,7 +1939,10 @@ mod storage_tests {
         let rows = store.storage.lengths();
         let failed = store.intern_test(
             TestView::Atom {
-                primitive: Primitive::HasValue(PathId(1)),
+                primitive: Primitive::Eq {
+                    field: crate::rvm::program::HistoryField::Principal,
+                    term: Term::Constant(1),
+                },
                 positive: true,
             },
             &mut world,
@@ -1770,7 +1955,6 @@ mod storage_tests {
         ));
         assert_eq!(store.bytes, MAX_GRAPH_BYTES);
         assert_eq!(store.storage.lengths(), rows);
-        store.release();
         Ok(())
     }
 
@@ -1782,7 +1966,10 @@ mod storage_tests {
             let before = (store.bytes, store.storage.lengths());
             match store.intern_test(
                 TestView::Atom {
-                    primitive: Primitive::HasValue(PathId(path)),
+                    primitive: Primitive::Eq {
+                        field: crate::rvm::program::HistoryField::Principal,
+                        term: Term::Constant(u64::from(path)),
+                    },
                     positive: true,
                 },
                 &mut world,
@@ -1792,18 +1979,13 @@ mod storage_tests {
                     assert_eq!((store.bytes, store.storage.lengths()), before);
                     let constant = store.intern_test(TestView::True, &mut world);
                     let expected = store.constants().test_true;
-                    store.release();
                     assert_eq!(constant?, expected);
                     return Ok(());
                 }
-                Err(error) => {
-                    store.release();
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             }
         }
-        store.release();
-        Err(invariant("512-byte arena did not exhaust"))
+        Err(HistoryError::invariant("512-byte arena did not exhaust"))
     }
 
     #[test]
@@ -1813,14 +1995,20 @@ mod storage_tests {
         let outcome = (|| -> KernelResult<_> {
             let a = store.intern_test(
                 TestView::Atom {
-                    primitive: Primitive::HasValue(PathId(1)),
+                    primitive: Primitive::Eq {
+                        field: crate::rvm::program::HistoryField::Principal,
+                        term: Term::Constant(1),
+                    },
                     positive: true,
                 },
                 &mut world,
             )?;
             let b = store.intern_test(
                 TestView::Atom {
-                    primitive: Primitive::HasValue(PathId(2)),
+                    primitive: Primitive::Eq {
+                        field: crate::rvm::program::HistoryField::Principal,
+                        term: Term::Constant(2),
+                    },
                     positive: true,
                 },
                 &mut world,
@@ -1850,7 +2038,6 @@ mod storage_tests {
             assert_eq!(store.intern_transition(append, &mut world)?, t);
             Ok(())
         })();
-        store.release();
         outcome?;
         Ok(())
     }
@@ -1934,14 +2121,13 @@ pub(crate) mod verify {
         ensures (a == b) == (a@ == b@),
     {
         match (a, b) {
-            (Primitive::EqCore(_, x), Primitive::EqCore(_, y)) => {
+            (Primitive::Eq { term: x, .. }, Primitive::Eq { term: y, .. }) => {
                 match (x, y) {
                     (super::super::kernel::Term::Constant(_), super::super::kernel::Term::Constant(_)) => {},
                     (super::super::kernel::Term::Variable(_), super::super::kernel::Term::Variable(_)) => {},
                     _ => {},
                 }
             },
-            _ => {},
         }
     }
     pub(super) proof fn lemma_arena_test_eq_iff_node_eq(t: &ArenaTables, a: ArenaTest, b: ArenaTest)
@@ -2346,13 +2532,9 @@ pub(crate) mod verify {
                     pub(crate) open(super) spec fn graph(&self) -> model::Graph {
                         model::Graph { constants: self.constants@, ..self.storage.graph() }
                     }
-                    pub(crate) open(super) spec fn charged_bytes(&self) -> nat { self.bytes as nat }
-
-                    pub(crate) open(super) spec fn capacity(&self) -> int { self.storage.capacity() }
-                    pub(crate) open(super) spec fn slack(&self) -> int { self.storage.slack() }
                     pub(crate) open(super) spec fn valid_store(&self) -> bool {
                         let g = self.graph();
-                        model::unique_nodes(g) && graph_weight(g) <= self.charged_bytes()
+                        model::unique_nodes(g) && graph_weight(g) <= (self.bytes as nat)
                     }
                 }
 
@@ -2367,12 +2549,6 @@ pub(crate) mod verify {
                 }
 
 
-                pub(crate) proof fn lemma_id_clones()
-                    ensures
-                        forall|a: TestId, b: TestId| cloned(a, b) ==> a == b,
-                        forall|a: RegexId, b: RegexId| cloned(a, b) ==> a == b,
-                        forall|a: TransitionId, b: TransitionId| cloned(a, b) ==> a == b,
-                {}
 
                 pub(super) proof fn lemma_tables_wf_same_tables(before: model::Graph, after: model::Graph)
                     requires

@@ -123,8 +123,6 @@ pub struct Interpreter {
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
-    #[cfg(feature = "history")]
-    history_match_state: builtins::history::HistoryMatchState,
 }
 
 impl Default for Interpreter {
@@ -174,8 +172,6 @@ impl Clone for Interpreter {
             module: None,
             no_rules_lookup: false,
             execution_timer: ExecutionTimer::new(self.execution_timer.config()),
-            #[cfg(feature = "history")]
-            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 }
@@ -258,8 +254,6 @@ impl Interpreter {
             gather_prints: false,
             prints: Vec::default(),
             execution_timer: ExecutionTimer::new(None),
-            #[cfg(feature = "history")]
-            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 
@@ -305,8 +299,6 @@ impl Interpreter {
                 .clone()
                 .unwrap_or_else(Value::new_object),
             execution_timer: ExecutionTimer::new(None),
-            #[cfg(feature = "history")]
-            history_match_state: builtins::history::HistoryMatchState::default(),
         }
     }
 
@@ -2655,27 +2647,12 @@ impl Interpreter {
             }
         }
 
-        #[cfg(feature = "history")]
-        let contextual_result = (name == "history.match").then(|| {
-            builtins::history_match_with_context(
-                span,
-                params,
-                &args,
-                &mut self.history_match_state,
-                &mut self.execution_timer,
-            )
-        });
-        #[cfg(not(feature = "history"))]
-        let contextual_result = None;
-        #[cfg_attr(not(feature = "history"), allow(clippy::unnecessary_literal_unwrap))]
-        let result = contextual_result.unwrap_or_else(|| {
-            builtin.0(
-                span,
-                params,
-                &args,
-                self.compiled_policy.strict_builtin_errors,
-            )
-        });
+        let result = builtin.0(
+            span,
+            params,
+            &args,
+            self.compiled_policy.strict_builtin_errors,
+        );
         let v = match result {
             Ok(v) => v,
             // Resource-limit errors must always propagate, even in non-strict

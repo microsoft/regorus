@@ -6,39 +6,45 @@
 //! Allowed leaves: ExecutionTimer and LimitError operations; Duration;
 //! ObservationWorld clock and reservation adapters;
 //! exact SmallVec sequence operations; concrete successor-cache wrappers
-//! (including their opaque default hasher type);
-//! sort_unstable, dedup, strictly-sorted binary_search, rotate_right; semantic
-//! SymbolBuilder map access; diagnostic child_path formatting.
+//! (including their opaque default hasher type); the exact native Iterator::position
+//! selector for retained cursor keys (the pinned vstd lacks its specification);
+//! sort_unstable, dedup, strictly-sorted binary_search, rotate_right.
 //! Primitive checked shifts use exact bit-vector results and reject oversized shifts.
 //!
 //! Reservations preserve logical contents on success and failure. Cache contracts
-//! permit eviction, never a fabricated entry. Symbol maps use deep semantic Value keys.
+//! permit eviction, never a fabricated entry. Event coordinates and bindings are
+//! fixed u64 identities; classification needs no Value or path-selection assumptions.
 //! hashconsius/verus-bumpalo pointer tables and hash buckets grow with infallible
 //! alloc::vec::Vec (OOM aborts; bounded by MAX_GRAPH_BYTES per store); their
-//! contracts are verified in the pinned revisions. The native Drop adapter calls
-//! verified HistoryMatchState::release; implicit destructor invocation is outside
-//! the Verus model.
+//! contracts are verified in the pinned revisions. The native ArenaStorage Drop
+//! adapter takes its owned tables and calls verified ArenaTables::release;
+//! implicit destructor invocation is outside the Verus model.
 //! Native allocator Send/Sync markers rely on exclusive chunk ownership,
 //! immutable shared access, and the corresponding element-type bounds outside SMT.
+//! The history owner isolates borrowed UTF-8 BTree operations and mutex-protected
+//! allocator freshness/provenance in narrow native adapters. Mutex linearization
+//! and the global counter invariant are trusted; allocation arithmetic, interner
+//! insertion/rollback, and locked history append/truncate carry executable contracts.
 //! Storage and KernelStore trait contracts are implemented by verified bodies,
 //! not trusted implementations. No compiler, normalizer, derivative, interpreter,
 //! matcher, replay, or evaluator may be external_body or assume_specification.
 
-use crate::builtins::history::error::HistoryError;
-use crate::builtins::history::graph::verify::{
+use crate::rvm::vm::history_tables::error::HistoryError;
+use crate::rvm::vm::history_tables::graph::verify::{
     graph_weight, regex_weight, test_weight, transition_weight,
 };
-use crate::builtins::history::graph::ObservationWorld;
-use crate::builtins::history::kernel::verify::{
+use crate::rvm::vm::history_tables::graph::ObservationWorld;
+use crate::rvm::vm::history_tables::kernel::verify::{
     graph_extends, graph_wf, regex_node_wf, tables_wf, test_node_wf, transition_node_wf, Graph,
     RegexNode,
 };
-use crate::builtins::history::kernel::{
+use crate::rvm::vm::history_tables::kernel::{
     Constants, KernelResult, RegexId, RegexKindView, RegexView, TestId, TestView, TransitionId,
     TransitionView,
 };
 use crate::utils::limits::{
-    check_memory_limit_if_needed, monotonic_now, ExecutionTimer, LimitError,
+    check_memory_limit_if_needed, enforce_memory_limit, monotonic_now, ExecutionTimer,
+    ExecutionTimerConfig, LimitError,
 };
 use alloc::vec::Vec;
 use core::{alloc::Allocator, ops::Deref, time::Duration};
@@ -59,6 +65,12 @@ pub struct ExLimitError(LimitError);
 
 // core::time::Duration already has an external type specification in vstd.
 
+#[verifier::external_type_specification]
+#[verifier::external_body]
+pub struct ExExecutionTimerConfig(ExecutionTimerConfig);
+
+pub assume_specification[ ExecutionTimer::config ](timer: &ExecutionTimer) -> Option<ExecutionTimerConfig>;
+
 pub assume_specification[ ExecutionTimer::accumulate ](
     timer: &mut ExecutionTimer, work_units: u32,
 ) -> bool;
@@ -68,6 +80,13 @@ pub assume_specification[ ExecutionTimer::check_now ](
 ) -> Result<(), LimitError>;
 
 pub assume_specification[ check_memory_limit_if_needed ]() -> Result<(), LimitError>;
+
+pub assume_specification[ enforce_memory_limit ]() -> Result<(), LimitError>;
+
+pub assume_specification[ alloc::string::String::try_reserve ](
+    value: &mut alloc::string::String, additional: usize,
+) -> Result<(), alloc::collections::TryReserveError>
+    ensures final(value)@ == old(value)@;
 
 pub assume_specification[ monotonic_now ]() -> Option<Duration>;
 
@@ -255,7 +274,7 @@ pub assume_specification<T>[ core::mem::drop ](value: T);
 #[verifier::external_trait_specification]
 #[verifier::external_trait_extension(StorageSpec via StorageSpecImpl)]
 pub trait ExStorage {
-    type ExternalTraitSpecificationFor: crate::builtins::history::graph::Storage;
+    type ExternalTraitSpecificationFor: crate::rvm::vm::history_tables::graph::Storage;
 
     spec fn graph(&self) -> Graph;
     /// Bytes each backing arena can hold (0 for growable storage).
@@ -337,13 +356,12 @@ pub trait ExStorage {
             r matches Err(error) ==> error is ArenaExhausted ==>
                 graph_weight(old(self).graph()) + transition_weight(view@) - old(self).slack()
                     > old(self).capacity();
-    fn release(self);
 }
 
 #[verifier::external_trait_specification]
 #[verifier::external_trait_extension(KernelStoreSpec via KernelStoreSpecImpl)]
 pub trait ExKernelStore {
-    type ExternalTraitSpecificationFor: crate::builtins::history::kernel::KernelStore;
+    type ExternalTraitSpecificationFor: crate::rvm::vm::history_tables::kernel::KernelStore;
 
     spec fn graph(&self) -> Graph;
     spec fn valid_store(&self) -> bool;

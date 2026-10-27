@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 use super::error::HistoryError;
+#[cfg(verus_keep_ghost)]
+use crate::languages::history_table::Event;
+use crate::rvm::program::HistoryField;
 use alloc::vec::Vec;
 use vstd::prelude::*;
 
@@ -83,7 +86,7 @@ macro_rules! id {
             pub(crate) fn index(self) -> KernelResult<usize> {
                 match usize::try_from(self.0) {
                     Ok(index) => Ok(index),
-                    Err(_) => Err(super::error::graph_id_overflow()),
+                    Err(_) => Err(HistoryError::graph_id_overflow()),
                 }
             }
             #[verus_spec(result => ensures
@@ -95,7 +98,7 @@ macro_rules! id {
             pub(crate) fn from_index(index: usize) -> KernelResult<Self> {
                 match u32::try_from(index) {
                     Ok(value) => Ok(Self(value)),
-                    Err(_) => Err(super::error::graph_index_overflow()),
+                    Err(_) => Err(HistoryError::graph_index_overflow()),
                 }
             }
         }
@@ -104,9 +107,6 @@ macro_rules! id {
 id!(TestId);
 id!(RegexId);
 id!(TransitionId);
-id!(ConstId);
-id!(PathId);
-id!(VariableId);
 
 // `eq` is proved equal to structural equality on the view, so derived `Hash` agrees with it.
 #[allow(clippy::derived_hash_with_manual_eq)]
@@ -114,17 +114,21 @@ id!(VariableId);
 #[verus_verify(external_derive)]
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, Hash)]
 pub(crate) enum Term {
-    Constant(ConstId),
-    Variable(VariableId),
+    Constant(u64),
+    Variable(HistoryField),
 }
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, Hash)]
 pub(crate) enum Primitive {
-    HasValue(PathId),
-    EqCore(PathId, Term),
+    Eq { field: HistoryField, term: Term },
 }
+
+#[verus_verify]
+#[verus_verify(external_derive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Bindings(pub(crate) [u64; 3]);
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[derive(Clone, Copy, Debug, Hash)]
@@ -235,9 +239,7 @@ impl PartialEq for Primitive {
     #[verus_spec(result => ensures result == (self@ == other@))]
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
-            (Self::HasValue(a), Self::HasValue(b)) => a == b,
-            (Self::EqCore(p, t), Self::EqCore(q, u)) => p == q && t == u,
-            _ => false,
+            (Self::Eq { field: p, term: t }, Self::Eq { field: q, term: u }) => p == q && t == u,
         }
     }
 }
@@ -380,66 +382,70 @@ impl AtomSet {
     pub(crate) const fn ids(&self) -> &[TestId] {
         self.ids.as_slice()
     }
-}
-#[verus_verify]
-#[verus_spec(result => ensures
-    final(store).graph() == old(store).graph(),
-    final(store).valid_store() == old(store).valid_store(),
-    final(store).restoration() == old(store).restoration(),
-    match result {
-        Ok(Some(id)) => index < ids@.len() && id == ids@[index as int]
-            && id@ < final(store).graph().tests.len()
-            && (final(store).graph().tests[id@ as int] matches TestNode::Atom(_, true))
-            && match previous { Some(prev) => prev@ < id@, None => true },
-        _ => result is Err,
-    },
-)]
-fn atom_set_step<G: KernelStore>(
-    store: &mut G,
-    ids: &[TestId],
-    index: usize,
-    previous: Option<TestId>,
-) -> KernelResult<Option<TestId>> {
-    store.checkpoint()?;
-    let id = match ids.get(index) {
-        Some(v) => *v,
-        None => return Err(super::error::invalid_atom_set()),
-    };
-    let valid = matches!(test_head(store, id), Ok(TestHead::Atom(_, true)));
-    let unordered = match previous {
-        Some(prev) => prev >= id,
-        None => false,
-    };
-    if !valid || unordered {
-        Err(super::error::invalid_atom_set())
-    } else {
-        Ok(Some(id))
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures
+        final(store).graph() == old(store).graph(),
+        final(store).valid_store() == old(store).valid_store(),
+        final(store).restoration() == old(store).restoration(),
+        match result {
+            Ok(Some(id)) => index < ids@.len() && id == ids@[index as int]
+                && id@ < final(store).graph().tests.len()
+                && (final(store).graph().tests[id@ as int] matches TestNode::Atom(_, true))
+                && match previous { Some(prev) => prev@ < id@, None => true },
+            _ => result is Err,
+        },
+    )]
+    fn validate_id<G: KernelStore>(
+        store: &mut G,
+        ids: &[TestId],
+        index: usize,
+        previous: Option<TestId>,
+    ) -> KernelResult<Option<TestId>> {
+        store.checkpoint()?;
+        let id = match ids.get(index) {
+            Some(v) => *v,
+            None => return Err(HistoryError::invalid_atom_set()),
+        };
+        let valid = matches!(id.head(store), Ok(TestHead::Atom(_, true)));
+        let unordered = match previous {
+            Some(prev) => prev >= id,
+            None => false,
+        };
+        if !valid || unordered {
+            Err(HistoryError::invalid_atom_set())
+        } else {
+            Ok(Some(id))
+        }
     }
-}
-#[verus_verify]
-#[verus_spec(result => ensures
-    final(store).graph() == old(store).graph(),
-    final(store).valid_store() == old(store).valid_store(),
-    final(store).restoration() == old(store).restoration(),
-    match result { Ok(atoms) => atoms@ == ids@ && atom_ids_wf(final(store).graph(), atoms@), Err(_) => true },
-)]
-pub(crate) fn atom_set<G: KernelStore>(store: &mut G, ids: Vec<TestId>) -> KernelResult<AtomSet> {
-    let mut state = Ok(None);
-    scan!(state,index,ids.len(),state.is_ok(),previous=>atom_set_step(store,&ids,index,previous);
-        invariant
-            store.graph() == old(store).graph(),
-            store.valid_store() == old(store).valid_store(),
-            store.restoration() == old(store).restoration(),
-            index <= ids.len(),
-            match state {
-                Ok(previous) => atom_prefix_wf(store.graph(), ids@, index as nat)
-                    && previous == if index == 0 { None } else { Some(ids@[index as int - 1]) },
-                Err(_) => true,
-            },
-        decreases ids.len() - index,
-    );
-    state?;
-    Ok(AtomSet { ids })
+    #[verus_verify]
+    #[verus_spec(result => ensures
+        final(store).graph() == old(store).graph(),
+        final(store).valid_store() == old(store).valid_store(),
+        final(store).restoration() == old(store).restoration(),
+        match result { Ok(atoms) => atoms@ == ids@ && atom_ids_wf(final(store).graph(), atoms@), Err(_) => true },
+    )]
+    pub(crate) fn new<G: KernelStore>(store: &mut G, ids: Vec<TestId>) -> KernelResult<Self> {
+        let mut state = Ok(None);
+        scan!(state,index,ids.len(),state.is_ok(),previous=>Self::validate_id(store,&ids,index,previous);
+            invariant
+                store.graph() == old(store).graph(),
+                store.valid_store() == old(store).valid_store(),
+                store.restoration() == old(store).restoration(),
+                index <= ids.len(),
+                match state {
+                    Ok(previous) => atom_prefix_wf(store.graph(), ids@, index as nat)
+                        && previous == if index == 0 { None } else { Some(ids@[index as int - 1]) },
+                    Err(_) => true,
+                },
+            decreases ids.len() - index,
+        );
+        state?;
+        Ok(AtomSet { ids })
+    }
 }
 
 // Drop-free heads end store-backed slice borrows before any mutable operation.
@@ -478,137 +484,158 @@ pub(crate) enum TransitionHead {
     Not(TransitionId),
     Append(TransitionId, usize),
 }
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(head) => id@ < store.graph().tests.len() && head@ == test_node_head(store.graph().tests[id@ as int]),
-    Err(_) => true,
-})]
-pub(crate) fn test_head<G: KernelStore>(store: &G, id: TestId) -> KernelResult<TestHead> {
-    Ok(match store.test(id)? {
-        TestView::True => TestHead::True,
-        TestView::False => TestHead::False,
-        TestView::Atom {
-            primitive,
-            positive,
-        } => TestHead::Atom(primitive, positive),
-        TestView::And(xs) => TestHead::And(xs.len()),
-        TestView::Or(xs) => TestHead::Or(xs.len()),
-    })
-}
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(head) => id@ < store.graph().regexes.len() && head@ == regex_node_head(store.graph().regexes[id@ as int].kind),
-    Err(_) => true,
-})]
-pub(crate) fn regex_head<G: KernelStore>(store: &G, id: RegexId) -> KernelResult<RegexHead> {
-    Ok(match store.regex(id)?.kind {
-        RegexKindView::Empty => RegexHead::Empty,
-        RegexKindView::All => RegexHead::All,
-        RegexKindView::Epsilon => RegexHead::Epsilon,
-        RegexKindView::Test(t) => RegexHead::Test(t),
-        RegexKindView::Union(xs) => RegexHead::Union(xs.len()),
-        RegexKindView::Concat(xs) => RegexHead::Concat(xs.len()),
-        RegexKindView::Star(inner) => RegexHead::Star(inner),
-        RegexKindView::Intersect(xs) => RegexHead::Intersect(xs.len()),
-        RegexKindView::Not(inner) => RegexHead::Not(inner),
-    })
-}
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(head) => id@ < store.graph().transitions.len() && head@ == transition_node_head(store.graph().transitions[id@ as int]),
-    Err(_) => true,
-})]
-pub(crate) fn transition_head<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-) -> KernelResult<TransitionHead> {
-    Ok(match store.transition(id)? {
-        TransitionView::Const(r) => TransitionHead::Const(r),
-        TransitionView::If {
-            test,
-            then_transition,
-            else_transition,
-        } => TransitionHead::If(test, then_transition, else_transition),
-        TransitionView::Union(xs) => TransitionHead::Union(xs.len()),
-        TransitionView::Intersect(xs) => TransitionHead::Intersect(xs.len()),
-        TransitionView::Not(inner) => TransitionHead::Not(inner),
-        TransitionView::Append { transition, suffix } => {
-            TransitionHead::Append(transition, suffix.len())
-        }
-    })
-}
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(child) => id@ < store.graph().tests.len() && test_node_child(store.graph().tests[id@ as int], index as nat) == Some(child@),
-    Err(_) => true,
-})]
-pub(crate) fn test_child<G: KernelStore>(
-    store: &G,
-    id: TestId,
-    index: usize,
-) -> KernelResult<TestId> {
-    match store.test(id)? {
-        TestView::And(xs) | TestView::Or(xs) => match xs.get(index) {
-            Some(value) => Ok(*value),
-            None => Err(super::error::normalization_invariant()),
-        },
-        _ => Err(super::error::normalization_invariant()),
+impl TestId {
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(head) => self@ < store.graph().tests.len() && head@ == test_node_head(store.graph().tests[self@ as int]),
+        Err(_) => true,
+    })]
+    pub(crate) fn head<G: KernelStore>(self, store: &G) -> KernelResult<TestHead> {
+        Ok(match store.test(self)? {
+            TestView::True => TestHead::True,
+            TestView::False => TestHead::False,
+            TestView::Atom {
+                primitive,
+                positive,
+            } => TestHead::Atom(primitive, positive),
+            TestView::And(xs) => TestHead::And(xs.len()),
+            TestView::Or(xs) => TestHead::Or(xs.len()),
+        })
     }
 }
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(child) => id@ < store.graph().regexes.len() && regex_node_child(store.graph().regexes[id@ as int].kind, index as nat) == Some(child@),
-    Err(_) => true,
-})]
-pub(crate) fn regex_child<G: KernelStore>(
-    store: &G,
-    id: RegexId,
-    index: usize,
-) -> KernelResult<RegexId> {
-    match store.regex(id)?.kind {
-        RegexKindView::Union(xs) | RegexKindView::Concat(xs) | RegexKindView::Intersect(xs) => {
-            match xs.get(index) {
-                Some(value) => Ok(*value),
-                None => Err(super::error::normalization_invariant()),
+
+impl RegexId {
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(head) => self@ < store.graph().regexes.len() && head@ == regex_node_head(store.graph().regexes[self@ as int].kind),
+        Err(_) => true,
+    })]
+    pub(crate) fn head<G: KernelStore>(self, store: &G) -> KernelResult<RegexHead> {
+        Ok(match store.regex(self)?.kind {
+            RegexKindView::Empty => RegexHead::Empty,
+            RegexKindView::All => RegexHead::All,
+            RegexKindView::Epsilon => RegexHead::Epsilon,
+            RegexKindView::Test(t) => RegexHead::Test(t),
+            RegexKindView::Union(xs) => RegexHead::Union(xs.len()),
+            RegexKindView::Concat(xs) => RegexHead::Concat(xs.len()),
+            RegexKindView::Star(inner) => RegexHead::Star(inner),
+            RegexKindView::Intersect(xs) => RegexHead::Intersect(xs.len()),
+            RegexKindView::Not(inner) => RegexHead::Not(inner),
+        })
+    }
+}
+
+impl TransitionId {
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(head) => self@ < store.graph().transitions.len() && head@ == transition_node_head(store.graph().transitions[self@ as int]),
+        Err(_) => true,
+    })]
+    pub(crate) fn head<G: KernelStore>(self, store: &G) -> KernelResult<TransitionHead> {
+        Ok(match store.transition(self)? {
+            TransitionView::Const(r) => TransitionHead::Const(r),
+            TransitionView::If {
+                test,
+                then_transition,
+                else_transition,
+            } => TransitionHead::If(test, then_transition, else_transition),
+            TransitionView::Union(xs) => TransitionHead::Union(xs.len()),
+            TransitionView::Intersect(xs) => TransitionHead::Intersect(xs.len()),
+            TransitionView::Not(inner) => TransitionHead::Not(inner),
+            TransitionView::Append { transition, suffix } => {
+                TransitionHead::Append(transition, suffix.len())
             }
+        })
+    }
+}
+
+impl TestId {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(child) => self@ < store.graph().tests.len() && test_node_child(store.graph().tests[self@ as int], index as nat) == Some(child@),
+        Err(_) => true,
+    })]
+    pub(crate) fn child<G: KernelStore>(self, store: &G, index: usize) -> KernelResult<Self> {
+        match store.test(self)? {
+            TestView::And(xs) | TestView::Or(xs) => match xs.get(index) {
+                Some(value) => Ok(*value),
+                None => Err(HistoryError::normalization_invariant()),
+            },
+            _ => Err(HistoryError::normalization_invariant()),
         }
-        _ => Err(super::error::normalization_invariant()),
     }
 }
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(child) => id@ < store.graph().transitions.len() && transition_node_child(store.graph().transitions[id@ as int], index as nat) == Some(child@),
-    Err(_) => true,
-})]
-pub(crate) fn transition_child<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    index: usize,
-) -> KernelResult<TransitionId> {
-    match store.transition(id)? {
-        TransitionView::Union(xs) | TransitionView::Intersect(xs) => match xs.get(index) {
-            Some(value) => Ok(*value),
-            None => Err(super::error::normalization_invariant()),
-        },
-        _ => Err(super::error::normalization_invariant()),
+
+impl RegexId {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(child) => self@ < store.graph().regexes.len() && regex_node_child(store.graph().regexes[self@ as int].kind, index as nat) == Some(child@),
+        Err(_) => true,
+    })]
+    pub(crate) fn child<G: KernelStore>(self, store: &G, index: usize) -> KernelResult<Self> {
+        match store.regex(self)?.kind {
+            RegexKindView::Union(xs) | RegexKindView::Concat(xs) | RegexKindView::Intersect(xs) => {
+                match xs.get(index) {
+                    Some(value) => Ok(*value),
+                    None => Err(HistoryError::normalization_invariant()),
+                }
+            }
+            _ => Err(HistoryError::normalization_invariant()),
+        }
     }
 }
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(child) => id@ < store.graph().transitions.len() && transition_node_suffix(store.graph().transitions[id@ as int], index as nat) == Some(child@),
-    Err(_) => true,
-})]
-pub(crate) fn suffix_child<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    index: usize,
-) -> KernelResult<RegexId> {
-    match store.transition(id)? {
-        TransitionView::Append { suffix, .. } => match suffix.get(index) {
-            Some(value) => Ok(*value),
-            None => Err(super::error::normalization_invariant()),
-        },
-        _ => Err(super::error::normalization_invariant()),
+
+impl TransitionId {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(child) => self@ < store.graph().transitions.len() && transition_node_child(store.graph().transitions[self@ as int], index as nat) == Some(child@),
+        Err(_) => true,
+    })]
+    pub(crate) fn child<G: KernelStore>(self, store: &G, index: usize) -> KernelResult<Self> {
+        match store.transition(self)? {
+            TransitionView::Union(xs) | TransitionView::Intersect(xs) => match xs.get(index) {
+                Some(value) => Ok(*value),
+                None => Err(HistoryError::normalization_invariant()),
+            },
+            _ => Err(HistoryError::normalization_invariant()),
+        }
+    }
+}
+
+impl TransitionId {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure"
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Ok(child) => self@ < store.graph().transitions.len() && transition_node_suffix(store.graph().transitions[self@ as int], index as nat) == Some(child@),
+        Err(_) => true,
+    })]
+    pub(crate) fn suffix_child<G: KernelStore>(
+        self,
+        store: &G,
+        index: usize,
+    ) -> KernelResult<RegexId> {
+        match store.transition(self)? {
+            TransitionView::Append { suffix, .. } => match suffix.get(index) {
+                Some(value) => Ok(*value),
+                None => Err(HistoryError::normalization_invariant()),
+            },
+            _ => Err(HistoryError::normalization_invariant()),
+        }
     }
 }
 
@@ -616,7 +643,7 @@ pub(crate) fn suffix_child<G: KernelStore>(
 pub(crate) mod verify {
     use super::*;
     use crate::verify::history_specs::{self as language, Regex, Transition};
-    use crate::verify::value_specs::Data;
+    use crate::verify::history_specs::{EventView, Subst};
     use alloc::boxed::Box;
     use vstd::std_specs::cmp::{OrdSpecImpl, PartialEqSpecImpl, PartialOrdSpecImpl};
 
@@ -647,14 +674,11 @@ pub(crate) mod verify {
     id_model!(TestId);
     id_model!(RegexId);
     id_model!(TransitionId);
-    id_model!(ConstId);
-    id_model!(PathId);
-    id_model!(VariableId);
 
     verus! {
 
-    pub enum GTerm { Constant(nat), Variable(nat) }
-    pub enum Primitive { HasValue(nat), EqCore(nat, GTerm) }
+    pub enum GTerm { Constant(nat), Variable(HistoryField) }
+    pub enum Primitive { Eq(HistoryField, GTerm) }
     pub enum TestNode { True, False, Atom(Primitive, bool), And(Seq<nat>), Or(Seq<nat>) }
     pub enum Test { True, False, Atom(Primitive, bool), And(Seq<Test>), Or(Seq<Test>) }
     pub enum RegexKindNode {
@@ -674,9 +698,6 @@ pub(crate) mod verify {
     pub struct Graph {
         pub tests: Seq<TestNode>, pub regexes: Seq<RegexNode>,
         pub transitions: Seq<TransitionNode>, pub constants: ConstantsModel,
-    }
-    pub struct Symbols {
-        pub constants: Seq<Data>, pub paths: Seq<Seq<Data>>, pub variables: Seq<Seq<char>>,
     }
     pub enum TestHeadNode { True, False, Atom(Primitive, bool), And(nat), Or(nat) }
     pub enum RegexHeadNode {
@@ -712,14 +733,29 @@ pub(crate) mod verify {
     impl View for super::Term {
         type V = GTerm;
         open(crate) spec fn view(&self) -> GTerm {
-            match self { super::Term::Constant(c) => GTerm::Constant(c@), super::Term::Variable(v) => GTerm::Variable(v@) }
+            match self { super::Term::Constant(c) => GTerm::Constant(*c as nat), super::Term::Variable(v) => GTerm::Variable(*v) }
         }
     }
     impl View for super::Primitive {
         type V = Primitive;
         open(crate) spec fn view(&self) -> Primitive {
-            match self { super::Primitive::HasValue(p) => Primitive::HasValue(p@), super::Primitive::EqCore(p, t) => Primitive::EqCore(p@, t@) }
+            match self { super::Primitive::Eq { field, term } => Primitive::Eq(*field, term@) }
         }
+    }
+    impl View for Event {
+        type V = EventView;
+        open(crate) spec fn view(&self) -> EventView {
+            EventView { principal: self.principal@, action: self.action@, resource: self.resource@ }
+        }
+    }
+    impl View for Bindings {
+        type V = Subst;
+        open(crate) spec fn view(&self) -> Subst {
+            EventView { principal: self.0@[0] as nat, action: self.0@[1] as nat, resource: self.0@[2] as nat }
+        }
+    }
+    pub open spec fn events_view(events: Seq<Event>) -> Seq<EventView> {
+        Seq::new(events.len(), |i: int| events[i]@)
     }
     pub open spec fn test_ids(ids: Seq<TestId>) -> Seq<nat> { Seq::new(ids.len(), |i: int| ids[i]@) }
     pub open spec fn regex_ids(ids: Seq<RegexId>) -> Seq<nat> { Seq::new(ids.len(), |i: int| ids[i]@) }
@@ -1049,31 +1085,26 @@ pub(crate) mod verify {
         old.tests.is_prefix_of(new.tests) && old.regexes.is_prefix_of(new.regexes) && old.transitions.is_prefix_of(new.transitions)
     }
     pub open spec fn graph_extends(old: Graph, new: Graph) -> bool { tables_extend(old, new) && old.constants == new.constants }
-    pub open spec fn symbols_wf(s: Symbols) -> bool {
-        s.constants.no_duplicates() && s.paths.no_duplicates() && s.variables.no_duplicates()
-        && forall|i: int| 0 <= i < s.variables.len() ==> #[trigger] s.variables[i].len() > 0
-    }
-    pub open spec fn primitive_holds(s: Symbols, theta: Seq<Data>, p: Primitive, e: Data) -> bool {
+    pub open spec fn primitive_holds(theta: Subst, p: Primitive, e: EventView) -> bool {
         match p {
-            Primitive::HasValue(path) => path < s.paths.len() && language::select(e, s.paths[path as int]) is Some,
-            Primitive::EqCore(path, term) => path < s.paths.len() && match term {
-                GTerm::Constant(c) => c < s.constants.len() && language::select(e, s.paths[path as int]) == Some(s.constants[c as int]),
-                GTerm::Variable(v) => v < theta.len() && language::select(e, s.paths[path as int]) == Some(theta[v as int]),
+            Primitive::Eq(field, term) => language::field_value(e, field) == match term {
+                GTerm::Constant(c) => c,
+                GTerm::Variable(v) => language::field_value(theta, v),
             },
         }
     }
-    pub open spec fn test_holds(s: Symbols, theta: Seq<Data>, t: Test, e: Data) -> bool
+    pub open spec fn test_holds(theta: Subst, t: Test, e: EventView) -> bool
         decreases t,
     {
         match t {
-            Test::True => true, Test::False => false, Test::Atom(p, positive) => primitive_holds(s, theta, p, e) == positive,
-            Test::And(cs) => forall|i: int| 0 <= i < cs.len() ==> test_holds(s, theta, cs[i], e),
-            Test::Or(cs) => exists|i: int| 0 <= i < cs.len() && test_holds(s, theta, cs[i], e),
+            Test::True => true, Test::False => false, Test::Atom(p, positive) => primitive_holds(theta, p, e) == positive,
+            Test::And(cs) => forall|i: int| 0 <= i < cs.len() ==> test_holds(theta, cs[i], e),
+            Test::Or(cs) => exists|i: int| 0 <= i < cs.len() && test_holds(theta, cs[i], e),
         }
     }
-    pub open spec fn gsem(s: Symbols, theta: Seq<Data>) -> spec_fn(Test, Data) -> bool { |t: Test, e: Data| test_holds(s, theta, t, e) }
-    pub open spec fn regex_lang(g: Graph, s: Symbols, theta: Seq<Data>, i: nat, word: Seq<Data>) -> bool {
-        language::lang(gsem(s, theta), lift_regex(g, i), word)
+    pub open spec fn gsem(theta: Subst) -> spec_fn(Test, EventView) -> bool { |t: Test, e: EventView| test_holds(theta, t, e) }
+    pub open spec fn regex_lang(g: Graph, theta: Subst, i: nat, word: Seq<EventView>) -> bool {
+        language::lang(gsem(theta), lift_regex(g, i), word)
     }
     pub open spec fn atom_ids_wf(g: Graph, ids: Seq<TestId>) -> bool {
         strictly_increasing(test_ids(ids))
@@ -1088,10 +1119,10 @@ pub(crate) mod verify {
         && (forall|i: int, j: int| 0 <= i < j < n ==> #[trigger] ids[i]@ < #[trigger] ids[j]@)
     }
 
-    pub proof fn lemma_constant_atoms_disjoint(s: Symbols, theta: Seq<Data>, path: nat, a: nat, b: nat, event: Data)
-        requires symbols_wf(s), a != b,
-        ensures !(primitive_holds(s, theta, Primitive::EqCore(path, GTerm::Constant(a)), event)
-            && primitive_holds(s, theta, Primitive::EqCore(path, GTerm::Constant(b)), event)),
+    pub proof fn lemma_constant_atoms_disjoint(theta: Subst, field: HistoryField, a: nat, b: nat, event: EventView)
+        requires a != b,
+        ensures !(primitive_holds(theta, Primitive::Eq(field, GTerm::Constant(a)), event)
+            && primitive_holds(theta, Primitive::Eq(field, GTerm::Constant(b)), event)),
     {}
 
     pub proof fn lemma_lift_test_stable(a: Graph, b: Graph, i: nat)

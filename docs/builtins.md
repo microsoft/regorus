@@ -240,260 +240,103 @@ In future, each builtin will be associated with a feature (many builtins could b
    |----------------------------------------------------------------------------------------------|---------|
    | [trace](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-tracing-trace) | _       |
 
-## History/request policies (Regorus extension)
+## Typed history tables (native Rust, RVM only)
 
-`history.match(policy, history, request) -> boolean` requires the opt-in `history`
-Cargo feature, which is not included in `full-opa` or the default features.
-It works with the interpreter and RVM, including no_std builds. It matches an
-explicit prior history oldest-to-newest; it never appends the request or mutates
-either argument. Rego rules and comprehensions can aggregate Boolean results.
+The opt-in `history` feature enables typed history tables, not a Rego builtin.
+It implies `rvm` and `arc`, supports no_std, and is not included in the default
+features or `full-opa`. The former generic history builtin is removed; calls to
+it fail function resolution. Language bindings do not forward a `history` feature
+or expose the native owner/identity API.
 
-The policy is an object with exactly `history` and `request` members. All tagged
-forms below have exactly one member; extra or unknown members are invalid.
+### Native boundary
 
-| Request pattern | Meaning |
-|---|---|
-| `{"value": v}` | Exact structural Value equality; operator-looking literal objects stay literal |
-| `{"var": "name"}` | Bind a nonempty name internally; every repeated occurrence must equal the complete bound Value |
-| `{"any": true}` | Any defined Value, including null |
-| `{"object": {key: pattern, ...}}` | Object with every required field; additional fields allowed |
-| `{"array": [pattern, ...]}` | Array with exactly the given length |
+Create an application-owned `Arc<HistoryStore>` from
+`regorus::languages::history_table`. Intern exact raw UTF-8 paths separately with
+`intern_principal`, `intern_action`, and `intern_resource`. The resulting opaque
+eight-byte `Principal`, `Action`, and `Resource` IDs form an `Event` containing
+exactly those three coordinates. Case, slashes, embedded NULs, and distinct
+Unicode encodings remain distinct; there is no normalization or ancestry match.
+IDs are not recycled, and foreign-owner IDs are rejected.
 
-Variable names are scoped to one pair, not Rego variables. Object keys and
-values are ordinary Rego Values, not a fixed principal/action/resource schema.
-Missing or Undefined required values fail the request pattern, including `any`
-and `var`; present null is a normal value. Bindings are not returned.
+Use `store.new_history()`, then `store.append(&history, &events)`,
+`store.truncate(&history, len)`, and `store.len(&history)`. Cloned handles share
+events. Compile cold policy JSON with `compile(&table, batch_size)`; zero is an
+error. After `vm.load_program(program)`, call `vm.attach_history(store.clone())`
+and `vm.set_history_input(history, request)`, then
+`vm.execute_entry_point_by_name("decide")`. The result is `Value::Null` for grant
+or the zero-based first violated rule index. Decisions never append the candidate.
+Repeated executions retain staged input. Loading another program cancels an old
+execution and requires explicit reattachment and restaging.
 
-A history test is `true`, `false`, `{"and": [test, ...]}`,
-`{"or": [test, ...]}`, or a comparison:
+### Cold policy grammar
 
-```rego
-{"eq": {"path": ["resource"], "term": {"var": "r"}}}
-{"neq": {"path": ["action"], "term": {"value": "edit"}}}
-```
+The table envelope is `{"rules": [{"mode": "require"|"forbid", "request": …,
+"history": …}]}`. Rules are ordered: require rejects a matching request when the
+history is outside its language; forbid rejects when it is inside. Nonmatching
+request heads skip the rule.
 
-Both comparisons accept either term form. Their payload contains exactly `path`
-and `term`. Paths contain defined Value keys; `[]` selects the entire event.
-Object-key lookup and set membership use Value collection semantics; array
-indexes must be nonnegative integers fitting `usize`. Missing/Undefined values,
-invalid indexes, and unsupported traversal make **both** equality and
-disequality false. Thus `eq(p, v) OR neq(p, v)` means presence, not universal
-truth. Empty `and` is true and empty `or` is false. Every variable reference is
-validated even in a branch discarded by normalization or a nonmatching request.
+The request is `{"any":true}` or `{"object":{…}}` containing only `principal`,
+`action`, and `resource`. Each coordinate is omitted/a wildcard, `{"any":true}`,
+`{"value":"raw path"}`, or `{"var":"name"}`. Variables belong to one domain;
+reusing a name across domains is invalid. No nested patterns, arbitrary Value
+constants, optional runtime coordinates, or container matching remain.
+
+Tests are Boolean literals, `{"and":[test,…]}`, `{"or":[test,…]}`, or
+`{"eq":{"path":["action"],"term":{"value":"edit"}}}` (also `neq`). Paths
+select exactly one of the three coordinates. A term is a string constant or
+`{"var":"name"}` declared by the head in that same domain. Empty conjunction
+is true; empty disjunction is false. Every runtime coordinate is present, so
+equality and disequality are complements.
 
 | History expression | Complete-history language |
 |---|---|
-| `{"empty": true}` | No histories |
-| `{"all": true}` | All finite histories, including empty |
-| `{"epsilon": true}` | Empty history only |
-| `{"test": test}` | Exactly one event satisfying the test |
-| `{"union": [regex, ...]}` | Union; empty list is empty language |
-| `{"concat": [regex, ...]}` | Chronological concatenation; empty list is epsilon |
-| `{"star": regex}` | Kleene star |
-| `{"intersect": [regex, ...]}` | Intersection; empty list is universal |
-| `{"not": regex}` | Complement over all finite histories, not predicate negation |
+| `{"empty":true}` | No histories |
+| `{"all":true}` | All finite histories |
+| `{"epsilon":true}` | Empty history only |
+| `{"test":test}` | One event satisfying the test |
+| `{"concat":[regex,…]}` | Chronological concatenation; empty is epsilon |
+| `{"union":[regex,…]}` | Union; empty is empty language |
+| `{"intersect":[regex,…]}` | Intersection; empty is universal |
+| `{"star":regex}` | Kleene star |
+| `{"not":regex}` | Complement over complete finite histories |
 
-For example, this pair accepts a release only when the supplied prior history
-contains an edit of the same resource; unrelated later events do not erase it:
+### Batching, sharing, and errors
 
-```rego
-package example
-import rego.v1
+Compilation emits one `HistoryStep` instruction per ordered rule. Each dispatch
+consumes at most the explicit batch size and repeats at the same PC when more
+events remain. Intermediate nullable prefixes do not grant. The existing VM
+executor charges dispatch budgets and preserves continuations during suspension.
 
-pair := {
-    "request": {"object": {
-        "action": {"value": "release"},
-        "resource": {"var": "r"},
-    }},
-    "history": {"concat": [
-        {"all": true},
-        {"test": {"and": [
-            {"eq": {"path": ["action"], "term": {"value": "edit"}}},
-            {"eq": {"path": ["resource"], "term": {"var": "r"}}},
-        ]}},
-        {"all": true},
-    ]},
-}
-result := history.match(pair, input.history, input.request)
-```
+A decision captures a revision and target length before execution, including an
+empty table. Concurrent appends are excluded until the next decision. Truncation
+that removes events changes the revision; resume or finalization reports typed
+`HistoryChanged`, rather than restarting or publishing a stale grant. Attachment
+or staged-input changes during an active/suspended execution fail.
 
-The implementation uses lazy symbolic derivatives, not regex strings or an eager
-DFA. Each pair has a 100 KiB structural graph-payload cap, excluding allocator
-capacity/padding and external Value payloads; it is not a process-memory bound.
-The active evaluator timer and configured memory limits apply during compilation
-and replay. Existing Value comparisons are atomic operations, with limit checks
-around them, not preemptible traversals. Allocation failures are reported only
-where the underlying API supports fallible allocation.
+The owner shares bounded table/graph and retained-prefix caches across VMs;
+active continuations pin their graph instance. Eviction or graph replacement
+cannot reinterpret a pinned residual. Successful batches publish their cursor
+only after fallible batch work completes; errors preserve the batch-entry cursor.
+Graph exhaustion permits one fresh lazy-graph retry per rule per decision,
+replayed through bounded dispatches. Native errors remain typed in
+`VmError::History`; resource limits retain the VM's existing limit variants.
 
-Malformed policies and non-array histories follow builtin strictness: errors in
-strict mode, Undefined otherwise. Top-level Undefined arguments propagate before
-matching. Graph, allocation, invariant and resource-limit failures are always
-errors, even through nested rules and negation. RVM hard matcher failures use
-`VmError::HistoryMatchFailure`; scoped strict validation failures use
-`VmError::HistoryMatchValidationError`. No binding or authorization/session API is
-added, and the existing RVM restriction on `with` is unchanged.
+Programs contain portable postorder source tables, not live IDs or store identity.
+Attachment interns constants in the supplied store outside decision execution.
+Serialization version 8 rejects older bytecode; recompile rather than translate.
 
-With `cache`, each retained Engine or RegoVM keeps at most 16 exact policy Values
-and their owned compiled graphs. Each pair has a 256-entry event-class
-successor LRU; signed predicates use canonical unsigned primitive truth vectors,
-so events with different unused metadata can select the same successor. A newly
-compiled cached pair precompiles, before its first decision, the derivatives and
-successor classes of up to 64 residual states reachable from the root (transitions
-with at most 8 primitive atoms, at most 256 classes in total); states beyond that
-budget are derived lazily. If that exploration exhausts the graph cap, the call is
-served from a freshly compiled lazy pair. Within one call these derivative/event
-caches also work without `cache`, but the pair is dropped at return and nothing is
-precompiled. Cached exploratory graph exhaustion evicts the entire pair and retries
-once from a fresh, lazily derived graph; a fresh graph over the cap is a hard error.
-Other errors are not retried. Evaluator clones start with empty matching caches;
-VM program replacement clears them. Existing `cache::clear/configure` remains
-regex/glob-only. `CompiledPolicy::eval_with_input` creates a fresh evaluator and
-does not promise warm cross-call reuse.
+### Proof and measurement boundaries
 
-Each retained pair keeps one shared `Rc<Array>` history snapshot and up to 16
-exact-binding residual cursors. A request mismatch leaves this progress alone.
-Pointer-identical arrays prove unchanged content; reconstructed/extended arrays
-must compare the entire retained prefix structurally. Truncation or changed
-prefixes replay from the source root and replace the old cursors only after a
-successful match. Failures do not commit partially consumed progress. A proven
-self-loop advances the cursor without changing its residual, but does not skip
-later events. Equal Boolean answers alone never authorize residual reuse.
-
-Compiled pairs remember one sorted object position per request-pattern field and
-event-path segment. Every hinted lookup checks the key and falls back to ordinary
-lookup on a miss; mutable BTree objects use ordinary lookup. A replay selects each
-distinct event path at most once per event, sharing present and missing results
-between guard checks and atom classification. Selection scratch is reset for each
-event and is not retained with the history snapshot. Hints affect performance only;
-the trusted `Object::get_hinted` contract is identical to `Object::get`, and hint
-construction is an external-body allocation boundary with no semantic guarantees.
-Consecutive events are not compared structurally; successor reuse uses primitive
-truth words or proven self-loop guards. Prefix, binding, and retained-policy
-comparisons checkpoint before each element; atom classification retains its entry
-and exit checkpoints.
-
-String operands of primitive equality tests use a per-pair `namespacius::PathCache`
-with delimiter `/`: constants are interned at compilation, bindings once per replay,
-and selected event strings per comparison. IDs preserve exact UTF-8 bytes, including
-leading/trailing delimiters; no path normalization occurs. Non-string operands use
-Value equality. The cache reserves 4096 trie nodes (16 KiB), 64 KiB of component
-storage, and 1024 memoized paths; index/memo metadata is additional heap storage.
-After an interning failure, that pair permanently falls back to Value equality.
-All pair-release paths free the interner arenas. Native dependency `Send`/`Sync`
-markers rely on exclusive arena ownership and read-only shared access; namespacius
-also trusts concrete index/LRU operations and deterministic hashing, not collision
-freedom. The byte-equality theorem and matcher interner bodies are verified.
-
-After policy/pattern/binding lookup, an unchanged pointer-identical history has
-an O(1) history fast path. A new array requires O(n) prefix event comparisons,
-including recursive payload-comparison costs; only automaton replay is limited
-to the remaining suffix. Retained snapshots keep caller data alive and can force
-full outer-array COW copies on append. There is no overall O(delta) guarantee,
-caller-supplied history identity, revision counter, or checkpoint tree. Drop the
-evaluator (or replace a VM's program) to release its local matching caches.
-
-Production correctness is established by the body-verified Verus contract on
-`HistoryMatchState::evaluate` in `src/builtins/history/mod.rs`. Every successful
-`Ok(answer)` equals the independent `policy_lang` specification in
-`src/verify/history_specs.rs`: the head matches the request, and the tail consumes
-committed history oldest-to-newest. Errors carry no Boolean interpretation and
-preserve the retained-state invariant. The proof covers both Base
-(`--no-default-features --features history,arc,std`) and Cached
-(`--features history`) production profiles, including compilation, normalization,
-symbolic execution, event-class caches, replay, and cursor reuse. The contract
-also states, for every `(head, tail)` the policy decodes to,
-`answer == pair_lang(head, tail, request, history)`;
-`history_specs::theorem_every_pair_has_a_policy` shows every well-formed pair
-(nonempty variable names, defined path keys) is the decoding of some policy, so
-the result covers every regex the grammar admits. Every verified loop carries a
-`decreases` clause; no `exec_allows_no_decreases_clause` remains under
-`src/builtins/history`. `transition_machine` decreases
-`normalize::verify::machine_cost`, an abstract run of the task stack over
-per-node depth bounds (`tdepth`: `1 + max` at `If`, additive at `Union`,
-multiplicative at `Intersect`, `4^d` at `Not`, `2d + 1` at `Append`).
-
-The FFI, Java, Python, Ruby, and WASM crates expose an opt-in `history` feature
-that forwards to `regorus/history`; their default features are unchanged.
-
-The trusted boundary consists of the existing numeric-library contracts;
-semantic Value equality/cloning and collection, string, and Rc/Arc operations;
-clocks and resource-limit queries; fallible Vec/SmallVec reservation; the
-bumpus arena's `Layout::size`/`Layout::align` bridge, fallible chunk allocation
-(`try_allocate`), and slice formation (`slice_ref`) — bump arithmetic, permission
-bookkeeping, and freeing are body-verified, and bumpus declares no `global layout`
-axiom, so no pointer-width or primitive-alignment assumption is imported; exact
-SmallVec/std sequence operations, sorting, deduplication, search, rotation, and
-checked shifts; symbol-index map access; concrete successor-LRU operations keyed by
-transition and truth-word contents (including the opaque default hasher type);
-the native state-drop adapter invoking verified release; and diagnostic formatting.
-Hash-consing, bucket lookup/completeness, and structural equality are body-verified.
-Hashconsius/bumpus pointer tables and buckets grow with infallible `alloc::vec::Vec`
-(OOM aborts; bookkeeping is bounded by `MAX_GRAPH_BYTES` per store).
-Native allocator `Send`/`Sync` markers rely on exclusive chunk ownership,
-immutable shared access, and corresponding element-type bounds outside SMT.
-No compiler, normalizer, derivative, interpreter, matcher,
-replay, or evaluator body is trusted. The production-refinement theorem is the
-Verus contract.
-
-Arena exhaustion is a distinct error, `HistoryError::ArenaExhausted`, separate
-from global-allocator failure (`AllocationFailed`) and the byte cap
-(`GraphLimit`). `CanonicalStore::intern_*` are verified transactional: on any
-error the abstract graph and the charged byte count are unchanged. They also
-carry a verified capacity theorem: `ArenaExhausted` can be returned only when
-`slack < MAX_GRAPH_BYTES - capacity`, where `capacity` is the per-arena chunk size
-and `slack` is the charged weight of the graph minus the bytes actually resident in
-the arenas (never decreasing on a successful push, zero for a fresh store). A
-production store (`ArenaStorage::new`, `capacity == MAX_GRAPH_BYTES`) therefore
-hits `GraphLimit` before it can ever exhaust an arena. The premises
-(`size_of::<ArenaX>() > 0`, `align_of::<ArenaX>() <= 16`, and
-`MAX_GRAPH_BYTES` a multiple of each alignment) are `const`-asserted for every
-compile target and re-checked at runtime so the proof does not rely on an
-x86_64-specific layout axiom.
-
-Each compiled pair keeps its hash-consed bump store for its whole lifetime: six
-100 KiB chunks per retained pair, with no heap copy at compilation's end. Nodes
-are interned by `hashconsius::BHConsign`; child lists use `SliceArena` with
-`hashconsius::index::Buckets`. Failed compilation, evaluation/publication of fresh
-pairs, eviction, explicit state release, and state destruction release the chunks.
-The string-operand interner adds its separate fixed arena budget described above.
-The destructor adapter is native; the release implementation is verified.
-
-Production evaluation passes a zero-sized `ObservationWorld` capability through
-the clock and fallible reservation call sites; arena allocation uses verified bumpus operations.
-The capability itself adds no runtime trace/counter or retained matcher state,
-and does not change the Engine/FFI interface. Kernel reservation callbacks preserve the existing
-reserve → charge → resize order. This makes observations explicit for the
-production proof.
-
-### Verified regex-language theorems
-
-The paper *Past Regular Expressions over Product Events* states the results
-below. Regorus adapts product events to JSON-like `Data`: missing paths make both
-source `Eq` and `Neq` false, so source tests have no complement operation.
-Union, intersection, concatenation, and test conjunction/disjunction are n-ary
-sequences, with set and splice equations replacing binary rearrangements.
-The independent definitions live in
+The typed language specifications and algebra are in
 [`history_specs.rs`](../src/verify/history_specs.rs) and
-[`history_algebra.rs`](../src/verify/history_algebra.rs).
+[`history_algebra.rs`](../src/verify/history_algebra.rs). Kernel modules retain
+normalization, derivative, graph-extension, and nullable contracts. Synchronization,
+allocation, clocks, and arena destruction have explicit trust boundaries; this
+documentation does not assert a completed end-to-end verification run or counts.
 
-| Paper result | Independent theorem | Production contract |
-| --- | --- | --- |
-| Derivative correctness | `history_specs::lemma_derivative_correct`, `lemma_derive_word_correct`, `lemma_derive_word_nullable` | Pure language theorems; no runtime counterpart needed. |
-| Similarity preserves language | `history_algebra::theorem_similarity_preserves_language`; policy corollary `theorem_similar_tails_same_decision`; source deviation `theorem_eq_or_neq_not_similar_to_true`; signed-kernel complement `lemma_test_complement_holds` and `lemma_test_complement_involutive` | `normalize.rs` smart constructors `regex_union`, `regex_intersect`, `regex_concat`, `regex_star`, `regex_not`, `regex_test`, `test_and`, `test_or`, `test_not` ensure language/truth equality with the unnormalized combination. Distributivity belongs to the equational theory but is not applied by the normalizer. |
-| Symbolic derivative correctness | `history_algebra::theorem_symbolic_derivative_correct`; stronger `lemma_symbolic_derivative_interp` gives syntactic equality with `derivative` | `symbolic::verify::derivative_correct` on `symbolic_derivative`, bridged by `lemma_derivative_correct_is_symbolic_derivative`. Runtime smart-constructor contracts supply the paper's `Norm`; the independent theorem needs no normalization. |
-| Matcher correctness | `history_algebra::theorem_matcher_correct`, `theorem_rule_decision`, `theorem_not_fired` | `HistoryMatchState::evaluate` ensures successful `answer == policy_lang`; `progress::verify::lemma_residual_is_symbolic_run` connects runtime residuals to the symbolic run. `history.match` returns this Boolean; the Rego author applies require/forbid modes. |
-| Pair language for every regex | `history_specs::theorem_every_pair_has_a_policy` (encoding adequacy; `head_wf`/`tail_wf` are exactly the decoders' side conditions) | `HistoryMatchState::evaluate` ensures `answer == pair_lang(head, tail, request, history)` for every decoding of the policy Value. |
+`cargo bench --features history --bench history_table` measures native decisions
+with batch size 256 and 16/256/4096 events: unchanged-prefix warm calls and
+revision-invalidated replay with graph/successor caches warm. Compilation,
+interning, attachment, staging, truncation, and append occur outside timing.
+These are decision measurements, not ingestion or generic-builtin benchmarks.
 
-### Performance scopes
-
-`cargo bench --features history --bench history_match` measures cold first
-matching, same-array warm calls, independently reconstructed prefixes, appended
-relevant and self-loop events, caller COW append plus evaluation, and alternating
-request bindings sharing one snapshot, for 16/256/4096-event histories. Rego
-preparation and fixture construction/warming are outside the timed region, except
-the explicitly named COW operation. Prefix validation remains in the appended
-and reconstructed-array timings. Every timed evaluation asserts its result.
-The wide scenarios use 12-field objects, eight primitive atoms sharing three event
-paths, and alternating event kinds for 256/4096-event cold calls and a 4096-event
-same-array warm call. Compare with `-- --save-baseline before` before runtime
-changes and `-- --baseline before` afterward.

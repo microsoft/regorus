@@ -98,8 +98,6 @@ impl RegoVM {
             }
         };
         let cache_name = builtins::must_cache(builtin_info.name.as_str());
-        #[cfg(feature = "history")]
-        let is_history_match = builtin_info.name == "history.match";
         drop(program);
 
         if let Err(error) = self.ensure_dummy_exprs(args.len()) {
@@ -132,37 +130,18 @@ impl RegoVM {
             }
         }
 
-        #[cfg(feature = "history")]
-        let contextual_result = is_history_match.then(|| {
-            builtins::history_match_with_context(
-                &dummy_span,
-                dummy_exprs.get(..args.len()).unwrap_or(&[]),
-                &args,
-                &mut self.history_match_state,
-                &mut self.execution_timer,
-            )
-        });
-        #[cfg(not(feature = "history"))]
-        let contextual_result = None;
-        #[cfg_attr(not(feature = "history"), allow(clippy::unnecessary_literal_unwrap))]
-        let result = contextual_result.unwrap_or_else(|| {
-            builtin_fn(
-                &dummy_span,
-                dummy_exprs.get(..args.len()).unwrap_or(&[]),
-                &args,
-                self.strict_builtin_errors,
-            )
-        });
+        let result = builtin_fn(
+            &dummy_span,
+            dummy_exprs.get(..args.len()).unwrap_or(&[]),
+            &args,
+            self.strict_builtin_errors,
+        );
         self.dummy_exprs = dummy_exprs;
         let result = match result {
             Ok(value) => value,
             Err(error) => {
                 if self.strict_builtin_errors || builtins::is_fatal_builtin_error(&error) {
                     self.cached_builtin_args = args;
-                    #[cfg(feature = "history")]
-                    if is_history_match {
-                        return Err(Self::history_match_error(error, self.pc));
-                    }
                     return Err(error.into());
                 }
                 Value::Undefined
@@ -189,32 +168,5 @@ impl RegoVM {
         self.memory_check()?;
 
         Ok(())
-    }
-
-    #[cfg(feature = "history")]
-    pub(super) fn history_match_error(error: anyhow::Error, pc: usize) -> VmError {
-        if let Some(limit) = error.downcast_ref::<crate::LimitError>() {
-            return match *limit {
-                crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
-                    VmError::TimeLimitExceeded { elapsed, limit, pc }
-                }
-                crate::LimitError::MemoryLimitExceeded { usage, limit } => {
-                    VmError::MemoryLimitExceeded { usage, limit, pc }
-                }
-                crate::LimitError::RegexSizeLimitExceeded { limit } => {
-                    VmError::RegexSizeLimitExceeded { limit, pc }
-                }
-            };
-        }
-        if builtins::is_fatal_builtin_error(&error) {
-            return VmError::HistoryMatchFailure {
-                message: alloc::format!("{error}"),
-                pc,
-            };
-        }
-        VmError::HistoryMatchValidationError {
-            message: alloc::format!("{error}"),
-            pc,
-        }
     }
 }

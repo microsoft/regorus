@@ -25,7 +25,7 @@
 //   - make `key_eq` return `self.value == other.value` instead of `self == other`.
 //
 // In Regorus the same pattern is graph::verify::tables_space_wf ->
-// HashKey impl key_eq -> Primitive::eq -> Term::eq (src/builtins/history/kernel.rs).
+// HashKey impl key_eq -> Primitive::eq -> Term::eq (src/rvm/vm/history_tables/kernel.rs).
 
 use vstd::prelude::*;
 

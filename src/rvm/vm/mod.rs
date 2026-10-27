@@ -10,7 +10,7 @@ mod execution;
 mod execution_model;
 mod functions;
 #[cfg(feature = "history")]
-mod history_tables;
+pub(crate) mod history_tables;
 mod loops;
 mod machine;
 mod rules;

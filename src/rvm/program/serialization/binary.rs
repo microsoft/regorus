@@ -132,7 +132,7 @@ impl Program {
 
     /// Deserialize program from binary format with version checking
     pub fn deserialize_binary(data: &[u8]) -> Result<DeserializationResult, String> {
-        if data.len() < 9 {
+        if data.len() < 8 {
             return Err("Data too short for header".to_string());
         }
 
@@ -142,22 +142,16 @@ impl Program {
         }
 
         let version = Self::read_u32(data, 4)?;
-        if version > Self::SERIALIZATION_VERSION {
+        if version != Self::SERIALIZATION_VERSION {
             return Err(format!(
-                "Unsupported version {}. Maximum supported version is {}",
+                "Unsupported version {}. Recompile for serialization version {}",
                 version,
                 Self::SERIALIZATION_VERSION
             ));
         }
 
         match version {
-            1..=6 => {
-                let mut program = Program::new();
-                program.needs_recompilation = true;
-                program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
-                Ok(DeserializationResult::Partial(program))
-            }
-            7 => {
+            8 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -250,6 +244,7 @@ impl Program {
                 program.rule_tree = rule_tree;
                 program.rego_v0 = rego_v0;
                 program.needs_recompilation = needs_recompilation;
+                program.validate_limits()?;
 
                 if !program.builtin_info_table.is_empty() {
                     if let Err(_e) = program.initialize_resolved_builtins() {
@@ -278,19 +273,6 @@ impl Program {
             return Ok(false);
         }
 
-        let version = Self::read_u32(data, 4).ok();
-
-        match version {
-            Some(1..=7) => Ok(true),
-            _ => Ok(false),
-        }
-    }
-
-    fn legacy_rego_v0(data: &[u8], version: u32) -> Option<bool> {
-        match version {
-            1 => data.get(16).map(|value| *value != 0),
-            2..=6 => data.get(24).map(|value| *value != 0),
-            _ => None,
-        }
+        Ok(Self::read_u32(data, 4)? == Self::SERIALIZATION_VERSION)
     }
 }

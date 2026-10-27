@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - [**breaking**] Float-promoting arithmetic now raises `numeric overflow in <operation>` instead of producing NaN or infinity, regardless of strict-builtin-error mode. Unlike OPA's wide-exponent arithmetic, finite results outside the binary64 range are rejected.
-- [**breaking**] RVM `Program::SERIALIZATION_VERSION` is now `7`; version 1–6 artifacts deserialize as `Partial` and must be recompiled.
-- *(history)* Intern string comparison operands per compiled pair with namespacius; preserve exact UTF-8 equality and fall back to Value equality after interner exhaustion.
+- [**breaking**] RVM `Program::SERIALIZATION_VERSION` is now `8`; older bytecode is rejected and must be recompiled.
+- [**breaking**, history] Remove generic `history.match` and binding feature forwarding. History validation is native Rust/RVM-only over opaque principal/action/resource IDs with exact raw UTF-8 interning; arbitrary Value paths, missing-field semantics, and VM-owned history methods are removed.
+- *(rvm, history)* Consolidate typed-history parsing, normalization, progress and publication on their owning types; compilation borrows policy members. Move 30 normalization/symbolic operations onto existing IDs and work types; remove redundant graph/storage accessors, task-pop/proof wrappers and the unused self-loop counter. Preserve the native Rust API, exact identity semantics, atomic cursor publication and portable v8 bytecode.
+- *(rvm, history)* Move the trace engine out of builtins into the `HistoryStep` owner and exercise its cache/progress regressions through the VM. Atom hash-key equality compares full-width identities, coordinate domains and polarity directly; the typed Rust API and portable bytecode are unchanged.
 
 ### Added
 
-- *(rvm, history)* History tables: `HistoryDecide` opcode judging a request against an ordered `{mode, request, history}` rule table, VM-owned histories (`RegoVM::history_new/append/truncate/len`) with per-rule incremental cursors over the verified kernel `fold`, and `languages::history_table::compile` (features `rvm` + `history`).
+- *(rvm, history)* Application-owned concurrent `Arc<HistoryStore>` histories and shared graph/prefix caches; `compile(&table, batch_size)`, `attach_history`, and `set_history_input` execute ordered typed rules using bounded `HistoryStep` dispatches. Decisions pin a prefix, exclude concurrent appends, and report typed `HistoryChanged` after truncation. Programs carry portable policy source, not live IDs; active continuations pin their graph through eviction/replacement. Native `history_table` benchmarks replace the deleted builtin benchmark.
 
 ## [0.13.0](https://github.com/microsoft/regorus/compare/regorus-v0.12.0...regorus-v0.13.0) - 2026-10-14
 

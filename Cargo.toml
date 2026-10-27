@@ -38,7 +38,7 @@ hex = ["dep:data-encoding"]
 http = []
 glob = ["dep:globset"]
 graph = []
-history = ["dep:verus-bumpalo", "dep:hashconsius", "dep:namespacius", "dep:smallvec", "dep:lru", "lru/hashbrown"]
+history = ["rvm", "arc", "dep:verus-bumpalo", "dep:hashconsius", "dep:smallvec", "dep:lru", "lru/hashbrown"]
 jsonschema = ["dep:jsonschema"]
 jsonpatch = []
 mimalloc = ["dep:mimalloc"]
@@ -47,7 +47,7 @@ no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
 cache = ["dep:lru"]
-rvm = ["dep:postcard", "dep:indexmap"]
+rvm = ["dep:postcard", "dep:indexmap", "dep:hashbrown"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
 std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std" ]
@@ -113,14 +113,13 @@ lazy_static =  { version = "1.4.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 verus-bumpalo = { git = "https://github.com/elefthei/bumpus", rev = "36c8e8723d767934a502fc1d9cea0ba49cff54ab", optional = true }
 hashconsius = { git = "https://github.com/elefthei/hashconsius", rev = "58ab05c67c34201fa25f27c443cb5b45bc3a6c00", default-features = false, optional = true }
-namespacius = { path = "../namespacius", default-features = false, optional = true }
 smallvec = { version = "1.16.2", default-features = false, optional = true }
 
 data-encoding = { version = "2.8.0", optional = true, default-features=false, features = ["alloc"] }
 num-bigint = { version = "0.5", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 parking_lot = { version = "0.12", optional = true }
-spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex"] }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"] }
 
 globset = { version = "0.4.16", features = ["simd-accel"], default-features = false, optional = true }
 regex = {version = "1.12.3", optional = true, default-features = false }
@@ -193,7 +192,7 @@ name = "regorus_benchmark"
 harness = false
 
 [[bench]]
-name = "history_match"
+name = "history_table"
 harness = false
 required-features = ["history"]
 

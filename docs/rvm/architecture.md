@@ -75,7 +75,7 @@ layout is deliberately split:
 | `needs_runtime_recursion_check: bool`           | Flags when `VirtualDataDocumentLookup` requires runtime guards.  | Ensures the VM short-circuits recursion before hitting the instruction budget ceiling. |
 | `needs_recompilation: bool`                     | Indicates partial deserialization of execution data.             | Set when the extensible section fails; signals the loader to recompile. |
 | `rego_v0: bool`                                 | Records whether the policy targeted Rego v0 semantics.          | Ensures recompilation preserves language-version behaviour. |
-| `history_tables: Vec<HistoryTable>`             | Ordered rule tables judged by `HistoryDecide`.                   | Each rule is a mode plus a pair literal index; validated by `validate_limits`. |
+| `history_tables: Vec<HistoryTable>`             | Ordered typed rule tables advanced by `HistoryStep`.             | Each rule is a mode plus portable postorder source nodes; validated by `validate_limits`, lowered into an attached shared `HistoryStore`. |
 
 Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and

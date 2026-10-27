@@ -27,12 +27,15 @@ impl RegoVM {
             | VmError::RegexSizeLimitExceeded { .. }
             | VmError::InstructionLimitExceeded { .. }
             | VmError::NumericOverflow { .. } => true,
+            VmError::HistoryFeatureDisabled { .. } => true,
             #[cfg(feature = "history")]
-            VmError::HistoryMatchFailure { .. }
-            | VmError::HistoryMatchValidationError { .. }
-            | VmError::HistoryTableCompile { .. }
-            | VmError::InvalidHistoryHandle { .. }
-            | VmError::InvalidHistoryEvent { .. } => true,
+            VmError::History { .. }
+            | VmError::HistoryContextMissing { .. }
+            | VmError::HistoryExecutionActive { .. }
+            | VmError::InvalidHistoryStepParams { .. }
+            | VmError::InvalidHistoryTableIndex { .. }
+            | VmError::InvalidHistoryRuleIndex { .. }
+            | VmError::InvalidHistoryBatchSize { .. } => true,
             _ => false,
         }
     }

@@ -4,87 +4,31 @@
 //! Independent pair-language semantics: request is the head, followed by history
 //! in oldest-to-newest order. Runtime errors carry no Boolean interpretation.
 
-use super::value_numeric::Numeric;
-use super::value_specs::Data;
+use crate::rvm::program::HistoryField;
 use alloc::boxed::Box;
 use vstd::prelude::*;
 
 verus! {
 
-broadcast use vstd::string::group_string_axioms;
+/// Fixed-width semantic event; zero is reserved for an unbound binding coordinate.
+pub struct EventView {
+    pub principal: nat,
+    pub action: nat,
+    pub resource: nat,
+}
 
-pub proof fn lemma_source_literals()
-    ensures
-        "value"@ == seq!['v', 'a', 'l', 'u', 'e'],
-        "var"@ == seq!['v', 'a', 'r'],
-        "any"@ == seq!['a', 'n', 'y'],
-        "array"@ == seq!['a', 'r', 'r', 'a', 'y'],
-        "object"@ == seq!['o', 'b', 'j', 'e', 'c', 't'],
-        "and"@ == seq!['a', 'n', 'd'],
-        "or"@ == seq!['o', 'r'],
-        "eq"@ == seq!['e', 'q'],
-        "neq"@ == seq!['n', 'e', 'q'],
-        "empty"@ == seq!['e', 'm', 'p', 't', 'y'],
-        "all"@ == seq!['a', 'l', 'l'],
-        "epsilon"@ == seq!['e', 'p', 's', 'i', 'l', 'o', 'n'],
-        "test"@ == seq!['t', 'e', 's', 't'],
-        "union"@ == seq!['u', 'n', 'i', 'o', 'n'],
-        "concat"@ == seq!['c', 'o', 'n', 'c', 'a', 't'],
-        "star"@ == seq!['s', 't', 'a', 'r'],
-        "intersect"@ == seq!['i', 'n', 't', 'e', 'r', 's', 'e', 'c', 't'],
-        "not"@ == seq!['n', 'o', 't'],
-        "path"@ == seq!['p', 'a', 't', 'h'],
-        "term"@ == seq!['t', 'e', 'r', 'm'],
-        "request"@ == seq!['r', 'e', 'q', 'u', 'e', 's', 't'],
-        "history"@ == seq!['h', 'i', 's', 't', 'o', 'r', 'y'],
-        "bool"@ == seq!['b', 'o', 'o', 'l'],
-{
-    reveal_strlit("value");
-    assert("value"@ =~= seq!['v', 'a', 'l', 'u', 'e']);
-    reveal_strlit("var");
-    assert("var"@ =~= seq!['v', 'a', 'r']);
-    reveal_strlit("any");
-    assert("any"@ =~= seq!['a', 'n', 'y']);
-    reveal_strlit("array");
-    assert("array"@ =~= seq!['a', 'r', 'r', 'a', 'y']);
-    reveal_strlit("object");
-    assert("object"@ =~= seq!['o', 'b', 'j', 'e', 'c', 't']);
-    reveal_strlit("and");
-    assert("and"@ =~= seq!['a', 'n', 'd']);
-    reveal_strlit("or");
-    assert("or"@ =~= seq!['o', 'r']);
-    reveal_strlit("eq");
-    assert("eq"@ =~= seq!['e', 'q']);
-    reveal_strlit("neq");
-    assert("neq"@ =~= seq!['n', 'e', 'q']);
-    reveal_strlit("empty");
-    assert("empty"@ =~= seq!['e', 'm', 'p', 't', 'y']);
-    reveal_strlit("all");
-    assert("all"@ =~= seq!['a', 'l', 'l']);
-    reveal_strlit("epsilon");
-    assert("epsilon"@ =~= seq!['e', 'p', 's', 'i', 'l', 'o', 'n']);
-    reveal_strlit("test");
-    assert("test"@ =~= seq!['t', 'e', 's', 't']);
-    reveal_strlit("union");
-    assert("union"@ =~= seq!['u', 'n', 'i', 'o', 'n']);
-    reveal_strlit("concat");
-    assert("concat"@ =~= seq!['c', 'o', 'n', 'c', 'a', 't']);
-    reveal_strlit("star");
-    assert("star"@ =~= seq!['s', 't', 'a', 'r']);
-    reveal_strlit("intersect");
-    assert("intersect"@ =~= seq!['i', 'n', 't', 'e', 'r', 's', 'e', 'c', 't']);
-    reveal_strlit("not");
-    assert("not"@ =~= seq!['n', 'o', 't']);
-    reveal_strlit("path");
-    assert("path"@ =~= seq!['p', 'a', 't', 'h']);
-    reveal_strlit("term");
-    assert("term"@ =~= seq!['t', 'e', 'r', 'm']);
-    reveal_strlit("request");
-    assert("request"@ =~= seq!['r', 'e', 'q', 'u', 'e', 's', 't']);
-    reveal_strlit("history");
-    assert("history"@ =~= seq!['h', 'i', 's', 't', 'o', 'r', 'y']);
-    reveal_strlit("bool");
-    assert("bool"@ =~= seq!['b', 'o', 'o', 'l']);
+pub type Subst = EventView;
+
+pub open spec fn event_wf(event: EventView) -> bool {
+    event.principal <= u64::MAX && event.action <= u64::MAX && event.resource <= u64::MAX
+}
+
+pub open spec fn field_value(event: EventView, field: HistoryField) -> nat {
+    match field {
+        HistoryField::Principal => event.principal,
+        HistoryField::Action => event.action,
+        HistoryField::Resource => event.resource,
+    }
 }
 
 pub enum Regex<L> {
@@ -109,7 +53,7 @@ pub open spec fn nullable<L>(r: Regex<L>) -> bool decreases r {
     }
 }
 
-pub open spec fn lang<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L>, w: Seq<Data>) -> bool decreases r {
+pub open spec fn lang<L>(sem: spec_fn(L, EventView) -> bool, r: Regex<L>, w: Seq<EventView>) -> bool decreases r {
     match r {
         Regex::Empty => false,
         Regex::All => true,
@@ -118,14 +62,14 @@ pub open spec fn lang<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L>, w: Seq<Data
         Regex::Union(cs) => exists|i: int| 0 <= i < cs.len() && lang(sem, cs[i], w),
         Regex::Intersect(cs) => forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], w),
         Regex::Not(c) => !lang(sem, *c, w),
-        Regex::Concat(cs) => exists|parts: Seq<Seq<Data>>| parts.len() == cs.len() && w == parts.flatten()
+        Regex::Concat(cs) => exists|parts: Seq<Seq<EventView>>| parts.len() == cs.len() && w == parts.flatten()
             && forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], parts[i]),
-        Regex::Star(c) => exists|parts: Seq<Seq<Data>>| w == parts.flatten()
+        Regex::Star(c) => exists|parts: Seq<Seq<EventView>>| w == parts.flatten()
             && forall|i: int| 0 <= i < parts.len() ==> lang(sem, *c, parts[i]),
     }
 }
 
-pub open spec fn derivative<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>) -> Regex<L>
+pub open spec fn derivative<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, r: Regex<L>) -> Regex<L>
     decreases r, 1nat, 0nat,
 {
     match r {
@@ -140,7 +84,7 @@ pub open spec fn derivative<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<
     }
 }
 
-pub open spec fn derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, bound: Regex<L>, cs: Seq<Regex<L>>) -> Regex<L>
+pub open spec fn derivative_concat<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, bound: Regex<L>, cs: Seq<Regex<L>>) -> Regex<L>
     decreases bound, 0nat, cs.len(),
     when forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], bound)
 {
@@ -151,14 +95,14 @@ pub open spec fn derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, bo
     }
 }
 
-pub open spec fn derive_word<L>(sem: spec_fn(L, Data) -> bool, w: Seq<Data>, r: Regex<L>) -> Regex<L>
+pub open spec fn derive_word<L>(sem: spec_fn(L, EventView) -> bool, w: Seq<EventView>, r: Regex<L>) -> Regex<L>
     decreases w.len(),
 {
     if w.len() == 0 { r }
     else { derive_word(sem, w.drop_first(), derivative(sem, w[0], r)) }
 }
 
-pub open spec fn interp_transition<L>(sem: spec_fn(L, Data) -> bool, e: Data, t: Transition<L>) -> Regex<L>
+pub open spec fn interp_transition<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, t: Transition<L>) -> Regex<L>
     decreases t,
 {
     match t {
@@ -171,7 +115,7 @@ pub open spec fn interp_transition<L>(sem: spec_fn(L, Data) -> bool, e: Data, t:
     }
 }
 
-pub proof fn lemma_flatten_empty(parts: Seq<Seq<Data>>)
+pub proof fn lemma_flatten_empty(parts: Seq<Seq<EventView>>)
     ensures parts.flatten().len() == 0 <==> forall|i: int| 0 <= i < parts.len() ==> parts[i].len() == 0,
     decreases parts.len(),
 {
@@ -190,13 +134,13 @@ pub proof fn lemma_flatten_empty(parts: Seq<Seq<Data>>)
     }
 }
 
-pub proof fn lemma_concat_uncons<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_concat_uncons<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, w: Seq<EventView>)
     requires cs.len() > 0,
-    ensures lang(sem, Regex::Concat(cs), w) <==> exists|a: Seq<Data>, b: Seq<Data>|
+    ensures lang(sem, Regex::Concat(cs), w) <==> exists|a: Seq<EventView>, b: Seq<EventView>|
         w == a + b && lang(sem, cs[0], a) && lang(sem, Regex::Concat(cs.drop_first()), b),
 {
     if lang(sem, Regex::Concat(cs), w) {
-        let parts = choose|parts: Seq<Seq<Data>>| parts.len() == cs.len() && w == parts.flatten()
+        let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == cs.len() && w == parts.flatten()
             && forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], parts[i]);
         let a = parts[0];
         let tail = parts.drop_first();
@@ -208,9 +152,9 @@ pub proof fn lemma_concat_uncons<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex
         assert(lang(sem, Regex::Concat(cs.drop_first()), b));
         assert(w == a + b);
     }
-    if exists|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, cs[0], a) && lang(sem, Regex::Concat(cs.drop_first()), b) {
-        let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, cs[0], a) && lang(sem, Regex::Concat(cs.drop_first()), b);
-        let tail = choose|tail: Seq<Seq<Data>>| tail.len() == cs.drop_first().len() && b == tail.flatten()
+    if exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, cs[0], a) && lang(sem, Regex::Concat(cs.drop_first()), b) {
+        let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, cs[0], a) && lang(sem, Regex::Concat(cs.drop_first()), b);
+        let tail = choose|tail: Seq<Seq<EventView>>| tail.len() == cs.drop_first().len() && b == tail.flatten()
             && forall|i: int| 0 <= i < cs.drop_first().len() ==> lang(sem, cs.drop_first()[i], tail[i]);
         let parts = seq![a] + tail;
         assert(parts.drop_first() =~= tail);
@@ -222,7 +166,7 @@ pub proof fn lemma_concat_uncons<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex
     }
 }
 
-pub proof fn lemma_nullable_iff_nil<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L>)
+pub proof fn lemma_nullable_iff_nil<L>(sem: spec_fn(L, EventView) -> bool, r: Regex<L>)
     ensures nullable(r) <==> lang(sem, r, Seq::empty()),
     decreases r,
 {
@@ -243,27 +187,27 @@ pub proof fn lemma_nullable_iff_nil<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L
                 lemma_nullable_iff_nil(sem, cs[i]);
             }
             if lang(sem, r, Seq::empty()) {
-                let parts = choose|parts: Seq<Seq<Data>>| parts.len() == cs.len() && Seq::<Data>::empty() == parts.flatten()
+                let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == cs.len() && Seq::<EventView>::empty() == parts.flatten()
                     && forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], parts[i]);
                 lemma_flatten_empty(parts);
                 assert forall|i: int| 0 <= i < cs.len() implies nullable(cs[i]) by {
-                    assert(parts[i] =~= Seq::<Data>::empty());
+                    assert(parts[i] =~= Seq::<EventView>::empty());
                 }
             }
             if nullable(r) {
-                let parts = Seq::new(cs.len(), |i: int| Seq::<Data>::empty());
+                let parts = Seq::new(cs.len(), |i: int| Seq::<EventView>::empty());
                 lemma_flatten_empty(parts);
-                assert(parts.flatten() =~= Seq::<Data>::empty());
+                assert(parts.flatten() =~= Seq::<EventView>::empty());
                 assert forall|i: int| 0 <= i < cs.len() implies lang(sem, cs[i], parts[i]) by {
                     lemma_nullable_iff_nil(sem, cs[i]);
                     assert(nullable(cs[i]));
-                    assert(parts[i] == Seq::<Data>::empty());
+                    assert(parts[i] == Seq::<EventView>::empty());
                 }
                 assert(lang(sem, r, Seq::empty()));
             }
         },
         Regex::Star(c) => {
-            let parts = Seq::<Seq<Data>>::empty();
+            let parts = Seq::<Seq<EventView>>::empty();
             assert(lang(sem, r, parts.flatten()));
         },
         _ => {},
@@ -271,15 +215,15 @@ pub proof fn lemma_nullable_iff_nil<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L
 }
 
 
-pub proof fn lemma_concat_prepend<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, cs: Seq<Regex<L>>, w: Seq<Data>)
-    ensures lang(sem, Regex::Concat(seq![c] + cs), w) <==> exists|a: Seq<Data>, b: Seq<Data>|
+pub proof fn lemma_concat_prepend<L>(sem: spec_fn(L, EventView) -> bool, c: Regex<L>, cs: Seq<Regex<L>>, w: Seq<EventView>)
+    ensures lang(sem, Regex::Concat(seq![c] + cs), w) <==> exists|a: Seq<EventView>, b: Seq<EventView>|
         w == a + b && lang(sem, c, a) && lang(sem, Regex::Concat(cs), b),
 {
     lemma_concat_uncons(sem, seq![c] + cs, w);
     assert((seq![c] + cs).drop_first() =~= cs);
 }
 
-pub proof fn lemma_cons_split(e: Data, w: Seq<Data>, a: Seq<Data>, b: Seq<Data>)
+pub proof fn lemma_cons_split(e: EventView, w: Seq<EventView>, a: Seq<EventView>, b: Seq<EventView>)
     requires seq![e] + w == a + b, a.len() > 0,
     ensures a == seq![e] + a.drop_first(), w == a.drop_first() + b,
 {
@@ -299,10 +243,10 @@ pub proof fn lemma_cons_split(e: Data, w: Seq<Data>, a: Seq<Data>, b: Seq<Data>)
     assert(w =~= a.drop_first() + b);
 }
 
-pub proof fn lemma_star_parts_cons<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, parts: Seq<Seq<Data>>, e: Data, w: Seq<Data>)
+pub proof fn lemma_star_parts_cons<L>(sem: spec_fn(L, EventView) -> bool, c: Regex<L>, parts: Seq<Seq<EventView>>, e: EventView, w: Seq<EventView>)
     requires parts.flatten() == seq![e] + w,
         forall|i: int| 0 <= i < parts.len() ==> lang(sem, c, parts[i]),
-    ensures exists|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, c, seq![e] + a)
+    ensures exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, c, seq![e] + a)
         && lang(sem, Regex::Star(Box::new(c)), b),
     decreases parts.len(),
 {
@@ -312,7 +256,7 @@ pub proof fn lemma_star_parts_cons<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>
         assert(tail[i] == parts[i + 1]);
     }
     if parts[0].len() == 0 {
-        assert(parts[0] =~= Seq::<Data>::empty());
+        assert(parts[0] =~= Seq::<EventView>::empty());
         lemma_star_parts_cons(sem, c, tail, e, w);
     } else {
         let a = parts[0].drop_first();
@@ -323,18 +267,18 @@ pub proof fn lemma_star_parts_cons<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>
     }
 }
 
-pub proof fn lemma_star_cons<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, e: Data, w: Seq<Data>)
-    ensures lang(sem, Regex::Star(Box::new(c)), seq![e] + w) <==> exists|a: Seq<Data>, b: Seq<Data>|
+pub proof fn lemma_star_cons<L>(sem: spec_fn(L, EventView) -> bool, c: Regex<L>, e: EventView, w: Seq<EventView>)
+    ensures lang(sem, Regex::Star(Box::new(c)), seq![e] + w) <==> exists|a: Seq<EventView>, b: Seq<EventView>|
         w == a + b && lang(sem, c, seq![e] + a) && lang(sem, Regex::Star(Box::new(c)), b),
 {
     if lang(sem, Regex::Star(Box::new(c)), seq![e] + w) {
-        let parts = choose|parts: Seq<Seq<Data>>| seq![e] + w == parts.flatten()
+        let parts = choose|parts: Seq<Seq<EventView>>| seq![e] + w == parts.flatten()
             && forall|i: int| 0 <= i < parts.len() ==> lang(sem, c, parts[i]);
         lemma_star_parts_cons(sem, c, parts, e, w);
     }
-    if exists|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, c, seq![e] + a) && lang(sem, Regex::Star(Box::new(c)), b) {
-        let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, c, seq![e] + a) && lang(sem, Regex::Star(Box::new(c)), b);
-        let tail = choose|tail: Seq<Seq<Data>>| b == tail.flatten()
+    if exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, c, seq![e] + a) && lang(sem, Regex::Star(Box::new(c)), b) {
+        let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, c, seq![e] + a) && lang(sem, Regex::Star(Box::new(c)), b);
+        let tail = choose|tail: Seq<Seq<EventView>>| b == tail.flatten()
             && forall|i: int| 0 <= i < tail.len() ==> lang(sem, c, tail[i]);
         let parts = seq![seq![e] + a] + tail;
         assert(parts.drop_first() =~= tail);
@@ -346,11 +290,14 @@ pub proof fn lemma_star_cons<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, e: D
     }
 }
 
-pub proof fn lemma_lang_union<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_lang_union<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, w: Seq<EventView>)
     ensures lang(sem, Regex::Union(cs), w) == (exists|i: int| 0 <= i < cs.len() && lang(sem, cs[i], w)),
-{ }
+{
+    reveal_with_fuel(lang, 2);
+    assert(Regex::Union(cs)->Union_0 == cs);
+}
 
-pub proof fn lemma_union_optional<L>(sem: spec_fn(L, Data) -> bool, a: Regex<L>, b: Regex<L>, flag: bool, w: Seq<Data>)
+pub proof fn lemma_union_optional<L>(sem: spec_fn(L, EventView) -> bool, a: Regex<L>, b: Regex<L>, flag: bool, w: Seq<EventView>)
     ensures lang(sem, Regex::Union(seq![a] + if flag { seq![b] } else { Seq::empty() }), w)
         == (lang(sem, a, w) || (flag && lang(sem, b, w))),
 {
@@ -378,9 +325,11 @@ pub proof fn lemma_union_optional<L>(sem: spec_fn(L, Data) -> bool, a: Regex<L>,
     }
 }
 
-pub proof fn lemma_lang_intersect<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_lang_intersect<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, w: Seq<EventView>)
     ensures lang(sem, Regex::Intersect(cs), w) == (forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], w)),
 {
+    reveal_with_fuel(lang, 2);
+    assert(Regex::Intersect(cs)->Intersect_0 == cs);
     if lang(sem, Regex::Intersect(cs), w) {
         assert forall|i: int| 0 <= i < cs.len() implies lang(sem, cs[i], w) by {
             assert(lang(sem, Regex::Intersect(cs), w));
@@ -388,18 +337,18 @@ pub proof fn lemma_lang_intersect<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Rege
     }
 }
 
-pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, bound: Regex<L>, cs: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, bound: Regex<L>, cs: Seq<Regex<L>>, w: Seq<EventView>)
     requires
         forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], bound),
-        forall|i: int, v: Seq<Data>| 0 <= i < cs.len() ==> lang(sem, derivative(sem, e, cs[i]), v) == lang(sem, cs[i], seq![e] + v),
+        forall|i: int, v: Seq<EventView>| 0 <= i < cs.len() ==> lang(sem, derivative(sem, e, cs[i]), v) == lang(sem, cs[i], seq![e] + v),
     ensures lang(sem, derivative_concat(sem, e, bound, cs), w) == lang(sem, Regex::Concat(cs), seq![e] + w),
     decreases cs.len(),
 {
     if cs.len() == 0 {
         if lang(sem, Regex::Concat(cs), seq![e] + w) {
-            let parts = choose|parts: Seq<Seq<Data>>| parts.len() == cs.len() && seq![e] + w == parts.flatten()
+            let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == cs.len() && seq![e] + w == parts.flatten()
                 && forall|i: int| 0 <= i < cs.len() ==> lang(sem, cs[i], parts[i]);
-            assert(parts =~= Seq::<Seq<Data>>::empty());
+            assert(parts =~= Seq::<Seq<EventView>>::empty());
         }
     } else {
         let c = cs[0];
@@ -407,7 +356,7 @@ pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, 
         assert forall|i: int| 0 <= i < rest.len() implies is_smaller_than(rest[i], bound) by {
             assert(rest[i] == cs[i + 1]);
         }
-        assert forall|i: int, v: Seq<Data>| 0 <= i < rest.len() implies lang(sem, derivative(sem, e, rest[i]), v) == lang(sem, rest[i], seq![e] + v) by {
+        assert forall|i: int, v: Seq<EventView>| 0 <= i < rest.len() implies lang(sem, derivative(sem, e, rest[i]), v) == lang(sem, rest[i], seq![e] + v) by {
             assert(rest[i] == cs[i + 1]);
         }
         lemma_derivative_concat(sem, e, bound, rest, w);
@@ -420,24 +369,24 @@ pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, 
         lemma_concat_uncons(sem, cs, seq![e] + w);
         if lang(sem, derivative_concat(sem, e, bound, cs), w) {
             if lang(sem, left, w) {
-                let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b && lang(sem, dc, a) && lang(sem, Regex::Concat(rest), b);
+                let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b && lang(sem, dc, a) && lang(sem, Regex::Concat(rest), b);
                 assert(lang(sem, c, seq![e] + a));
                 assert(seq![e] + w =~= (seq![e] + a) + b);
-                assert(exists|a0: Seq<Data>, b0: Seq<Data>| seq![e] + w == a0 + b0 && lang(sem, c, a0) && lang(sem, Regex::Concat(rest), b0));
+                assert(exists|a0: Seq<EventView>, b0: Seq<EventView>| seq![e] + w == a0 + b0 && lang(sem, c, a0) && lang(sem, Regex::Concat(rest), b0));
             } else {
                 assert(nullable(c) && lang(sem, dr, w));
-                let a = Seq::<Data>::empty();
+                let a = Seq::<EventView>::empty();
                 let b = seq![e] + w;
                 assert(a + b =~= b);
                 assert(lang(sem, c, a) && lang(sem, Regex::Concat(rest), b));
-                assert(exists|a0: Seq<Data>, b0: Seq<Data>| seq![e] + w == a0 + b0 && lang(sem, c, a0) && lang(sem, Regex::Concat(rest), b0));
+                assert(exists|a0: Seq<EventView>, b0: Seq<EventView>| seq![e] + w == a0 + b0 && lang(sem, c, a0) && lang(sem, Regex::Concat(rest), b0));
             }
             assert(lang(sem, Regex::Concat(cs), seq![e] + w));
         }
         if lang(sem, Regex::Concat(cs), seq![e] + w) {
-            let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| seq![e] + w == a + b && lang(sem, c, a) && lang(sem, Regex::Concat(rest), b);
+            let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| seq![e] + w == a + b && lang(sem, c, a) && lang(sem, Regex::Concat(rest), b);
             if a.len() == 0 {
-                assert(a =~= Seq::<Data>::empty());
+                assert(a =~= Seq::<EventView>::empty());
                 assert(b =~= seq![e] + w);
                 assert(nullable(c));
                 assert(lang(sem, dr, w));
@@ -445,7 +394,7 @@ pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, 
                 lemma_cons_split(e, w, a, b);
                 let v = a.drop_first();
                 assert(lang(sem, dc, v));
-                assert(exists|a0: Seq<Data>, b0: Seq<Data>| w == a0 + b0 && lang(sem, dc, a0) && lang(sem, Regex::Concat(rest), b0));
+                assert(exists|a0: Seq<EventView>, b0: Seq<EventView>| w == a0 + b0 && lang(sem, dc, a0) && lang(sem, Regex::Concat(rest), b0));
                 assert(lang(sem, left, w));
             }
             assert(lang(sem, derivative_concat(sem, e, bound, cs), w));
@@ -453,11 +402,11 @@ pub proof fn lemma_derivative_concat<L>(sem: spec_fn(L, Data) -> bool, e: Data, 
     }
 }
 
-pub proof fn lemma_concat_singleton<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L>, w: Seq<Data>)
+pub proof fn lemma_concat_singleton<L>(sem: spec_fn(L, EventView) -> bool, r: Regex<L>, w: Seq<EventView>)
     ensures lang(sem, Regex::Concat(seq![r]), w) == lang(sem, r, w),
 {
     if lang(sem, Regex::Concat(seq![r]), w) {
-        let parts = choose|parts: Seq<Seq<Data>>| parts.len() == 1 && w == parts.flatten()
+        let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == 1 && w == parts.flatten()
             && forall|i: int| 0 <= i < 1 ==> lang(sem, seq![r][i], parts[i]);
         parts.lemma_flatten_one_element();
         assert(lang(sem, r, w));
@@ -470,18 +419,18 @@ pub proof fn lemma_concat_singleton<L>(sem: spec_fn(L, Data) -> bool, r: Regex<L
     }
 }
 
-pub proof fn lemma_concat_pair<L>(sem: spec_fn(L, Data) -> bool, a: Regex<L>, b: Regex<L>, w: Seq<Data>)
-    ensures lang(sem, Regex::Concat(seq![a, b]), w) <==> exists|u: Seq<Data>, v: Seq<Data>|
+pub proof fn lemma_concat_pair<L>(sem: spec_fn(L, EventView) -> bool, a: Regex<L>, b: Regex<L>, w: Seq<EventView>)
+    ensures lang(sem, Regex::Concat(seq![a, b]), w) <==> exists|u: Seq<EventView>, v: Seq<EventView>|
         w == u + v && lang(sem, a, u) && lang(sem, b, v),
 {
     assert(seq![a, b] =~= seq![a] + seq![b]);
     lemma_concat_prepend(sem, a, seq![b], w);
-    assert forall|v: Seq<Data>| lang(sem, Regex::Concat(seq![b]), v) == lang(sem, b, v) by {
+    assert forall|v: Seq<EventView>| lang(sem, Regex::Concat(seq![b]), v) == lang(sem, b, v) by {
         lemma_concat_singleton(sem, b, v);
     }
 }
 
-pub proof fn lemma_derivative_correct<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>, w: Seq<Data>)
+pub proof fn lemma_derivative_correct<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, r: Regex<L>, w: Seq<EventView>)
     ensures lang(sem, derivative(sem, e, r), w) <==> lang(sem, r, seq![e] + w),
     decreases r,
 {
@@ -514,14 +463,14 @@ pub proof fn lemma_derivative_correct<L>(sem: spec_fn(L, Data) -> bool, e: Data,
         Regex::Star(c) => {
             lemma_star_cons(sem, *c, e, w);
             lemma_concat_pair(sem, derivative(sem, e, *c), Regex::Star(c), w);
-            assert forall|a: Seq<Data>| lang(sem, derivative(sem, e, *c), a) == lang(sem, *c, seq![e] + a) by {
+            assert forall|a: Seq<EventView>| lang(sem, derivative(sem, e, *c), a) == lang(sem, *c, seq![e] + a) by {
                 lemma_derivative_correct(sem, e, *c, a);
             }
             assert(lang(sem, derivative(sem, e, r), w) == lang(sem, r, seq![e] + w));
         },
         Regex::Concat(cs) => {
             assert forall|i: int| 0 <= i < cs.len() implies is_smaller_than(cs[i], r) by { }
-            assert forall|i: int, v: Seq<Data>| 0 <= i < cs.len() implies lang(sem, derivative(sem, e, cs[i]), v) == lang(sem, cs[i], seq![e] + v) by {
+            assert forall|i: int, v: Seq<EventView>| 0 <= i < cs.len() implies lang(sem, derivative(sem, e, cs[i]), v) == lang(sem, cs[i], seq![e] + v) by {
                 lemma_derivative_correct(sem, e, cs[i], v);
             }
             lemma_derivative_concat(sem, e, r, cs, w);
@@ -531,7 +480,7 @@ pub proof fn lemma_derivative_correct<L>(sem: spec_fn(L, Data) -> bool, e: Data,
     }
 }
 
-pub proof fn lemma_derive_word_correct<L>(sem: spec_fn(L, Data) -> bool, prefix: Seq<Data>, r: Regex<L>, suffix: Seq<Data>)
+pub proof fn lemma_derive_word_correct<L>(sem: spec_fn(L, EventView) -> bool, prefix: Seq<EventView>, r: Regex<L>, suffix: Seq<EventView>)
     ensures lang(sem, derive_word(sem, prefix, r), suffix) == lang(sem, r, prefix + suffix),
     decreases prefix.len(),
 {
@@ -543,24 +492,24 @@ pub proof fn lemma_derive_word_correct<L>(sem: spec_fn(L, Data) -> bool, prefix:
     }
 }
 
-pub proof fn lemma_derive_word_nullable<L>(sem: spec_fn(L, Data) -> bool, w: Seq<Data>, r: Regex<L>)
+pub proof fn lemma_derive_word_nullable<L>(sem: spec_fn(L, EventView) -> bool, w: Seq<EventView>, r: Regex<L>)
     ensures nullable(derive_word(sem, w, r)) == lang(sem, r, w),
 {
     lemma_nullable_iff_nil(sem, derive_word(sem, w, r));
     lemma_derive_word_correct(sem, w, r, Seq::empty());
-    assert(w + Seq::<Data>::empty() =~= w);
+    assert(w + Seq::<EventView>::empty() =~= w);
 }
 
-pub proof fn lemma_interp_const<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>)
+pub proof fn lemma_interp_const<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, r: Regex<L>)
     ensures interp_transition(sem, e, Transition::Const(r)) == r,
 { }
 
-pub proof fn lemma_interp_if<L>(sem: spec_fn(L, Data) -> bool, e: Data, l: L, a: Transition<L>, b: Transition<L>)
+pub proof fn lemma_interp_if<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, l: L, a: Transition<L>, b: Transition<L>)
     ensures interp_transition(sem, e, Transition::If(l, Box::new(a), Box::new(b)))
         == if sem(l, e) { interp_transition(sem, e, a) } else { interp_transition(sem, e, b) },
 { }
 
-pub proof fn lemma_interp_union<L>(sem: spec_fn(L, Data) -> bool, e: Data, cs: Seq<Transition<L>>, w: Seq<Data>)
+pub proof fn lemma_interp_union<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, cs: Seq<Transition<L>>, w: Seq<EventView>)
     ensures lang(sem, interp_transition(sem, e, Transition::Union(cs)), w)
         == (exists|i: int| 0 <= i < cs.len() && lang(sem, interp_transition(sem, e, cs[i]), w)),
 {
@@ -585,7 +534,7 @@ pub proof fn lemma_interp_union<L>(sem: spec_fn(L, Data) -> bool, e: Data, cs: S
     }
 }
 
-pub proof fn lemma_interp_intersect<L>(sem: spec_fn(L, Data) -> bool, e: Data, cs: Seq<Transition<L>>, w: Seq<Data>)
+pub proof fn lemma_interp_intersect<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, cs: Seq<Transition<L>>, w: Seq<EventView>)
     ensures lang(sem, interp_transition(sem, e, Transition::Intersect(cs)), w)
         == (forall|i: int| 0 <= i < cs.len() ==> lang(sem, interp_transition(sem, e, cs[i]), w)),
 {
@@ -610,997 +559,315 @@ pub proof fn lemma_interp_intersect<L>(sem: spec_fn(L, Data) -> bool, e: Data, c
     }
 }
 
-pub proof fn lemma_interp_not<L>(sem: spec_fn(L, Data) -> bool, e: Data, t: Transition<L>)
+pub proof fn lemma_interp_not<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, t: Transition<L>)
     ensures interp_transition(sem, e, Transition::Not(Box::new(t))) == Regex::Not(Box::new(interp_transition(sem, e, t))),
 { }
 
-pub proof fn lemma_interp_append<L>(sem: spec_fn(L, Data) -> bool, e: Data, t: Transition<L>, suffix: Seq<Regex<L>>)
+pub proof fn lemma_interp_append<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, t: Transition<L>, suffix: Seq<Regex<L>>)
     ensures interp_transition(sem, e, Transition::Append(Box::new(t), suffix)) == Regex::Concat(seq![interp_transition(sem, e, t)] + suffix),
 { }
 
 pub enum Term {
-    Constant(Data),
-    Variable(Seq<char>),
+    Constant(nat),
+    Variable(HistoryField),
 }
 
 pub enum SrcTest {
     Bool(bool),
     And(Seq<SrcTest>),
     Or(Seq<SrcTest>),
-    Eq(Seq<Data>, Term),
-    Neq(Seq<Data>, Term),
+    Eq(HistoryField, Term),
+    Neq(HistoryField, Term),
 }
 
-pub enum Head {
-    Literal(Data),
-    Variable(Seq<char>),
-    Any,
-    Array(Seq<Head>),
-    Object(Map<Data, Head>),
+pub enum HeadField { Any, Constant(nat), Bind }
+
+pub struct Head {
+    pub principal: HeadField,
+    pub action: HeadField,
+    pub resource: HeadField,
 }
 
-pub type Subst = Map<Seq<char>, Data>;
-
-pub open spec fn array_index(n: Numeric) -> Option<int> {
-    let scale = vstd::arithmetic::power2::pow2(1074) as int;
-    if n.rank == 0 && n.units >= 0 && n.units % scale == 0 { Some(n.units / scale) } else { None }
-}
-
-pub open spec fn select(event: Data, path: Seq<Data>) -> Option<Data>
-    decreases path.len(),
-{
-    if event == Data::Undefined { None }
-    else if path.len() == 0 { Some(event) }
-    else {
-        let next = match event {
-            Data::Object(fields) => {
-                if fields.contains_key(path[0]) { Some(fields[path[0]]) } else { None }
-            },
-            Data::Set(values) => {
-                if values.contains(path[0]) { Some(path[0]) } else { None }
-            },
-            Data::Array(values) => match path[0] {
-                Data::Number(n) => match array_index(n) {
-                    Some(i) => if 0 <= i < values.len() { Some(values[i]) } else { None },
-                    None => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
-        match next {
-            Some(value) => select(value, path.drop_first()),
-            None => None,
-        }
+pub open spec fn head_field(head: Head, field: HistoryField) -> HeadField {
+    match field {
+        HistoryField::Principal => head.principal,
+        HistoryField::Action => head.action,
+        HistoryField::Resource => head.resource,
     }
 }
 
-pub open spec fn term_value(theta: Subst, t: Term) -> Data {
-    match t {
+pub open spec fn head_field_match(head: HeadField, request: nat, binding: nat) -> bool {
+    match head {
+        HeadField::Any => binding == 0,
+        HeadField::Constant(value) => request == value && binding == 0,
+        HeadField::Bind => binding == request,
+    }
+}
+
+pub open spec fn head_match(head: Head, request: EventView, theta: Subst) -> bool {
+    head_field_match(head.principal, request.principal, theta.principal)
+        && head_field_match(head.action, request.action, theta.action)
+        && head_field_match(head.resource, request.resource, theta.resource)
+}
+
+pub open spec fn head_bindings(head: Head, request: EventView) -> Subst {
+    EventView {
+        principal: if head.principal is Bind { request.principal } else { 0 },
+        action: if head.action is Bind { request.action } else { 0 },
+        resource: if head.resource is Bind { request.resource } else { 0 },
+    }
+}
+
+pub open spec fn term_value(theta: Subst, term: Term) -> nat {
+    match term {
         Term::Constant(value) => value,
-        Term::Variable(name) => theta[name],
+        Term::Variable(field) => field_value(theta, field),
     }
 }
 
-pub open spec fn src_test_holds(theta: Subst, t: SrcTest, event: Data) -> bool
-    decreases t,
+pub open spec fn src_test_holds(theta: Subst, test: SrcTest, event: EventView) -> bool
+    decreases test,
 {
-    match t {
+    match test {
         SrcTest::Bool(value) => value,
         SrcTest::And(children) => forall|i: int| 0 <= i < children.len()
             ==> src_test_holds(theta, children[i], event),
         SrcTest::Or(children) => exists|i: int| 0 <= i < children.len()
             && src_test_holds(theta, children[i], event),
-        SrcTest::Eq(path, term) => match select(event, path) {
-            Some(value) => value == term_value(theta, term),
-            None => false,
-        },
-        SrcTest::Neq(path, term) => match select(event, path) {
-            Some(value) => value != term_value(theta, term),
-            None => false,
-        },
+        SrcTest::Eq(field, term) => field_value(event, field) == term_value(theta, term),
+        SrcTest::Neq(field, term) => field_value(event, field) != term_value(theta, term),
     }
 }
 
-pub open spec fn head_match(h: Head, req: Data, theta: Subst) -> bool
-    decreases h,
-{
-    match h {
-        Head::Literal(value) => req != Data::Undefined && req == value,
-        Head::Variable(name) => req != Data::Undefined
-            && theta.contains_key(name) && theta[name] == req,
-        Head::Any => req != Data::Undefined,
-        Head::Array(children) => match req {
-            Data::Array(values) => children.len() == values.len()
-                && forall|i: int| 0 <= i < children.len()
-                    ==> head_match(children[i], values[i], theta),
-            _ => false,
-        },
-        Head::Object(fields) => match req {
-            Data::Object(values) => forall|key: Data| fields.contains_key(key)
-                ==> values.contains_key(key) && head_match(fields[key], values[key], theta),
-            _ => false,
-        },
-    }
-}
-
-pub open spec fn head_vars(h: Head) -> Set<Seq<char>>
-    decreases h, 1nat, 0nat,
-{
-    match h {
-        Head::Variable(name) => Set::empty().insert(name),
-        Head::Array(children) => head_vars_array(h, children),
-        Head::Object(fields) => head_vars_object(h, fields, fields.dom()),
-        _ => Set::empty(),
-    }
-}
-
-pub open spec fn head_vars_array(bound: Head, children: Seq<Head>) -> Set<Seq<char>>
-    decreases bound, 0nat, children.len(),
-    when forall|i: int| 0 <= i < children.len() ==> is_smaller_than(children[i], bound)
-{
-    if children.len() == 0 { Set::empty() }
-    else { head_vars_array(bound, children.drop_last()).union(head_vars(children.last())) }
-}
-
-pub open spec fn head_vars_object(bound: Head, fields: Map<Data, Head>, keys: Set<Data>) -> Set<Seq<char>>
-    decreases bound, 0nat, keys.len(),
-    when keys.subset_of(fields.dom()) && forall|key: Data| fields.contains_key(key)
-        ==> is_smaller_than(fields[key], bound)
-{
-    if keys.is_empty() { Set::empty() }
-    else {
-        let key = keys.choose();
-        head_vars_object(bound, fields, keys.remove(key)).union(head_vars(fields[key]))
-    }
-}
-
-pub proof fn lemma_head_vars_array_membership(bound: Head, children: Seq<Head>)
-    requires forall|i: int| 0 <= i < children.len() ==> is_smaller_than(children[i], bound),
-    ensures forall|name: Seq<char>| head_vars_array(bound, children).contains(name)
-        <==> exists|i: int| 0 <= i < children.len() && head_vars(children[i]).contains(name),
-    decreases children.len(),
-{
-    broadcast use vstd::set::group_set_lemmas;
-    if children.len() > 0 {
-        lemma_head_vars_array_membership(bound, children.drop_last());
-        assert forall|name: Seq<char>| head_vars_array(bound, children).contains(name)
-            <==> (exists|i: int| 0 <= i < children.len() && head_vars(children[i]).contains(name)) by {
-            if head_vars_array(bound, children).contains(name) {
-                if head_vars(children.last()).contains(name) {
-                    assert(head_vars(children[children.len() - 1]).contains(name));
-                } else {
-                    assert(head_vars_array(bound, children.drop_last()).contains(name));
-                    let i = choose|i: int| 0 <= i < children.drop_last().len()
-                        && head_vars(children.drop_last()[i]).contains(name);
-                    assert(children.drop_last()[i] == children[i]);
-                }
-            }
-            if exists|i: int| 0 <= i < children.len() && head_vars(children[i]).contains(name) {
-                let i = choose|i: int| 0 <= i < children.len() && head_vars(children[i]).contains(name);
-                if i < children.len() - 1 {
-                    assert(children.drop_last()[i] == children[i]);
-                } else { assert(children[i] == children.last()); }
-            }
-        }
-    }
-}
-
-pub proof fn lemma_head_vars_object_membership(bound: Head, fields: Map<Data, Head>, keys: Set<Data>)
-    requires keys.subset_of(fields.dom()),
-        forall|key: Data| fields.contains_key(key) ==> is_smaller_than(fields[key], bound),
-    ensures forall|name: Seq<char>| head_vars_object(bound, fields, keys).contains(name)
-        <==> exists|key: Data| keys.contains(key) && head_vars(fields[key]).contains(name),
-    decreases keys.len(),
-{
-    broadcast use vstd::set::group_set_lemmas;
-    if !keys.is_empty() {
-        let key = keys.choose();
-        lemma_head_vars_object_membership(bound, fields, keys.remove(key));
-        assert forall|name: Seq<char>| head_vars_object(bound, fields, keys).contains(name)
-            <==> (exists|k: Data| keys.contains(k) && head_vars(fields[k]).contains(name)) by {
-            if head_vars_object(bound, fields, keys).contains(name) {
-                if head_vars(fields[key]).contains(name) {
-                    assert(keys.contains(key) && head_vars(fields[key]).contains(name));
-                } else {
-                    assert(head_vars_object(bound, fields, keys.remove(key)).contains(name));
-                    let k = choose|k: Data| keys.remove(key).contains(k) && head_vars(fields[k]).contains(name);
-                    assert(keys.contains(k));
-                }
-            }
-            if exists|k: Data| keys.contains(k) && head_vars(fields[k]).contains(name) {
-                let k = choose|k: Data| keys.contains(k) && head_vars(fields[k]).contains(name);
-                if k != key { assert(keys.remove(key).contains(k)); }
-            }
-        }
-    }
-}
-
-pub proof fn lemma_head_vars_array(children: Seq<Head>)
-    ensures forall|name: Seq<char>| head_vars(Head::Array(children)).contains(name)
-        <==> exists|i: int| 0 <= i < children.len() && head_vars(children[i]).contains(name),
-{
-    let bound = Head::Array(children);
-    let field: Seq<Head> = get_variant_field(bound, "Array", "0");
-    assert(is_smaller_than(field, bound));
-    assert forall|i: int| 0 <= i < children.len()
-        implies is_smaller_than(children[i], Head::Array(children)) by {
-        assert(is_smaller_than(children[i], children));
-    }
-    lemma_head_vars_array_membership(Head::Array(children), children);
-    assert(head_vars(Head::Array(children)) == head_vars_array(Head::Array(children), children));
-}
-
-pub proof fn lemma_head_vars_object(fields: Map<Data, Head>)
-    ensures forall|name: Seq<char>| head_vars(Head::Object(fields)).contains(name)
-        <==> exists|key: Data| fields.contains_key(key) && head_vars(fields[key]).contains(name),
-{
-    broadcast use vstd::map::group_map_lemmas;
-    let bound = Head::Object(fields);
-    let field: Map<Data, Head> = get_variant_field(bound, "Object", "0");
-    assert(is_smaller_than(field, bound));
-    assert forall|key: Data| fields.contains_key(key)
-        implies is_smaller_than(fields[key], Head::Object(fields)) by {
-        assert(is_smaller_than(fields[key], fields));
-    }
-    lemma_head_vars_object_membership(Head::Object(fields), fields, fields.dom());
-    assert(head_vars(Head::Object(fields)) == head_vars_object(Head::Object(fields), fields, fields.dom()));
-}
-
-/// A tag is exactly one string-keyed member; no iteration order is specified.
-pub open spec fn tagged_payload(d: Data, tag: Seq<char>) -> Option<Data> {
-    match d {
-        Data::Object(fields) => {
-            let key = Data::String(tag);
-            if fields.dom() == Set::empty().insert(key) { Some(fields[key]) } else { None }
-        },
-        _ => None,
-    }
-}
-
-pub open spec fn decodes_term(d: Data, term: Term) -> bool {
+pub open spec fn term_wf(field: HistoryField, term: Term, head: Head) -> bool {
     match term {
-        Term::Constant(value) => tagged_payload(d, "value"@) == Some(value),
-        Term::Variable(name) => name.len() > 0
-            && tagged_payload(d, "var"@) == Some(Data::String(name)),
+        Term::Constant(value) => 0 < value <= u64::MAX,
+        Term::Variable(variable) => variable == field && head_field(head, field) is Bind,
     }
 }
 
-pub open spec fn decodes_head(d: Data, h: Head) -> bool
-    decreases h,
-{
-    match h {
-        Head::Literal(value) => tagged_payload(d, "value"@) == Some(value),
-        Head::Variable(name) => name.len() > 0
-            && tagged_payload(d, "var"@) == Some(Data::String(name)),
-        Head::Any => tagged_payload(d, "any"@) == Some(Data::Bool(true)),
-        Head::Array(children) => match tagged_payload(d, "array"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len()
-                    ==> decodes_head(values[i], children[i]),
-            _ => false,
-        },
-        Head::Object(fields) => match tagged_payload(d, "object"@) {
-            Some(Data::Object(values)) => values.dom() == fields.dom()
-                && forall|key: Data| fields.contains_key(key)
-                    ==> decodes_head(values[key], fields[key]),
-            _ => false,
-        },
-    }
+pub open spec fn head_wf(head: Head) -> bool {
+    (match head.principal {
+        HeadField::Constant(value) => 0 < value <= u64::MAX,
+        _ => true,
+    }) && (match head.action {
+        HeadField::Constant(value) => 0 < value <= u64::MAX,
+        _ => true,
+    }) && (match head.resource {
+        HeadField::Constant(value) => 0 < value <= u64::MAX,
+        _ => true,
+    })
 }
 
-pub open spec fn decodes_comparison(d: Data, tag: Seq<char>, path: Seq<Data>, term: Term) -> bool {
-    match tagged_payload(d, tag) {
-        Some(Data::Object(fields)) => {
-            let pk = Data::String("path"@);
-            let tk = Data::String("term"@);
-            fields.dom() == Set::empty().insert(pk).insert(tk)
-                && fields[pk] == Data::Array(path)
-                && (forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined)
-                && decodes_term(fields[tk], term)
-        },
-        _ => false,
-    }
-}
-
-pub open spec fn decodes_test(d: Data, test: SrcTest) -> bool
+pub open spec fn test_wf(test: SrcTest, head: Head) -> bool
     decreases test,
 {
     match test {
-        SrcTest::Bool(value) => d == Data::Bool(value),
-        SrcTest::And(children) => match tagged_payload(d, "and"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len()
-                    ==> decodes_test(values[i], children[i]),
-            _ => false,
-        },
-        SrcTest::Or(children) => match tagged_payload(d, "or"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len()
-                    ==> decodes_test(values[i], children[i]),
-            _ => false,
-        },
-        SrcTest::Eq(path, term) => decodes_comparison(d, "eq"@, path, term),
-        SrcTest::Neq(path, term) => decodes_comparison(d, "neq"@, path, term),
-    }
-}
-
-pub open spec fn decodes_tail(d: Data, r: Regex<SrcTest>) -> bool
-    decreases r,
-{
-    match r {
-        Regex::Empty => tagged_payload(d, "empty"@) == Some(Data::Bool(true)),
-        Regex::All => tagged_payload(d, "all"@) == Some(Data::Bool(true)),
-        Regex::Epsilon => tagged_payload(d, "epsilon"@) == Some(Data::Bool(true)),
-        Regex::Test(test) => match tagged_payload(d, "test"@) {
-            Some(value) => decodes_test(value, test),
-            None => false,
-        },
-        Regex::Union(children) => match tagged_payload(d, "union"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len() ==> decodes_tail(values[i], children[i]),
-            _ => false,
-        },
-        Regex::Concat(children) => match tagged_payload(d, "concat"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len() ==> decodes_tail(values[i], children[i]),
-            _ => false,
-        },
-        Regex::Star(child) => match tagged_payload(d, "star"@) {
-            Some(value) => decodes_tail(value, *child),
-            None => false,
-        },
-        Regex::Intersect(children) => match tagged_payload(d, "intersect"@) {
-            Some(Data::Array(values)) => values.len() == children.len()
-                && forall|i: int| 0 <= i < children.len() ==> decodes_tail(values[i], children[i]),
-            _ => false,
-        },
-        Regex::Not(child) => match tagged_payload(d, "not"@) {
-            Some(value) => decodes_tail(value, *child),
-            None => false,
-        },
-    }
-}
-
-pub open spec fn decodes_policy(policy: Data, head: Head, tail: Regex<SrcTest>) -> bool {
-    match policy {
-        Data::Object(fields) => {
-            let rk = Data::String("request"@);
-            let hk = Data::String("history"@);
-            fields.dom() == Set::empty().insert(rk).insert(hk)
-                && decodes_head(fields[rk], head) && decodes_tail(fields[hk], tail)
-        },
-        _ => false,
-    }
-}
-
-pub open spec fn tag(name: Seq<char>, payload: Data) -> Data {
-    Data::Object(Map::empty().insert(Data::String(name), payload))
-}
-
-/// Well-formedness is exactly the decoders' side conditions.
-pub open spec fn term_wf(t: Term) -> bool {
-    match t {
-        Term::Constant(_) => true,
-        Term::Variable(name) => name.len() > 0,
-    }
-}
-
-pub open spec fn head_wf(h: Head) -> bool
-    decreases h,
-{
-    match h {
-        Head::Variable(name) => name.len() > 0,
-        Head::Array(children) => forall|i: int| 0 <= i < children.len() ==> head_wf(children[i]),
-        Head::Object(fields) => forall|key: Data| fields.contains_key(key) ==> head_wf(fields[key]),
-        _ => true,
-    }
-}
-
-pub open spec fn test_wf(t: SrcTest) -> bool
-    decreases t,
-{
-    match t {
         SrcTest::Bool(_) => true,
-        SrcTest::And(children) => forall|i: int| 0 <= i < children.len() ==> test_wf(children[i]),
-        SrcTest::Or(children) => forall|i: int| 0 <= i < children.len() ==> test_wf(children[i]),
-        SrcTest::Eq(path, term) => term_wf(term)
-            && forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
-        SrcTest::Neq(path, term) => term_wf(term)
-            && forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
+        SrcTest::And(children) | SrcTest::Or(children) => forall|i: int|
+            0 <= i < children.len() ==> test_wf(children[i], head),
+        SrcTest::Eq(field, term) | SrcTest::Neq(field, term) => term_wf(field, term, head),
     }
 }
 
-pub open spec fn tail_wf(r: Regex<SrcTest>) -> bool
-    decreases r,
+pub open spec fn tail_wf(tail: Regex<SrcTest>, head: Head) -> bool
+    decreases tail,
 {
-    match r {
-        Regex::Test(t) => test_wf(t),
-        Regex::Union(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
-        Regex::Concat(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
-        Regex::Intersect(cs) => forall|i: int| 0 <= i < cs.len() ==> tail_wf(cs[i]),
-        Regex::Star(c) => tail_wf(*c),
-        Regex::Not(c) => tail_wf(*c),
+    match tail {
+        Regex::Test(test) => test_wf(test, head),
+        Regex::Union(children) | Regex::Concat(children) | Regex::Intersect(children) =>
+            forall|i: int| 0 <= i < children.len() ==> tail_wf(children[i], head),
+        Regex::Star(child) | Regex::Not(child) => tail_wf(*child, head),
         _ => true,
     }
 }
 
-proof fn lemma_tag_payload(name: Seq<char>, payload: Data)
-    ensures tagged_payload(tag(name, payload), name) == Some(payload),
-{
-    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
-    assert(Map::<Data, Data>::empty().insert(Data::String(name), payload).dom()
-        =~= Set::<Data>::empty().insert(Data::String(name)));
+pub open spec fn pair_lang(head: Head, tail: Regex<SrcTest>, request: EventView, history: Seq<EventView>) -> bool {
+    exists|theta: Subst| head_match(head, request, theta)
+        && lang(|test: SrcTest, event: EventView| src_test_holds(theta, test, event), tail, history)
 }
 
-proof fn lemma_term_encodable(t: Term)
-    requires term_wf(t),
-    ensures exists|d: Data| decodes_term(d, t),
-{
-    match t {
-        Term::Constant(v) => {
-            lemma_tag_payload("value"@, v);
-            assert(decodes_term(tag("value"@, v), t));
-        },
-        Term::Variable(name) => {
-            lemma_tag_payload("var"@, Data::String(name));
-            assert(decodes_term(tag("var"@, Data::String(name)), t));
-        },
-    }
-}
-
-proof fn lemma_head_encodable(h: Head)
-    requires head_wf(h),
-    ensures exists|d: Data| decodes_head(d, h),
-    decreases h,
-{
-    broadcast use vstd::map::group_map_lemmas;
-    match h {
-        Head::Literal(v) => {
-            lemma_tag_payload("value"@, v);
-            assert(decodes_head(tag("value"@, v), h));
-        },
-        Head::Variable(name) => {
-            lemma_tag_payload("var"@, Data::String(name));
-            assert(decodes_head(tag("var"@, Data::String(name)), h));
-        },
-        Head::Any => {
-            lemma_tag_payload("any"@, Data::Bool(true));
-            assert(decodes_head(tag("any"@, Data::Bool(true)), h));
-        },
-        Head::Array(children) => {
-            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
-                implies exists|d: Data| decodes_head(d, children[i]) by {
-                lemma_head_encodable(children[i]);
-            }
-            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_head(d, children[i]));
-            lemma_tag_payload("array"@, Data::Array(values));
-            assert(decodes_head(tag("array"@, Data::Array(values)), h));
-        },
-        Head::Object(fields) => {
-            assert forall|key: Data| fields.contains_key(key)
-                implies exists|d: Data| decodes_head(d, fields[key]) by {
-                vstd::map::axiom_map_index_decreases(fields, key);
-                lemma_head_encodable(fields[key]);
-            }
-            let values = Map::new(fields.dom(), |k: Data| choose|d: Data| decodes_head(d, fields[k]));
-            assert(values.dom() == fields.dom());
-            assert forall|key: Data| fields.contains_key(key)
-                implies decodes_head(values[key], fields[key]) by {
-                assert(values[key] == choose|d: Data| decodes_head(d, fields[key]));
-            }
-            lemma_tag_payload("object"@, Data::Object(values));
-            assert(decodes_head(tag("object"@, Data::Object(values)), h));
-        },
-    }
-}
-
-proof fn lemma_comparison_encodable(name: Seq<char>, path: Seq<Data>, term: Term)
-    requires
-        term_wf(term),
-        forall|i: int| 0 <= i < path.len() ==> path[i] != Data::Undefined,
-    ensures exists|d: Data| decodes_comparison(d, name, path, term),
-{
-    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
-    lemma_source_literals();
-    assert("path"@[0] != "term"@[0]);
-    lemma_term_encodable(term);
-    let td = choose|d: Data| decodes_term(d, term);
-    let pk = Data::String("path"@);
-    let tk = Data::String("term"@);
-    let fields = Map::<Data, Data>::empty().insert(pk, Data::Array(path)).insert(tk, td);
-    assert(fields.dom() =~= Set::empty().insert(pk).insert(tk));
-    lemma_tag_payload(name, Data::Object(fields));
-    assert(decodes_comparison(tag(name, Data::Object(fields)), name, path, term));
-}
-
-proof fn lemma_test_encodable(t: SrcTest)
-    requires test_wf(t),
-    ensures exists|d: Data| decodes_test(d, t),
-    decreases t,
-{
-    match t {
-        SrcTest::Bool(value) => {
-            assert(decodes_test(Data::Bool(value), t));
-        },
-        SrcTest::And(children) => {
-            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
-                implies exists|d: Data| decodes_test(d, children[i]) by {
-                lemma_test_encodable(children[i]);
-            }
-            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_test(d, children[i]));
-            lemma_tag_payload("and"@, Data::Array(values));
-            assert(decodes_test(tag("and"@, Data::Array(values)), t));
-        },
-        SrcTest::Or(children) => {
-            assert forall|i: int| #![trigger children[i]] 0 <= i < children.len()
-                implies exists|d: Data| decodes_test(d, children[i]) by {
-                lemma_test_encodable(children[i]);
-            }
-            let values = Seq::new(children.len(), |i: int| choose|d: Data| decodes_test(d, children[i]));
-            lemma_tag_payload("or"@, Data::Array(values));
-            assert(decodes_test(tag("or"@, Data::Array(values)), t));
-        },
-        SrcTest::Eq(path, term) => {
-            lemma_comparison_encodable("eq"@, path, term);
-            let d = choose|d: Data| decodes_comparison(d, "eq"@, path, term);
-            assert(decodes_test(d, t));
-        },
-        SrcTest::Neq(path, term) => {
-            lemma_comparison_encodable("neq"@, path, term);
-            let d = choose|d: Data| decodes_comparison(d, "neq"@, path, term);
-            assert(decodes_test(d, t));
-        },
-    }
-}
-
-proof fn lemma_tail_encodable(r: Regex<SrcTest>)
-    requires tail_wf(r),
-    ensures exists|d: Data| decodes_tail(d, r),
-    decreases r,
-{
-    match r {
-        Regex::Empty => {
-            lemma_tag_payload("empty"@, Data::Bool(true));
-            assert(decodes_tail(tag("empty"@, Data::Bool(true)), r));
-        },
-        Regex::All => {
-            lemma_tag_payload("all"@, Data::Bool(true));
-            assert(decodes_tail(tag("all"@, Data::Bool(true)), r));
-        },
-        Regex::Epsilon => {
-            lemma_tag_payload("epsilon"@, Data::Bool(true));
-            assert(decodes_tail(tag("epsilon"@, Data::Bool(true)), r));
-        },
-        Regex::Test(t) => {
-            lemma_test_encodable(t);
-            let c = choose|d: Data| decodes_test(d, t);
-            lemma_tag_payload("test"@, c);
-            assert(decodes_tail(tag("test"@, c), r));
-        },
-        Regex::Union(cs) => {
-            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
-                lemma_tail_encodable(cs[i]);
-            }
-            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
-            lemma_tag_payload("union"@, Data::Array(values));
-            assert(decodes_tail(tag("union"@, Data::Array(values)), r));
-        },
-        Regex::Concat(cs) => {
-            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
-                lemma_tail_encodable(cs[i]);
-            }
-            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
-            lemma_tag_payload("concat"@, Data::Array(values));
-            assert(decodes_tail(tag("concat"@, Data::Array(values)), r));
-        },
-        Regex::Intersect(cs) => {
-            assert forall|i: int| #![trigger cs[i]] 0 <= i < cs.len() implies exists|d: Data| decodes_tail(d, cs[i]) by {
-                lemma_tail_encodable(cs[i]);
-            }
-            let values = Seq::new(cs.len(), |i: int| choose|d: Data| decodes_tail(d, cs[i]));
-            lemma_tag_payload("intersect"@, Data::Array(values));
-            assert(decodes_tail(tag("intersect"@, Data::Array(values)), r));
-        },
-        Regex::Star(child) => {
-            lemma_tail_encodable(*child);
-            let c = choose|d: Data| decodes_tail(d, *child);
-            lemma_tag_payload("star"@, c);
-            assert(decodes_tail(tag("star"@, c), r));
-        },
-        Regex::Not(child) => {
-            lemma_tail_encodable(*child);
-            let c = choose|d: Data| decodes_tail(d, *child);
-            lemma_tag_payload("not"@, c);
-            assert(decodes_tail(tag("not"@, c), r));
-        },
-    }
-}
-
-pub proof fn lemma_policy_encodable(head: Head, tail: Regex<SrcTest>)
-    requires head_wf(head), tail_wf(tail),
-    ensures exists|policy: Data| decodes_policy(policy, head, tail),
-{
-    broadcast use vstd::map::group_map_lemmas, vstd::set::group_set_lemmas;
-    lemma_source_literals();
-    assert("request"@[0] != "history"@[0]);
-    lemma_head_encodable(head);
-    lemma_tail_encodable(tail);
-    let hd = choose|d: Data| decodes_head(d, head);
-    let td = choose|d: Data| decodes_tail(d, tail);
-    let rk = Data::String("request"@);
-    let hk = Data::String("history"@);
-    let fields = Map::<Data, Data>::empty().insert(rk, hd).insert(hk, td);
-    assert(fields.dom() =~= Set::empty().insert(rk).insert(hk));
-    assert(decodes_policy(Data::Object(fields), head, tail));
-}
-
-pub open spec fn pair_lang(head: Head, tail: Regex<SrcTest>, req: Data, history: Seq<Data>) -> bool {
-    exists|theta: Subst| head_match(head, req, theta) && theta.dom() == head_vars(head)
-        && lang(|test: SrcTest, event: Data| src_test_holds(theta, test, event), tail, history)
-}
-
-pub open spec fn policy_lang(policy: Data, req: Data, history: Seq<Data>) -> bool {
-    exists|head: Head, tail: Regex<SrcTest>| decodes_policy(policy, head, tail)
-        && pair_lang(head, tail, req, history)
-}
-
-pub proof fn lemma_tagged_payload_unique_tag(d: Data, left: Seq<char>, right: Seq<char>)
-    requires tagged_payload(d, left) is Some, tagged_payload(d, right) is Some,
+pub proof fn lemma_head_match_unique_subst(head: Head, request: EventView, left: Subst, right: Subst)
+    requires head_match(head, request, left), head_match(head, request, right),
     ensures left == right,
 {
-    broadcast use vstd::set::group_set_lemmas;
-    match d {
-        Data::Object(fields) => {
-            assert(fields.dom().contains(Data::String(left)));
-            assert(Set::empty().insert(Data::String(right)).contains(Data::String(left)));
-        },
-        _ => {},
-    }
+    match head.principal { HeadField::Any => {}, HeadField::Constant(_) => {}, HeadField::Bind => {} }
+    match head.action { HeadField::Any => {}, HeadField::Constant(_) => {}, HeadField::Bind => {} }
+    match head.resource { HeadField::Any => {}, HeadField::Constant(_) => {}, HeadField::Bind => {} }
 }
 
-pub open spec fn head_tag(head: Head) -> Seq<char> {
-    match head {
-        Head::Literal(_) => "value"@,
-        Head::Variable(_) => "var"@,
-        Head::Any => "any"@,
-        Head::Array(_) => "array"@,
-        Head::Object(_) => "object"@,
-    }
-}
-
-pub proof fn lemma_decode_head_tag(d: Data, head: Head)
-    requires decodes_head(d, head),
-    ensures tagged_payload(d, head_tag(head)) is Some,
-{
-    match head {
-        Head::Literal(_) => {},
-        Head::Variable(_) => {},
-        Head::Any => {},
-        Head::Array(_) => {},
-        Head::Object(_) => {},
-    }
-}
-
-pub proof fn lemma_decode_head_deterministic(d: Data, left: Head, right: Head)
-    requires decodes_head(d, left), decodes_head(d, right),
-    ensures left == right,
-    decreases left,
-{
-    lemma_source_literals();
-    broadcast use vstd::map::group_map_lemmas;
-    lemma_decode_head_tag(d, left);
-    lemma_decode_head_tag(d, right);
-    lemma_tagged_payload_unique_tag(d, head_tag(left), head_tag(right));
-    match (left, right) {
-        (Head::Array(a), Head::Array(b)) => {
-            let values = tagged_payload(d, "array"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_head_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (Head::Object(a), Head::Object(b)) => {
-            let values = tagged_payload(d, "object"@)->Some_0->Object_0;
-            assert forall|key: Data| a.contains_key(key) implies a[key] == b[key] by {
-                lemma_decode_head_deterministic(values[key], a[key], b[key]);
-            }
-            assert(a =~= b);
-        },
-        _ => {},
-    }
-}
-
-pub proof fn lemma_decode_term_deterministic(d: Data, left: Term, right: Term)
-    requires decodes_term(d, left), decodes_term(d, right),
-    ensures left == right,
-{
-    lemma_source_literals();
-    match (left, right) {
-        (Term::Constant(_), Term::Variable(_)) => {
-            lemma_tagged_payload_unique_tag(d, "value"@, "var"@);
-        },
-        (Term::Variable(_), Term::Constant(_)) => {
-            lemma_tagged_payload_unique_tag(d, "var"@, "value"@);
-        },
-        _ => {},
-    }
-}
-
-pub open spec fn test_tag(test: SrcTest) -> Seq<char> {
-    match test {
-        SrcTest::Bool(_) => "bool"@,
-        SrcTest::And(_) => "and"@,
-        SrcTest::Or(_) => "or"@,
-        SrcTest::Eq(_, _) => "eq"@,
-        SrcTest::Neq(_, _) => "neq"@,
-    }
-}
-
-pub proof fn lemma_decode_test_tag(d: Data, test: SrcTest)
-    requires decodes_test(d, test),
-    ensures test is Bool ==> d is Bool,
-        !(test is Bool) ==> tagged_payload(d, test_tag(test)) is Some,
-{
-    match test {
-        SrcTest::Bool(_) => {},
-        SrcTest::And(_) => {},
-        SrcTest::Or(_) => {},
-        SrcTest::Eq(_, _) => {},
-        SrcTest::Neq(_, _) => {},
-    }
-}
-
-pub proof fn lemma_decode_comparison_deterministic(d: Data, tag: Seq<char>, p1: Seq<Data>, t1: Term, p2: Seq<Data>, t2: Term)
-    requires decodes_comparison(d, tag, p1, t1), decodes_comparison(d, tag, p2, t2),
-    ensures p1 == p2, t1 == t2,
-{
-    let fields = tagged_payload(d, tag)->Some_0->Object_0;
-    lemma_decode_term_deterministic(fields[Data::String("term"@)], t1, t2);
-}
-
-pub proof fn lemma_decode_test_deterministic(d: Data, left: SrcTest, right: SrcTest)
-    requires decodes_test(d, left), decodes_test(d, right),
-    ensures left == right,
-    decreases left,
-{
-    lemma_source_literals();
-    lemma_decode_test_tag(d, left);
-    lemma_decode_test_tag(d, right);
-    if !(left is Bool) && !(right is Bool) {
-        lemma_tagged_payload_unique_tag(d, test_tag(left), test_tag(right));
-    }
-    match (left, right) {
-        (SrcTest::And(a), SrcTest::And(b)) => {
-            let values = tagged_payload(d, "and"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_test_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (SrcTest::Or(a), SrcTest::Or(b)) => {
-            let values = tagged_payload(d, "or"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_test_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (SrcTest::Eq(p1, t1), SrcTest::Eq(p2, t2)) => {
-            lemma_decode_comparison_deterministic(d, "eq"@, p1, t1, p2, t2);
-        },
-        (SrcTest::Neq(p1, t1), SrcTest::Neq(p2, t2)) => {
-            lemma_decode_comparison_deterministic(d, "neq"@, p1, t1, p2, t2);
-        },
-        _ => {},
-    }
-}
-
-pub open spec fn tail_tag(tail: Regex<SrcTest>) -> Seq<char> {
-    match tail {
-        Regex::Empty => "empty"@,
-        Regex::All => "all"@,
-        Regex::Epsilon => "epsilon"@,
-        Regex::Test(_) => "test"@,
-        Regex::Union(_) => "union"@,
-        Regex::Concat(_) => "concat"@,
-        Regex::Star(_) => "star"@,
-        Regex::Intersect(_) => "intersect"@,
-        Regex::Not(_) => "not"@,
-    }
-}
-
-pub proof fn lemma_decode_tail_tag(d: Data, tail: Regex<SrcTest>)
-    requires decodes_tail(d, tail),
-    ensures tagged_payload(d, tail_tag(tail)) is Some,
-{
-    match tail {
-        Regex::Empty => {},
-        Regex::All => {},
-        Regex::Epsilon => {},
-        Regex::Test(_) => {},
-        Regex::Union(_) => {},
-        Regex::Concat(_) => {},
-        Regex::Star(_) => {},
-        Regex::Intersect(_) => {},
-        Regex::Not(_) => {},
-    }
-}
-
-pub proof fn lemma_decode_tail_deterministic(d: Data, left: Regex<SrcTest>, right: Regex<SrcTest>)
-    requires decodes_tail(d, left), decodes_tail(d, right),
-    ensures left == right,
-    decreases left,
-{
-    lemma_source_literals();
-    lemma_decode_tail_tag(d, left);
-    lemma_decode_tail_tag(d, right);
-    lemma_tagged_payload_unique_tag(d, tail_tag(left), tail_tag(right));
-    match (left, right) {
-        (Regex::Test(a), Regex::Test(b)) => {
-            lemma_decode_test_deterministic(tagged_payload(d, "test"@)->Some_0, a, b);
-        },
-        (Regex::Union(a), Regex::Union(b)) => {
-            let values = tagged_payload(d, "union"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_tail_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (Regex::Concat(a), Regex::Concat(b)) => {
-            let values = tagged_payload(d, "concat"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_tail_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (Regex::Star(a), Regex::Star(b)) => {
-            lemma_decode_tail_deterministic(tagged_payload(d, "star"@)->Some_0, *a, *b);
-        },
-        (Regex::Intersect(a), Regex::Intersect(b)) => {
-            let values = tagged_payload(d, "intersect"@)->Some_0->Array_0;
-            assert forall|i: int| 0 <= i < a.len() implies a[i] == b[i] by {
-                lemma_decode_tail_deterministic(values[i], a[i], b[i]);
-            }
-            assert(a =~= b);
-        },
-        (Regex::Not(a), Regex::Not(b)) => {
-            lemma_decode_tail_deterministic(tagged_payload(d, "not"@)->Some_0, *a, *b);
-        },
-        _ => {},
-    }
-}
-
-pub proof fn lemma_decode_deterministic(policy: Data, h1: Head, r1: Regex<SrcTest>, h2: Head, r2: Regex<SrcTest>)
-    requires decodes_policy(policy, h1, r1), decodes_policy(policy, h2, r2),
-    ensures h1 == h2, r1 == r2,
-{
-    match policy {
-        Data::Object(fields) => {
-            lemma_decode_head_deterministic(fields[Data::String("request"@)], h1, h2);
-            lemma_decode_tail_deterministic(fields[Data::String("history"@)], r1, r2);
-        },
-        _ => {},
-    }
-}
-
-pub proof fn lemma_head_match_agrees(
-    h: Head, request: Data, left: Subst, right: Subst, name: Seq<char>,
-)
-    requires
-        head_match(h, request, left), head_match(h, request, right),
-        head_vars(h).contains(name),
-    ensures left.contains_key(name) && right.contains_key(name) && left[name] == right[name],
-    decreases h,
-{
-    match h {
-        Head::Literal(_) => {},
-        Head::Any => {},
-        Head::Variable(_) => {},
-        Head::Array(children) => {
-            lemma_head_vars_array(children);
-            let i = choose|i: int| 0 <= i < children.len()
-                && head_vars(children[i]).contains(name);
-            match request {
-                Data::Array(values) => {
-                    lemma_head_match_agrees(children[i], values[i], left, right, name);
-                },
-                _ => {},
-            }
-        },
-        Head::Object(fields) => {
-            lemma_head_vars_object(fields);
-            let key = choose|key: Data| fields.contains_key(key)
-                && head_vars(fields[key]).contains(name);
-            vstd::map::axiom_map_index_decreases(fields, key);
-            match request {
-                Data::Object(values) => {
-                    lemma_head_match_agrees(fields[key], values[key], left, right, name);
-                },
-                _ => {},
-            }
-        },
-    }
-}
-
-pub proof fn lemma_head_match_unique_subst(
-    h: Head, request: Data, left: Subst, right: Subst,
-)
-    requires
-        head_match(h, request, left),
-        head_match(h, request, right),
-        left.dom() == head_vars(h),
-        right.dom() == head_vars(h),
-    ensures left == right,
-{
-    assert forall|name: Seq<char>| head_vars(h).contains(name)
-        implies left[name] == right[name] by {
-        lemma_head_match_agrees(h, request, left, right, name);
-    }
-    assert(left =~= right);
-}
-
-/// A complete matching substitution is the unique binding used by the tail.
-pub proof fn lemma_pair_lang_substitutions(
-    head: Head, tail: Regex<SrcTest>, request: Data, history: Seq<Data>, theta: Subst,
-)
-    requires head_match(head, request, theta), theta.dom() == head_vars(head),
+pub proof fn lemma_pair_lang_substitutions(head: Head, tail: Regex<SrcTest>, request: EventView,
+    history: Seq<EventView>, theta: Subst)
+    requires head_match(head, request, theta),
     ensures pair_lang(head, tail, request, history)
-        == lang(|test: SrcTest, event: Data| src_test_holds(theta, test, event), tail, history),
+        == lang(|test: SrcTest, event: EventView| src_test_holds(theta, test, event), tail, history),
 {
     if pair_lang(head, tail, request, history) {
         let other = choose|other: Subst| head_match(head, request, other)
-            && other.dom() == head_vars(head)
-            && lang(|test: SrcTest, event: Data| src_test_holds(other, test, event), tail, history);
+            && lang(|test: SrcTest, event: EventView| src_test_holds(other, test, event), tail, history);
         lemma_head_match_unique_subst(head, request, theta, other);
     }
-    if lang(|test: SrcTest, event: Data| src_test_holds(theta, test, event), tail, history) {
+    if lang(|test: SrcTest, event: EventView| src_test_holds(theta, test, event), tail, history) {
         assert(exists|other: Subst| head_match(head, request, other)
-            && other.dom() == head_vars(head)
-            && lang(|test: SrcTest, event: Data| src_test_holds(other, test, event), tail, history));
+            && lang(|test: SrcTest, event: EventView| src_test_holds(other, test, event), tail, history));
     }
 }
 
-pub proof fn lemma_policy_lang_decoded(
-    policy: Data, head: Head, tail: Regex<SrcTest>, request: Data, history: Seq<Data>,
-)
-    requires decodes_policy(policy, head, tail),
-    ensures policy_lang(policy, request, history) == pair_lang(head, tail, request, history),
+/// The selected batch is compositional; nullable is used only at the fixed target.
+pub proof fn lemma_derive_word_append<L>(sem: spec_fn(L, EventView) -> bool,
+    xs: Seq<EventView>, ys: Seq<EventView>, root: Regex<L>)
+    ensures derive_word(sem, xs + ys, root) == derive_word(sem, ys, derive_word(sem, xs, root)),
+    decreases xs.len(),
 {
-    if policy_lang(policy, request, history) {
-        let (other_head, other_tail) = choose|other_head: Head, other_tail: Regex<SrcTest>|
-            decodes_policy(policy, other_head, other_tail)
-                && pair_lang(other_head, other_tail, request, history);
-        lemma_decode_deterministic(policy, head, tail, other_head, other_tail);
-    }
-    if pair_lang(head, tail, request, history) {
-        assert(exists|h: Head, r: Regex<SrcTest>| decodes_policy(policy, h, r)
-            && pair_lang(h, r, request, history));
+    if xs.len() == 0 {
+        assert(xs + ys =~= ys);
+    } else {
+        assert((xs + ys)[0] == xs[0]);
+        assert((xs + ys).drop_first() =~= xs.drop_first() + ys);
+        lemma_derive_word_append(sem, xs.drop_first(), ys, derivative(sem, xs[0], root));
     }
 }
 
-pub proof fn lemma_policy_lang_every_decoding(policy: Data, request: Data, history: Seq<Data>)
-    ensures forall|head: Head, tail: Regex<SrcTest>| #[trigger] decodes_policy(policy, head, tail)
-        ==> policy_lang(policy, request, history) == pair_lang(head, tail, request, history),
+pub open spec fn selected_end(consumed: nat, target: nat, batch_size: nat) -> nat {
+    consumed + if batch_size < target - consumed { batch_size } else { (target - consumed) as nat }
+}
+
+pub proof fn lemma_selected_end(consumed: nat, target: nat, batch_size: nat)
+    requires consumed <= target, batch_size > 0,
+    ensures consumed <= selected_end(consumed, target, batch_size) <= target,
+        consumed < target ==> consumed < selected_end(consumed, target, batch_size),
+        selected_end(consumed, target, batch_size) - consumed <= batch_size,
+        target - consumed <= batch_size ==> selected_end(consumed, target, batch_size) == target,
+{ }
+
+pub proof fn lemma_batch_prefix_composition<L>(sem: spec_fn(L, EventView) -> bool,
+    history: Seq<EventView>, root: Regex<L>, consumed: nat, end: nat)
+    requires consumed <= end <= history.len(),
+    ensures derive_word(sem, history.subrange(consumed as int, end as int),
+        derive_word(sem, history.take(consumed as int), root))
+        == derive_word(sem, history.take(end as int), root),
 {
-    assert forall|head: Head, tail: Regex<SrcTest>| #[trigger] decodes_policy(policy, head, tail)
-        implies policy_lang(policy, request, history) == pair_lang(head, tail, request, history) by {
-        lemma_policy_lang_decoded(policy, head, tail, request, history);
+    assert(history.take(consumed as int) + history.subrange(consumed as int, end as int)
+        =~= history.take(end as int));
+    lemma_derive_word_append(sem, history.take(consumed as int),
+        history.subrange(consumed as int, end as int), root);
+}
+
+pub proof fn lemma_full_target_answer<L>(sem: spec_fn(L, EventView) -> bool,
+    history: Seq<EventView>, root: Regex<L>, target: nat)
+    requires target <= history.len(),
+    ensures nullable(derive_word(sem, history.take(target as int), root))
+        == lang(sem, root, history.take(target as int)),
+{
+    lemma_derive_word_nullable(sem, history.take(target as int), root);
+}
+
+pub struct HistoryStateView {
+    pub events: Seq<EventView>,
+    pub revision: nat,
+}
+
+/// Successful locked mutations either append, do nothing, or truncate with a checked revision.
+pub open spec fn history_mutation(before: HistoryStateView, after: HistoryStateView) -> bool {
+    before.revision <= u64::MAX && after.revision <= u64::MAX && (
+        (before.revision == after.revision && before.events.is_prefix_of(after.events))
+        || (before.revision < u64::MAX && after.revision == before.revision + 1
+            && after.events.len() < before.events.len()
+            && after.events == before.events.take(after.events.len() as int)))
+}
+
+pub proof fn lemma_revision_chain_preserves_prefix(states: Seq<HistoryStateView>)
+    requires states.len() > 0,
+        forall|i: int| 0 < i < states.len() ==> #[trigger] history_mutation(states[i - 1], states[i]),
+    ensures states.first().revision <= states.last().revision,
+        states.first().revision == states.last().revision
+            ==> states.first().events.is_prefix_of(states.last().events),
+    decreases states.len(),
+{
+    if states.len() > 1 {
+        let prior = states.drop_last();
+        assert forall|i: int| 0 < i < prior.len() implies #[trigger] history_mutation(prior[i - 1], prior[i]) by {
+            assert(prior[i - 1] == states[i - 1]);
+            assert(prior[i] == states[i]);
+        }
+        lemma_revision_chain_preserves_prefix(prior);
+        assert(history_mutation(prior.last(), states.last()));
+        if states.first().revision == states.last().revision {
+            assert(prior.first().revision == prior.last().revision);
+            assert(prior.last().events.is_prefix_of(states.last().events));
+            assert(states.last().events.take(states.first().events.len() as int)
+                =~= states.first().events);
+        }
     }
 }
 
-/// Adequacy: every well-formed pair is the decoding of some policy, and `policy_lang`
-/// of that policy is `pair_lang` of the pair for every request and history.
-pub proof fn theorem_every_pair_has_a_policy(head: Head, tail: Regex<SrcTest>)
-    requires head_wf(head), tail_wf(tail),
-    ensures exists|policy: Data| #[trigger] decodes_policy(policy, head, tail)
-        && forall|request: Data, history: Seq<Data>|
-            policy_lang(policy, request, history) == pair_lang(head, tail, request, history),
+/// Same-revision snapshots refer to an immutable prefix, not to the current length.
+pub open spec fn snapshot_valid(captured: Seq<EventView>, revision: nat,
+    current: Seq<EventView>, current_revision: nat) -> bool {
+    revision == current_revision && captured.is_prefix_of(current)
+}
+
+pub proof fn lemma_append_preserves_snapshot(captured: Seq<EventView>, revision: nat,
+    current: Seq<EventView>, suffix: Seq<EventView>)
+    requires snapshot_valid(captured, revision, current, revision),
+    ensures snapshot_valid(captured, revision, current + suffix, revision),
 {
-    lemma_policy_encodable(head, tail);
-    let policy = choose|policy: Data| decodes_policy(policy, head, tail);
-    assert forall|request: Data, history: Seq<Data>|
-        policy_lang(policy, request, history) == pair_lang(head, tail, request, history) by {
-        lemma_policy_lang_decoded(policy, head, tail, request, history);
+    assert(captured.len() <= current.len());
+    assert((current + suffix).take(captured.len() as int) =~= captured);
+}
+
+pub proof fn lemma_truncate_invalidates_snapshot(captured: Seq<EventView>, revision: nat,
+    current: Seq<EventView>, keep: nat)
+    requires keep < current.len(), revision < u64::MAX,
+    ensures !snapshot_valid(captured, revision, current.take(keep as int), revision + 1),
+{ }
+
+pub proof fn lemma_exact_utf8_equality(left: Seq<char>, right: Seq<char>)
+    ensures (vstd::utf8::encode_utf8(left) == vstd::utf8::encode_utf8(right)) == (left == right),
+{
+    vstd::utf8::encode_utf8_decode_utf8(left);
+    vstd::utf8::encode_utf8_decode_utf8(right);
+}
+
+/// Mutex linearization composes the checked executable allocator's consecutive states.
+pub proof fn lemma_allocator_nonreuse(first: nat, after_first: nat, before_later: nat, later: nat)
+    requires after_first == first + 1, after_first <= before_later, later == before_later,
+    ensures first < later,
+{ }
+
+/// Exact UTF-8 bytes are keys; no normalization or ancestry relation is modeled.
+pub open spec fn interner_wf(paths: Map<Seq<u8>, nat>, next: nat) -> bool {
+    0 < next <= u64::MAX
+        && (forall|path: Seq<u8>| paths.contains_key(path) ==> 0 < paths[path] < next)
+        && (forall|left: Seq<u8>, right: Seq<u8>| paths.contains_key(left)
+            && paths.contains_key(right) && paths[left] == paths[right] ==> left == right)
+}
+
+pub proof fn lemma_interner_raise_frontier(paths: Map<Seq<u8>, nat>, before: nat, after: nat)
+    requires interner_wf(paths, before), before <= after <= u64::MAX,
+    ensures interner_wf(paths, after),
+{ }
+
+pub proof fn lemma_interner_exact_equality(paths: Map<Seq<u8>, nat>, next: nat,
+    left: Seq<u8>, right: Seq<u8>)
+    requires interner_wf(paths, next), paths.contains_key(left), paths.contains_key(right),
+    ensures (paths[left] == paths[right]) == (left == right),
+{ }
+
+pub proof fn lemma_interner_fresh_nonreuse(paths: Map<Seq<u8>, nat>, next: nat,
+    path: Seq<u8>, allocated: nat)
+    requires interner_wf(paths, next), !paths.contains_key(path),
+        next <= allocated < u64::MAX,
+    ensures interner_wf(paths.insert(path, allocated), allocated + 1),
+        forall|old_path: Seq<u8>| paths.contains_key(old_path)
+            ==> paths.insert(path, allocated)[old_path] == paths[old_path]
+                && paths[old_path] != allocated,
+{
+    assert forall|left: Seq<u8>, right: Seq<u8>| paths.insert(path, allocated).contains_key(left)
+        && paths.insert(path, allocated).contains_key(right)
+        && paths.insert(path, allocated)[left] == paths.insert(path, allocated)[right]
+        implies left == right by {
+        if left != path && right != path { assert(paths[left] == paths[right]); }
     }
 }
 

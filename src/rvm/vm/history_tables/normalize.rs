@@ -1,19 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use super::error::normalization_invariant as invariant;
-#[cfg(verus_keep_ghost)]
-use super::graph::verify::lemma_id_clones;
 #[cfg(verus_keep_ghost)]
 use super::kernel::verify as model;
 use super::kernel::*;
-use super::work::WorkVec;
+use super::HistoryError;
+use super::WorkVec;
 #[cfg(verus_keep_ghost)]
 use crate::verify::history_assumptions::{dedup_spec, KernelStoreSpec, SmallVecSpecFns};
 #[cfg(verus_keep_ghost)]
 use crate::verify::history_specs as language;
 #[cfg(verus_keep_ghost)]
-use crate::verify::value_specs::Data;
+use crate::verify::history_specs::{EventView, Subst};
 #[cfg(verus_keep_ghost)]
 use alloc::boxed::Box;
 #[cfg(verus_keep_ghost)]
@@ -32,28 +30,28 @@ use vstd::std_specs::cmp::{OrdSpec, PartialEqSpec};
         match result { Ok(found) => found ==> test_opposite(final(store).graph(), a, b), Err(_) => true },
 )]
 fn complementary<G: KernelStore>(store: &mut G, a: TestId, b: TestId) -> KernelResult<bool> {
-    let left = test_head(store, a)?;
-    let right = test_head(store, b)?;
+    let left = a.head(store)?;
+    let right = b.head(store)?;
     match (left, right) {
         (TestHead::Atom(p, x), TestHead::Atom(q, y)) => {
             proof! {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| p@ == q@ && x != y
-                    implies test_truth(store.graph(), sym, theta, a@, event) != test_truth(store.graph(), sym, theta, b@, event) by {
-                    test_lemma_truth(store.graph(), sym, theta, a@, event);
-                    test_lemma_truth(store.graph(), sym, theta, b@, event);
+                assert forall|theta: Subst, event: EventView| p@ == q@ && x != y
+                    implies test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
+                    test_lemma_truth(store.graph(), theta, a@, event);
+                    test_lemma_truth(store.graph(), theta, b@, event);
                 }
             }
             Ok(p == q && x != y)
         }
         (TestHead::And(_), TestHead::Or(_)) | (TestHead::Or(_), TestHead::And(_)) => {
-            Ok(test_not(store, a)? == b)
+            Ok(a.not(store)? == b)
         }
         (TestHead::True, TestHead::False) | (TestHead::False, TestHead::True) => {
             proof! {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                    test_truth(store.graph(), sym, theta, a@, event) != test_truth(store.graph(), sym, theta, b@, event) by {
-                    test_lemma_truth(store.graph(), sym, theta, a@, event);
-                    test_lemma_truth(store.graph(), sym, theta, b@, event);
+                assert forall|theta: Subst, event: EventView|
+                    test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
+                    test_lemma_truth(store.graph(), theta, a@, event);
+                    test_lemma_truth(store.graph(), theta, b@, event);
                 }
             }
             Ok(true)
@@ -64,8 +62,12 @@ fn complementary<G: KernelStore>(store: &mut G, a: TestId, b: TestId) -> KernelR
 #[verus_verify]
 #[verus_spec(result => ensures result == test_distinct_heads(left@, right@))]
 fn distinct(left: TestHead, right: TestHead) -> bool {
-    matches!((left,right),(TestHead::Atom(Primitive::EqCore(p,Term::Constant(c)),_),TestHead::Atom(Primitive::EqCore(q,Term::Constant(d)),_)) if p==q&&c!=d)
+    matches!((left,right),(TestHead::Atom(Primitive::Eq{field:p,term:Term::Constant(c)},_),TestHead::Atom(Primitive::Eq{field:q,term:Term::Constant(d)},_)) if p==q&&c!=d)
 }
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "Preserve the existing Verus-verified function shape."
+)]
 #[verus_verify]
 #[verus_spec(result => ensures result == match head@ {
     model::TestHeadNode::Or(n) => if and { Some(n as usize) } else { None },
@@ -86,9 +88,13 @@ fn dual_test_count(head: TestHead, and: bool) -> Option<usize> {
 const fn midpoint(low: usize, high: usize) -> KernelResult<usize> {
     match high.saturating_sub(low).checked_div(2) {
         Some(half) => Ok(low.saturating_add(half)),
-        None => Err(invariant()),
+        None => Err(HistoryError::normalization_invariant()),
     }
 }
+#[allow(
+    clippy::semicolon_if_nothing_returned,
+    reason = "Preserve the existing Verus-verified mutation branches."
+)]
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(store.graph()), test_child_count(store.graph(), parent, count as nat),
@@ -120,7 +126,7 @@ fn test_contains<G: KernelStore>(
     ))]
     while low < high {
         let mid = loop_try!(midpoint(low, high), failure);
-        let child = loop_try!(test_child(store, parent, mid), failure);
+        let child = loop_try!(parent.child(store, mid), failure);
         if child < id {
             proof! {
                 assert forall|i: int| 0 <= i <= mid
@@ -143,7 +149,7 @@ fn test_contains<G: KernelStore>(
         return Err(error);
     }
     if low < count {
-        Ok(test_child(store, parent, low)? == id)
+        Ok(parent.child(store, low)? == id)
     } else {
         Ok(false)
     }
@@ -187,7 +193,7 @@ fn test_subset<G: KernelStore>(
         decreases a_count - i,
     ))]
     while i < a_count {
-        let id = loop_try!(test_child(store, a, i), failure);
+        let id = loop_try!(a.child(store, i), failure);
         proof! { assert(id@ == test_children(store.graph(), a)[i as int]); }
         included &= loop_try!(test_contains(store, b, b_count, id), failure);
         i = i.saturating_add(1);
@@ -212,26 +218,19 @@ fn test_subset<G: KernelStore>(
     }
     Ok(included)
 }
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure."
+)]
 #[verus_verify]
 #[verus_spec(result => ensures match result {
     Ok(id) => index < ids@.len() && id == ids@[index as int],
     Err(_) => index >= ids@.len(),
 })]
-fn test_at(ids: &[TestId], index: usize) -> KernelResult<TestId> {
+fn id_at<T: Copy>(ids: &[T], index: usize) -> KernelResult<T> {
     match ids.get(index) {
         Some(id) => Ok(*id),
-        None => Err(invariant()),
-    }
-}
-#[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(id) => index < ids@.len() && id == ids@[index as int],
-    Err(_) => index >= ids@.len(),
-})]
-fn regex_at(ids: &[RegexId], index: usize) -> KernelResult<RegexId> {
-    match ids.get(index) {
-        Some(id) => Ok(*id),
-        None => Err(invariant()),
+        None => Err(HistoryError::normalization_invariant()),
     }
 }
 #[verus_verify]
@@ -252,11 +251,11 @@ fn test_pair_step<G: KernelStore>(
     mut collapse: bool,
 ) -> KernelResult<bool> {
     proof_decl! { let ghost before = store.graph(); let ghost prior = collapse; }
-    let b = test_at(siblings, index)?;
+    let b = id_at(siblings, index)?;
     store.checkpoint()?;
     if a != b {
-        let av = test_head(store, a)?;
-        let bv = test_head(store, b)?;
+        let av = a.head(store)?;
+        let bv = b.head(store)?;
         collapse |= matches!((av,bv),(TestHead::Atom(_,x),TestHead::Atom(_,y)) if x==and&&y==and)
             && distinct(av, bv);
         collapse |= complementary(store, a, b)?;
@@ -318,7 +317,7 @@ fn test_complement_step<G: KernelStore>(
     found: bool,
 ) -> KernelResult<bool> {
     proof_decl! { let ghost before = store.graph(); }
-    let sibling = test_at(siblings, index)?;
+    let sibling = id_at(siblings, index)?;
     let matched = complementary(store, id, sibling)?;
     proof! {
         if found { test_lemma_has_opposite_extends(before, store.graph(), id, siblings@); }
@@ -368,7 +367,7 @@ fn test_compound_step<G: KernelStore>(
 ) -> KernelResult<bool> {
     proof_decl! { let ghost before = store.graph(); }
     proof! { test_lemma_children(store.graph(), a, test_children(store.graph(), a).len()); }
-    let id = test_child(store, a, index)?;
+    let id = a.child(store, index)?;
     let matched = test_has_complement(store, id, siblings)?;
     proof! {
         if all { test_lemma_covered_extends(before, store.graph(), test_children(before, a).take(index as int), siblings@); }
@@ -388,6 +387,10 @@ fn test_compound_step<G: KernelStore>(
     }
     Ok(all && matched)
 }
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure."
+)]
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(old(store).graph()), old(store).valid_store(),
@@ -403,7 +406,7 @@ fn test_compound_collapse<G: KernelStore>(
     and: bool,
 ) -> KernelResult<bool> {
     #[allow(clippy::manual_unwrap_or, clippy::manual_unwrap_or_default)] // Verus-verified match.
-    let count = match dual_test_count(test_head(store, a)?, and) {
+    let count = match dual_test_count(a.head(store)?, and) {
         Some(n) => n,
         None => 0,
     };
@@ -447,11 +450,11 @@ fn test_redundant_step<G: KernelStore>(
     and: bool,
     mut redundant: bool,
 ) -> KernelResult<bool> {
-    let b = test_at(siblings, index)?;
+    let b = id_at(siblings, index)?;
     store.checkpoint()?;
     if a != b {
-        let av = test_head(store, a)?;
-        let bv = test_head(store, b)?;
+        let av = a.head(store)?;
+        let bv = b.head(store)?;
         if let Some(n) = dual_test_count(av, and) {
             redundant |= match dual_test_count(bv, and) {
                 Some(m) => test_subset(store, b, m, a, n)?,
@@ -532,7 +535,7 @@ fn collect_test_children<G: KernelStore>(
         decreases count - i,
     ))]
     while i < count {
-        let child = loop_try!(test_child(store, id, i), failure);
+        let child = loop_try!(id.child(store, i), failure);
         proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
         flat.push(child);
         i = i.saturating_add(1);
@@ -542,6 +545,10 @@ fn collect_test_children<G: KernelStore>(
     }
     Ok(())
 }
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure."
+)]
 #[verus_verify]
 #[verus_spec(result =>
     requires structural_eq::<T>(), read < old(values).view().len(), state.1 <= read,
@@ -571,7 +578,7 @@ fn dedup_step<T: Copy + Eq>(
     proof_decl! { let ghost source = values.view(); }
     let value = match values.get(read) {
         Some(v) => *v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     let (previous, write) = state;
     let duplicate = match previous {
@@ -584,7 +591,7 @@ fn dedup_step<T: Copy + Eq>(
         if write != read {
             match values.as_mut_slice().get_mut(write) {
                 Some(slot) => *slot = value,
-                None => return Err(invariant()),
+                None => return Err(HistoryError::normalization_invariant()),
             }
         }
         proof! {
@@ -661,9 +668,9 @@ struct TestMode {
             Ok(true) => children@[index as int] == mode.absorber && final(flat).view() == old(flat).view()
                 && test_absorbs(final(store).graph(), children@, mode.and),
             Ok(false) => test_ids_valid(final(store).graph(), final(flat).view())
-                && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                    test_combo(final(store).graph(), sym, theta, final(flat).view(), event, mode.and)
-                        == test_combo(final(store).graph(), sym, theta, old(flat).view().push(children@[index as int]), event, mode.and)),
+                && (forall|theta: Subst, event: EventView|
+                    test_combo(final(store).graph(), theta, final(flat).view(), event, mode.and)
+                        == test_combo(final(store).graph(), theta, old(flat).view().push(children@[index as int]), event, mode.and)),
             Err(_) => true,
         },
 )]
@@ -676,21 +683,21 @@ fn collect_test_step<G: KernelStore>(
 ) -> KernelResult<bool> {
     proof_decl! { let ghost prior = flat.view(); }
     proof! { model::lemma_graph_wf_elim(store.graph()); }
-    let id = test_at(children, index)?;
+    let id = id_at(children, index)?;
     store.checkpoint()?;
     if id == mode.absorber {
         proof! {
             test_lemma_constants_semantics(store.graph());
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                implies test_combo(store.graph(), sym, theta, seq![id], event, mode.and) == !mode.and by {
-                test_lemma_combo_push(store.graph(), sym, theta, event, Seq::empty(), id, mode.and);
+            assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                implies test_combo(store.graph(), theta, seq![id], event, mode.and) == !mode.and by {
+                test_lemma_combo_push(store.graph(), theta, event, Seq::empty(), id, mode.and);
             }
             test_lemma_absorbs_superset(store.graph(), seq![id], children@, mode.and);
         }
         return Ok(true);
     }
     if id != mode.identity {
-        match test_head(store, id)? {
+        match id.head(store)? {
             TestHead::And(n) if mode.and => collect_test_children(store, id, n, flat)?,
             TestHead::Or(n) if !mode.and => collect_test_children(store, id, n, flat)?,
             _ => flat.push(id),
@@ -704,11 +711,11 @@ fn collect_test_step<G: KernelStore>(
                 _ => {},
             }
         } else {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, flat.view(), event, mode.and)
-                    == test_combo(store.graph(), sym, theta, prior.push(id), event, mode.and) by {
-                test_lemma_truth(store.graph(), sym, theta, id@, event);
-                test_lemma_combo_push(store.graph(), sym, theta, event, prior, id, mode.and);
+            assert forall|theta: Subst, event: EventView|
+                test_combo(store.graph(), theta, flat.view(), event, mode.and)
+                    == test_combo(store.graph(), theta, prior.push(id), event, mode.and) by {
+                test_lemma_truth(store.graph(), theta, id@, event);
+                test_lemma_combo_push(store.graph(), theta, event, prior, id, mode.and);
             }
         }
         assert forall|i: int| 0 <= i < flat.view().len() implies flat.view()[i]@ < store.graph().tests.len() by {
@@ -737,9 +744,9 @@ fn collect_test_step<G: KernelStore>(
     ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
         final(store).restoration() == old(store).restoration(),
         match result { Ok(out) => (prior ==> out) && (out ==> test_absorbs(final(store).graph(), flat@, and))
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(old(store).graph(), sym, theta, flat@, event, and)
-                    == test_combo(final(store).graph(), sym, theta, flat@, event, and)), Err(_) => true },
+            && (forall|theta: Subst, event: EventView|
+                test_combo(old(store).graph(), theta, flat@, event, and)
+                    == test_combo(final(store).graph(), theta, flat@, event, and)), Err(_) => true },
 )]
 fn collapse_test_step<G: KernelStore>(
     store: &mut G,
@@ -749,7 +756,7 @@ fn collapse_test_step<G: KernelStore>(
     prior: bool,
 ) -> KernelResult<bool> {
     proof_decl! { let ghost before = store.graph(); }
-    let id = test_at(flat, index)?;
+    let id = id_at(flat, index)?;
     let pair = test_pair_collapse(store, id, flat, and)?;
     proof_decl! { let ghost after_pair = store.graph(); }
     let compound = test_compound_collapse(store, id, flat, and)?;
@@ -780,7 +787,7 @@ fn retain_test_step<G: KernelStore>(
     and: bool,
     kept: &mut WorkVec<TestId>,
 ) -> KernelResult<()> {
-    let id = test_at(flat, index)?;
+    let id = id_at(flat, index)?;
     if !test_redundant(store, id, flat, and)? {
         kept.push(id);
     }
@@ -795,12 +802,12 @@ fn retain_test_step<G: KernelStore>(
         match result { Ok(id) => id@ < final(store).graph().tests.len()
             && (forall|i: nat| i < old(store).graph().tests.len()
                 ==> model::lift_test(old(store).graph(), i) == model::lift_test(final(store).graph(), i))
-            && (forall|ids: Seq<TestId>, sym: model::Symbols, theta: Seq<Data>, event: Data, mode: bool|
-                test_ids_valid(old(store).graph(), ids) ==> test_combo(old(store).graph(), sym, theta, ids, event, mode)
-                    == test_combo(final(store).graph(), sym, theta, ids, event, mode))
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_truth(final(store).graph(), sym, theta, id@, event)
-                    == test_combo(final(store).graph(), sym, theta, children@, event, and)), Err(_) => true },
+            && (forall|ids: Seq<TestId>, theta: Subst, event: EventView, mode: bool|
+                test_ids_valid(old(store).graph(), ids) ==> test_combo(old(store).graph(), theta, ids, event, mode)
+                    == test_combo(final(store).graph(), theta, ids, event, mode))
+            && (forall|theta: Subst, event: EventView|
+                test_truth(final(store).graph(), theta, id@, event)
+                    == test_combo(final(store).graph(), theta, children@, event, and)), Err(_) => true },
 )]
 fn test_intern_step<G: KernelStore>(
     store: &mut G,
@@ -814,244 +821,267 @@ fn test_intern_step<G: KernelStore>(
         TestView::Or(children)
     })?;
     proof! {
-        assert forall|ids: Seq<TestId>, sym: model::Symbols, theta: Seq<Data>, event: Data, mode: bool|
-            test_ids_valid(before, ids) implies test_combo(before, sym, theta, ids, event, mode)
-                == test_combo(store.graph(), sym, theta, ids, event, mode) by {
+        assert forall|ids: Seq<TestId>, theta: Subst, event: EventView, mode: bool|
+            test_ids_valid(before, ids) implies test_combo(before, theta, ids, event, mode)
+                == test_combo(store.graph(), theta, ids, event, mode) by {
             test_lemma_combo_extends(before, store.graph(), ids);
         }
         assert forall|i: nat| i < before.tests.len()
             implies model::lift_test(before, i) == model::lift_test(store.graph(), i) by {
             model::lemma_lift_test_stable(before, store.graph(), i);
         }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_truth(store.graph(), sym, theta, id@, event)
-                == test_combo(store.graph(), sym, theta, children@, event, and) by {
-            test_lemma_compound_semantics(store.graph(), sym, theta, event, id, children@, and);
+        assert forall|theta: Subst, event: EventView|
+            test_truth(store.graph(), theta, id@, event)
+                == test_combo(store.graph(), theta, children@, event, and) by {
+            test_lemma_compound_semantics(store.graph(), theta, event, id, children@, and);
         }
     }
     Ok(id)
 }
 
 #[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(id) => id@ < final(store).graph().tests.len()
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> test_truth(final(store).graph(), sym, theta, id@, event)
-                    == test_combo(final(store).graph(), sym, theta, children@, event, and)), Err(_) => true },
-)]
-fn test_connective<G: KernelStore>(
-    store: &mut G,
-    children: &[TestId],
-    and: bool,
-) -> KernelResult<TestId> {
-    proof! { test_lemma_constants_semantics(store.graph()); }
-    let c = store.constants();
-    let identity = if and { c.test_true } else { c.test_false };
-    let absorber = if and { c.test_false } else { c.test_true };
-    let mode = TestMode {
-        and,
-        identity,
-        absorber,
-    };
-    let mut flat = WorkVec::new();
-    proof! { assert(children@.take(children@.len() as int) =~= children@); }
-    let mut collecting = Ok(false);
-    scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>{
-        proof! {
-            assert(children@.take(index as int).push(children@[index as int]) =~= children@.take(index as int + 1));
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, flat.view().push(children@[index as int]), event, and)
-                    == test_combo(store.graph(), sym, theta, children@.take(index as int + 1), event, and) by {
-                test_lemma_combo_push(store.graph(), sym, theta, event, flat.view(), children@[index as int], and);
-                test_lemma_combo_push(store.graph(), sym, theta, event, children@.take(index as int), children@[index as int], and);
-            }
-        }
-        collect_test_step(store,children,index,mode,&mut flat)
-    };
-        invariant store.graph() == old(store).graph(), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            c@ == store.graph().constants, mode.and == and, mode.identity == identity, mode.absorber == absorber,
-            identity@ == if and { c.test_true@ } else { c.test_false@ }, absorber@ == if and { c.test_false@ } else { c.test_true@ },
-            test_ids_valid(store.graph(), children@), index <= children.len(),
-            children@.take(children@.len() as int) == children@,
-            match collecting {
-                Ok(true) => test_absorbs(store.graph(), children@, and),
-                Ok(false) => test_ids_valid(store.graph(), flat.view())
-                    && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                        test_combo(store.graph(), sym, theta, flat.view(), event, and)
-                            == test_combo(store.graph(), sym, theta, children@.take(index as int), event, and)),
+impl TestId {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), self@ < old(store).graph().tests.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().tests.len()
+                    && (forall|theta: Subst, event: EventView|
+                        test_truth(final(store).graph(), theta, id@, event)
+                            != test_truth(final(store).graph(), theta, self@, event)),
                 Err(_) => true,
             },
-        ensures matches!(collecting, Ok(false)) ==> index == children.len(),
-            match collecting { Ok(false) => test_ids_valid(store.graph(), flat.view())
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, flat.view(), event, and) == test_combo(store.graph(), sym, theta, children@, event, and)), _ => true },
-        decreases children.len() - index,
-    );
-    if collecting? {
-        return Ok(absorber);
-    }
-    proof_decl! { let ghost collected = flat.view(); }
-    flat.as_mut_slice().sort_unstable();
-    proof_decl! { let ghost sorted = flat.view(); }
-    dedup_ids(&mut flat)?;
-    proof! {
-        lemma_multiset_members(collected, sorted);
-        assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ <= sorted[j]@ by {
-            assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
+    )]
+    pub(crate) fn not<G: KernelStore>(self, store: &mut G) -> KernelResult<TestId> {
+        let mut tasks = WorkVec::new();
+        let mut values = WorkVec::new();
+        tasks.push((self, false));
+        proof! { test_lemma_not_initial(store.graph(), self); }
+        let mut state = Ok(());
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                store.restoration() == old(store).restoration(),
+                model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                state is Ok ==> test_not_state(store.graph(), tasks.view(), values.view(), self),
+            decreases if state is Ok { test_not_work(store.graph(), tasks.view()) + 1 } else { 0 },
+        ))]
+        while !tasks.is_empty() && state.is_ok() {
+            state = test_not_next(store, &mut tasks, &mut values);
         }
-        assert forall|id: TestId| flat.view().contains(id) <==> collected.contains(id) by {
-            assert(flat.view().contains(id) == sorted.contains(id));
-        }
-        assert forall|i: int| 0 <= i < flat.view().len() implies flat.view()[i]@ < store.graph().tests.len() by {
-            assert(collected.contains(flat.view()[i]));
-            let j = choose|j: int| 0 <= j < collected.len() && collected[j] == flat.view()[i];
-        }
-        lemma_dedup_strict(sorted, |id: TestId| id@);
-        assert forall|i: int, j: int| 0 <= i < j < flat.view().len()
-            implies flat.view()[i]@ < flat.view()[j]@ by {
-            assert(dedup_spec(sorted)[i] == flat.view()[i]);
-            assert(dedup_spec(sorted)[j] == flat.view()[j]);
-            assert((|id: TestId| id@)(dedup_spec(sorted)[i])
-                < (|id: TestId| id@)(dedup_spec(sorted)[j]));
-        }
-        assert forall|i: int, j: int| 0 <= i < j < model::test_ids(flat.view()).len()
-            implies model::test_ids(flat.view())[i] < model::test_ids(flat.view())[j] by {
-            assert(model::test_ids(flat.view())[i] == flat.view()[i]@);
-            assert(model::test_ids(flat.view())[j] == flat.view()[j]@);
-        }
-        assert(model::strictly_increasing(model::test_ids(flat.view())));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_combo(store.graph(), sym, theta, flat.view(), event, and)
-                == test_combo(store.graph(), sym, theta, children@, event, and) by {
-            test_lemma_combo_membership(store.graph(), sym, theta, event, flat.view(), collected, and);
+        state?;
+        proof! { test_lemma_not_done(store.graph(), values.view(), self); }
+        match values.pop() {
+            Some(v) => Ok(v),
+            None => Err(HistoryError::normalization_invariant()),
         }
     }
-    let mut collapse = Ok(false);
-    scan!(collapse,index,flat.len(),collapse.is_ok(),prior=>collapse_test_step(store,&flat,index,and,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            test_ids_valid(store.graph(), flat.view()), test_ids_valid(store.graph(), children@), index <= flat.len(),
-            model::strictly_increasing(model::test_ids(flat.view())),
-            collapse is Ok ==> (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, flat.view(), event, and)
-                    == test_combo(old(store).graph(), sym, theta, children@, event, and)),
-            match collapse { Ok(out) => out ==> test_absorbs(store.graph(), flat.view(), and), Err(_) => true },
-        decreases flat.len() - index,
-    );
-    proof! {
-        test_lemma_combo_extends(old(store).graph(), store.graph(), children@);
-        test_lemma_constants_semantics(store.graph());
-    }
-    if collapse? {
-        return Ok(absorber);
-    }
-    let mut kept = WorkVec::new();
-    let mut retaining = Ok(());
-    proof! { assert(flat.view().take(flat.view().len() as int) =~= flat.view()); }
-    scan!(retaining,index,flat.len(),retaining.is_ok(),_prior=>{
+
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            match result { Ok(id) => id@ < final(store).graph().tests.len()
+                && (forall|theta: Subst, event: EventView| language::event_wf(theta)
+                    ==> test_truth(final(store).graph(), theta, id@, event)
+                        == test_combo(final(store).graph(), theta, children@, event, and)), Err(_) => true },
+    )]
+    pub(crate) fn connective<G: KernelStore>(
+        store: &mut G,
+        children: &[Self],
+        and: bool,
+    ) -> KernelResult<Self> {
+        proof! { test_lemma_constants_semantics(store.graph()); }
+        let c = store.constants();
+        let identity = if and { c.test_true } else { c.test_false };
+        let absorber = if and { c.test_false } else { c.test_true };
+        let mode = TestMode {
+            and,
+            identity,
+            absorber,
+        };
+        let mut flat = WorkVec::new();
+        proof! { assert(children@.take(children@.len() as int) =~= children@); }
+        let mut collecting = Ok(false);
+        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>{
+            proof! {
+                assert(children@.take(index as int).push(children@[index as int]) =~= children@.take(index as int + 1));
+                assert forall|theta: Subst, event: EventView|
+                    test_combo(store.graph(), theta, flat.view().push(children@[index as int]), event, and)
+                        == test_combo(store.graph(), theta, children@.take(index as int + 1), event, and) by {
+                    test_lemma_combo_push(store.graph(), theta, event, flat.view(), children@[index as int], and);
+                    test_lemma_combo_push(store.graph(), theta, event, children@.take(index as int), children@[index as int], and);
+                }
+            }
+            collect_test_step(store,children,index,mode,&mut flat)
+        };
+            invariant store.graph() == old(store).graph(), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                c@ == store.graph().constants, mode.and == and, mode.identity == identity, mode.absorber == absorber,
+                identity@ == if and { c.test_true@ } else { c.test_false@ }, absorber@ == if and { c.test_false@ } else { c.test_true@ },
+                test_ids_valid(store.graph(), children@), index <= children.len(),
+                children@.take(children@.len() as int) == children@,
+                match collecting {
+                    Ok(true) => test_absorbs(store.graph(), children@, and),
+                    Ok(false) => test_ids_valid(store.graph(), flat.view())
+                        && (forall|theta: Subst, event: EventView|
+                            test_combo(store.graph(), theta, flat.view(), event, and)
+                                == test_combo(store.graph(), theta, children@.take(index as int), event, and)),
+                    Err(_) => true,
+                },
+            ensures matches!(collecting, Ok(false)) ==> index == children.len(),
+                match collecting { Ok(false) => test_ids_valid(store.graph(), flat.view())
+                && (forall|theta: Subst, event: EventView|
+                    test_combo(store.graph(), theta, flat.view(), event, and) == test_combo(store.graph(), theta, children@, event, and)), _ => true },
+            decreases children.len() - index,
+        );
+        if collecting? {
+            return Ok(absorber);
+        }
+        proof_decl! { let ghost collected = flat.view(); }
+        flat.as_mut_slice().sort_unstable();
+        proof_decl! { let ghost sorted = flat.view(); }
+        dedup_ids(&mut flat)?;
         proof! {
-            flat.view().take(index as int).lemma_filter_push(flat.view()[index as int],
-                |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and));
-            assert(flat.view().take(index as int).push(flat.view()[index as int]) =~= flat.view().take(index as int + 1));
-        }
-        retain_test_step(store,&flat,index,and,&mut kept)
-    };
-        invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            test_ids_valid(store.graph(), flat.view()), index <= flat.len(),
-            model::strictly_increasing(model::test_ids(flat.view())),
-            flat.view().take(flat.view().len() as int) == flat.view(),
-            retaining is Ok ==> kept.view() == flat.view().take(index as int).filter(
-                |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and)),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, flat.view(), event, and)
-                    == test_combo(store.graph(), sym, theta, children@, event, and),
-        ensures retaining is Ok ==> index == flat.len(),
-            retaining is Ok ==> kept.view() == test_retained(store.graph(), flat.view(), and),
-        decreases flat.len() - index,
-    );
-    retaining?;
-    proof! {
-        test_lemma_retained_members(store.graph(), flat.view(), and);
-        test_lemma_retention(store.graph(), flat.view(), kept.view(), and);
-        test_lemma_filter_ordered(flat.view(), |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and), |id: TestId| id@);
-        assert(kept.view() == test_retained(store.graph(), flat.view(), and));
-        assert forall|i: int| 0 <= i < kept.view().len() implies kept.view()[i]@ < store.graph().tests.len() by {
-            assert(kept.view().contains(kept.view()[i]));
-            assert(flat.view().contains(kept.view()[i]));
-            let j = choose|j: int| 0 <= j < flat.view().len() && flat.view()[j] == kept.view()[i];
-        }
-        assert forall|i: int, j: int| 0 <= i < j < model::test_ids(kept.view()).len()
-            implies model::test_ids(kept.view())[i] < model::test_ids(kept.view())[j] by {
-            assert(model::test_ids(kept.view())[i] == kept.view()[i]@);
-            assert(model::test_ids(kept.view())[j] == kept.view()[j]@);
-            assert((|id: TestId| id@)(kept.view()[i]) < (|id: TestId| id@)(kept.view()[j]));
-        }
-        if kept.len() == 1 {
-            assert(kept.view() =~= seq![kept.view()[0]]);
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_combo(store.graph(), sym, theta, kept.view(), event, and)
-                    == test_truth(store.graph(), sym, theta, kept.view()[0]@, event) by {
-                test_lemma_combo_push(store.graph(), sym, theta, event, Seq::empty(), kept.view()[0], and);
+            lemma_multiset_members(collected, sorted);
+            assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ <= sorted[j]@ by {
+                assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
+            }
+            assert forall|id: TestId| flat.view().contains(id) <==> collected.contains(id) by {
+                assert(flat.view().contains(id) == sorted.contains(id));
+            }
+            assert forall|i: int| 0 <= i < flat.view().len() implies flat.view()[i]@ < store.graph().tests.len() by {
+                assert(collected.contains(flat.view()[i]));
+                let j = choose|j: int| 0 <= j < collected.len() && collected[j] == flat.view()[i];
+            }
+            lemma_dedup_strict(sorted, |id: TestId| id@);
+            assert forall|i: int, j: int| 0 <= i < j < flat.view().len()
+                implies flat.view()[i]@ < flat.view()[j]@ by {
+                assert(dedup_spec(sorted)[i] == flat.view()[i]);
+                assert(dedup_spec(sorted)[j] == flat.view()[j]);
+                assert((|id: TestId| id@)(dedup_spec(sorted)[i])
+                    < (|id: TestId| id@)(dedup_spec(sorted)[j]));
+            }
+            assert forall|i: int, j: int| 0 <= i < j < model::test_ids(flat.view()).len()
+                implies model::test_ids(flat.view())[i] < model::test_ids(flat.view())[j] by {
+                assert(model::test_ids(flat.view())[i] == flat.view()[i]@);
+                assert(model::test_ids(flat.view())[j] == flat.view()[j]@);
+            }
+            assert(model::strictly_increasing(model::test_ids(flat.view())));
+            assert forall|theta: Subst, event: EventView|
+                test_combo(store.graph(), theta, flat.view(), event, and)
+                    == test_combo(store.graph(), theta, children@, event, and) by {
+                test_lemma_combo_membership(store.graph(), theta, event, flat.view(), collected, and);
             }
         }
-        assert(test_ids_valid(store.graph(), kept.view()));
-        assert(model::strictly_increasing(model::test_ids(kept.view())));
-        test_lemma_constants_semantics(store.graph());
-        assert(identity@ == if and { store.graph().constants.test_true } else { store.graph().constants.test_false });
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies test_combo(store.graph(), sym, theta, kept.view(), event, and)
-                == test_combo(store.graph(), sym, theta, children@, event, and) by {}
-    }
-    if kept.is_empty() {
+        let mut collapse = Ok(false);
+        scan!(collapse,index,flat.len(),collapse.is_ok(),prior=>collapse_test_step(store,&flat,index,and,prior);
+            invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                test_ids_valid(store.graph(), flat.view()), test_ids_valid(store.graph(), children@), index <= flat.len(),
+                model::strictly_increasing(model::test_ids(flat.view())),
+                collapse is Ok ==> (forall|theta: Subst, event: EventView|
+                    test_combo(store.graph(), theta, flat.view(), event, and)
+                        == test_combo(old(store).graph(), theta, children@, event, and)),
+                match collapse { Ok(out) => out ==> test_absorbs(store.graph(), flat.view(), and), Err(_) => true },
+            decreases flat.len() - index,
+        );
         proof! {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                implies test_truth(store.graph(), sym, theta, identity@, event)
-                    == test_combo(store.graph(), sym, theta, children@, event, and) by {}
+            test_lemma_combo_extends(old(store).graph(), store.graph(), children@);
+            test_lemma_constants_semantics(store.graph());
         }
-        Ok(identity)
-    } else if kept.len() == 1 {
+        if collapse? {
+            return Ok(absorber);
+        }
+        let mut kept = WorkVec::new();
+        let mut retaining = Ok(());
+        proof! { assert(flat.view().take(flat.view().len() as int) =~= flat.view()); }
+        scan!(retaining,index,flat.len(),retaining.is_ok(),_prior=>{
+            proof! {
+                flat.view().take(index as int).lemma_filter_push(flat.view()[index as int],
+                    |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and));
+                assert(flat.view().take(index as int).push(flat.view()[index as int]) =~= flat.view().take(index as int + 1));
+            }
+            retain_test_step(store,&flat,index,and,&mut kept)
+        };
+            invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                test_ids_valid(store.graph(), flat.view()), index <= flat.len(),
+                model::strictly_increasing(model::test_ids(flat.view())),
+                flat.view().take(flat.view().len() as int) == flat.view(),
+                retaining is Ok ==> kept.view() == flat.view().take(index as int).filter(
+                    |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and)),
+                forall|theta: Subst, event: EventView|
+                    test_combo(store.graph(), theta, flat.view(), event, and)
+                        == test_combo(store.graph(), theta, children@, event, and),
+            ensures retaining is Ok ==> index == flat.len(),
+                retaining is Ok ==> kept.view() == test_retained(store.graph(), flat.view(), and),
+            decreases flat.len() - index,
+        );
+        retaining?;
         proof! {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                implies test_truth(store.graph(), sym, theta, kept.view()[0]@, event)
-                    == test_combo(store.graph(), sym, theta, children@, event, and) by {}
+            test_lemma_retained_members(store.graph(), flat.view(), and);
+            test_lemma_retention(store.graph(), flat.view(), kept.view(), and);
+            test_lemma_filter_ordered(flat.view(), |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and), |id: TestId| id@);
+            assert(kept.view() == test_retained(store.graph(), flat.view(), and));
+            assert forall|i: int| 0 <= i < kept.view().len() implies kept.view()[i]@ < store.graph().tests.len() by {
+                assert(kept.view().contains(kept.view()[i]));
+                assert(flat.view().contains(kept.view()[i]));
+                let j = choose|j: int| 0 <= j < flat.view().len() && flat.view()[j] == kept.view()[i];
+            }
+            assert forall|i: int, j: int| 0 <= i < j < model::test_ids(kept.view()).len()
+                implies model::test_ids(kept.view())[i] < model::test_ids(kept.view())[j] by {
+                assert(model::test_ids(kept.view())[i] == kept.view()[i]@);
+                assert(model::test_ids(kept.view())[j] == kept.view()[j]@);
+                assert((|id: TestId| id@)(kept.view()[i]) < (|id: TestId| id@)(kept.view()[j]));
+            }
+            if kept.len() == 1 {
+                assert(kept.view() =~= seq![kept.view()[0]]);
+                assert forall|theta: Subst, event: EventView|
+                    test_combo(store.graph(), theta, kept.view(), event, and)
+                        == test_truth(store.graph(), theta, kept.view()[0]@, event) by {
+                    test_lemma_combo_push(store.graph(), theta, event, Seq::empty(), kept.view()[0], and);
+                }
+            }
+            assert(test_ids_valid(store.graph(), kept.view()));
+            assert(model::strictly_increasing(model::test_ids(kept.view())));
+            test_lemma_constants_semantics(store.graph());
+            assert(identity@ == if and { store.graph().constants.test_true } else { store.graph().constants.test_false });
+            assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                implies test_combo(store.graph(), theta, kept.view(), event, and)
+                    == test_combo(store.graph(), theta, children@, event, and) by {}
         }
-        test_at(&kept, 0)
-    } else {
-        test_intern_step(store, &kept, and)
+        if kept.is_empty() {
+            proof! {
+                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                    implies test_truth(store.graph(), theta, identity@, event)
+                        == test_combo(store.graph(), theta, children@, event, and) by {}
+            }
+            Ok(identity)
+        } else if kept.len() == 1 {
+            proof! {
+                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                    implies test_truth(store.graph(), theta, kept.view()[0]@, event)
+                        == test_combo(store.graph(), theta, children@, event, and) by {}
+            }
+            id_at(&kept, 0)
+        } else {
+            test_intern_step(store, &kept, and)
+        }
     }
 }
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(id) => id@ < final(store).graph().tests.len()
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> test_truth(final(store).graph(), sym, theta, id@, event)
-                    == test_combo(final(store).graph(), sym, theta, children@, event, true)), Err(_) => true },
+#[allow(
+    clippy::option_if_let_else,
+    reason = "Explicit matches preserve the Verus proof structure."
 )]
-pub(crate) fn test_and<G: KernelStore>(store: &mut G, children: &[TestId]) -> KernelResult<TestId> {
-    test_connective(store, children, true)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(id) => id@ < final(store).graph().tests.len()
-            && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> test_truth(final(store).graph(), sym, theta, id@, event)
-                    == test_combo(final(store).graph(), sym, theta, children@, event, false)), Err(_) => true },
-)]
-pub(crate) fn test_or<G: KernelStore>(store: &mut G, children: &[TestId]) -> KernelResult<TestId> {
-    test_connective(store, children, false)
-}
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
@@ -1098,12 +1128,12 @@ fn schedule_test_children<G: KernelStore>(
         let i = loop_try!(
             match remaining.checked_sub(1) {
                 Some(value) => Ok(value),
-                None => Err(invariant()),
+                None => Err(HistoryError::normalization_invariant()),
             },
             failure
         );
         remaining = i;
-        let child = loop_try!(test_child(store, id, i), failure);
+        let child = loop_try!(id.child(store, i), failure);
         proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
         tasks.push((child, false));
     }
@@ -1139,9 +1169,9 @@ fn schedule_test_children<G: KernelStore>(
                     && final(store).graph().tests[final(values).view().last()@ as int]
                         == if and { model::TestNode::And(model::test_ids(sorted)) }
                             else { model::TestNode::Or(model::test_ids(sorted)) }
-                &&& forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                    test_truth(final(store).graph(), sym, theta, final(values).view().last()@, event)
-                    == test_combo(final(store).graph(), sym, theta, source, event, and)
+                &&& forall|theta: Subst, event: EventView|
+                    test_truth(final(store).graph(), theta, final(values).view().last()@, event)
+                    == test_combo(final(store).graph(), theta, source, event, and)
             },
             Err(_) => true,
         },
@@ -1155,11 +1185,11 @@ fn finish_test_not<G: KernelStore>(
     proof_decl! { let ghost original = values.view(); }
     let start = match values.len().checked_sub(count) {
         Some(v) => v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     let children = match values.as_mut_slice().get_mut(start..) {
         Some(v) => v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     // De Morgan preserves every normalized reduction; only canonical ID ordering changes.
     children.sort_unstable();
@@ -1193,12 +1223,12 @@ fn finish_test_not<G: KernelStore>(
         TestView::Or(children)
     })?;
     proof! {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_truth(store.graph(), sym, theta, out@, event)
-                == test_combo(store.graph(), sym, theta,
+        assert forall|theta: Subst, event: EventView|
+            test_truth(store.graph(), theta, out@, event)
+                == test_combo(store.graph(), theta,
                     original.subrange(start as int, original.len() as int), event, and) by {
-            test_lemma_compound_semantics(store.graph(), sym, theta, event, out, sorted, and);
-            test_lemma_combo_permutation(store.graph(), sym, theta, event,
+            test_lemma_compound_semantics(store.graph(), theta, event, out, sorted, and);
+            test_lemma_combo_permutation(store.graph(), theta, event,
                 sorted, original.subrange(start as int, original.len() as int), and);
         }
     }
@@ -1237,9 +1267,9 @@ fn test_not_step<G: KernelStore>(
         let ghost pending = tasks.view();
         let ghost prior_values = values.view();
     }
-    proof! { test_lemma_not_constant_rows(store.graph()); }
+    proof! { model::lemma_graph_wf_elim(store.graph()); }
     store.checkpoint()?;
-    match test_head(store, id)? {
+    match id.head(store)? {
         TestHead::True => {
             values.push(store.constants().test_false);
             proof! {
@@ -1326,7 +1356,7 @@ fn test_not_next<G: KernelStore>(
     proof_decl! { let ghost pending = tasks.view(); }
     let (id, finish) = match tasks.pop() {
         Some(v) => v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     proof! {
         assert(tasks.view().push((id, finish)) =~= pending);
@@ -1338,103 +1368,10 @@ fn test_not_next<G: KernelStore>(
     }
     test_not_step(store, id, finish, tasks, values)
 }
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test@ < old(store).graph().tests.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().tests.len()
-                && (forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                    test_truth(final(store).graph(), sym, theta, id@, event)
-                        != test_truth(final(store).graph(), sym, theta, test@, event)),
-            Err(_) => true,
-        },
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "Preserve the existing Verus-verified function shape."
 )]
-pub(crate) fn test_not<G: KernelStore>(store: &mut G, test: TestId) -> KernelResult<TestId> {
-    let mut tasks = WorkVec::new();
-    let mut values = WorkVec::new();
-    tasks.push((test, false));
-    proof! { test_lemma_not_initial(store.graph(), test); }
-    let mut state = Ok(());
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            store.restoration() == old(store).restoration(),
-            model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            state is Ok ==> test_not_state(store.graph(), tasks.view(), values.view(), test),
-        decreases if state is Ok { test_not_work(store.graph(), tasks.view()) + 1 } else { 0 },
-    ))]
-    while !tasks.is_empty() && state.is_ok() {
-        state = test_not_next(store, &mut tasks, &mut values);
-    }
-    state?;
-    proof! { test_lemma_not_done(store.graph(), values.view(), test); }
-    match values.pop() {
-        Some(v) => Ok(v),
-        None => Err(invariant()),
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        model::regex_node_wf(old(store).graph(), model::RegexNode { kind: kind@, nullable: n }),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && final(store).graph().regexes[id@ as int] == (model::RegexNode { kind: kind@, nullable: n })
-                && model::lift_regex(final(store).graph(), id@) == regex_unbounded_kind(final(store).graph(), kind@),
-            Err(_) => true,
-        },
-)]
-fn intern_regex_step<G: KernelStore>(
-    store: &mut G,
-    kind: RegexKindView<'_>,
-    n: bool,
-) -> KernelResult<RegexId> {
-    let id = store.intern_regex(kind, n)?;
-    proof! { regex_unfold(store.graph(), id@); }
-    Ok(id)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), regex@ < store.graph().regexes.len(),
-    ensures match result {
-        Ok(value) => value == language::nullable(model::lift_regex(store.graph(), regex@)),
-        Err(_) => true,
-    },
-)]
-pub(crate) fn nullable<G: KernelStore>(store: &G, regex: RegexId) -> KernelResult<bool> {
-    proof! { regex_unfold(store.graph(), regex@); }
-    Ok(store.regex(regex)?.nullable)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), test@ < old(store).graph().tests.len(),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        model::graph_wf(final(store).graph()),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == (word.len() == 1 && model::test_holds(sym, theta,
-                            model::lift_test(final(store).graph(), test@), word[0])),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_test<G: KernelStore>(store: &mut G, test: TestId) -> KernelResult<RegexId> {
-    proof! { regex_constants(store.graph()); }
-    store.checkpoint()?;
-    if test == store.constants().test_false {
-        Ok(store.constants().empty)
-    } else {
-        intern_regex_step(store, RegexKindView::Test(test), false)
-    }
-}
 #[verus_verify]
 #[verus_spec(result => ensures result == match head {
     RegexHead::Union(n) => if intersect { Some(n) } else { None },
@@ -1448,6 +1385,10 @@ fn dual_regex_count(head: RegexHead, intersect: bool) -> Option<usize> {
         _ => None,
     }
 }
+#[allow(
+    clippy::semicolon_if_nothing_returned,
+    reason = "Preserve the existing Verus-verified mutation branches."
+)]
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(store.graph()), parent@ < store.graph().regexes.len(),
@@ -1478,7 +1419,7 @@ fn regex_contains<G: KernelStore>(
     ))]
     while low < high {
         let mid = loop_try!(midpoint(low, high), failure);
-        let child = loop_try!(regex_child(store, parent, mid), failure);
+        let child = loop_try!(parent.child(store, mid), failure);
         proof! { regex_child_exact(store.graph(), parent@, mid as nat, child@); }
         if child < id {
             low = mid.saturating_add(1)
@@ -1490,7 +1431,7 @@ fn regex_contains<G: KernelStore>(
         return Err(error);
     }
     if low < count {
-        let child = regex_child(store, parent, low)?;
+        let child = parent.child(store, low)?;
         proof! { regex_child_exact(store.graph(), parent@, low as nat, child@); }
         Ok(child == id)
     } else {
@@ -1529,7 +1470,7 @@ fn regex_subset<G: KernelStore>(
         decreases a_count - i,
     ))]
     while i < a_count {
-        let id = loop_try!(regex_child(store, a, i), failure);
+        let id = loop_try!(a.child(store, i), failure);
         proof! { regex_child_exact(store.graph(), a@, i as nat, id@); }
         included &= loop_try!(regex_contains(store, b, b_count, id), failure);
         i = i.saturating_add(1);
@@ -1563,7 +1504,7 @@ fn regex_complement_step<G: KernelStore>(
 ) -> KernelResult<bool> {
     proof! { regex_contains_prefix(siblings@, index as int, inner); }
     store.checkpoint()?;
-    Ok(found || regex_at(siblings, index)? == inner)
+    Ok(found || id_at(siblings, index)? == inner)
 }
 #[verus_verify]
 #[verus_spec(result =>
@@ -1588,7 +1529,7 @@ fn regex_has_complement<G: KernelStore>(
 ) -> KernelResult<bool> {
     proof! { regex_unfold(store.graph(), a@); }
     store.checkpoint()?;
-    if let RegexHead::Not(inner) = regex_head(store, a)? {
+    if let RegexHead::Not(inner) = a.head(store)? {
         proof! { regex_ids_contains(siblings@, inner); }
         let mut state = Ok(false);
         scan!(state,index,siblings.len(),state.is_ok(),prior=>regex_complement_step(store,inner,siblings,index,prior);
@@ -1624,15 +1565,15 @@ fn regex_absorbed_step<G: KernelStore>(
     intersect: bool,
     mut redundant: bool,
 ) -> KernelResult<bool> {
-    let b = regex_at(siblings, index)?;
+    let b = id_at(siblings, index)?;
     store.checkpoint()?;
     proof! {
         regex_children_count(store.graph(), a@);
         regex_children_count(store.graph(), b@);
     }
     if a != b {
-        let av = regex_head(store, a)?;
-        let bv = regex_head(store, b)?;
+        let av = a.head(store)?;
+        let bv = b.head(store)?;
         if let Some(n) = dual_regex_count(av, intersect) {
             proof! { regex_dual_order(store.graph(), a@, intersect); }
             redundant |= match dual_regex_count(bv, intersect) {
@@ -1675,33 +1616,6 @@ fn regex_absorbed<G: KernelStore>(
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
-        index < regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
-    ensures regex_ids_valid(store.graph(), final(flat).view()),
-        old(flat).view().is_prefix_of(final(flat).view()),
-        match result {
-            Ok(()) => model::regex_ids(final(flat).view())
-                == model::regex_ids(old(flat).view()).push(regex_children(store.graph(), id@)[index as int]),
-            Err(_) => final(flat).view() == old(flat).view(),
-        },
-)]
-fn collect_regex_child_step<G: KernelStore>(
-    store: &G,
-    id: RegexId,
-    index: usize,
-    flat: &mut WorkVec<RegexId>,
-) -> KernelResult<()> {
-    let child = regex_child(store, id, index)?;
-    proof! { regex_child_exact(store.graph(), id@, index as nat, child@); }
-    flat.push(child);
-    proof! {
-        regex_ids_push(flat.view().drop_last(), child);
-        assert(flat.view() == flat.view().drop_last().push(child));
-    }
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
         count == regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
     ensures regex_ids_valid(store.graph(), final(flat).view()),
         old(flat).view().is_prefix_of(final(flat).view()),
@@ -1731,10 +1645,22 @@ fn collect_regex_children<G: KernelStore>(
         decreases count - i,
     ))]
     while i < count {
-        loop_try!(collect_regex_child_step(store, id, i, flat), failure);
+        proof_decl! { let ghost prior = flat.view(); }
+        let child = loop_try!(id.child(store, i), failure);
+        proof! { regex_child_exact(store.graph(), id@, i as nat, child@); }
+        flat.push(child);
+        proof! {
+            regex_ids_push(flat.view().drop_last(), child);
+            assert(flat.view() == flat.view().drop_last().push(child));
+            assert(flat.view() == prior.push(child));
+            assert(model::regex_ids(flat.view()) == model::regex_ids(prior).push(child@));
+        }
         proof! {
             assert(regex_children(store.graph(), id@).subrange(0, i as int + 1)
                 =~= regex_children(store.graph(), id@).subrange(0, i as int).push(regex_children(store.graph(), id@)[i as int]));
+            assert(model::regex_ids(prior).push(child@)
+                =~= model::regex_ids(old(flat).view())
+                    + regex_children(store.graph(), id@).subrange(0, i as int + 1));
         }
         i = i.saturating_add(1);
     }
@@ -1780,14 +1706,14 @@ fn collect_regex_step<G: KernelStore>(
     mode: RegexMode,
     flat: &mut WorkVec<RegexId>,
 ) -> KernelResult<bool> {
-    let id = regex_at(children, index)?;
+    let id = id_at(children, index)?;
     store.checkpoint()?;
     proof! { regex_children_count(store.graph(), id@); }
     if id == mode.absorber {
         return Ok(true);
     }
     if id != mode.identity {
-        match regex_head(store, id)? {
+        match id.head(store)? {
             RegexHead::Union(n) if !mode.intersect => {
                 collect_regex_children(store, id, n, flat)?;
                 proof! { assert(regex_set_piece(store.graph(), id@, mode@) == regex_children(store.graph(), id@)); }
@@ -1809,11 +1735,11 @@ fn collect_regex_step<G: KernelStore>(
         assert(model::regex_ids(old(flat).view()).push(id@) =~= model::regex_ids(old(flat).view()) + seq![id@]);
         assert(model::regex_ids(old(flat).view()) + Seq::<nat>::empty() =~= model::regex_ids(old(flat).view()));
         regex_collect_preserves(store.graph(), id, old(flat).view(), flat.view(), mode@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            implies regex_combo(store.graph(), sym, theta, flat.view(), word, mode.intersect)
-                == regex_combo(store.graph(), sym, theta, children@.subrange(0, index as int + 1), word, mode.intersect) by {
-            regex_combo_push(store.graph(), old(flat).view(), id, sym, theta, word, mode.intersect);
-            regex_combo_prefix(store.graph(), children@, index as int, sym, theta, word, mode.intersect);
+        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            implies regex_combo(store.graph(), theta, flat.view(), word, mode.intersect)
+                == regex_combo(store.graph(), theta, children@.subrange(0, index as int + 1), word, mode.intersect) by {
+            regex_combo_push(store.graph(), old(flat).view(), id, theta, word, mode.intersect);
+            regex_combo_prefix(store.graph(), children@, index as int, theta, word, mode.intersect);
         }
     }
     Ok(false)
@@ -1843,9 +1769,9 @@ fn split_regex_step<G: KernelStore>(
     others: &mut WorkVec<RegexId>,
 ) -> KernelResult<()> {
     store.checkpoint()?;
-    let id = regex_at(flat, index)?;
+    let id = id_at(flat, index)?;
     proof! { model::lemma_graph_regex_wf(store.graph(), id@); }
-    match regex_head(store, id)? {
+    match id.head(store)? {
         RegexHead::Test(t) => {
             tests.push(t);
             proof! { regex_test_ids_push(old(tests).view(), t); }
@@ -1853,11 +1779,11 @@ fn split_regex_step<G: KernelStore>(
         _ => others.push(id),
     }
     proof! {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>, intersect: bool|
-            regex_group_combo(store.graph(), sym, theta, tests.view(), others.view(), word, intersect)
-                == regex_combo(store.graph(), sym, theta, flat@.subrange(0, index as int + 1), word, intersect) by {
+        assert forall|theta: Subst, word: Seq<EventView>, intersect: bool|
+            regex_group_combo(store.graph(), theta, tests.view(), others.view(), word, intersect)
+                == regex_combo(store.graph(), theta, flat@.subrange(0, index as int + 1), word, intersect) by {
             regex_split_preserves(store.graph(), id, old(tests).view(), old(others).view(), tests.view(), others.view(), intersect);
-            regex_combo_prefix(store.graph(), flat@, index as int, sym, theta, word, intersect);
+            regex_combo_prefix(store.graph(), flat@, index as int, theta, word, intersect);
         }
     }
     Ok(())
@@ -1895,12 +1821,12 @@ fn regex_stats_step<G: KernelStore>(
         }
     }
     store.checkpoint()?;
-    let id = regex_at(ids, index)?;
-    let n = nullable(store, id)?;
+    let id = id_at(ids, index)?;
+    let n = id.nullable(store)?;
     stats.all_nullable &= n;
     stats.any_nullable |= id != epsilon && n;
     stats.epsilon |= id == epsilon;
-    let head = regex_head(store, id)?;
+    let head = id.head(store)?;
     if !n {
         match head {
             RegexHead::Not(inner) if inner == epsilon => {}
@@ -1922,9 +1848,9 @@ fn regex_stats_step<G: KernelStore>(
         model::strictly_increasing(model::regex_ids(final(ids).view())),
         match result {
             Ok(removed) => final(ids).view() == (if removed { old(ids).view().remove(index as int) } else { old(ids).view() })
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> regex_combo(final(store).graph(), sym, theta, final(ids).view(), word, mode.intersect)
-                        == regex_combo(final(store).graph(), sym, theta, old(ids).view(), word, mode.intersect),
+                && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    ==> regex_combo(final(store).graph(), theta, final(ids).view(), word, mode.intersect)
+                        == regex_combo(final(store).graph(), theta, old(ids).view(), word, mode.intersect),
             Err(_) => final(ids).view() == old(ids).view(),
         },
 )]
@@ -1935,7 +1861,7 @@ fn retain_regex_step<G: KernelStore>(
     mode: RegexMode,
 ) -> KernelResult<bool> {
     store.checkpoint()?;
-    let id = regex_at(ids, index)?;
+    let id = id_at(ids, index)?;
     let epsilon = store.constants().epsilon;
     let mut stats = Ok(RegexStats {
         all_nullable: true,
@@ -1952,7 +1878,7 @@ fn retain_regex_step<G: KernelStore>(
         decreases ids.len() - scan_index,
     );
     let stats = stats?;
-    let head = regex_head(store, id)?;
+    let head = id.head(store)?;
     let redundant = (!mode.intersect && id == epsilon && stats.any_nullable)
         || (mode.intersect
             && stats.has_nonnullable
@@ -1962,9 +1888,9 @@ fn retain_regex_step<G: KernelStore>(
         proof! {
             regex_retention_remove(store.graph(), ids.view(), index as int, mode@, epsilon, stats@);
             regex_remove_strict(ids.view(), index as int);
-            assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                implies regex_combo(store.graph(), sym, theta, ids.view().remove(index as int), word, mode.intersect)
-                    == regex_combo(store.graph(), sym, theta, ids.view(), word, mode.intersect) by {
+            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                implies regex_combo(store.graph(), theta, ids.view().remove(index as int), word, mode.intersect)
+                    == regex_combo(store.graph(), theta, ids.view(), word, mode.intersect) by {
                 assert(mode@.intersect == mode.intersect);
             }
         }
@@ -1993,7 +1919,7 @@ fn nullable_step<G: KernelStore>(
     prior: bool,
 ) -> KernelResult<bool> {
     proof! { regex_nullable_prefix(store.graph(), ids@, index as int, and); }
-    let n = nullable(store, regex_at(ids, index)?)?;
+    let n = (id_at(ids, index)?).nullable(store)?;
     Ok(if and { prior && n } else { prior || n })
 }
 #[verus_verify]
@@ -2002,323 +1928,513 @@ fn nullable_step<G: KernelStore>(
     ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
         final(store).restoration() == old(store).restoration(),
         match result { Ok(id) => id@ < final(store).graph().regexes.len()
-            && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                    == regex_test_combo(final(store).graph(), sym, theta, tests@, word, intersect), Err(_) => true },
+            && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                    == regex_test_combo(final(store).graph(), theta, tests@, word, intersect), Err(_) => true },
 )]
 fn regex_group_test_step<G: KernelStore>(
     store: &mut G,
     tests: &[TestId],
     intersect: bool,
 ) -> KernelResult<RegexId> {
-    let test = test_connective(store, tests, intersect)?;
+    let test = TestId::connective(store, tests, intersect)?;
     proof_decl! { let ghost test_graph = store.graph(); }
     proof! {
         assert forall|next: model::Graph| model::graph_extends(test_graph, next)
-            implies forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> model::test_holds(sym, theta, model::lift_test(next, test@), event)
-                    == test_combo(next, sym, theta, tests@, event, intersect) by {
+            implies forall|theta: Subst, event: EventView| language::event_wf(theta)
+                ==> model::test_holds(theta, model::lift_test(next, test@), event)
+                    == test_combo(next, theta, tests@, event, intersect) by {
             regex_test_connective_extends(test_graph, next, tests@, test, intersect);
         }
     }
-    let id = regex_test(store, test)?;
+    let id = RegexId::from_test(store, test)?;
     Ok(id)
 }
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len() && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-                model::symbols_wf(sym) ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                    == regex_combo(final(store).graph(), sym, theta, children@, word, intersect),
+impl RegexId {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), self@ < store.graph().regexes.len(),
+        ensures match result {
+            Ok(value) => value == language::nullable(model::lift_regex(store.graph(), self@)),
             Err(_) => true,
         },
-)]
-fn regex_set<G: KernelStore>(
-    store: &mut G,
-    children: &[RegexId],
-    intersect: bool,
-) -> KernelResult<RegexId> {
-    let c = store.constants();
-    proof! { regex_constants(store.graph()); }
-    let identity = if intersect { c.all } else { c.empty };
-    let absorber = if intersect { c.empty } else { c.all };
-    let mode = RegexMode {
-        intersect,
-        identity,
-        absorber,
-    };
-    let mut flat = WorkVec::new();
-    let mut collecting = Ok(false);
-    scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>collect_regex_step(store,children,index,mode,&mut flat);
-        invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            regex_mode_wf(store.graph(), mode@), regex_ids_valid(store.graph(), children@), regex_ids_valid(store.graph(), flat.view()), index <= children.len(),
-            mode.intersect == intersect, mode.absorber == absorber,
-            match collecting {
-                Ok(false) => regex_equivalent(store.graph(), flat.view(), children@.subrange(0, index as int), intersect),
-                Ok(true) => exists|i: int| 0 <= i < index && children@[i] == absorber,
+    )]
+    pub(crate) fn nullable<G: KernelStore>(self, store: &G) -> KernelResult<bool> {
+        proof! { regex_unfold(store.graph(), self@); }
+        Ok(store.regex(self)?.nullable)
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), self@ < old(store).graph().regexes.len(),
+            old(store).valid_store(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                            == language::lang(model::gsem(theta), language::Regex::Star(Box::new(
+                                model::lift_regex(final(store).graph(), self@))), word),
                 Err(_) => true,
             },
-        decreases children.len() - index,
-    );
-    if collecting? {
+    )]
+    pub(crate) fn star<G: KernelStore>(self, store: &mut G) -> KernelResult<RegexId> {
         proof! {
-            let i = choose|i: int| 0 <= i < children.len() && children@[i] == absorber;
-            regex_absorber_member(store.graph(), children@, i, mode@);
-        }
-        return Ok(absorber);
-    }
-    proof! { assert(children@.subrange(0, children.len() as int) =~= children@); }
-    let mut tests = WorkVec::new();
-    let mut others = WorkVec::new();
-    let mut splitting = Ok(());
-    scan!(splitting,index,flat.len(),splitting.is_ok(),_prior=>split_regex_step(store,&flat,index,&mut tests,&mut others);
-        invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            regex_ids_valid(store.graph(), flat.view()), regex_ids_valid(store.graph(), children@),
-            regex_equivalent(store.graph(), flat.view(), children@, intersect),
-            test_ids_valid(store.graph(), tests.view()), regex_ids_valid(store.graph(), others.view()), index <= flat.len(),
-            match splitting { Ok(()) => regex_split_prefix(store.graph(), flat.view(), tests.view(), others.view(), index as nat), Err(_) => true },
-        decreases flat.len() - index,
-    );
-    splitting?;
-    proof_decl! { let ghost grouped_graph = store.graph(); let ghost grouped_others = others.view(); }
-    proof! {
-        assert(flat.view().subrange(0, flat.view().len() as int) =~= flat.view());
-        regex_group_equivalence_extends(grouped_graph, grouped_graph, children@, tests.view(), grouped_others, intersect);
-        assert forall|next: model::Graph| model::graph_extends(grouped_graph, next)
-            implies forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> regex_group_combo(next, sym, theta, tests.view(), grouped_others, word, intersect)
-                    == regex_combo(next, sym, theta, children@, word, intersect) by {
-            regex_group_equivalence_extends(grouped_graph, next, children@, tests.view(), grouped_others, intersect);
-        }
-    }
-    if !tests.is_empty() {
-        let r = regex_group_test_step(store, &tests, intersect)?;
-        proof! {
+            regex_unfold(store.graph(), self@);
             regex_constants(store.graph());
-            assert(model::graph_extends(grouped_graph, store.graph()));
-            regex_group_equivalence_extends(grouped_graph, store.graph(), children@, tests.view(), grouped_others, intersect);
-            assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                implies model::regex_lang(store.graph(), sym, theta, r@, word)
-                    == regex_test_combo(store.graph(), sym, theta, tests.view(), word, intersect) by {};
+            regex_star_laws(store.graph(), self@);
         }
-        if intersect && r == c.empty {
+        store.checkpoint()?;
+        let c = store.constants();
+        match self.head(store)? {
+            RegexHead::Empty | RegexHead::Epsilon => Ok(c.epsilon),
+            RegexHead::All => Ok(c.all),
+            RegexHead::Test(t) if t == c.test_true => Ok(c.all),
+            RegexHead::Star(_) => Ok(self),
+            _ => RegexId::intern(store, RegexKindView::Star(self), true),
+        }
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), self@ < old(store).graph().regexes.len(),
+            old(store).valid_store(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                            == !model::regex_lang(final(store).graph(), theta, self@, word),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn not<G: KernelStore>(self, store: &mut G) -> KernelResult<RegexId> {
+        proof! {
+            regex_unfold(store.graph(), self@);
+            regex_constants(store.graph());
+        }
+        store.checkpoint()?;
+        let c = store.constants();
+        match self.head(store)? {
+            RegexHead::Empty => Ok(c.all),
+            RegexHead::All => Ok(c.empty),
+            RegexHead::Not(inner) => Ok(inner),
+            _ => {
+                let n = !self.nullable(store)?;
+                RegexId::intern(store, RegexKindView::Not(self), n)
+            }
+        }
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), test@ < old(store).graph().tests.len(),
+            old(store).valid_store(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).valid_store(),
+            model::graph_wf(final(store).graph()),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                            == (word.len() == 1 && model::test_holds(theta,
+                                model::lift_test(final(store).graph(), test@), word[0])),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn from_test<G: KernelStore>(store: &mut G, test: TestId) -> KernelResult<RegexId> {
+        proof! { regex_constants(store.graph()); }
+        store.checkpoint()?;
+        if test == store.constants().test_false {
+            Ok(store.constants().empty)
+        } else {
+            RegexId::intern(store, RegexKindView::Test(test), false)
+        }
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), regex_ids_valid(old(store).graph(), children@),
+            old(store).valid_store(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                            == concat_combo(final(store).graph(), theta, children@, word),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn concat<G: KernelStore>(
+        store: &mut G,
+        children: &[RegexId],
+    ) -> KernelResult<RegexId> {
+        let c = store.constants();
+        proof! { regex_constants(store.graph()); }
+        let mut flat = WorkVec::new();
+        let mut collecting = Ok(false);
+        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>concat_collect_step(store,children,index,&mut flat);
+            invariant store.graph() == old(store).graph(), index <= children.len(),
+                store.restoration() == old(store).restoration(),
+                store.valid_store(),
+                model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
+                regex_ids_valid(store.graph(), flat.view()),
+                match collecting {
+                    Ok(false) => model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@.subrange(0, index as int)),
+                    Ok(true) => exists|i: int| 0 <= i < index
+                        && store.graph().regexes[children@[i]@ as int].kind == model::RegexKindNode::Empty,
+                    Err(_) => true,
+                },
+            decreases children.len() - index,
+        );
+        if collecting? {
             proof! {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    implies !regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-                    assert(regex_group_combo(store.graph(), sym, theta, tests.view(), grouped_others, word, intersect)
-                        == regex_combo(store.graph(), sym, theta, children@, word, intersect));
-                    assert(!model::regex_lang(store.graph(), sym, theta, r@, word));
-                }
+                let i = choose|i: int| 0 <= i < children.len()
+                    && store.graph().regexes[children@[i]@ as int].kind == model::RegexKindNode::Empty;
+                regex_concat_absorber(store.graph(), children@, i);
             }
             return Ok(c.empty);
         }
-        if r != c.empty {
-            others.push(r);
-            proof! {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    implies regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                        == regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-                    regex_combo_push(store.graph(), grouped_others, r, sym, theta, word, intersect);
-                    assert(regex_group_combo(store.graph(), sym, theta, tests.view(), grouped_others, word, intersect)
-                        == regex_combo(store.graph(), sym, theta, children@, word, intersect));
-                }
-            }
-        }
         proof! {
-            if r == c.empty {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    implies regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                        == regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-                    assert(!intersect);
-                    assert(!model::regex_lang(store.graph(), sym, theta, r@, word));
-                    assert(regex_group_combo(store.graph(), sym, theta, tests.view(), grouped_others, word, intersect)
-                        == regex_combo(store.graph(), sym, theta, children@, word, intersect));
+            assert(children@.subrange(0, children@.len() as int) =~= children@);
+            assert(model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@));
+        }
+        let mut n = Ok(true);
+        scan!(n,index,flat.len(),n.is_ok(),prior=>nullable_step(store,&flat,index,true,prior);
+            invariant store.graph() == old(store).graph(), index <= flat.len(),
+                store.restoration() == old(store).restoration(),
+                store.valid_store(),
+                model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
+                regex_ids_valid(store.graph(), flat.view()),
+                model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@),
+                match n { Ok(value) => value == regex_nullable_combo(store.graph(), flat.view().subrange(0, index as int), true), Err(_) => true },
+            decreases flat.len() - index,
+        );
+        let n = n?;
+        proof! {
+            assert(flat.view().subrange(0, flat.view().len() as int) =~= flat.view());
+            assert(n == regex_nullable_combo(store.graph(), flat.view(), true));
+            regex_concat_node_wf(store.graph(), flat.view(), n);
+            assert forall|next: model::Graph| model::graph_extends(store.graph(), next)
+                implies forall|theta: Subst, word: Seq<EventView>|
+                    concat_combo(next, theta, flat.view(), word) == concat_combo(next, theta, children@, word) by {
+                regex_concat_normalization_extends(store.graph(), next, children@, flat.view());
+            }
+            assert forall|theta: Subst, word: Seq<EventView>|
+                concat_combo(store.graph(), theta, flat.view(), word)
+                    == concat_combo(store.graph(), theta, children@, word) by {
+                regex_concat_flat_law(store.graph(), children@, theta, word);
+            }
+            assert(model::lift_regexes_bounded(store.graph(), model::regex_ids(flat.view()), store.graph().regexes.len())
+                =~= model::lift_regexes(store.graph(), model::regex_ids(flat.view())));
+            assert(model::regex_node_wf(store.graph(), model::RegexNode { kind: model::RegexKindNode::Concat(model::regex_ids(flat.view())), nullable: n }));
+            assert forall|theta: Subst, word: Seq<EventView>|
+                flat.view().len() == 0 implies concat_combo(store.graph(), theta, children@, word) == (word.len() == 0) by {
+                regex_concat_empty::<model::Test>(model::gsem(theta), word);
+            }
+            assert forall|theta: Subst, word: Seq<EventView>|
+                flat.view().len() == 1 implies concat_combo(store.graph(), theta, children@, word)
+                    == model::regex_lang(store.graph(), theta, flat.view()[0]@, word) by {
+                if flat.view().len() == 1 {
+                    assert(model::lift_regexes(store.graph(), model::regex_ids(flat.view())) =~= seq![model::lift_regex(store.graph(), flat.view()[0]@)]);
+                    language::lemma_concat_singleton(model::gsem(theta), model::lift_regex(store.graph(), flat.view()[0]@), word);
                 }
             }
         }
-    }
-    proof! {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            implies regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                == regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-            assert(regex_group_combo(store.graph(), sym, theta, tests.view(), grouped_others, word, intersect)
-                == regex_combo(store.graph(), sym, theta, children@, word, intersect));
-        }
-    }
-    proof_decl! { let ghost unsorted = others.view(); }
-    others.as_mut_slice().sort_unstable();
-    proof! {
-        regex_multiset_members(unsorted, others.view());
-        regex_member_ids_valid(store.graph(), unsorted, others.view());
-        regex_combo_permutation(store.graph(), unsorted, others.view(), intersect);
-        assert forall|i: int, j: int| 0 <= i < j < others.view().len() implies others.view()[i]@ <= others.view()[j]@ by {
-            assert(!(OrdSpec::cmp_spec(&others.view()[i], &others.view()[j]) is Greater));
-            assert(others.view()[i].0 <= others.view()[j].0);
-        }
-    }
-    proof_decl! { let ghost sorted = others.view(); }
-    dedup_ids(&mut others)?;
-    proof! {
-        regex_member_ids_valid(store.graph(), sorted, others.view());
-        regex_combo_members(store.graph(), sorted, others.view(), intersect);
-        regex_dedup_strict(sorted, others.view());
-    }
-    let mut stats = Ok(RegexStats {
-        all_nullable: true,
-        any_nullable: false,
-        epsilon: false,
-        complement: false,
-        has_nonnullable: false,
-    });
-    scan!(stats,index,others.len(),stats.is_ok(),prior=>regex_stats_step(store,&others,index,c.epsilon,true,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            store.graph().constants == c@, regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
-            regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
-            match stats { Ok(value) => regex_stats_prefix(store.graph(), others.view(), index as nat, c.epsilon, value@, true), Err(_) => true },
-        decreases others.len() - index,
-    );
-    let stats = stats?;
-    proof! {
-        regex_constants(store.graph());
-        regex_stats_decisions(store.graph(), others.view(), c.epsilon, stats@, intersect);
-    }
-    if stats.complement {
-        return Ok(absorber);
-    }
-    if intersect && stats.epsilon {
-        return Ok(if stats.all_nullable {
-            c.epsilon
+        if flat.is_empty() {
+            Ok(c.epsilon)
+        } else if flat.len() == 1 {
+            id_at(&flat, 0)
         } else {
-            c.empty
-        });
-    }
-    let mut index = 0;
-    let mut failure = None;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            regex_ids_valid(store.graph(), others.view()), index <= others.len(),
-            mode.intersect == intersect, regex_ids_valid(store.graph(), children@),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                    == regex_combo(store.graph(), sym, theta, children@, word, intersect),
-            model::strictly_increasing(model::regex_ids(others.view())),
-        decreases others.len() - index,
-    ))]
-    while index < others.len() {
-        proof_decl! { let ghost previous = others.view(); }
-        let removed = loop_try!(retain_regex_step(store, &mut others, index, mode), failure);
-        proof! {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                implies regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                    == regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-                assert(regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                    == regex_combo(store.graph(), sym, theta, previous, word, intersect));
-            }
-        }
-        if !removed {
-            index = index.saturating_add(1);
+            RegexId::intern(store, RegexKindView::Concat(&flat), n)
         }
     }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    let mut n = Ok(intersect);
-    scan!(n,index,others.len(),n.is_ok(),prior=>nullable_step(store,&others,index,intersect,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
-            regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
-            match n { Ok(value) => value == regex_nullable_combo(store.graph(), others.view().subrange(0, index as int), intersect), Err(_) => true },
-        decreases others.len() - index,
-    );
-    let n = n?;
-    proof! {
-        regex_constants(store.graph());
-        assert(others.view().subrange(0, others.view().len() as int) =~= others.view());
-        regex_set_node_wf(store.graph(), others.view(), n, intersect);
-        regex_set_result(store.graph(), others.view(), children@, intersect);
-        assert forall|next: model::Graph| model::graph_extends(store.graph(), next)
-            implies regex_equivalent(next, others.view(), children@, intersect) by {
-            regex_equivalence_extends(store.graph(), next, others.view(), children@, intersect);
-        }
-    }
-    if others.is_empty() {
-        Ok(identity)
-    } else if others.len() == 1 {
-        regex_at(&others, 0)
-    } else {
-        let id = intern_regex_step(
-            store,
-            if intersect {
-                RegexKindView::Intersect(&others)
-            } else {
-                RegexKindView::Union(&others)
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            model::regex_node_wf(old(store).graph(), model::RegexNode { kind: kind@, nullable: n }),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && final(store).graph().regexes[id@ as int] == (model::RegexNode { kind: kind@, nullable: n })
+                    && model::lift_regex(final(store).graph(), id@) == regex_unbounded_kind(final(store).graph(), kind@),
+                Err(_) => true,
             },
-            n,
-        )?;
-        proof! {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                implies model::regex_lang(store.graph(), sym, theta, id@, word)
-                    == regex_combo(store.graph(), sym, theta, children@, word, intersect) by {
-                regex_node_language(store.graph(), id@, sym, theta, word);
-                regex_combo_ids(store.graph(), others.view(), sym, theta, word, intersect);
-                assert(model::regex_lang(store.graph(), sym, theta, id@, word)
-                    == regex_combo_nats(store.graph(), sym, theta, model::regex_ids(others.view()), word, intersect));
-                assert(regex_combo(store.graph(), sym, theta, others.view(), word, intersect)
-                    == regex_combo(store.graph(), sym, theta, children@, word, intersect));
-            }
-        }
+    )]
+    fn intern<G: KernelStore>(
+        store: &mut G,
+        kind: RegexKindView<'_>,
+        n: bool,
+    ) -> KernelResult<RegexId> {
+        let id = store.intern_regex(kind, n)?;
+        proof! { regex_unfold(store.graph(), id@); }
         Ok(id)
     }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex_ids_valid(old(store).graph(), children@),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == regex_combo(final(store).graph(), sym, theta, children@, word, false),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_union<G: KernelStore>(
-    store: &mut G,
-    children: &[RegexId],
-) -> KernelResult<RegexId> {
-    regex_set(store, children, false)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex_ids_valid(old(store).graph(), children@),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == regex_combo(final(store).graph(), sym, theta, children@, word, true),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_intersect<G: KernelStore>(
-    store: &mut G,
-    children: &[RegexId],
-) -> KernelResult<RegexId> {
-    regex_set(store, children, true)
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            match result {
+                Ok(id) => id@ < final(store).graph().regexes.len() && forall|theta: Subst, word: Seq<EventView>|
+                    language::event_wf(theta) ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                        == regex_combo(final(store).graph(), theta, children@, word, intersect),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn set<G: KernelStore>(
+        store: &mut G,
+        children: &[Self],
+        intersect: bool,
+    ) -> KernelResult<Self> {
+        let c = store.constants();
+        proof! { regex_constants(store.graph()); }
+        let identity = if intersect { c.all } else { c.empty };
+        let absorber = if intersect { c.empty } else { c.all };
+        let mode = RegexMode {
+            intersect,
+            identity,
+            absorber,
+        };
+        let mut flat = WorkVec::new();
+        let mut collecting = Ok(false);
+        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>collect_regex_step(store,children,index,mode,&mut flat);
+            invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                regex_mode_wf(store.graph(), mode@), regex_ids_valid(store.graph(), children@), regex_ids_valid(store.graph(), flat.view()), index <= children.len(),
+                mode.intersect == intersect, mode.absorber == absorber,
+                match collecting {
+                    Ok(false) => regex_equivalent(store.graph(), flat.view(), children@.subrange(0, index as int), intersect),
+                    Ok(true) => exists|i: int| 0 <= i < index && children@[i] == absorber,
+                    Err(_) => true,
+                },
+            decreases children.len() - index,
+        );
+        if collecting? {
+            proof! {
+                let i = choose|i: int| 0 <= i < children.len() && children@[i] == absorber;
+                regex_absorber_member(store.graph(), children@, i, mode@);
+            }
+            return Ok(absorber);
+        }
+        proof! { assert(children@.subrange(0, children.len() as int) =~= children@); }
+        let mut tests = WorkVec::new();
+        let mut others = WorkVec::new();
+        let mut splitting = Ok(());
+        scan!(splitting,index,flat.len(),splitting.is_ok(),_prior=>split_regex_step(store,&flat,index,&mut tests,&mut others);
+            invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                regex_ids_valid(store.graph(), flat.view()), regex_ids_valid(store.graph(), children@),
+                regex_equivalent(store.graph(), flat.view(), children@, intersect),
+                test_ids_valid(store.graph(), tests.view()), regex_ids_valid(store.graph(), others.view()), index <= flat.len(),
+                match splitting { Ok(()) => regex_split_prefix(store.graph(), flat.view(), tests.view(), others.view(), index as nat), Err(_) => true },
+            decreases flat.len() - index,
+        );
+        splitting?;
+        proof_decl! { let ghost grouped_graph = store.graph(); let ghost grouped_others = others.view(); }
+        proof! {
+            assert(flat.view().subrange(0, flat.view().len() as int) =~= flat.view());
+            regex_group_equivalence_extends(grouped_graph, grouped_graph, children@, tests.view(), grouped_others, intersect);
+            assert forall|next: model::Graph| model::graph_extends(grouped_graph, next)
+                implies forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    ==> regex_group_combo(next, theta, tests.view(), grouped_others, word, intersect)
+                        == regex_combo(next, theta, children@, word, intersect) by {
+                regex_group_equivalence_extends(grouped_graph, next, children@, tests.view(), grouped_others, intersect);
+            }
+        }
+        if !tests.is_empty() {
+            let r = regex_group_test_step(store, &tests, intersect)?;
+            proof! {
+                regex_constants(store.graph());
+                assert(model::graph_extends(grouped_graph, store.graph()));
+                regex_group_equivalence_extends(grouped_graph, store.graph(), children@, tests.view(), grouped_others, intersect);
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    implies model::regex_lang(store.graph(), theta, r@, word)
+                        == regex_test_combo(store.graph(), theta, tests.view(), word, intersect) by {};
+            }
+            if intersect && r == c.empty {
+                proof! {
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        implies !regex_combo(store.graph(), theta, children@, word, intersect) by {
+                        assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
+                            == regex_combo(store.graph(), theta, children@, word, intersect));
+                        assert(!model::regex_lang(store.graph(), theta, r@, word));
+                    }
+                }
+                return Ok(c.empty);
+            }
+            if r != c.empty {
+                others.push(r);
+                proof! {
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        implies regex_combo(store.graph(), theta, others.view(), word, intersect)
+                            == regex_combo(store.graph(), theta, children@, word, intersect) by {
+                        regex_combo_push(store.graph(), grouped_others, r, theta, word, intersect);
+                        assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
+                            == regex_combo(store.graph(), theta, children@, word, intersect));
+                    }
+                }
+            }
+            proof! {
+                if r == c.empty {
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                        implies regex_combo(store.graph(), theta, others.view(), word, intersect)
+                            == regex_combo(store.graph(), theta, children@, word, intersect) by {
+                        assert(!intersect);
+                        assert(!model::regex_lang(store.graph(), theta, r@, word));
+                        assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
+                            == regex_combo(store.graph(), theta, children@, word, intersect));
+                    }
+                }
+            }
+        }
+        proof! {
+            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                implies regex_combo(store.graph(), theta, others.view(), word, intersect)
+                    == regex_combo(store.graph(), theta, children@, word, intersect) by {
+                assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
+                    == regex_combo(store.graph(), theta, children@, word, intersect));
+            }
+        }
+        proof_decl! { let ghost unsorted = others.view(); }
+        others.as_mut_slice().sort_unstable();
+        proof! {
+            regex_multiset_members(unsorted, others.view());
+            regex_member_ids_valid(store.graph(), unsorted, others.view());
+            regex_combo_permutation(store.graph(), unsorted, others.view(), intersect);
+            assert forall|i: int, j: int| 0 <= i < j < others.view().len() implies others.view()[i]@ <= others.view()[j]@ by {
+                assert(!(OrdSpec::cmp_spec(&others.view()[i], &others.view()[j]) is Greater));
+                assert(others.view()[i].0 <= others.view()[j].0);
+            }
+        }
+        proof_decl! { let ghost sorted = others.view(); }
+        dedup_ids(&mut others)?;
+        proof! {
+            regex_member_ids_valid(store.graph(), sorted, others.view());
+            regex_combo_members(store.graph(), sorted, others.view(), intersect);
+            regex_dedup_strict(sorted, others.view());
+        }
+        let mut stats = Ok(RegexStats {
+            all_nullable: true,
+            any_nullable: false,
+            epsilon: false,
+            complement: false,
+            has_nonnullable: false,
+        });
+        scan!(stats,index,others.len(),stats.is_ok(),prior=>regex_stats_step(store,&others,index,c.epsilon,true,prior);
+            invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                store.graph().constants == c@, regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
+                regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
+                match stats { Ok(value) => regex_stats_prefix(store.graph(), others.view(), index as nat, c.epsilon, value@, true), Err(_) => true },
+            decreases others.len() - index,
+        );
+        let stats = stats?;
+        proof! {
+            regex_constants(store.graph());
+            regex_stats_decisions(store.graph(), others.view(), c.epsilon, stats@, intersect);
+        }
+        if stats.complement {
+            return Ok(absorber);
+        }
+        if intersect && stats.epsilon {
+            return Ok(if stats.all_nullable {
+                c.epsilon
+            } else {
+                c.empty
+            });
+        }
+        let mut index = 0;
+        let mut failure = None;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                regex_ids_valid(store.graph(), others.view()), index <= others.len(),
+                mode.intersect == intersect, regex_ids_valid(store.graph(), children@),
+                forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    ==> regex_combo(store.graph(), theta, others.view(), word, intersect)
+                        == regex_combo(store.graph(), theta, children@, word, intersect),
+                model::strictly_increasing(model::regex_ids(others.view())),
+            decreases others.len() - index,
+        ))]
+        while index < others.len() {
+            proof_decl! { let ghost previous = others.view(); }
+            let removed = loop_try!(retain_regex_step(store, &mut others, index, mode), failure);
+            proof! {
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    implies regex_combo(store.graph(), theta, others.view(), word, intersect)
+                        == regex_combo(store.graph(), theta, children@, word, intersect) by {
+                    assert(regex_combo(store.graph(), theta, others.view(), word, intersect)
+                        == regex_combo(store.graph(), theta, previous, word, intersect));
+                }
+            }
+            if !removed {
+                index = index.saturating_add(1);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        let mut n = Ok(intersect);
+        scan!(n,index,others.len(),n.is_ok(),prior=>nullable_step(store,&others,index,intersect,prior);
+            invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
+                regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
+                match n { Ok(value) => value == regex_nullable_combo(store.graph(), others.view().subrange(0, index as int), intersect), Err(_) => true },
+            decreases others.len() - index,
+        );
+        let n = n?;
+        proof! {
+            regex_constants(store.graph());
+            assert(others.view().subrange(0, others.view().len() as int) =~= others.view());
+            regex_set_node_wf(store.graph(), others.view(), n, intersect);
+            regex_set_result(store.graph(), others.view(), children@, intersect);
+            assert forall|next: model::Graph| model::graph_extends(store.graph(), next)
+                implies regex_equivalent(next, others.view(), children@, intersect) by {
+                regex_equivalence_extends(store.graph(), next, others.view(), children@, intersect);
+            }
+        }
+        if others.is_empty() {
+            Ok(identity)
+        } else if others.len() == 1 {
+            id_at(&others, 0)
+        } else {
+            let id = RegexId::intern(
+                store,
+                if intersect {
+                    RegexKindView::Intersect(&others)
+                } else {
+                    RegexKindView::Union(&others)
+                },
+                n,
+            )?;
+            proof! {
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    implies model::regex_lang(store.graph(), theta, id@, word)
+                        == regex_combo(store.graph(), theta, children@, word, intersect) by {
+                    regex_node_language(store.graph(), id@, theta, word);
+                    regex_combo_ids(store.graph(), others.view(), theta, word, intersect);
+                    assert(model::regex_lang(store.graph(), theta, id@, word)
+                        == regex_combo_nats(store.graph(), theta, model::regex_ids(others.view()), word, intersect));
+                    assert(regex_combo(store.graph(), theta, others.view(), word, intersect)
+                        == regex_combo(store.graph(), theta, children@, word, intersect));
+                }
+            }
+            Ok(id)
+        }
+    }
 }
 #[verus_verify]
 #[verus_spec(result =>
@@ -2347,8 +2463,8 @@ fn concat_collect_step<G: KernelStore>(
 ) -> KernelResult<bool> {
     proof! { regex_concat_flat_prefix(store.graph(), ids@, index as int); }
     store.checkpoint()?;
-    let id = regex_at(ids, index)?;
-    match regex_head(store, id)? {
+    let id = id_at(ids, index)?;
+    match id.head(store)? {
         RegexHead::Empty => Ok(true),
         RegexHead::Epsilon => Ok(false),
         RegexHead::Concat(n) => {
@@ -2362,266 +2478,7 @@ fn concat_collect_step<G: KernelStore>(
         }
     }
 }
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex_ids_valid(old(store).graph(), children@),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == concat_combo(final(store).graph(), sym, theta, children@, word),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_concat<G: KernelStore>(
-    store: &mut G,
-    children: &[RegexId],
-) -> KernelResult<RegexId> {
-    let c = store.constants();
-    proof! { regex_constants(store.graph()); }
-    let mut flat = WorkVec::new();
-    let mut collecting = Ok(false);
-    scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>concat_collect_step(store,children,index,&mut flat);
-        invariant store.graph() == old(store).graph(), index <= children.len(),
-            store.restoration() == old(store).restoration(),
-            store.valid_store(),
-            model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
-            regex_ids_valid(store.graph(), flat.view()),
-            match collecting {
-                Ok(false) => model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@.subrange(0, index as int)),
-                Ok(true) => exists|i: int| 0 <= i < index
-                    && store.graph().regexes[children@[i]@ as int].kind == model::RegexKindNode::Empty,
-                Err(_) => true,
-            },
-        decreases children.len() - index,
-    );
-    if collecting? {
-        proof! {
-            let i = choose|i: int| 0 <= i < children.len()
-                && store.graph().regexes[children@[i]@ as int].kind == model::RegexKindNode::Empty;
-            regex_concat_absorber(store.graph(), children@, i);
-        }
-        return Ok(c.empty);
-    }
-    proof! {
-        assert(children@.subrange(0, children@.len() as int) =~= children@);
-        assert(model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@));
-    }
-    let mut n = Ok(true);
-    scan!(n,index,flat.len(),n.is_ok(),prior=>nullable_step(store,&flat,index,true,prior);
-        invariant store.graph() == old(store).graph(), index <= flat.len(),
-            store.restoration() == old(store).restoration(),
-            store.valid_store(),
-            model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
-            regex_ids_valid(store.graph(), flat.view()),
-            model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@),
-            match n { Ok(value) => value == regex_nullable_combo(store.graph(), flat.view().subrange(0, index as int), true), Err(_) => true },
-        decreases flat.len() - index,
-    );
-    let n = n?;
-    proof! {
-        assert(flat.view().subrange(0, flat.view().len() as int) =~= flat.view());
-        assert(n == regex_nullable_combo(store.graph(), flat.view(), true));
-        regex_concat_node_wf(store.graph(), flat.view(), n);
-        assert forall|next: model::Graph| model::graph_extends(store.graph(), next)
-            implies forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-                concat_combo(next, sym, theta, flat.view(), word) == concat_combo(next, sym, theta, children@, word) by {
-            regex_concat_normalization_extends(store.graph(), next, children@, flat.view());
-        }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            concat_combo(store.graph(), sym, theta, flat.view(), word)
-                == concat_combo(store.graph(), sym, theta, children@, word) by {
-            regex_concat_flat_law(store.graph(), children@, sym, theta, word);
-        }
-        assert(model::lift_regexes_bounded(store.graph(), model::regex_ids(flat.view()), store.graph().regexes.len())
-            =~= model::lift_regexes(store.graph(), model::regex_ids(flat.view())));
-        assert(model::regex_node_wf(store.graph(), model::RegexNode { kind: model::RegexKindNode::Concat(model::regex_ids(flat.view())), nullable: n }));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            flat.view().len() == 0 implies concat_combo(store.graph(), sym, theta, children@, word) == (word.len() == 0) by {
-            regex_concat_empty::<model::Test>(model::gsem(sym, theta), word);
-        }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            flat.view().len() == 1 implies concat_combo(store.graph(), sym, theta, children@, word)
-                == model::regex_lang(store.graph(), sym, theta, flat.view()[0]@, word) by {
-            if flat.view().len() == 1 {
-                assert(model::lift_regexes(store.graph(), model::regex_ids(flat.view())) =~= seq![model::lift_regex(store.graph(), flat.view()[0]@)]);
-                language::lemma_concat_singleton(model::gsem(sym, theta), model::lift_regex(store.graph(), flat.view()[0]@), word);
-            }
-        }
-    }
-    if flat.is_empty() {
-        Ok(c.epsilon)
-    } else if flat.len() == 1 {
-        regex_at(&flat, 0)
-    } else {
-        intern_regex_step(store, RegexKindView::Concat(&flat), n)
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex@ < old(store).graph().regexes.len(),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(
-                            model::lift_regex(final(store).graph(), regex@))), word),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_star<G: KernelStore>(store: &mut G, regex: RegexId) -> KernelResult<RegexId> {
-    proof! {
-        regex_unfold(store.graph(), regex@);
-        regex_constants(store.graph());
-        regex_star_laws(store.graph(), regex@);
-    }
-    store.checkpoint()?;
-    let c = store.constants();
-    match regex_head(store, regex)? {
-        RegexHead::Empty | RegexHead::Epsilon => Ok(c.epsilon),
-        RegexHead::All => Ok(c.all),
-        RegexHead::Test(t) if t == c.test_true => Ok(c.all),
-        RegexHead::Star(_) => Ok(regex),
-        _ => intern_regex_step(store, RegexKindView::Star(regex), true),
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex@ < old(store).graph().regexes.len(),
-        old(store).valid_store(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().regexes.len()
-                && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> model::regex_lang(final(store).graph(), sym, theta, id@, word)
-                        == !model::regex_lang(final(store).graph(), sym, theta, regex@, word),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn regex_not<G: KernelStore>(store: &mut G, regex: RegexId) -> KernelResult<RegexId> {
-    proof! {
-        regex_unfold(store.graph(), regex@);
-        regex_constants(store.graph());
-    }
-    store.checkpoint()?;
-    let c = store.constants();
-    match regex_head(store, regex)? {
-        RegexHead::Empty => Ok(c.all),
-        RegexHead::All => Ok(c.empty),
-        RegexHead::Not(inner) => Ok(inner),
-        _ => {
-            let n = !nullable(store, regex)?;
-            intern_regex_step(store, RegexKindView::Not(regex), n)
-        }
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        model::transition_node_wf(old(store).graph(), node@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().transitions.len()
-                && final(store).graph().transitions[id@ as int] == node@
-                && model::lift_transition(final(store).graph(), id@)
-                    == transition_unbounded_node(final(store).graph(), node@)
-                && tdepth(final(store).graph(), id@) == tdepth_node(final(store).graph(), node@),
-            Err(_) => true,
-        },
-)]
-fn intern_transition_step<G: KernelStore>(
-    store: &mut G,
-    node: TransitionView<'_>,
-) -> KernelResult<TransitionId> {
-    let id = store.intern_transition(node)?;
-    proof! { transition_unfold(store.graph(), id@); tdepth_lemma_unfold(store.graph(), id@); }
-    Ok(id)
-}
 
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex@ < old(store).graph().regexes.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().transitions.len()
-                && final(store).graph().transitions[id@ as int] is Const
-                && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                        == model::regex_lang(final(store).graph(), sym, theta, regex@, word),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn transition_const<G: KernelStore>(
-    store: &mut G,
-    regex: RegexId,
-) -> KernelResult<TransitionId> {
-    proof! { model::lemma_graph_wf_elim(store.graph()); }
-    store.checkpoint()?;
-    let c = store.constants();
-    if regex == c.empty {
-        Ok(c.transition_empty)
-    } else if regex == c.all {
-        Ok(c.transition_all)
-    } else if regex == c.epsilon {
-        Ok(c.transition_epsilon)
-    } else {
-        intern_transition_step(store, TransitionView::Const(regex))
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        test@ < old(store).graph().tests.len(), a@ < old(store).graph().transitions.len(), b@ < old(store).graph().transitions.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(id) => id@ < final(store).graph().transitions.len()
-                && tdepth(final(store).graph(), id@)
-                    <= if_bound(tdepth(old(store).graph(), a@), tdepth(old(store).graph(), b@))
-                && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                        == transition_if_combo(final(store).graph(), sym, theta, test, a, b, event, word),
-            Err(_) => true,
-        },
-)]
-fn local_if<G: KernelStore>(
-    store: &mut G,
-    test: TestId,
-    a: TransitionId,
-    b: TransitionId,
-) -> KernelResult<TransitionId> {
-    proof! { model::lemma_graph_wf_elim(store.graph()); tdepth_lemma_extends_forall(store.graph()); }
-    let c = store.constants();
-    if test == c.test_true || a == b {
-        Ok(a)
-    } else if test == c.test_false {
-        Ok(b)
-    } else {
-        intern_transition_step(
-            store,
-            TransitionView::If {
-                test,
-                then_transition: a,
-                else_transition: b,
-            },
-        )
-    }
-}
 #[verus_verify]
 #[verus_spec(result =>
     requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
@@ -2654,7 +2511,7 @@ fn collect_transition_children<G: KernelStore>(
         decreases count - i,
     ))]
     while i < count {
-        let child = loop_try!(transition_child(store, id, i), failure);
+        let child = loop_try!(id.child(store, i), failure);
         proof_decl! { let ghost prior = flat.view(); }
         proof! { transition_lemma_child(store.graph(), id@, i as nat, child@); }
         flat.push(child);
@@ -2713,7 +2570,7 @@ fn transition_collect_step<G: KernelStore>(
     }
     let id = match pending.pop() {
         Some(v) => v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     store.checkpoint()?;
     proof_decl! { let ghost prefix = pending.view(); }
@@ -2727,7 +2584,7 @@ fn transition_collect_step<G: KernelStore>(
         return Ok(true);
     }
     if id != mode.identity {
-        match transition_head(store, id)? {
+        match id.head(store)? {
             TransitionHead::Union(n) if !mode.intersect => {
                 collect_transition_children(store, id, n, pending)?;
                 proof! {
@@ -2825,10 +2682,10 @@ fn transition_collect_nodes<G: KernelStore>(
             transition_ids_valid(store.graph(), pending.view()), transition_ids_valid(store.graph(), flat.view()),
             regex_ids_valid(store.graph(), constants.view()),
             match state {
-                Ok(collapsed) => forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> transition_collect_combo(store.graph(), sym, theta, p0, f0, rs0, event, word, mode.intersect)
+                Ok(collapsed) => forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    ==> transition_collect_combo(store.graph(), theta, p0, f0, rs0, event, word, mode.intersect)
                         == if collapsed { !mode.intersect } else {
-                            transition_collect_combo(store.graph(), sym, theta, pending.view(), flat.view(), constants.view(), event, word, mode.intersect)
+                            transition_collect_combo(store.graph(), theta, pending.view(), flat.view(), constants.view(), event, word, mode.intersect)
                         },
                 Err(_) => true,
             },
@@ -2845,180 +2702,355 @@ fn transition_collect_nodes<G: KernelStore>(
     state
 }
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(id) => id@ < final(store).graph().transitions.len()
-                && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, intersect)
-                && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                        == transition_combo(final(store).graph(), sym, theta, children@, event, word, intersect),
-            Err(_) => true,
-        },
-)]
-fn transition_collect<G: KernelStore>(
-    store: &mut G,
-    children: &[TransitionId],
-    intersect: bool,
-) -> KernelResult<TransitionId> {
-    proof_decl! { let ghost original = children@; let ghost entry = store.graph(); }
-    proof! {
-        tdepth_lemma_constants(entry);
-        collect_lemma_bound(entry, original, intersect);
-    }
-    let c = store.constants();
-    let identity = if intersect {
-        c.transition_all
-    } else {
-        c.transition_empty
-    };
-    let absorber = if intersect {
-        c.transition_empty
-    } else {
-        c.transition_all
-    };
-    let mode = TransitionMode {
-        intersect,
-        identity,
-        absorber,
-    };
-    proof! {
-        assert(transition_mode_valid(store.graph(), mode@));
-        transition_lemma_identities(store.graph(), mode@);
-    }
-    let mut flat = WorkVec::new();
-    let mut constants = WorkVec::new();
-    let mut pending = WorkVec::new();
-    pending.extend_from_slice(children);
-    proof! {
-        assert(pending.view() == original);
-        assert(flat.view() == Seq::<TransitionId>::empty());
-        assert(constants.view() == Seq::<RegexId>::empty());
-    }
-    if transition_collect_nodes(store, mode, &mut pending, &mut flat, &mut constants)? {
-        proof! {
-            transition_lemma_initial_collection(store.graph(), mode@, original,
-                pending.view(), flat.view(), constants.view(), true);
+impl TransitionId {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex@ < old(store).graph().regexes.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().transitions.len()
+                    && final(store).graph().transitions[id@ as int] is Const
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                        ==> transition_lang(final(store).graph(), theta, id, event, word)
+                            == model::regex_lang(final(store).graph(), theta, regex@, word),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn constant<G: KernelStore>(
+        store: &mut G,
+        regex: RegexId,
+    ) -> KernelResult<TransitionId> {
+        proof! { model::lemma_graph_wf_elim(store.graph()); }
+        store.checkpoint()?;
+        let c = store.constants();
+        if regex == c.empty {
+            Ok(c.transition_empty)
+        } else if regex == c.all {
+            Ok(c.transition_all)
+        } else if regex == c.epsilon {
+            Ok(c.transition_epsilon)
+        } else {
+            TransitionId::intern(store, TransitionView::Const(regex))
         }
-        return Ok(absorber);
     }
-    proof! {
-        transition_lemma_initial_collection(store.graph(), mode@, original,
-            pending.view(), flat.view(), constants.view(), false);
-        collect_lemma_flat(store.graph(), original, pending.view(), flat.view(), constants.view(), intersect);
+
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            test@ < old(store).graph().tests.len(), then_id@ < old(store).graph().transitions.len(),
+            else_id@ < old(store).graph().transitions.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    ==> transition_lang(final(store).graph(), theta, id, event, word)
+                        == transition_if_combo(final(store).graph(), theta, test, then_id, else_id, event, word), Err(_) => true },
+    )]
+    pub(crate) fn if_then_else<G: KernelStore>(
+        store: &mut G,
+        test: TestId,
+        then_id: TransitionId,
+        else_id: TransitionId,
+    ) -> KernelResult<TransitionId> {
+        proof_decl! { let ghost entry = store.graph(); }
+        let id = TransitionId::local_if(store, test, then_id, else_id)?;
+        let path = store.constants().test_true;
+        proof! {
+            assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
+            machine_driver_extension_future(entry, store.graph());
+            machine_driver_if_future(store.graph(), test, then_id, else_id, id);
+        }
+        Action::Clean(id, path).run(store)
     }
-    if !constants.is_empty() {
-        proof_decl! { let ghost before_group = store.graph(); let ghost prior_flat = flat.view(); }
-        let r = regex_set(store, &constants, intersect)?;
-        proof_decl! { let ghost after_regex = store.graph(); }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && transition_result(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0), id), Err(_) => true },
+    )]
+    pub(crate) fn intersect<G: KernelStore>(
+        store: &mut G,
+        children: &[TransitionId],
+    ) -> KernelResult<TransitionId> {
+        let mut xs = WorkVec::new();
+        xs.extend_from_slice(children);
+        Action::Fold(xs, 0).run(store)
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), self@ < old(store).graph().transitions.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && transition_result(final(store).graph(), ActionShape::Not(self@), id), Err(_) => true },
+    )]
+    pub(crate) fn not<G: KernelStore>(self, store: &mut G) -> KernelResult<TransitionId> {
+        Action::Not(self).run(store)
+    }
+
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), self@ < old(store).graph().transitions.len(),
+            regex_ids_valid(old(store).graph(), suffix@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    ==> transition_lang(final(store).graph(), theta, id, event, word)
+                        == transition_append_combo(final(store).graph(), theta, self, suffix@, event, word), Err(_) => true },
+    )]
+    pub(crate) fn append<G: KernelStore>(
+        self,
+        store: &mut G,
+        suffix: &[RegexId],
+    ) -> KernelResult<TransitionId> {
+        proof_decl! { let ghost entry = store.graph(); }
+        let r = RegexId::concat(store, suffix)?;
         proof! {
-            regex_combo_extends(before_group, after_regex, constants.view(), intersect);
-            regex_set_result(after_regex, seq![r], seq![r], intersect);
-            assert(regex_equivalent(after_regex, seq![r], constants.view(), intersect));
+            machine_driver_extension_future(entry, store.graph());
+            machine_driver_append_future(store.graph(), self, suffix@, r);
         }
-        let t = transition_const(store, r)?;
+        Action::Append(self, r).run(store)
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            model::transition_node_wf(old(store).graph(), node@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().transitions.len()
+                    && final(store).graph().transitions[id@ as int] == node@
+                    && model::lift_transition(final(store).graph(), id@)
+                        == transition_unbounded_node(final(store).graph(), node@)
+                    && tdepth(final(store).graph(), id@) == tdepth_node(final(store).graph(), node@),
+                Err(_) => true,
+            },
+    )]
+    fn intern<G: KernelStore>(
+        store: &mut G,
+        node: TransitionView<'_>,
+    ) -> KernelResult<TransitionId> {
+        let id = store.intern_transition(node)?;
+        proof! { transition_unfold(store.graph(), id@); tdepth_lemma_unfold(store.graph(), id@); }
+        Ok(id)
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            test@ < old(store).graph().tests.len(), a@ < old(store).graph().transitions.len(), b@ < old(store).graph().transitions.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(id) => id@ < final(store).graph().transitions.len()
+                    && tdepth(final(store).graph(), id@)
+                        <= if_bound(tdepth(old(store).graph(), a@), tdepth(old(store).graph(), b@))
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                        ==> transition_lang(final(store).graph(), theta, id, event, word)
+                            == transition_if_combo(final(store).graph(), theta, test, a, b, event, word),
+                Err(_) => true,
+            },
+    )]
+    fn local_if<G: KernelStore>(
+        store: &mut G,
+        test: TestId,
+        a: TransitionId,
+        b: TransitionId,
+    ) -> KernelResult<TransitionId> {
+        proof! { model::lemma_graph_wf_elim(store.graph()); tdepth_lemma_extends_forall(store.graph()); }
+        let c = store.constants();
+        if test == c.test_true || a == b {
+            Ok(a)
+        } else if test == c.test_false {
+            Ok(b)
+        } else {
+            TransitionId::intern(
+                store,
+                TransitionView::If {
+                    test,
+                    then_transition: a,
+                    else_transition: b,
+                },
+            )
+        }
+    }
+
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            match result {
+                Ok(id) => id@ < final(store).graph().transitions.len()
+                    && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, intersect)
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                        ==> transition_lang(final(store).graph(), theta, id, event, word)
+                            == transition_combo(final(store).graph(), theta, children@, event, word, intersect),
+                Err(_) => true,
+            },
+    )]
+    pub(crate) fn collect<G: KernelStore>(
+        store: &mut G,
+        children: &[Self],
+        intersect: bool,
+    ) -> KernelResult<Self> {
+        proof_decl! { let ghost original = children@; let ghost entry = store.graph(); }
         proof! {
-            transition_lemma_extends_transitive(before_group, after_regex, store.graph());
-            transition_collected_extends(before_group, store.graph(), original, prior_flat, constants.view(), intersect);
-            regex_equivalence_extends(after_regex, store.graph(), seq![r], constants.view(), intersect);
-            regex_combo_extends(after_regex, store.graph(), seq![r], intersect);
-            regex_set_result(store.graph(), seq![r], constants.view(), intersect);
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                implies transition_lang(store.graph(), sym, theta, t, event, word)
-                    == regex_combo(store.graph(), sym, theta, constants.view(), word, intersect) by {}
-            transition_lemma_group_result(store.graph(), original, prior_flat, constants.view(), mode@, t);
-            tdepth_lemma_constants(store.graph());
-            collect_lemma_const_result(before_group, store.graph(), original, prior_flat, t, t != identity, intersect);
+            tdepth_lemma_constants(entry);
+            collect_lemma_bound(entry, original, intersect);
         }
-        if t == absorber {
+        let c = store.constants();
+        let identity = if intersect {
+            c.transition_all
+        } else {
+            c.transition_empty
+        };
+        let absorber = if intersect {
+            c.transition_empty
+        } else {
+            c.transition_all
+        };
+        let mode = TransitionMode {
+            intersect,
+            identity,
+            absorber,
+        };
+        proof! {
+            assert(transition_mode_valid(store.graph(), mode@));
+            transition_lemma_identities(store.graph(), mode@);
+        }
+        let mut flat = WorkVec::new();
+        let mut constants = WorkVec::new();
+        let mut pending = WorkVec::new();
+        pending.extend_from_slice(children);
+        proof! {
+            assert(pending.view() == original);
+            assert(flat.view() == Seq::<TransitionId>::empty());
+            assert(constants.view() == Seq::<RegexId>::empty());
+        }
+        if transition_collect_nodes(store, mode, &mut pending, &mut flat, &mut constants)? {
+            proof! {
+                transition_lemma_initial_collection(store.graph(), mode@, original,
+                    pending.view(), flat.view(), constants.view(), true);
+            }
             return Ok(absorber);
         }
-        if t != identity {
-            flat.push(t);
+        proof! {
+            transition_lemma_initial_collection(store.graph(), mode@, original,
+                pending.view(), flat.view(), constants.view(), false);
+            collect_lemma_flat(store.graph(), original, pending.view(), flat.view(), constants.view(), intersect);
         }
-    }
-    proof! {
-        if constants.view().len() == 0 { assert(transition_equivalent(store.graph(), original, flat.view(), intersect)); }
-        assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
-        assert(transition_ids_valid(store.graph(), original));
-        assert(transition_ids_valid(store.graph(), flat.view()));
-        tdepth_lemma_extends_forall(entry);
-        assert(collect_weight(store.graph(), flat.view(), intersect) <= collect_weight(store.graph(), original, intersect));
-    }
-    proof_decl! { let ghost unsorted = flat.view(); }
-    flat.as_mut_slice().sort_unstable();
-    proof! {
-        transition_multiset_members(unsorted, flat.view());
-        transition_member_ids_valid(store.graph(), unsorted, flat.view());
-        transition_combo_members(store.graph(), unsorted, flat.view(), intersect);
-        assert forall|i: int, j: int| 0 <= i < j < flat.view().len() implies flat.view()[i]@ <= flat.view()[j]@ by {
-            assert(!(flat.view()[i].cmp_spec(&flat.view()[j]) is Greater));
-        }
-    }
-    proof_decl! { let ghost sorted = flat.view(); }
-    dedup_ids(&mut flat)?;
-    proof! {
-        transition_member_ids_valid(store.graph(), sorted, flat.view());
-        transition_combo_members(store.graph(), sorted, flat.view(), intersect);
-        transition_dedup_strict(sorted, flat.view());
-        assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
-        transition_lemma_set_result(store.graph(), flat.view(), original, intersect);
-        transition_equivalence_future(store.graph(), original, flat.view(), intersect);
-        transition_set_law(flat.view(), intersect);
-        transition_lemma_identities(store.graph(), mode@);
-        assert forall|id: TransitionId| flat.view().contains(id) implies unsorted.contains(id) by {
-            assert(sorted.contains(id));
-        }
-        assert(flat.view().no_duplicates()) by {
-            assert forall|i: int, j: int| 0 <= i < flat.view().len() && 0 <= j < flat.view().len() && i != j
-                implies flat.view()[i] != flat.view()[j] by {
-                assert(model::transition_ids(flat.view())[i] == flat.view()[i]@);
-                assert(model::transition_ids(flat.view())[j] == flat.view()[j]@);
+        if !constants.is_empty() {
+            proof_decl! { let ghost before_group = store.graph(); let ghost prior_flat = flat.view(); }
+            let r = RegexId::set(store, &constants, intersect)?;
+            proof_decl! { let ghost after_regex = store.graph(); }
+            proof! {
+                regex_combo_extends(before_group, after_regex, constants.view(), intersect);
+                regex_set_result(after_regex, seq![r], seq![r], intersect);
+                assert(regex_equivalent(after_regex, seq![r], constants.view(), intersect));
+            }
+            let t = TransitionId::constant(store, r)?;
+            proof! {
+                transition_lemma_extends_transitive(before_group, after_regex, store.graph());
+                transition_collected_extends(before_group, store.graph(), original, prior_flat, constants.view(), intersect);
+                regex_equivalence_extends(after_regex, store.graph(), seq![r], constants.view(), intersect);
+                regex_combo_extends(after_regex, store.graph(), seq![r], intersect);
+                regex_set_result(store.graph(), seq![r], constants.view(), intersect);
+                assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    implies transition_lang(store.graph(), theta, t, event, word)
+                        == regex_combo(store.graph(), theta, constants.view(), word, intersect) by {}
+                transition_lemma_group_result(store.graph(), original, prior_flat, constants.view(), mode@, t);
+                tdepth_lemma_constants(store.graph());
+                collect_lemma_const_result(before_group, store.graph(), original, prior_flat, t, t != identity, intersect);
+            }
+            if t == absorber {
+                return Ok(absorber);
+            }
+            if t != identity {
+                flat.push(t);
             }
         }
-        collect_lemma_subset(store.graph(), flat.view(), unsorted, intersect);
-        collect_lemma_final(entry, store.graph(), original, flat.view(), intersect);
-        tdepths_lemma_extends_forall(store.graph(), flat.view());
-    }
-    if flat.is_empty() {
-        Ok(identity)
-    } else if flat.len() == 1 {
-        match flat.first() {
-            Some(id) => Ok(*id),
-            None => Err(invariant()),
+        proof! {
+            if constants.view().len() == 0 { assert(transition_equivalent(store.graph(), original, flat.view(), intersect)); }
+            assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
+            assert(transition_ids_valid(store.graph(), original));
+            assert(transition_ids_valid(store.graph(), flat.view()));
+            tdepth_lemma_extends_forall(entry);
+            assert(collect_weight(store.graph(), flat.view(), intersect) <= collect_weight(store.graph(), original, intersect));
         }
-    } else {
-        intern_transition_step(
-            store,
-            if intersect {
-                TransitionView::Intersect(&flat)
-            } else {
-                TransitionView::Union(&flat)
-            },
-        )
+        proof_decl! { let ghost unsorted = flat.view(); }
+        flat.as_mut_slice().sort_unstable();
+        proof! {
+            transition_multiset_members(unsorted, flat.view());
+            transition_member_ids_valid(store.graph(), unsorted, flat.view());
+            transition_combo_members(store.graph(), unsorted, flat.view(), intersect);
+            assert forall|i: int, j: int| 0 <= i < j < flat.view().len() implies flat.view()[i]@ <= flat.view()[j]@ by {
+                assert(!(flat.view()[i].cmp_spec(&flat.view()[j]) is Greater));
+            }
+        }
+        proof_decl! { let ghost sorted = flat.view(); }
+        dedup_ids(&mut flat)?;
+        proof! {
+            transition_member_ids_valid(store.graph(), sorted, flat.view());
+            transition_combo_members(store.graph(), sorted, flat.view(), intersect);
+            transition_dedup_strict(sorted, flat.view());
+            assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
+            transition_lemma_set_result(store.graph(), flat.view(), original, intersect);
+            transition_equivalence_future(store.graph(), original, flat.view(), intersect);
+            transition_set_law(flat.view(), intersect);
+            transition_lemma_identities(store.graph(), mode@);
+            assert forall|id: TransitionId| flat.view().contains(id) implies unsorted.contains(id) by {
+                assert(sorted.contains(id));
+            }
+            assert(flat.view().no_duplicates()) by {
+                assert forall|i: int, j: int| 0 <= i < flat.view().len() && 0 <= j < flat.view().len() && i != j
+                    implies flat.view()[i] != flat.view()[j] by {
+                    assert(model::transition_ids(flat.view())[i] == flat.view()[i]@);
+                    assert(model::transition_ids(flat.view())[j] == flat.view()[j]@);
+                }
+            }
+            collect_lemma_subset(store.graph(), flat.view(), unsorted, intersect);
+            collect_lemma_final(entry, store.graph(), original, flat.view(), intersect);
+            tdepths_lemma_extends_forall(store.graph(), flat.view());
+        }
+        if flat.is_empty() {
+            Ok(identity)
+        } else if flat.len() == 1 {
+            match flat.first() {
+                Some(id) => Ok(*id),
+                None => Err(HistoryError::normalization_invariant()),
+            }
+        } else {
+            TransitionId::intern(
+                store,
+                if intersect {
+                    TransitionView::Intersect(&flat)
+                } else {
+                    TransitionView::Union(&flat)
+                },
+            )
+        }
     }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(id) => id@ < final(store).graph().transitions.len()
-                && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, false)
-                && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                    ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                        == transition_combo(final(store).graph(), sym, theta, children@, event, word, false),
-            Err(_) => true,
-        },
-)]
-pub(crate) fn transition_union<G: KernelStore>(
-    store: &mut G,
-    children: &[TransitionId],
-) -> KernelResult<TransitionId> {
-    transition_collect(store, children, false)
 }
 #[verus_verify]
 enum Action {
@@ -3046,81 +3078,90 @@ enum ChildAction {
     PairRight(TransitionId),
 }
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
-        transition_child_action_valid(store.graph(), action@),
-        transition_tasks_valid(store.graph(), transition_action_views(old(tasks).view())),
-    ensures transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_action_views(final(tasks).view())
-                == transition_action_views(old(tasks).view()) + transition_child_actions(store.graph(), id@, action@),
-            Err(_) => true,
-        },
-)]
-fn schedule_transition_children<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    count: usize,
-    action: ChildAction,
-    tasks: &mut WorkVec<Action>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost base = transition_action_views(tasks.view()); }
-    proof! {
-        transition_lemma_children(store.graph(), id@);
-        transition_lemma_child_actions_valid(store.graph(), id@, action@);
-    }
-    let mut failure = None;
-    let mut remaining = count;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant remaining <= count, model::graph_wf(store.graph()),
-            transition_child_count(store.graph(), id@, count as nat),
-            transition_child_action_valid(store.graph(), action@),
-            transition_child_actions(store.graph(), id@, action@).len() == count,
-            transition_tasks_valid(store.graph(), transition_action_views(tasks.view())),
-            base.is_prefix_of(transition_action_views(tasks.view())),
-            failure.is_none() ==> transition_action_views(tasks.view())
-                == base + transition_child_actions(store.graph(), id@, action@).take(count as int - remaining as int),
-        ensures failure.is_none() ==> remaining == 0,
-        decreases remaining,
-    ))]
-    while remaining != 0 {
-        proof_decl! { let ghost prior = tasks.view(); }
-        let i = loop_try!(
-            match remaining.checked_sub(1) {
-                Some(value) => Ok(value),
-                None => Err(invariant()),
+impl ChildAction {
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
+            transition_child_action_valid(store.graph(), self@),
+            transition_tasks_valid(store.graph(), transition_action_views(old(tasks).view())),
+        ensures transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_action_views(final(tasks).view())
+                    == transition_action_views(old(tasks).view()) + transition_child_actions(store.graph(), id@, self@),
+                Err(_) => true,
             },
-            failure
-        );
-        remaining = i;
-        let child = loop_try!(transition_child(store, id, i), failure);
-        proof! { transition_lemma_child(store.graph(), id@, i as nat, child@); }
-        tasks.push(match action {
-            ChildAction::Clean(path) => Action::Clean(child, path),
-            ChildAction::Not => Action::Not(child),
-            ChildAction::Append(r) => Action::Append(child, r),
-            ChildAction::PairLeft(other) => Action::Pair(child, other),
-            ChildAction::PairRight(other) => Action::Pair(other, child),
-        });
+    )]
+    fn schedule<G: KernelStore>(
+        self,
+        store: &G,
+        id: TransitionId,
+        count: usize,
+        tasks: &mut WorkVec<Action>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost base = transition_action_views(tasks.view()); }
         proof! {
-            let shape = transition_child_shape(action@, child@);
-            transition_lemma_child_action_valid(store.graph(), action@, child@);
-            assert(tasks.view().last()@ == shape);
-            assert(tasks.view() == prior.push(tasks.view().last()));
-            transition_action_views_push(prior, tasks.view().last());
-            let index = count as int - remaining as int - 1;
-            assert(0 <= index < count);
-            assert(transition_child_actions(store.graph(), id@, action@)[index] == shape);
-            assert(transition_child_actions(store.graph(), id@, action@).take(index).push(shape)
-                =~= transition_child_actions(store.graph(), id@, action@).take(index + 1));
+            transition_lemma_children(store.graph(), id@);
+            transition_lemma_child_actions_valid(store.graph(), id@, self@);
         }
+        let mut failure = None;
+        // Reverse pushes preserve source order when the LIFO work stack executes.
+        let mut remaining = count;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant remaining <= count, model::graph_wf(store.graph()),
+                transition_child_count(store.graph(), id@, count as nat),
+                transition_child_action_valid(store.graph(), self@),
+                transition_child_actions(store.graph(), id@, self@).len() == count,
+                transition_tasks_valid(store.graph(), transition_action_views(tasks.view())),
+                base.is_prefix_of(transition_action_views(tasks.view())),
+                failure.is_none() ==> transition_action_views(tasks.view())
+                    == base + transition_child_actions(store.graph(), id@, self@).take(count as int - remaining as int),
+            ensures failure.is_none() ==> remaining == 0,
+            decreases remaining,
+        ))]
+        while remaining != 0 {
+            proof_decl! { let ghost prior = tasks.view(); }
+            let i = loop_try!(
+                match remaining.checked_sub(1) {
+                    Some(value) => Ok(value),
+                    None => Err(HistoryError::normalization_invariant()),
+                },
+                failure
+            );
+            remaining = i;
+            let child = loop_try!(id.child(store, i), failure);
+            proof! { transition_lemma_child(store.graph(), id@, i as nat, child@); }
+            tasks.push(match self {
+                ChildAction::Clean(path) => Action::Clean(child, path),
+                ChildAction::Not => Action::Not(child),
+                ChildAction::Append(r) => Action::Append(child, r),
+                ChildAction::PairLeft(other) => Action::Pair(child, other),
+                ChildAction::PairRight(other) => Action::Pair(other, child),
+            });
+            proof! {
+                let shape = transition_child_shape(self@, child@);
+                transition_lemma_child_action_valid(store.graph(), self@, child@);
+                assert(tasks.view().last()@ == shape);
+                assert(tasks.view() == prior.push(tasks.view().last()));
+                transition_action_views_push(prior, tasks.view().last());
+                let index = count as int - remaining as int - 1;
+                assert(0 <= index < count);
+                assert(transition_child_actions(store.graph(), id@, self@)[index] == shape);
+                assert(transition_child_actions(store.graph(), id@, self@).take(index).push(shape)
+                    =~= transition_child_actions(store.graph(), id@, self@).take(index + 1));
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(())
     }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    Ok(())
 }
+
 #[verus_verify]
 #[verus_spec(result => ensures match result {
     Ok(taken) => count <= old(values).view().len()
@@ -3132,15 +3173,14 @@ fn take_values(
     values: &mut WorkVec<TransitionId>,
     count: usize,
 ) -> KernelResult<WorkVec<TransitionId>> {
-    proof! { lemma_id_clones(); }
     let start = match values.len().checked_sub(count) {
         Some(v) => v,
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     };
     let mut result = WorkVec::new();
     match values.get(start..) {
         Some(xs) => result.extend_from_slice(xs),
-        None => return Err(invariant()),
+        None => return Err(HistoryError::normalization_invariant()),
     }
     values.truncate(start);
     Ok(result)
@@ -3172,7 +3212,7 @@ fn suffix_values<G: KernelStore>(
         decreases count - i,
     ))]
     while i < count {
-        let child = loop_try!(suffix_child(store, id, i), failure);
+        let child = loop_try!(id.suffix_child(store, i), failure);
         proof_decl! { let ghost prior = values.view(); }
         proof! { transition_lemma_suffix_child(store.graph(), id@, i as nat, child@); }
         values.push(child);
@@ -3230,7 +3270,7 @@ fn clean_children<G: KernelStore>(
         transition_action_views_push(initial, tasks.view().last());
         assert(tasks.view().last()@ == if intersect { ActionShape::Intersect(count as nat) } else { ActionShape::Union(count as nat) });
     }
-    schedule_transition_children(store, id, count, ChildAction::Clean(path), tasks)?;
+    ChildAction::Clean(path).schedule(store, id, count, tasks)?;
     proof! {
         assert(transition_action_views(tasks.view()) == transition_clean_child_tasks(store.graph(), id, path, intersect, base));
         assert forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
@@ -3278,7 +3318,7 @@ fn pair_conditionals<G: KernelStore>(
     proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
     let ghost entry = store.graph(); }
     proof! {
-        transition_lemma_constants(store.graph());
+        assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
         transition_configuration_future(store.graph(), p0, v0);
         model::lemma_graph_transition_wf(store.graph(), a@);
         model::lemma_graph_transition_wf(store.graph(), b@);
@@ -3294,13 +3334,13 @@ fn pair_conditionals<G: KernelStore>(
             machine_pair_if_language(store.graph(), b, y, yt, ye);
         }
         if xe == c.transition_empty && ye == c.transition_empty {
-            let guard = test_and(store, &[x, y])?;
+            let guard = TestId::connective(store, &[x, y], true)?;
             proof! {
-                assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                    implies model::test_holds(sym, theta, model::lift_test(store.graph(), guard@), event)
-                        == test_combo(store.graph(), sym, theta, seq![x, y], event, true) by {
-                    assert(test_truth(store.graph(), sym, theta, guard@, event)
-                        == test_combo(store.graph(), sym, theta, seq![x, y], event, true));
+                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                    implies model::test_holds(theta, model::lift_test(store.graph(), guard@), event)
+                        == test_combo(store.graph(), theta, seq![x, y], event, true) by {
+                    assert(test_truth(store.graph(), theta, guard@, event)
+                        == test_combo(store.graph(), theta, seq![x, y], event, true));
                 }
                 machine_pair_empty_branches(store.graph(), a, b, x, xt, y, yt, c.transition_empty, guard);
                 tdepth_lemma_extends(entry, store.graph(), c.transition_empty@);
@@ -3360,1023 +3400,934 @@ fn pair_conditionals<G: KernelStore>(
         }
         Ok(())
     } else {
-        Err(invariant())
+        Err(HistoryError::normalization_invariant())
     }
 }
+
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        transition_ids_valid(old(store).graph(), xs.view()),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Fold(model::transition_ids(xs.view()), index as nat), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_fold_step<G: KernelStore>(
-    store: &mut G,
-    xs: WorkVec<TransitionId>,
-    index: usize,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); let ghost original = xs.view(); }
-    proof_decl! { let ghost entry = store.graph(); }
-    proof! {
-        transition_configuration_future(store.graph(), p0, v0);
-        graph_lemma_extends_refl(entry);
-        assert(value_depths(entry, original) =~= tdepths(entry, model::transition_ids(original)));
-    }
-    {
-        if index == 0 {
-            let flat = transition_collect(store, &xs, true)?;
-            proof! { model::lemma_graph_transition_wf(store.graph(), flat@); }
-            match transition_head(store, flat)? {
-                TransitionHead::Intersect(n) => {
-                    let mut children = WorkVec::new();
-                    collect_transition_children(store, flat, n, &mut children)?;
-                    let first = match children.first() {
-                        Some(v) => *v,
-                        None => return Err(invariant()),
-                    };
-                    proof_decl! { let ghost cs = children.view(); }
-                    proof! {
-                        assert(model::transition_ids(cs) == transition_children(store.graph(), flat@));
-                        transition_lemma_children(store.graph(), flat@);
-                        assert(store.graph().transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(cs)));
-                        machine_pair_fold_collection_effect(store.graph(), original, flat, cs, p0, v0);
-                        machine_fold_start(entry, store.graph(), p0, model::transition_ids(original), flat, cs, v0);
-                    }
-                    values.push(first);
-                    tasks.push(Action::Fold(children, 1));
-                    proof! {
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(cs), 1)));
-                    }
-                }
-                _ => {
-                    values.push(flat);
-                    proof! {
-                        machine_pair_set_result(store.graph(), original, ActionShape::Fold(model::transition_ids(original), 0), flat);
-                        transition_lemma_push_result(store.graph(), ActionShape::Fold(model::transition_ids(original), 0), p0, v0, flat);
-                        machine_fold_flat(entry, store.graph(), p0, model::transition_ids(original), v0, flat);
-                    }
-                }
-            }
-        } else if let Some(next) = xs.get(index) {
-            let a = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            let b = *next;
-            let next_index = match index.checked_add(1) {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            tasks.push(Action::Fold(xs, next_index));
-            tasks.push(Action::Pair(a, b));
-            proof! {
-                machine_pair_fold_next_effect(store.graph(), original, index as nat, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(original), next_index as nat))
-                    .push(ActionShape::Pair(a@, b@)));
-                assert(model::transition_ids(original)[index as int] == b@);
-                assert(values.view() == v0.drop_last());
-                machine_fold_next(store.graph(), p0, model::transition_ids(original), index as nat, v0);
-            }
-        }
+impl Action {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            transition_ids_valid(old(store).graph(), xs.view()),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Fold(model::transition_ids(xs.view()), index as nat), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn fold_step<G: KernelStore>(
+        store: &mut G,
+        xs: WorkVec<TransitionId>,
+        index: usize,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); let ghost original = xs.view(); }
+        proof_decl! { let ghost entry = store.graph(); }
         proof! {
-            if index != 0 && index >= original.len() {
-                machine_pair_fold_noop(store.graph(), original, index as nat, p0, v0);
-                machine_fold_noop(store.graph(), p0, model::transition_ids(original), index as nat, v0);
-            }
+            transition_configuration_future(store.graph(), p0, v0);
+            graph_lemma_extends_refl(entry);
+            assert(value_depths(entry, original) =~= tdepths(entry, model::transition_ids(original)));
         }
-    }
-    Ok(())
-}
-
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        id@ < old(store).graph().transitions.len(),
-        path@ < old(store).graph().tests.len(),
-        c@ == old(store).graph().constants,
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Clean(id@, path@),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Clean(id@, path@), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_clean_step<G: KernelStore>(
-    store: &mut G,
-    id: TransitionId,
-    path: TestId,
-    c: &Constants,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
-    proof_decl! { let ghost entry = store.graph(); }
-    proof! { transition_lemma_constants(store.graph()); model::lemma_graph_transition_wf(store.graph(), id@); }
-    proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
-    match transition_head(store, id)? {
-        TransitionHead::Const(_) => {
-            values.push(id);
-            proof! {
-                transition_lemma_clean_identity(store.graph(), id, path);
-                transition_lemma_push_result(store.graph(), ActionShape::Clean(id@, path@), p0, v0, id);
-                machine_value_result(entry, store.graph(), p0, ActionShape::Clean(id@, path@), v0, id);
-            }
-        }
-        TransitionHead::If(test, a, b) => {
-            let yes = test_and(store, &[path, test])?;
-            proof_decl! { let ghost after_yes = store.graph(); }
-            let neg = test_not(store, test)?;
-            proof_decl! { let ghost after_negated = store.graph(); }
-            let no = test_and(store, &[path, neg])?;
-            proof! {
-                transition_lemma_extends_transitive(after_yes, after_negated, store.graph());
-                transition_lemma_extends_transitive(entry, after_yes, store.graph());
-                regex_test_connective_extends(after_yes, store.graph(), seq![path, test], yes, true);
-                transition_test_not_extends(after_negated, store.graph(), test, neg);
-                assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                    implies (model::test_holds(sym, theta, model::lift_test(store.graph(), yes@), event)
-                        == (model::test_holds(sym, theta, model::lift_test(store.graph(), path@), event)
-                            && model::test_holds(sym, theta, model::lift_test(store.graph(), test@), event)))
-                    && (model::test_holds(sym, theta, model::lift_test(store.graph(), no@), event)
-                        == (model::test_holds(sym, theta, model::lift_test(store.graph(), path@), event)
-                            && !model::test_holds(sym, theta, model::lift_test(store.graph(), test@), event))) by {
-                    transition_lemma_test_pair(store.graph(), sym, theta, path, test, event);
-                    transition_lemma_test_pair(store.graph(), sym, theta, path, neg, event);
-                }
-                transition_lemma_clean_if_effect(store.graph(), id, path, test, a, b, yes, no, p0);
-            }
-            if yes == c.test_false {
-                tasks.push(Action::Clean(b, no));
-            } else if no == c.test_false {
-                tasks.push(Action::Clean(a, yes));
-            } else {
-                tasks.push(Action::If(test));
-                tasks.push(Action::Clean(b, no));
-                tasks.push(Action::Clean(a, yes));
-            }
-            proof! {
-                assert(transition_action_views(tasks.view()) == transition_clean_if_tasks(store.graph(), test, a, b, yes, no, p0));
-                machine_clean_if(entry, store.graph(), p0, id, path, test, a, b, yes, no, v0);
-            }
-        }
-        TransitionHead::Union(n) => {
-            clean_children(store, id, n, false, path, tasks)?;
-            proof! { machine_clean_children(store.graph(), p0, id, path, false, v0); }
-        }
-        TransitionHead::Intersect(n) => {
-            clean_children(store, id, n, true, path, tasks)?;
-            proof! { machine_clean_children(store.graph(), p0, id, path, true, v0); }
-        }
-        TransitionHead::Not(inner) => {
-            tasks.push(Action::NotResult);
-            tasks.push(Action::Clean(inner, path));
-            proof! {
-                transition_lemma_clean_not_effect(store.graph(), id, path, inner, p0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)));
-                machine_clean_not(entry, store.graph(), p0, id, path, inner, v0);
-            }
-        }
-        TransitionHead::Append(inner, n) => {
-            let xs = suffix_values(store, id, n)?;
-            proof! { transition_lemma_suffix(store.graph(), id@); }
-            let r = regex_concat(store, &xs)?;
-            tasks.push(Action::AppendResult(r));
-            tasks.push(Action::Clean(inner, path));
-            proof! {
-                transition_lemma_suffix(store.graph(), id@);
-                transition_lemma_clean_append_effect(store.graph(), id, path, inner, xs.view(), r, p0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)));
-                machine_clean_append(entry, store.graph(), p0, id, path, inner, r, v0);
-            }
-        }
-    }
-    Ok(())
-}
-
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        id@ < old(store).graph().transitions.len(),
-        c@ == old(store).graph().constants,
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Not(id@),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Not(id@), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_not_step<G: KernelStore>(
-    store: &mut G,
-    id: TransitionId,
-    c: &Constants,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost entry = store.graph(); let ghost initial = tasks.view();
-    let ghost base = transition_action_views(initial); let ghost prior = values.view(); }
-    proof! {
-        transition_lemma_constants(store.graph());
-        model::lemma_graph_transition_wf(store.graph(), id@);
-        transition_configuration_future(entry, base, prior);
-        graph_lemma_extends_refl(entry);
-    }
-    match transition_head(store, id)? {
-        TransitionHead::Const(r) => {
-            proof_decl! { let ghost head = r; }
-            let r = regex_not(store, r)?;
-            proof_decl! { let ghost before_const = store.graph(); }
-            values.push(transition_const(store, r)?);
-            proof! {
-                machine_unary_not_const_result(before_const, store.graph(), id, head, r, values.view().last());
-                transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
-                transition_lemma_extends_transitive(entry, before_const, store.graph());
-                assert(values.view() == prior.push(values.view().last()));
-                machine_value_result(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
-            }
-        }
-        TransitionHead::Not(inner) => {
-            values.push(inner);
-            proof! {
-                machine_unary_double_not_result(store.graph(), id, inner);
-                transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, inner);
-                machine_not_double(entry, store.graph(), base, id, inner, prior);
-            }
-        }
-        TransitionHead::Append(_, _) => {
-            values.push(intern_transition_step(store, TransitionView::Not(id))?);
-            proof! {
-                transition_lemma_result_same_term(store.graph(), ActionShape::Not(id@), values.view().last());
-                transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
-                assert(values.view() == prior.push(values.view().last()));
-                machine_wrap_interned(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
-            }
-        }
-        TransitionHead::If(test, a, b) => {
-            if a == c.transition_all && b == c.transition_empty {
-                let guard = test_not(store, test)?;
-                proof! {
-                    assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                        implies model::test_holds(sym, theta, model::lift_test(store.graph(), guard@), event)
-                            == !model::test_holds(sym, theta, model::lift_test(store.graph(), test@), event) by {
-                        assert(test_truth(store.graph(), sym, theta, guard@, event)
-                            != test_truth(store.graph(), sym, theta, test@, event));
-                    }
-                }
-                proof_decl! { let ghost before_if = store.graph(); }
-                let out = local_if(store, guard, a, b)?;
-                tasks.push(Action::Clean(out, c.test_true));
-                proof! {
-                    machine_unary_flip_result(before_if, store.graph(), id, test, a, b, guard, out);
-                    machine_unary_clean_result_effect(store.graph(), ActionShape::Not(id@), out, base, prior);
-                    assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Clean(out@, c.test_true@)));
-                    transition_lemma_extends_transitive(entry, before_if, store.graph());
-                    tdepth_lemma_constants(before_if);
-                    machine_not_flip(entry, store.graph(), base, id, test, a, b, out, c.test_true, prior);
-                }
-            } else {
-                tasks.push(Action::CleanIf(test, c.test_true));
-                tasks.push(Action::Not(b));
-                tasks.push(Action::Not(a));
-                proof! {
-                    machine_unary_if_effect(store.graph(), id, test, a, b, None, base, prior);
-                    assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, None, base));
-                    machine_unary_if(entry, store.graph(), base, id, test, a, b, None, prior);
-                }
-            }
-        }
-        TransitionHead::Union(n) => {
-            tasks.push(Action::Intersect(n));
-            proof! {
-                transition_lemma_children(store.graph(), id@);
-                assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Intersect(n as nat)));
-                assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
-            }
-            schedule_transition_children(store, id, n, ChildAction::Not, tasks)?;
-            proof! {
-                machine_unary_children_effect(store.graph(), id, None, true, base, prior);
-                assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, true, base));
-                machine_unary_children(store.graph(), base, id, None, true, prior);
-            }
-        }
-        TransitionHead::Intersect(n) => {
-            tasks.push(Action::Union(n));
-            proof! {
-                transition_lemma_children(store.graph(), id@);
-                assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Union(n as nat)));
-                assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
-            }
-            schedule_transition_children(store, id, n, ChildAction::Not, tasks)?;
-            proof! {
-                machine_unary_children_effect(store.graph(), id, None, false, base, prior);
-                assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, false, base));
-                machine_unary_children(store.graph(), base, id, None, false, prior);
-            }
-        }
-    }
-    Ok(())
-}
-
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        id@ < old(store).graph().transitions.len(),
-        r@ < old(store).graph().regexes.len(),
-        c@ == old(store).graph().constants,
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Append(id@, r@),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Append(id@, r@), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_append_step<G: KernelStore>(
-    store: &mut G,
-    id: TransitionId,
-    r: RegexId,
-    c: &Constants,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost entry = store.graph(); let ghost initial = tasks.view();
-    let ghost base = transition_action_views(initial); let ghost prior = values.view(); }
-    proof! {
-        transition_lemma_constants(store.graph());
-        model::lemma_graph_transition_wf(store.graph(), id@);
-        model::lemma_graph_regex_wf(store.graph(), r@);
-        transition_configuration_future(entry, base, prior);
-        graph_lemma_extends_refl(entry);
-        tdepth_lemma_constants(entry);
-    }
-    {
-        if r == c.epsilon {
-            values.push(id);
-            proof! {
-                machine_unary_append_identity_result(store.graph(), id, r, id);
-                transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, id);
-                machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, id);
-            }
-        } else if r == c.empty {
-            values.push(c.transition_empty);
-            proof! {
-                machine_unary_append_identity_result(store.graph(), id, r, c.transition_empty);
-                transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, c.transition_empty);
-                machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, c.transition_empty);
-            }
-        } else {
-            match transition_head(store, id)? {
-                TransitionHead::Const(head) => {
-                    let out = regex_concat(store, &[head, r])?;
-                    proof_decl! { let ghost before_const = store.graph(); }
-                    values.push(transition_const(store, out)?);
-                    proof! {
-                        machine_unary_append_const_result(before_const, store.graph(), id, head, r, out, values.view().last());
-                        transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
-                        transition_lemma_extends_transitive(entry, before_const, store.graph());
-                        assert(values.view() == prior.push(values.view().last()));
-                        machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
-                    }
-                }
-                TransitionHead::If(test, a, b) => {
-                    tasks.push(Action::CleanIf(test, c.test_true));
-                    tasks.push(Action::Append(b, r));
-                    tasks.push(Action::Append(a, r));
-                    proof! {
-                        machine_unary_if_effect(store.graph(), id, test, a, b, Some(r), base, prior);
-                        assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, Some(r), base));
-                        machine_unary_if(entry, store.graph(), base, id, test, a, b, Some(r), prior);
-                    }
-                }
-                TransitionHead::Union(n) => {
-                    tasks.push(Action::Union(n));
-                    proof! {
-                        transition_lemma_children(store.graph(), id@);
-                        assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Union(n as nat)));
-                        assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
-                    }
-                    schedule_transition_children(store, id, n, ChildAction::Append(r), tasks)?;
-                    proof! {
-                        machine_unary_children_effect(store.graph(), id, Some(r), false, base, prior);
-                        assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, Some(r), false, base));
-                        machine_unary_children(store.graph(), base, id, Some(r), false, prior);
-                    }
-                }
-                TransitionHead::Append(inner, n) => {
-                    let mut xs = suffix_values(store, id, n)?;
-                    proof_decl! { let ghost children = xs.view(); }
-                    proof! { transition_lemma_suffix(store.graph(), id@); }
-                    xs.push(r);
-                    let combined = regex_concat(store, &xs)?;
-                    tasks.push(Action::Append(inner, combined));
-                    proof! {
-                        machine_unary_append_nested_effect(store.graph(), id, inner, r, combined, children, base, prior);
-                        assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Append(inner@, combined@)));
-                        machine_append_nested(entry, store.graph(), base, id, r, inner, combined, prior);
-                    }
-                }
-                TransitionHead::Intersect(_) | TransitionHead::Not(_) => {
-                    let mut xs = WorkVec::new();
-                    match regex_head(store, r)? {
-                        RegexHead::Concat(n) => {
-                            proof! { regex_children_count(store.graph(), r@); }
-                            collect_regex_children(store, r, n, &mut xs)?
+        {
+            if index == 0 {
+                let flat = TransitionId::collect(store, &xs, true)?;
+                proof! { model::lemma_graph_transition_wf(store.graph(), flat@); }
+                match flat.head(store)? {
+                    TransitionHead::Intersect(n) => {
+                        let mut children = WorkVec::new();
+                        collect_transition_children(store, flat, n, &mut children)?;
+                        let first = match children.first() {
+                            Some(v) => *v,
+                            None => return Err(HistoryError::normalization_invariant()),
+                        };
+                        proof_decl! { let ghost cs = children.view(); }
+                        proof! {
+                            assert(model::transition_ids(cs) == transition_children(store.graph(), flat@));
+                            transition_lemma_children(store.graph(), flat@);
+                            assert(store.graph().transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(cs)));
+                            machine_pair_fold_collection_effect(store.graph(), original, flat, cs, p0, v0);
+                            machine_fold_start(entry, store.graph(), p0, model::transition_ids(original), flat, cs, v0);
                         }
-                        _ => xs.push(r),
+                        values.push(first);
+                        tasks.push(Action::Fold(children, 1));
+                        proof! {
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(cs), 1)));
+                        }
                     }
-                    proof! {
-                        regex_children_count(store.graph(), r@);
-                        machine_unary_suffix_language(store.graph(), r, xs.view());
+                    _ => {
+                        values.push(flat);
+                        proof! {
+                            machine_pair_set_result(store.graph(), original, ActionShape::Fold(model::transition_ids(original), 0), flat);
+                            transition_lemma_push_result(store.graph(), ActionShape::Fold(model::transition_ids(original), 0), p0, v0, flat);
+                            machine_fold_flat(entry, store.graph(), p0, model::transition_ids(original), v0, flat);
+                        }
                     }
-                    proof_decl! { let ghost before_intern = store.graph(); }
-                    values.push(intern_transition_step(
-                        store,
-                        TransitionView::Append {
-                            transition: id,
-                            suffix: &xs,
-                        },
-                    )?);
-                    proof! {
-                        machine_unary_append_raw_result(before_intern, store.graph(), id, r, xs.view(), values.view().last());
-                        transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
-                        transition_lemma_extends_transitive(entry, before_intern, store.graph());
-                        assert(values.view() == prior.push(values.view().last()));
-                        machine_wrap_interned(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
-                    }
+                }
+            } else if let Some(next) = xs.get(index) {
+                let a = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                let b = *next;
+                let next_index = match index.checked_add(1) {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                tasks.push(Action::Fold(xs, next_index));
+                tasks.push(Action::Pair(a, b));
+                proof! {
+                    machine_pair_fold_next_effect(store.graph(), original, index as nat, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(original), next_index as nat))
+                        .push(ActionShape::Pair(a@, b@)));
+                    assert(model::transition_ids(original)[index as int] == b@);
+                    assert(values.view() == v0.drop_last());
+                    machine_fold_next(store.graph(), p0, model::transition_ids(original), index as nat, v0);
+                }
+            }
+            proof! {
+                if index != 0 && index >= original.len() {
+                    machine_pair_fold_noop(store.graph(), original, index as nat, p0, v0);
+                    machine_fold_noop(store.graph(), p0, model::transition_ids(original), index as nat, v0);
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        a@ < old(store).graph().transitions.len(),
-        b@ < old(store).graph().transitions.len(),
-        c@ == old(store).graph().constants,
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Pair(a@, b@), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_pair_step<G: KernelStore>(
-    store: &mut G,
-    a: TransitionId,
-    b: TransitionId,
-    c: &Constants,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
-    let ghost entry = store.graph(); }
-    proof! {
-        transition_lemma_constants(store.graph());
-        transition_configuration_future(store.graph(), p0, v0);
-        model::lemma_graph_transition_wf(store.graph(), a@);
-        model::lemma_graph_transition_wf(store.graph(), b@);
-        graph_lemma_extends_refl(entry);
-        tdepth_lemma_constants(entry);
-        tdepth_lemma_pos(entry, a@);
-        tdepth_lemma_pos(entry, b@);
-        lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
-    }
-    {
-        if a == b || b == c.transition_all {
-            values.push(a);
-            proof! {
-                machine_pair_identity_result(store.graph(), a, b, a, c.transition_all, c.transition_empty);
-                transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, a);
-                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, a);
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            id@ < old(store).graph().transitions.len(),
+            path@ < old(store).graph().tests.len(),
+            c@ == old(store).graph().constants,
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Clean(id@, path@),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Clean(id@, path@), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn clean_step<G: KernelStore>(
+        store: &mut G,
+        id: TransitionId,
+        path: TestId,
+        c: &Constants,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
+        proof_decl! { let ghost entry = store.graph(); }
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        proof! { assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); } model::lemma_graph_transition_wf(store.graph(), id@); }
+        proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
+        match id.head(store)? {
+            TransitionHead::Const(_) => {
+                values.push(id);
+                proof! {
+                    transition_lemma_clean_identity(store.graph(), id, path);
+                    transition_lemma_push_result(store.graph(), ActionShape::Clean(id@, path@), p0, v0, id);
+                    machine_value_result(entry, store.graph(), p0, ActionShape::Clean(id@, path@), v0, id);
+                }
             }
-        } else if a == c.transition_all {
-            values.push(b);
-            proof! {
-                machine_pair_identity_result(store.graph(), a, b, b, c.transition_all, c.transition_empty);
-                transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, b);
-                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, b);
+            TransitionHead::If(test, a, b) => {
+                let yes = TestId::connective(store, &[path, test], true)?;
+                proof_decl! { let ghost after_yes = store.graph(); }
+                let neg = test.not(store)?;
+                proof_decl! { let ghost after_negated = store.graph(); }
+                let no = TestId::connective(store, &[path, neg], true)?;
+                proof! {
+                    transition_lemma_extends_transitive(after_yes, after_negated, store.graph());
+                    transition_lemma_extends_transitive(entry, after_yes, store.graph());
+                    regex_test_connective_extends(after_yes, store.graph(), seq![path, test], yes, true);
+                    transition_test_not_extends(after_negated, store.graph(), test, neg);
+                    assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                        implies (model::test_holds(theta, model::lift_test(store.graph(), yes@), event)
+                            == (model::test_holds(theta, model::lift_test(store.graph(), path@), event)
+                                && model::test_holds(theta, model::lift_test(store.graph(), test@), event)))
+                        && (model::test_holds(theta, model::lift_test(store.graph(), no@), event)
+                            == (model::test_holds(theta, model::lift_test(store.graph(), path@), event)
+                                && !model::test_holds(theta, model::lift_test(store.graph(), test@), event))) by {
+                        transition_lemma_test_pair(store.graph(), theta, path, test, event);
+                        transition_lemma_test_pair(store.graph(), theta, path, neg, event);
+                    }
+                    transition_lemma_clean_if_effect(store.graph(), id, path, test, a, b, yes, no, p0);
+                }
+                if yes == c.test_false {
+                    tasks.push(Action::Clean(b, no));
+                } else if no == c.test_false {
+                    tasks.push(Action::Clean(a, yes));
+                } else {
+                    tasks.push(Action::If(test));
+                    tasks.push(Action::Clean(b, no));
+                    tasks.push(Action::Clean(a, yes));
+                }
+                proof! {
+                    assert(transition_action_views(tasks.view()) == transition_clean_if_tasks(store.graph(), test, a, b, yes, no, p0));
+                    machine_clean_if(entry, store.graph(), p0, id, path, test, a, b, yes, no, v0);
+                }
             }
-        } else if a == c.transition_empty || b == c.transition_empty {
-            values.push(c.transition_empty);
-            proof! {
-                machine_pair_identity_result(store.graph(), a, b, c.transition_empty, c.transition_all, c.transition_empty);
-                transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
-                machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
+            TransitionHead::Union(n) => {
+                clean_children(store, id, n, false, path, tasks)?;
+                proof! { machine_clean_children(store.graph(), p0, id, path, false, v0); }
             }
-        } else {
-            let left = transition_head(store, a)?;
-            let right = transition_head(store, b)?;
-            match (left, right) {
-                (TransitionHead::Const(x), TransitionHead::Const(y)) => {
-                    let r = regex_intersect(store, &[x, y])?;
-                    proof_decl! { let ghost after_regex = store.graph(); }
-                    values.push(transition_const(store, r)?);
-                    proof! {
-                        let out = values.view().last();
-                        machine_pair_constant_result(after_regex, store.graph(), a, b, x, y, r, out);
-                        transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
-                        transition_lemma_extends_transitive(entry, after_regex, store.graph());
-                        machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
-                    }
+            TransitionHead::Intersect(n) => {
+                clean_children(store, id, n, true, path, tasks)?;
+                proof! { machine_clean_children(store.graph(), p0, id, path, true, v0); }
+            }
+            TransitionHead::Not(inner) => {
+                tasks.push(Action::NotResult);
+                tasks.push(Action::Clean(inner, path));
+                proof! {
+                    transition_lemma_clean_not_effect(store.graph(), id, path, inner, p0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)));
+                    machine_clean_not(entry, store.graph(), p0, id, path, inner, v0);
                 }
-                (TransitionHead::If(_, _, _), TransitionHead::If(_, _, _)) => {
-                    pair_conditionals(store, a, b, left, right, tasks, values)?
-                }
-                (TransitionHead::Union(n), _) => {
-                    tasks.push(Action::Union(n));
-                    proof! {
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(n as nat)));
-                        assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
-                        transition_lemma_children(store.graph(), a@);
-                        assert(transition_children(store.graph(), a@).len() == n);
-                    }
-                    schedule_transition_children(store, a, n, ChildAction::PairLeft(b), tasks)?;
-                    proof! {
-                        machine_pair_union_effect(store.graph(), a, b, true, p0, v0);
-                        assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
-                            transition_action_views(tasks.view()), values.view()));
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
-                            transition_children(store.graph(), a@).len())) + transition_child_actions(store.graph(), a@,
-                            ChildShape::PairLeft(b@)));
-                        machine_pair_union(store.graph(), p0, a, b, true, v0);
-                    }
-                }
-                (_, TransitionHead::Union(n)) => {
-                    tasks.push(Action::Union(n));
-                    proof! {
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(n as nat)));
-                        assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
-                        transition_lemma_children(store.graph(), b@);
-                        assert(transition_children(store.graph(), b@).len() == n);
-                    }
-                    schedule_transition_children(store, b, n, ChildAction::PairRight(a), tasks)?;
-                    proof! {
-                        machine_pair_union_effect(store.graph(), a, b, false, p0, v0);
-                        assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
-                            transition_action_views(tasks.view()), values.view()));
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
-                            transition_children(store.graph(), b@).len())) + transition_child_actions(store.graph(), b@,
-                            ChildShape::PairRight(a@)));
-                        machine_pair_union(store.graph(), p0, a, b, false, v0);
-                    }
-                }
-                (TransitionHead::If(test, t, e), _) => {
-                    tasks.push(Action::CleanIf(test, c.test_true));
-                    tasks.push(Action::Pair(e, b));
-                    tasks.push(Action::Pair(t, b));
-                    proof! {
-                        machine_pair_if_language(store.graph(), a, test, t, e);
-                        machine_pair_if_effect(store.graph(), a, b, test, t, b, e, b, p0, v0);
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
-                            .push(ActionShape::Pair(e@, b@)).push(ActionShape::Pair(t@, b@)));
-                        machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, true, v0);
-                    }
-                }
-                (_, TransitionHead::If(test, t, e)) => {
-                    tasks.push(Action::CleanIf(test, c.test_true));
-                    tasks.push(Action::Pair(a, e));
-                    tasks.push(Action::Pair(a, t));
-                    proof! {
-                        machine_pair_if_language(store.graph(), b, test, t, e);
-                        machine_pair_if_effect(store.graph(), a, b, test, a, t, a, e, p0, v0);
-                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
-                            .push(ActionShape::Pair(a@, e@)).push(ActionShape::Pair(a@, t@)));
-                        machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, false, v0);
-                    }
-                }
-                _ => {
-                    values.push(transition_collect(store, &[a, b], true)?);
-                    proof! {
-                        let out = values.view().last();
-                        machine_pair_set_result(store.graph(), seq![a, b], ActionShape::Pair(a@, b@), out);
-                        transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
-                        collect_lemma_pair_bound(entry, a, b);
-                        machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
-                    }
+            }
+            TransitionHead::Append(inner, n) => {
+                let xs = suffix_values(store, id, n)?;
+                proof! { transition_lemma_suffix(store.graph(), id@); }
+                let r = RegexId::concat(store, &xs)?;
+                tasks.push(Action::AppendResult(r));
+                tasks.push(Action::Clean(inner, path));
+                proof! {
+                    transition_lemma_suffix(store.graph(), id@);
+                    transition_lemma_clean_append_effect(store.graph(), id, path, inner, xs.view(), r, p0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)));
+                    machine_clean_append(entry, store.graph(), p0, id, path, inner, r, v0);
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_action_valid(old(store).graph(), task@),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), task@,
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()), task@, old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_step<G: KernelStore>(
-    store: &mut G,
-    task: Action,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
-    let ghost entry = store.graph(); }
-    proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
-    store.checkpoint()?;
-    let c = store.constants();
-    match task {
-        Action::Union(n) => {
-            let xs = take_values(values, n)?;
-            values.push(transition_union(store, &xs)?);
-            proof! {
-                machine_driver_union_effect(store.graph(), n as nat, p0, v0, values.view().last());
-                assert(values.view() == v0.take(v0.len() as int - n as int).push(values.view().last()));
-                machine_driver_union(entry, store.graph(), p0, n as nat, v0, values.view().last());
-            }
-        }
-        Action::Intersect(n) => {
-            let xs = take_values(values, n)?;
-            tasks.push(Action::Fold(xs, 0));
-            proof! {
-                machine_driver_intersect_effect(store.graph(), n as nat, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(
-                    model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int)), 0)));
-                machine_driver_intersect(store.graph(), p0, n as nat, v0);
-            }
-        }
-        Action::Fold(xs, index) => {
-            proof! {
-                assert forall|i: int| 0 <= i < xs.view().len() implies xs.view()[i]@ < store.graph().transitions.len() by {
-                    assert(model::transition_ids(xs.view())[i] == xs.view()[i]@);
-                }
-            }
-            transition_fold_step(store, xs, index, tasks, values)?;
-        }
-        Action::If(test) => {
-            let b = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            let a = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            proof! {
-                assert(values.view() =~= v0.take(v0.len() as int - 2));
-                assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
-            }
-            values.push(local_if(store, test, a, b)?);
-            proof! {
-                machine_driver_if_effect(store.graph(), test, None, p0, v0, values.view().last());
-                assert(values.view() == v0.take(v0.len() as int - 2).push(values.view().last()));
-                machine_driver_if(entry, store.graph(), p0, ActionShape::If(test@), v0, values.view().last());
-            }
-        }
-        Action::CleanIf(test, path) => {
-            let b = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            let a = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            proof! {
-                assert(values.view() =~= v0.take(v0.len() as int - 2));
-                assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
-            }
-            let out = local_if(store, test, a, b)?;
-            tasks.push(Action::Clean(out, path));
-            proof! {
-                machine_driver_if_effect(store.graph(), test, Some(path), p0, v0, out);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Clean(out@, path@)));
-                machine_driver_clean_if(entry, store.graph(), p0, test, path, v0, out);
-            }
-        }
-        Action::Clean(id, path) => transition_clean_step(store, id, path, &c, tasks, values)?,
-        Action::Not(id) => transition_not_step(store, id, &c, tasks, values)?,
-        Action::Append(id, r) => transition_append_step(store, id, r, &c, tasks, values)?,
-        Action::Pair(a, b) => transition_pair_step(store, a, b, &c, tasks, values)?,
-        Action::NotResult => {
-            let id = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            proof! { assert(values.view() =~= v0.drop_last()); }
-            tasks.push(Action::Not(id));
-            proof! {
-                machine_driver_result_effect(store.graph(), ActionShape::NotResult, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Not(id@)));
-                machine_driver_result(store.graph(), p0, None, v0);
-            }
-        }
-        Action::AppendResult(r) => {
-            let id = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            proof! { assert(values.view() =~= v0.drop_last()); }
-            tasks.push(Action::Append(id, r));
-            proof! {
-                machine_driver_result_effect(store.graph(), ActionShape::AppendResult(r@), p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Append(id@, r@)));
-                machine_driver_result(store.graph(), p0, Some(r@), v0);
-            }
-        }
-        Action::SwapThen => {
-            let a = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            let b = match values.pop() {
-                Some(v) => v,
-                None => return Err(invariant()),
-            };
-            proof! { assert(values.view() =~= v0.take(v0.len() as int - 2)); }
-            values.push(a);
-            values.push(b);
-            proof! {
-                machine_driver_swap_effect(store.graph(), p0, v0);
-                assert(values.view() =~= v0.take(v0.len() as int - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]));
-                machine_driver_swap(store.graph(), p0, v0);
-            }
-        }
-    }
-    Ok(())
-}
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        match result {
-            Ok(()) => transition_program_refines(
-                transition_program(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-                transition_program(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()))
-                && machine_cost(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view())
-                    < machine_cost(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-            Err(_) => true,
-        },
-)]
-fn transition_next<G: KernelStore>(
-    store: &mut G,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost entry = store.graph(); let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
-    let task = match tasks.pop() {
-        Some(v) => v,
-        None => return Err(invariant()),
-    };
-    proof_decl! { let ghost shape = task@; let ghost pending = transition_action_views(tasks.view()); }
-    proof! { assert(p0 =~= pending.push(shape)); }
-    proof! {
-        assert forall|i: int| 0 <= i < pending.len() implies transition_action_valid(store.graph(), pending[i]) by {
-            assert(p0[i] == pending[i]);
-            assert(transition_action_valid(store.graph(), p0[i]));
-        }
-    }
-    transition_step(store, task, tasks, values)?;
-    proof! {
-        transition_lemma_program_stable(entry, store.graph(), p0, v0);
-        transition_lemma_effect_frame(store.graph(), shape, pending, v0, transition_action_views(tasks.view()), values.view());
-    }
-    Ok(())
-}
-#[verus_verify]
-// Only successful-return correctness is claimed; each step lowers `verify::machine_cost`.
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_action_valid(old(store).graph(), initial@), transition_action_pushes(initial@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && transition_result(final(store).graph(), initial@, id), Err(_) => true },
-)]
-fn transition_machine<G: KernelStore>(
-    store: &mut G,
-    initial: Action,
-) -> KernelResult<TransitionId> {
-    proof_decl! { let ghost entry = store.graph(); let ghost shape = initial@;
-    let ghost original = transition_program(entry, seq![shape], Seq::empty()); }
-    let mut tasks = WorkVec::new();
-    let mut values = WorkVec::new();
-    tasks.push(initial);
-    proof! {
-        assert(tasks.view() =~= seq![initial]);
-        assert(transition_action_views(tasks.view())[0] == shape);
-        assert(transition_action_views(tasks.view()) =~= seq![shape]);
-    }
-    let mut state = Ok(());
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            store.restoration() == old(store).restoration(),
-            model::graph_wf(store.graph()), store.valid_store(), model::graph_extends(entry, store.graph()),
-            transition_configuration_valid(store.graph(), transition_action_views(tasks.view()), values.view()),
-            state.is_ok() ==> transition_program_refines(original,
-                transition_program(store.graph(), transition_action_views(tasks.view()), values.view())),
-        decreases if state.is_ok() {
-            machine_cost(store.graph(), transition_action_views(tasks.view()), values.view()) + 1
-        } else { 0 },
-    ))]
-    while !tasks.is_empty() && state.is_ok() {
-        proof_decl! { let ghost before = store.graph();
-        let ghost before_program = transition_program(before, transition_action_views(tasks.view()), values.view()); }
-        state = transition_next(store, &mut tasks, &mut values);
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            id@ < old(store).graph().transitions.len(),
+            c@ == old(store).graph().constants,
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Not(id@),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Not(id@), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn not_step<G: KernelStore>(
+        store: &mut G,
+        id: TransitionId,
+        c: &Constants,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost entry = store.graph(); let ghost initial = tasks.view();
+        let ghost base = transition_action_views(initial); let ghost prior = values.view(); }
         proof! {
-            transition_lemma_extends_transitive(entry, before, store.graph());
-            if state.is_ok() {
-                guarded_lemma_program_transitive(transition_context_sem(), transition_context_valid(), original,
-                    before_program, transition_program(store.graph(), transition_action_views(tasks.view()), values.view()));
+            assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
+            model::lemma_graph_transition_wf(store.graph(), id@);
+            transition_configuration_future(entry, base, prior);
+            graph_lemma_extends_refl(entry);
+        }
+        match id.head(store)? {
+            TransitionHead::Const(r) => {
+                proof_decl! { let ghost head = r; }
+                let r = r.not(store)?;
+                proof_decl! { let ghost before_const = store.graph(); }
+                values.push(TransitionId::constant(store, r)?);
+                proof! {
+                    machine_unary_not_const_result(before_const, store.graph(), id, head, r, values.view().last());
+                    transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
+                    transition_lemma_extends_transitive(entry, before_const, store.graph());
+                    assert(values.view() == prior.push(values.view().last()));
+                    machine_value_result(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
+                }
+            }
+            TransitionHead::Not(inner) => {
+                values.push(inner);
+                proof! {
+                    machine_unary_double_not_result(store.graph(), id, inner);
+                    transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, inner);
+                    machine_not_double(entry, store.graph(), base, id, inner, prior);
+                }
+            }
+            TransitionHead::Append(_, _) => {
+                values.push(TransitionId::intern(store, TransitionView::Not(id))?);
+                proof! {
+                    transition_lemma_result_same_term(store.graph(), ActionShape::Not(id@), values.view().last());
+                    transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
+                    assert(values.view() == prior.push(values.view().last()));
+                    machine_wrap_interned(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
+                }
+            }
+            TransitionHead::If(test, a, b) => {
+                if a == c.transition_all && b == c.transition_empty {
+                    let guard = test.not(store)?;
+                    proof! {
+                        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                            implies model::test_holds(theta, model::lift_test(store.graph(), guard@), event)
+                                == !model::test_holds(theta, model::lift_test(store.graph(), test@), event) by {
+                            assert(test_truth(store.graph(), theta, guard@, event)
+                                != test_truth(store.graph(), theta, test@, event));
+                        }
+                    }
+                    proof_decl! { let ghost before_if = store.graph(); }
+                    let out = TransitionId::local_if(store, guard, a, b)?;
+                    tasks.push(Action::Clean(out, c.test_true));
+                    proof! {
+                        machine_unary_flip_result(before_if, store.graph(), id, test, a, b, guard, out);
+                        machine_unary_clean_result_effect(store.graph(), ActionShape::Not(id@), out, base, prior);
+                        assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Clean(out@, c.test_true@)));
+                        transition_lemma_extends_transitive(entry, before_if, store.graph());
+                        tdepth_lemma_constants(before_if);
+                        machine_not_flip(entry, store.graph(), base, id, test, a, b, out, c.test_true, prior);
+                    }
+                } else {
+                    tasks.push(Action::CleanIf(test, c.test_true));
+                    tasks.push(Action::Not(b));
+                    tasks.push(Action::Not(a));
+                    proof! {
+                        machine_unary_if_effect(store.graph(), id, test, a, b, None, base, prior);
+                        assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, None, base));
+                        machine_unary_if(entry, store.graph(), base, id, test, a, b, None, prior);
+                    }
+                }
+            }
+            TransitionHead::Union(n) => {
+                tasks.push(Action::Intersect(n));
+                proof! {
+                    transition_lemma_children(store.graph(), id@);
+                    assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Intersect(n as nat)));
+                    assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
+                }
+                ChildAction::Not.schedule(store, id, n, tasks)?;
+                proof! {
+                    machine_unary_children_effect(store.graph(), id, None, true, base, prior);
+                    assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, true, base));
+                    machine_unary_children(store.graph(), base, id, None, true, prior);
+                }
+            }
+            TransitionHead::Intersect(n) => {
+                tasks.push(Action::Union(n));
+                proof! {
+                    transition_lemma_children(store.graph(), id@);
+                    assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Union(n as nat)));
+                    assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
+                }
+                ChildAction::Not.schedule(store, id, n, tasks)?;
+                proof! {
+                    machine_unary_children_effect(store.graph(), id, None, false, base, prior);
+                    assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, false, base));
+                    machine_unary_children(store.graph(), base, id, None, false, prior);
+                }
             }
         }
+        Ok(())
     }
-    state?;
-    proof! {
-        assert(tasks.view().len() == 0);
-        assert(transition_freeze_tasks(store.graph(), transition_action_views(tasks.view())) =~= Seq::<TransitionAction>::empty());
-        transition_lemma_program_stable(entry, store.graph(), seq![shape], Seq::empty());
-        machine_driver_complete(store.graph(), shape, values.view());
+
+    #[allow(
+        clippy::semicolon_if_nothing_returned,
+        reason = "Preserve the existing Verus-verified match arms."
+    )]
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            id@ < old(store).graph().transitions.len(),
+            r@ < old(store).graph().regexes.len(),
+            c@ == old(store).graph().constants,
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Append(id@, r@),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Append(id@, r@), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn append_step<G: KernelStore>(
+        store: &mut G,
+        id: TransitionId,
+        r: RegexId,
+        c: &Constants,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost entry = store.graph(); let ghost initial = tasks.view();
+        let ghost base = transition_action_views(initial); let ghost prior = values.view(); }
+        proof! {
+            assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
+            model::lemma_graph_transition_wf(store.graph(), id@);
+            model::lemma_graph_regex_wf(store.graph(), r@);
+            transition_configuration_future(entry, base, prior);
+            graph_lemma_extends_refl(entry);
+            tdepth_lemma_constants(entry);
+        }
+        {
+            if r == c.epsilon {
+                values.push(id);
+                proof! {
+                    machine_unary_append_identity_result(store.graph(), id, r, id);
+                    transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, id);
+                    machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, id);
+                }
+            } else if r == c.empty {
+                values.push(c.transition_empty);
+                proof! {
+                    machine_unary_append_identity_result(store.graph(), id, r, c.transition_empty);
+                    transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, c.transition_empty);
+                    machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, c.transition_empty);
+                }
+            } else {
+                match id.head(store)? {
+                    TransitionHead::Const(head) => {
+                        let out = RegexId::concat(store, &[head, r])?;
+                        proof_decl! { let ghost before_const = store.graph(); }
+                        values.push(TransitionId::constant(store, out)?);
+                        proof! {
+                            machine_unary_append_const_result(before_const, store.graph(), id, head, r, out, values.view().last());
+                            transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
+                            transition_lemma_extends_transitive(entry, before_const, store.graph());
+                            assert(values.view() == prior.push(values.view().last()));
+                            machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
+                        }
+                    }
+                    TransitionHead::If(test, a, b) => {
+                        tasks.push(Action::CleanIf(test, c.test_true));
+                        tasks.push(Action::Append(b, r));
+                        tasks.push(Action::Append(a, r));
+                        proof! {
+                            machine_unary_if_effect(store.graph(), id, test, a, b, Some(r), base, prior);
+                            assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, Some(r), base));
+                            machine_unary_if(entry, store.graph(), base, id, test, a, b, Some(r), prior);
+                        }
+                    }
+                    TransitionHead::Union(n) => {
+                        tasks.push(Action::Union(n));
+                        proof! {
+                            transition_lemma_children(store.graph(), id@);
+                            assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Union(n as nat)));
+                            assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
+                        }
+                        ChildAction::Append(r).schedule(store, id, n, tasks)?;
+                        proof! {
+                            machine_unary_children_effect(store.graph(), id, Some(r), false, base, prior);
+                            assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, Some(r), false, base));
+                            machine_unary_children(store.graph(), base, id, Some(r), false, prior);
+                        }
+                    }
+                    TransitionHead::Append(inner, n) => {
+                        let mut xs = suffix_values(store, id, n)?;
+                        proof_decl! { let ghost children = xs.view(); }
+                        proof! { transition_lemma_suffix(store.graph(), id@); }
+                        xs.push(r);
+                        let combined = RegexId::concat(store, &xs)?;
+                        tasks.push(Action::Append(inner, combined));
+                        proof! {
+                            machine_unary_append_nested_effect(store.graph(), id, inner, r, combined, children, base, prior);
+                            assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Append(inner@, combined@)));
+                            machine_append_nested(entry, store.graph(), base, id, r, inner, combined, prior);
+                        }
+                    }
+                    TransitionHead::Intersect(_) | TransitionHead::Not(_) => {
+                        let mut xs = WorkVec::new();
+                        match r.head(store)? {
+                            RegexHead::Concat(n) => {
+                                proof! { regex_children_count(store.graph(), r@); }
+                                collect_regex_children(store, r, n, &mut xs)?
+                            }
+                            _ => xs.push(r),
+                        }
+                        proof! {
+                            regex_children_count(store.graph(), r@);
+                            machine_unary_suffix_language(store.graph(), r, xs.view());
+                        }
+                        proof_decl! { let ghost before_intern = store.graph(); }
+                        values.push(TransitionId::intern(
+                            store,
+                            TransitionView::Append {
+                                transition: id,
+                                suffix: &xs,
+                            },
+                        )?);
+                        proof! {
+                            machine_unary_append_raw_result(before_intern, store.graph(), id, r, xs.view(), values.view().last());
+                            transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
+                            transition_lemma_extends_transitive(entry, before_intern, store.graph());
+                            assert(values.view() == prior.push(values.view().last()));
+                            machine_wrap_interned(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
-    match values.pop() {
-        Some(v) => Ok(v),
-        None => Err(invariant()),
+
+    #[allow(
+        clippy::semicolon_if_nothing_returned,
+        reason = "Preserve the existing Verus-verified match arms."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            a@ < old(store).graph().transitions.len(),
+            b@ < old(store).graph().transitions.len(),
+            c@ == old(store).graph().constants,
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Pair(a@, b@), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn pair_step<G: KernelStore>(
+        store: &mut G,
+        a: TransitionId,
+        b: TransitionId,
+        c: &Constants,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+        let ghost entry = store.graph(); }
+        proof! {
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+            assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
+            transition_configuration_future(store.graph(), p0, v0);
+            model::lemma_graph_transition_wf(store.graph(), a@);
+            model::lemma_graph_transition_wf(store.graph(), b@);
+            graph_lemma_extends_refl(entry);
+            tdepth_lemma_constants(entry);
+            tdepth_lemma_pos(entry, a@);
+            tdepth_lemma_pos(entry, b@);
+            lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
+        }
+        {
+            if a == b || b == c.transition_all {
+                values.push(a);
+                proof! {
+                    machine_pair_identity_result(store.graph(), a, b, a, c.transition_all, c.transition_empty);
+                    transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, a);
+                    machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, a);
+                }
+            } else if a == c.transition_all {
+                values.push(b);
+                proof! {
+                    machine_pair_identity_result(store.graph(), a, b, b, c.transition_all, c.transition_empty);
+                    transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, b);
+                    machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, b);
+                }
+            } else if a == c.transition_empty || b == c.transition_empty {
+                values.push(c.transition_empty);
+                proof! {
+                    machine_pair_identity_result(store.graph(), a, b, c.transition_empty, c.transition_all, c.transition_empty);
+                    transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
+                    machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
+                }
+            } else {
+                let left = a.head(store)?;
+                let right = b.head(store)?;
+                match (left, right) {
+                    (TransitionHead::Const(x), TransitionHead::Const(y)) => {
+                        let r = RegexId::set(store, &[x, y], true)?;
+                        proof_decl! { let ghost after_regex = store.graph(); }
+                        values.push(TransitionId::constant(store, r)?);
+                        proof! {
+                            let out = values.view().last();
+                            machine_pair_constant_result(after_regex, store.graph(), a, b, x, y, r, out);
+                            transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
+                            transition_lemma_extends_transitive(entry, after_regex, store.graph());
+                            machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
+                        }
+                    }
+                    (TransitionHead::If(_, _, _), TransitionHead::If(_, _, _)) => {
+                        pair_conditionals(store, a, b, left, right, tasks, values)?
+                    }
+                    (TransitionHead::Union(n), _) => {
+                        tasks.push(Action::Union(n));
+                        proof! {
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(n as nat)));
+                            assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
+                            transition_lemma_children(store.graph(), a@);
+                            assert(transition_children(store.graph(), a@).len() == n);
+                        }
+                        ChildAction::PairLeft(b).schedule(store, a, n, tasks)?;
+                        proof! {
+                            machine_pair_union_effect(store.graph(), a, b, true, p0, v0);
+                            assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
+                                transition_action_views(tasks.view()), values.view()));
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
+                                transition_children(store.graph(), a@).len())) + transition_child_actions(store.graph(), a@,
+                                ChildShape::PairLeft(b@)));
+                            machine_pair_union(store.graph(), p0, a, b, true, v0);
+                        }
+                    }
+                    (_, TransitionHead::Union(n)) => {
+                        tasks.push(Action::Union(n));
+                        proof! {
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(n as nat)));
+                            assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
+                            transition_lemma_children(store.graph(), b@);
+                            assert(transition_children(store.graph(), b@).len() == n);
+                        }
+                        ChildAction::PairRight(a).schedule(store, b, n, tasks)?;
+                        proof! {
+                            machine_pair_union_effect(store.graph(), a, b, false, p0, v0);
+                            assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
+                                transition_action_views(tasks.view()), values.view()));
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Union(
+                                transition_children(store.graph(), b@).len())) + transition_child_actions(store.graph(), b@,
+                                ChildShape::PairRight(a@)));
+                            machine_pair_union(store.graph(), p0, a, b, false, v0);
+                        }
+                    }
+                    (TransitionHead::If(test, t, e), _) => {
+                        tasks.push(Action::CleanIf(test, c.test_true));
+                        tasks.push(Action::Pair(e, b));
+                        tasks.push(Action::Pair(t, b));
+                        proof! {
+                            machine_pair_if_language(store.graph(), a, test, t, e);
+                            machine_pair_if_effect(store.graph(), a, b, test, t, b, e, b, p0, v0);
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
+                                .push(ActionShape::Pair(e@, b@)).push(ActionShape::Pair(t@, b@)));
+                            machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, true, v0);
+                        }
+                    }
+                    (_, TransitionHead::If(test, t, e)) => {
+                        tasks.push(Action::CleanIf(test, c.test_true));
+                        tasks.push(Action::Pair(a, e));
+                        tasks.push(Action::Pair(a, t));
+                        proof! {
+                            machine_pair_if_language(store.graph(), b, test, t, e);
+                            machine_pair_if_effect(store.graph(), a, b, test, a, t, a, e, p0, v0);
+                            assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
+                                .push(ActionShape::Pair(a@, e@)).push(ActionShape::Pair(a@, t@)));
+                            machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, false, v0);
+                        }
+                    }
+                    _ => {
+                        values.push(TransitionId::collect(store, &[a, b], true)?);
+                        proof! {
+                            let out = values.view().last();
+                            machine_pair_set_result(store.graph(), seq![a, b], ActionShape::Pair(a@, b@), out);
+                            transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
+                            collect_lemma_pair_bound(entry, a, b);
+                            machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
-}
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        test@ < old(store).graph().tests.len(), then_id@ < old(store).graph().transitions.len(),
-        else_id@ < old(store).graph().transitions.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                    == transition_if_combo(final(store).graph(), sym, theta, test, then_id, else_id, event, word), Err(_) => true },
-)]
-pub(crate) fn transition_if<G: KernelStore>(
-    store: &mut G,
-    test: TestId,
-    then_id: TransitionId,
-    else_id: TransitionId,
-) -> KernelResult<TransitionId> {
-    proof_decl! { let ghost entry = store.graph(); }
-    let id = local_if(store, test, then_id, else_id)?;
-    let path = store.constants().test_true;
-    proof! {
-        transition_lemma_constants(store.graph());
-        machine_driver_extension_future(entry, store.graph());
-        machine_driver_if_future(store.graph(), test, then_id, else_id, id);
+
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_action_valid(old(store).graph(), self@),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), self@,
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()), self@, old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn step<G: KernelStore>(
+        self,
+        store: &mut G,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+        let ghost entry = store.graph(); }
+        proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
+        store.checkpoint()?;
+        let c = store.constants();
+        match self {
+            Action::Union(n) => {
+                let xs = take_values(values, n)?;
+                values.push(TransitionId::collect(store, &xs, false)?);
+                proof! {
+                    machine_driver_union_effect(store.graph(), n as nat, p0, v0, values.view().last());
+                    assert(values.view() == v0.take(v0.len() as int - n as int).push(values.view().last()));
+                    machine_driver_union(entry, store.graph(), p0, n as nat, v0, values.view().last());
+                }
+            }
+            Action::Intersect(n) => {
+                let xs = take_values(values, n)?;
+                tasks.push(Action::Fold(xs, 0));
+                proof! {
+                    machine_driver_intersect_effect(store.graph(), n as nat, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(
+                        model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int)), 0)));
+                    machine_driver_intersect(store.graph(), p0, n as nat, v0);
+                }
+            }
+            Action::Fold(xs, index) => {
+                proof! {
+                    assert forall|i: int| 0 <= i < xs.view().len() implies xs.view()[i]@ < store.graph().transitions.len() by {
+                        assert(model::transition_ids(xs.view())[i] == xs.view()[i]@);
+                    }
+                }
+                Action::fold_step(store, xs, index, tasks, values)?;
+            }
+            Action::If(test) => {
+                let b = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                let a = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                proof! {
+                    assert(values.view() =~= v0.take(v0.len() as int - 2));
+                    assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
+                }
+                values.push(TransitionId::local_if(store, test, a, b)?);
+                proof! {
+                    machine_driver_if_effect(store.graph(), test, None, p0, v0, values.view().last());
+                    assert(values.view() == v0.take(v0.len() as int - 2).push(values.view().last()));
+                    machine_driver_if(entry, store.graph(), p0, ActionShape::If(test@), v0, values.view().last());
+                }
+            }
+            Action::CleanIf(test, path) => {
+                let b = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                let a = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                proof! {
+                    assert(values.view() =~= v0.take(v0.len() as int - 2));
+                    assert(a == v0[v0.len() - 2] && b == v0[v0.len() - 1]);
+                }
+                let out = TransitionId::local_if(store, test, a, b)?;
+                tasks.push(Action::Clean(out, path));
+                proof! {
+                    machine_driver_if_effect(store.graph(), test, Some(path), p0, v0, out);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Clean(out@, path@)));
+                    machine_driver_clean_if(entry, store.graph(), p0, test, path, v0, out);
+                }
+            }
+            Action::Clean(id, path) => Action::clean_step(store, id, path, &c, tasks, values)?,
+            Action::Not(id) => Action::not_step(store, id, &c, tasks, values)?,
+            Action::Append(id, r) => Action::append_step(store, id, r, &c, tasks, values)?,
+            Action::Pair(a, b) => Action::pair_step(store, a, b, &c, tasks, values)?,
+            Action::NotResult => {
+                let id = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                proof! { assert(values.view() =~= v0.drop_last()); }
+                tasks.push(Action::Not(id));
+                proof! {
+                    machine_driver_result_effect(store.graph(), ActionShape::NotResult, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Not(id@)));
+                    machine_driver_result(store.graph(), p0, None, v0);
+                }
+            }
+            Action::AppendResult(r) => {
+                let id = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                proof! { assert(values.view() =~= v0.drop_last()); }
+                tasks.push(Action::Append(id, r));
+                proof! {
+                    machine_driver_result_effect(store.graph(), ActionShape::AppendResult(r@), p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Append(id@, r@)));
+                    machine_driver_result(store.graph(), p0, Some(r@), v0);
+                }
+            }
+            Action::SwapThen => {
+                let a = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                let b = match values.pop() {
+                    Some(v) => v,
+                    None => return Err(HistoryError::normalization_invariant()),
+                };
+                proof! { assert(values.view() =~= v0.take(v0.len() as int - 2)); }
+                values.push(a);
+                values.push(b);
+                proof! {
+                    machine_driver_swap_effect(store.graph(), p0, v0);
+                    assert(values.view() =~= v0.take(v0.len() as int - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]));
+                    machine_driver_swap(store.graph(), p0, v0);
+                }
+            }
+        }
+        Ok(())
     }
-    clean_transition_path(store, id, path)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition@ < old(store).graph().transitions.len(), path@ < old(store).graph().tests.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && transition_result(final(store).graph(), ActionShape::Clean(transition@, path@), id), Err(_) => true },
-)]
-pub(crate) fn clean_transition_path<G: KernelStore>(
-    store: &mut G,
-    transition: TransitionId,
-    path: TestId,
-) -> KernelResult<TransitionId> {
-    transition_machine(store, Action::Clean(transition, path))
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && transition_result(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0), id), Err(_) => true },
-)]
-pub(crate) fn transition_intersect<G: KernelStore>(
-    store: &mut G,
-    children: &[TransitionId],
-) -> KernelResult<TransitionId> {
-    proof! { lemma_id_clones(); }
-    let mut xs = WorkVec::new();
-    xs.extend_from_slice(children);
-    transition_machine(store, Action::Fold(xs, 0))
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition@ < old(store).graph().transitions.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && transition_result(final(store).graph(), ActionShape::Not(transition@), id), Err(_) => true },
-)]
-pub(crate) fn transition_not<G: KernelStore>(
-    store: &mut G,
-    transition: TransitionId,
-) -> KernelResult<TransitionId> {
-    transition_machine(store, Action::Not(transition))
-}
-#[verus_verify]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition@ < old(store).graph().transitions.len(),
-        regex_ids_valid(old(store).graph(), suffix@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(id) => id@ < final(store).graph().transitions.len()
-            && forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(final(store).graph(), sym, theta, id, event, word)
-                    == transition_append_combo(final(store).graph(), sym, theta, transition, suffix@, event, word), Err(_) => true },
-)]
-pub(crate) fn transition_append<G: KernelStore>(
-    store: &mut G,
-    transition: TransitionId,
-    suffix: &[RegexId],
-) -> KernelResult<TransitionId> {
-    proof_decl! { let ghost entry = store.graph(); }
-    let r = regex_concat(store, suffix)?;
-    proof! {
-        machine_driver_extension_future(entry, store.graph());
-        machine_driver_append_future(store.graph(), transition, suffix@, r);
+
+    #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            match result {
+                Ok(()) => transition_program_refines(
+                    transition_program(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+                    transition_program(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()))
+                    && machine_cost(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view())
+                        < machine_cost(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn next<G: KernelStore>(
+        store: &mut G,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost entry = store.graph(); let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view(); }
+        let task = match tasks.pop() {
+            Some(v) => v,
+            None => return Err(HistoryError::normalization_invariant()),
+        };
+        proof_decl! { let ghost shape = task@; let ghost pending = transition_action_views(tasks.view()); }
+        proof! { assert(p0 =~= pending.push(shape)); }
+        proof! {
+            assert forall|i: int| 0 <= i < pending.len() implies transition_action_valid(store.graph(), pending[i]) by {
+                assert(p0[i] == pending[i]);
+                assert(transition_action_valid(store.graph(), p0[i]));
+            }
+        }
+        task.step(store, tasks, values)?;
+        proof! {
+            transition_lemma_program_stable(entry, store.graph(), p0, v0);
+            transition_lemma_effect_frame(store.graph(), shape, pending, v0, transition_action_views(tasks.view()), values.view());
+        }
+        Ok(())
     }
-    transition_machine(store, Action::Append(transition, r))
+
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    #[verus_verify]
+    // Only successful-return correctness is claimed; each step lowers `verify::machine_cost`.
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_action_valid(old(store).graph(), self@), transition_action_pushes(self@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && transition_result(final(store).graph(), self@, id), Err(_) => true },
+    )]
+    fn run<G: KernelStore>(self, store: &mut G) -> KernelResult<TransitionId> {
+        proof_decl! { let ghost entry = store.graph(); let ghost shape = self@;
+        let ghost original = transition_program(entry, seq![shape], Seq::empty()); }
+        let mut tasks = WorkVec::new();
+        let mut values = WorkVec::new();
+        tasks.push(self);
+        proof! {
+            assert(tasks.view() =~= seq![self]);
+            assert(transition_action_views(tasks.view())[0] == shape);
+            assert(transition_action_views(tasks.view()) =~= seq![shape]);
+        }
+        let mut state = Ok(());
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                store.restoration() == old(store).restoration(),
+                model::graph_wf(store.graph()), store.valid_store(), model::graph_extends(entry, store.graph()),
+                transition_configuration_valid(store.graph(), transition_action_views(tasks.view()), values.view()),
+                state.is_ok() ==> transition_program_refines(original,
+                    transition_program(store.graph(), transition_action_views(tasks.view()), values.view())),
+            decreases if state.is_ok() {
+                machine_cost(store.graph(), transition_action_views(tasks.view()), values.view()) + 1
+            } else { 0 },
+        ))]
+        while !tasks.is_empty() && state.is_ok() {
+            proof_decl! { let ghost before = store.graph();
+            let ghost before_program = transition_program(before, transition_action_views(tasks.view()), values.view()); }
+            state = Action::next(store, &mut tasks, &mut values);
+            proof! {
+                transition_lemma_extends_transitive(entry, before, store.graph());
+                if state.is_ok() {
+                    guarded_lemma_program_transitive(transition_context_sem(), transition_context_valid(), original,
+                        before_program, transition_program(store.graph(), transition_action_views(tasks.view()), values.view()));
+                }
+            }
+        }
+        state?;
+        proof! {
+            assert(tasks.view().len() == 0);
+            assert(transition_freeze_tasks(store.graph(), transition_action_views(tasks.view())) =~= Seq::<TransitionAction>::empty());
+            transition_lemma_program_stable(entry, store.graph(), seq![shape], Seq::empty());
+            machine_driver_complete(store.graph(), shape, values.view());
+        }
+        match values.pop() {
+            Some(v) => Ok(v),
+            None => Err(HistoryError::normalization_invariant()),
+        }
+    }
 }
 
 #[cfg(verus_keep_ghost)]
@@ -4394,73 +4345,73 @@ pub(crate) mod verify {
                 forall|i: int| 0 <= i < ids.len() ==> ids[i]@ < g.transitions.len()
             }
             pub open spec fn test_combo(
-                g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<TestId>, e: Data, and: bool,
+                g: model::Graph, theta: Subst, ids: Seq<TestId>, e: EventView, and: bool,
             ) -> bool {
                 if and {
                     forall|i: int| 0 <= i < ids.len()
-                        ==> model::test_holds(sym, theta, model::lift_test(g, ids[i]@), e)
+                        ==> model::test_holds(theta, model::lift_test(g, ids[i]@), e)
                 } else {
                     exists|i: int| 0 <= i < ids.len()
-                        && model::test_holds(sym, theta, model::lift_test(g, ids[i]@), e)
+                        && model::test_holds(theta, model::lift_test(g, ids[i]@), e)
                 }
             }
             pub open spec fn regex_combo(
-                g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<RegexId>, w: Seq<Data>, intersect: bool,
+                g: model::Graph, theta: Subst, ids: Seq<RegexId>, w: Seq<EventView>, intersect: bool,
             ) -> bool {
                 if intersect {
-                    forall|i: int| 0 <= i < ids.len() ==> model::regex_lang(g, sym, theta, ids[i]@, w)
+                    forall|i: int| 0 <= i < ids.len() ==> model::regex_lang(g, theta, ids[i]@, w)
                 } else {
-                    exists|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, ids[i]@, w)
+                    exists|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, ids[i]@, w)
                 }
             }
             pub open spec fn concat_combo(
-                g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<RegexId>, w: Seq<Data>,
+                g: model::Graph, theta: Subst, ids: Seq<RegexId>, w: Seq<EventView>,
             ) -> bool {
-                language::lang(model::gsem(sym, theta),
+                language::lang(model::gsem(theta),
                     language::Regex::Concat(model::lift_regexes(g, model::regex_ids(ids))), w)
             }
             pub open spec fn transition_lang(
-                g: model::Graph, sym: model::Symbols, theta: Seq<Data>, id: TransitionId, e: Data, w: Seq<Data>,
+                g: model::Graph, theta: Subst, id: TransitionId, e: EventView, w: Seq<EventView>,
             ) -> bool {
-                language::lang(model::gsem(sym, theta), language::interp_transition(
-                    model::gsem(sym, theta), e, model::lift_transition(g, id@)), w)
+                language::lang(model::gsem(theta), language::interp_transition(
+                    model::gsem(theta), e, model::lift_transition(g, id@)), w)
             }
             pub open spec fn transition_combo(
-                g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<TransitionId>, e: Data, w: Seq<Data>, intersect: bool,
+                g: model::Graph, theta: Subst, ids: Seq<TransitionId>, e: EventView, w: Seq<EventView>, intersect: bool,
             ) -> bool {
                 if intersect {
-                    forall|i: int| 0 <= i < ids.len() ==> transition_lang(g, sym, theta, ids[i], e, w)
+                    forall|i: int| 0 <= i < ids.len() ==> transition_lang(g, theta, ids[i], e, w)
                 } else {
-                    exists|i: int| 0 <= i < ids.len() && transition_lang(g, sym, theta, ids[i], e, w)
+                    exists|i: int| 0 <= i < ids.len() && transition_lang(g, theta, ids[i], e, w)
                 }
             }
 
     // Boolean normalization proofs.
     pub open spec fn test_distinct_heads(left: model::TestHeadNode, right: model::TestHeadNode) -> bool {
         match (left, right) {
-            (model::TestHeadNode::Atom(model::Primitive::EqCore(p, model::GTerm::Constant(c)), _),
-                model::TestHeadNode::Atom(model::Primitive::EqCore(q, model::GTerm::Constant(d)), _))
+            (model::TestHeadNode::Atom(model::Primitive::Eq(p, model::GTerm::Constant(c)), _),
+                model::TestHeadNode::Atom(model::Primitive::Eq(q, model::GTerm::Constant(d)), _))
                 => p == q && c != d,
             _ => false,
         }
     }
 
     pub proof fn test_lemma_distinct_atoms(
-        sym: model::Symbols, theta: Seq<Data>, left: model::TestHeadNode,
-        right: model::TestHeadNode, event: Data,
+        theta: Subst, left: model::TestHeadNode,
+        right: model::TestHeadNode, event: EventView,
     )
-        requires model::symbols_wf(sym), test_distinct_heads(left, right),
+        requires language::event_wf(theta), test_distinct_heads(left, right),
         ensures match (left, right) {
             (model::TestHeadNode::Atom(p, _), model::TestHeadNode::Atom(q, _))
-                => !(model::primitive_holds(sym, theta, p, event)
-                    && model::primitive_holds(sym, theta, q, event)),
+                => !(model::primitive_holds(theta, p, event)
+                    && model::primitive_holds(theta, q, event)),
             _ => false,
         },
     {
         match (left, right) {
-            (model::TestHeadNode::Atom(model::Primitive::EqCore(p, model::GTerm::Constant(c)), _),
-                model::TestHeadNode::Atom(model::Primitive::EqCore(q, model::GTerm::Constant(d)), _)) => {
-                model::lemma_constant_atoms_disjoint(sym, theta, p, c, d, event);
+            (model::TestHeadNode::Atom(model::Primitive::Eq(p, model::GTerm::Constant(c)), _),
+                model::TestHeadNode::Atom(model::Primitive::Eq(q, model::GTerm::Constant(d)), _)) => {
+                model::lemma_constant_atoms_disjoint(theta, p, c, d, event);
             },
             _ => {},
         }
@@ -4617,90 +4568,90 @@ pub(crate) mod verify {
     }
 
     pub proof fn test_lemma_combo_inclusion(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+        g: model::Graph, theta: Subst, event: EventView,
         left: Seq<TestId>, right: Seq<TestId>, and: bool,
     )
         requires forall|id: TestId| left.contains(id) ==> right.contains(id),
         ensures if and {
-            test_combo(g, sym, theta, right, event, and) ==> test_combo(g, sym, theta, left, event, and)
+            test_combo(g, theta, right, event, and) ==> test_combo(g, theta, left, event, and)
         } else {
-            test_combo(g, sym, theta, left, event, and) ==> test_combo(g, sym, theta, right, event, and)
+            test_combo(g, theta, left, event, and) ==> test_combo(g, theta, right, event, and)
         },
     {
         if and {
-            if test_combo(g, sym, theta, right, event, and) {
+            if test_combo(g, theta, right, event, and) {
                 assert forall|i: int| 0 <= i < left.len()
-                    implies model::test_holds(sym, theta, model::lift_test(g, left[i]@), event) by {
+                    implies model::test_holds(theta, model::lift_test(g, left[i]@), event) by {
                     assert(left.contains(left[i]));
                     assert(right.contains(left[i]));
                     let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
                 }
             }
-        } else if test_combo(g, sym, theta, left, event, and) {
+        } else if test_combo(g, theta, left, event, and) {
             let i = choose|i: int| 0 <= i < left.len()
-                && model::test_holds(sym, theta, model::lift_test(g, left[i]@), event);
+                && model::test_holds(theta, model::lift_test(g, left[i]@), event);
             assert(left.contains(left[i]));
             assert(right.contains(left[i]));
             let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-            assert(model::test_holds(sym, theta, model::lift_test(g, right[j]@), event));
+            assert(model::test_holds(theta, model::lift_test(g, right[j]@), event));
         }
     }
 
     pub proof fn test_lemma_combo_membership(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+        g: model::Graph, theta: Subst, event: EventView,
         left: Seq<TestId>, right: Seq<TestId>, and: bool,
     )
         requires forall|id: TestId| left.contains(id) <==> right.contains(id),
-        ensures test_combo(g, sym, theta, left, event, and) == test_combo(g, sym, theta, right, event, and),
+        ensures test_combo(g, theta, left, event, and) == test_combo(g, theta, right, event, and),
     {
-        test_lemma_combo_inclusion(g, sym, theta, event, left, right, and);
-        test_lemma_combo_inclusion(g, sym, theta, event, right, left, and);
+        test_lemma_combo_inclusion(g, theta, event, left, right, and);
+        test_lemma_combo_inclusion(g, theta, event, right, left, and);
     }
 
     pub proof fn test_lemma_combo_permutation(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+        g: model::Graph, theta: Subst, event: EventView,
         left: Seq<TestId>, right: Seq<TestId>, and: bool,
     )
         requires left.to_multiset() == right.to_multiset(),
-        ensures test_combo(g, sym, theta, left, event, and) == test_combo(g, sym, theta, right, event, and),
+        ensures test_combo(g, theta, left, event, and) == test_combo(g, theta, right, event, and),
     {
         lemma_multiset_members(left, right);
-        test_lemma_combo_membership(g, sym, theta, event, left, right, and);
+        test_lemma_combo_membership(g, theta, event, left, right, and);
     }
 
-    pub proof fn test_lemma_semantics_unfold(sym: model::Symbols, theta: Seq<Data>, event: Data, test: model::Test)
+    pub proof fn test_lemma_semantics_unfold(theta: Subst, event: EventView, test: model::Test)
         ensures match test {
-            model::Test::And(cs) => model::test_holds(sym, theta, test, event)
-                == (forall|i: int| 0 <= i < cs.len() ==> model::test_holds(sym, theta, cs[i], event)),
-            model::Test::Or(cs) => model::test_holds(sym, theta, test, event)
-                == (exists|i: int| 0 <= i < cs.len() && model::test_holds(sym, theta, cs[i], event)),
+            model::Test::And(cs) => model::test_holds(theta, test, event)
+                == (forall|i: int| 0 <= i < cs.len() ==> model::test_holds(theta, cs[i], event)),
+            model::Test::Or(cs) => model::test_holds(theta, test, event)
+                == (exists|i: int| 0 <= i < cs.len() && model::test_holds(theta, cs[i], event)),
             _ => true,
         },
     {
         match test { model::Test::And(_) => {}, model::Test::Or(_) => {}, _ => {} }
     }
 
-    pub proof fn test_lemma_compound_child(sym: model::Symbols, theta: Seq<Data>, event: Data,
+    pub proof fn test_lemma_compound_child(theta: Subst, event: EventView,
         children: Seq<model::Test>, index: int)
         requires 0 <= index < children.len(),
-        ensures model::test_holds(sym, theta, model::Test::And(children), event)
-            ==> model::test_holds(sym, theta, children[index], event),
-            model::test_holds(sym, theta, children[index], event)
-            ==> model::test_holds(sym, theta, model::Test::Or(children), event),
+        ensures model::test_holds(theta, model::Test::And(children), event)
+            ==> model::test_holds(theta, children[index], event),
+            model::test_holds(theta, children[index], event)
+            ==> model::test_holds(theta, model::Test::Or(children), event),
     {
-        test_lemma_semantics_unfold(sym, theta, event, model::Test::And(children));
-        test_lemma_semantics_unfold(sym, theta, event, model::Test::Or(children));
+        test_lemma_semantics_unfold(theta, event, model::Test::And(children));
+        test_lemma_semantics_unfold(theta, event, model::Test::Or(children));
     }
 
     pub proof fn test_lemma_compound_semantics(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+        g: model::Graph, theta: Subst, event: EventView,
         parent: TestId, children: Seq<TestId>, and: bool,
     )
         requires model::graph_wf(g), parent@ < g.tests.len(),
             g.tests[parent@ as int] == if and { model::TestNode::And(model::test_ids(children)) }
                 else { model::TestNode::Or(model::test_ids(children)) },
-        ensures model::test_holds(sym, theta, model::lift_test(g, parent@), event)
-            == test_combo(g, sym, theta, children, event, and),
+        ensures model::test_holds(theta, model::lift_test(g, parent@), event)
+            == test_combo(g, theta, children, event, and),
     {
         model::lemma_graph_test_wf(g, parent@);
         let lifted = model::lift_tests(g, model::test_ids(children), parent@);
@@ -4708,33 +4659,33 @@ pub(crate) mod verify {
             implies lifted[i] == model::lift_test(g, children[i]@) by {}
         assert(model::lift_test(g, parent@) == if and { model::Test::And(lifted) } else { model::Test::Or(lifted) });
         assert(lifted.len() == children.len());
-        test_lemma_semantics_unfold(sym, theta, event, model::Test::And(lifted));
-        test_lemma_semantics_unfold(sym, theta, event, model::Test::Or(lifted));
+        test_lemma_semantics_unfold(theta, event, model::Test::And(lifted));
+        test_lemma_semantics_unfold(theta, event, model::Test::Or(lifted));
         if and {
-            if test_combo(g, sym, theta, children, event, true) {
+            if test_combo(g, theta, children, event, true) {
                 assert forall|i: int| 0 <= i < lifted.len()
-                    implies model::test_holds(sym, theta, lifted[i], event) by {
-                    assert(model::test_holds(sym, theta, model::lift_test(g, children[i]@), event));
+                    implies model::test_holds(theta, lifted[i], event) by {
+                    assert(model::test_holds(theta, model::lift_test(g, children[i]@), event));
                 }
-                assert(model::test_holds(sym, theta, model::Test::And(lifted), event));
+                assert(model::test_holds(theta, model::Test::And(lifted), event));
             } else {
                 let i = choose|i: int| 0 <= i < children.len()
-                    && !model::test_holds(sym, theta, model::lift_test(g, children[i]@), event);
-                test_lemma_compound_child(sym, theta, event, lifted, i);
-                assert(!model::test_holds(sym, theta, model::Test::And(lifted), event));
+                    && !model::test_holds(theta, model::lift_test(g, children[i]@), event);
+                test_lemma_compound_child(theta, event, lifted, i);
+                assert(!model::test_holds(theta, model::Test::And(lifted), event));
             }
         } else {
-            if test_combo(g, sym, theta, children, event, false) {
+            if test_combo(g, theta, children, event, false) {
                 let i = choose|i: int| 0 <= i < children.len()
-                    && model::test_holds(sym, theta, model::lift_test(g, children[i]@), event);
-                test_lemma_compound_child(sym, theta, event, lifted, i);
-                assert(model::test_holds(sym, theta, model::Test::Or(lifted), event));
+                    && model::test_holds(theta, model::lift_test(g, children[i]@), event);
+                test_lemma_compound_child(theta, event, lifted, i);
+                assert(model::test_holds(theta, model::Test::Or(lifted), event));
             } else {
                 assert forall|i: int| 0 <= i < lifted.len()
-                    implies !model::test_holds(sym, theta, lifted[i], event) by {
-                    assert(!model::test_holds(sym, theta, model::lift_test(g, children[i]@), event));
+                    implies !model::test_holds(theta, lifted[i], event) by {
+                    assert(!model::test_holds(theta, model::lift_test(g, children[i]@), event));
                 }
-                assert(!model::test_holds(sym, theta, model::Test::Or(lifted), event));
+                assert(!model::test_holds(theta, model::Test::Or(lifted), event));
             }
         }
     }
@@ -4819,9 +4770,9 @@ pub(crate) mod verify {
     }
 
     pub open spec fn test_dominates(g: model::Graph, a: TestId, b: TestId, and: bool) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            ==> if and { test_truth(g, sym, theta, b@, event) ==> test_truth(g, sym, theta, a@, event) }
-                else { test_truth(g, sym, theta, a@, event) ==> test_truth(g, sym, theta, b@, event) }
+        forall|theta: Subst, event: EventView| language::event_wf(theta)
+            ==> if and { test_truth(g, theta, b@, event) ==> test_truth(g, theta, a@, event) }
+                else { test_truth(g, theta, a@, event) ==> test_truth(g, theta, b@, event) }
     }
 
     pub proof fn test_lemma_redundancy(g: model::Graph, a: TestId, b: TestId, and: bool)
@@ -4842,13 +4793,13 @@ pub(crate) mod verify {
                 test_lemma_strict_subset_length(bc, ac);
             }
         }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies if and { test_truth(g, sym, theta, b@, event) ==> test_truth(g, sym, theta, a@, event) }
-                else { test_truth(g, sym, theta, a@, event) ==> test_truth(g, sym, theta, b@, event) } by {
-            test_lemma_truth(g, sym, theta, a@, event);
-            test_lemma_truth(g, sym, theta, b@, event);
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies if and { test_truth(g, theta, b@, event) ==> test_truth(g, theta, a@, event) }
+                else { test_truth(g, theta, a@, event) ==> test_truth(g, theta, b@, event) } by {
+            test_lemma_truth(g, theta, a@, event);
+            test_lemma_truth(g, theta, b@, event);
             if !test_dual(g, a, and) {
-                test_lemma_distinct_atoms(sym, theta, model::test_node_head(g.tests[a@ as int]),
+                test_lemma_distinct_atoms(theta, model::test_node_head(g.tests[a@ as int]),
                     model::test_node_head(g.tests[b@ as int]), event);
             }
         }
@@ -4879,35 +4830,35 @@ pub(crate) mod verify {
     pub proof fn test_lemma_retention(g: model::Graph, siblings: Seq<TestId>, kept: Seq<TestId>, and: bool)
         requires model::graph_wf(g), test_ids_valid(g, siblings),
             forall|id: TestId| kept.contains(id) <==> siblings.contains(id) && !test_redundant_in(g, id, siblings, and),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            ==> test_combo(g, sym, theta, kept, event, and) == test_combo(g, sym, theta, siblings, event, and),
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+            ==> test_combo(g, theta, kept, event, and) == test_combo(g, theta, siblings, event, and),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies test_combo(g, sym, theta, kept, event, and) == test_combo(g, sym, theta, siblings, event, and) by {
-            test_lemma_combo_inclusion(g, sym, theta, event, kept, siblings, and);
-            if and && test_combo(g, sym, theta, kept, event, and) {
-                assert forall|i: int| 0 <= i < siblings.len() implies test_truth(g, sym, theta, siblings[i]@, event) by {
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies test_combo(g, theta, kept, event, and) == test_combo(g, theta, siblings, event, and) by {
+            test_lemma_combo_inclusion(g, theta, event, kept, siblings, and);
+            if and && test_combo(g, theta, kept, event, and) {
+                assert forall|i: int| 0 <= i < siblings.len() implies test_truth(g, theta, siblings[i]@, event) by {
                     assert(siblings.contains(siblings[i]));
                     test_lemma_surviving_factor(g, siblings, siblings[i], and);
                     let b = choose|b: TestId| siblings.contains(b) && !test_redundant_in(g, b, siblings, and)
                         && test_dominates(g, siblings[i], b, and);
                     let j = choose|j: int| 0 <= j < kept.len() && kept[j] == b;
                 }
-            } else if !and && test_combo(g, sym, theta, siblings, event, and) {
-                let i = choose|i: int| 0 <= i < siblings.len() && test_truth(g, sym, theta, siblings[i]@, event);
+            } else if !and && test_combo(g, theta, siblings, event, and) {
+                let i = choose|i: int| 0 <= i < siblings.len() && test_truth(g, theta, siblings[i]@, event);
                 assert(siblings.contains(siblings[i]));
                 test_lemma_surviving_factor(g, siblings, siblings[i], and);
                 let b = choose|b: TestId| siblings.contains(b) && !test_redundant_in(g, b, siblings, and)
                     && test_dominates(g, siblings[i], b, and);
                 let j = choose|j: int| 0 <= j < kept.len() && kept[j] == b;
-                assert(test_truth(g, sym, theta, kept[j]@, event));
+                assert(test_truth(g, theta, kept[j]@, event));
             }
         }
     }
 
     pub open spec fn test_opposite_nat(g: model::Graph, a: nat, b: nat) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_truth(g, sym, theta, a, event) != test_truth(g, sym, theta, b, event)
+        forall|theta: Subst, event: EventView|
+            test_truth(g, theta, a, event) != test_truth(g, theta, b, event)
     }
 
     pub open spec fn test_opposite(g: model::Graph, a: TestId, b: TestId) -> bool {
@@ -4915,8 +4866,8 @@ pub(crate) mod verify {
     }
 
     pub open spec fn test_absorbs(g: model::Graph, ids: Seq<TestId>, and: bool) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            ==> test_combo(g, sym, theta, ids, event, and) == !and
+        forall|theta: Subst, event: EventView| language::event_wf(theta)
+            ==> test_combo(g, theta, ids, event, and) == !and
     }
 
     pub open spec fn test_complement_covered(g: model::Graph, children: Seq<nat>, siblings: Seq<TestId>) -> bool {
@@ -4924,27 +4875,27 @@ pub(crate) mod verify {
             ==> exists|i: int| 0 <= i < siblings.len() && test_opposite_nat(g, child, siblings[i]@)
     }
 
-    pub proof fn test_lemma_combo_push(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+    pub proof fn test_lemma_combo_push(g: model::Graph, theta: Subst, event: EventView,
         ids: Seq<TestId>, id: TestId, and: bool)
-        ensures test_combo(g, sym, theta, ids.push(id), event, and)
-            == if and { test_combo(g, sym, theta, ids, event, and) && test_truth(g, sym, theta, id@, event) }
-                else { test_combo(g, sym, theta, ids, event, and) || test_truth(g, sym, theta, id@, event) },
+        ensures test_combo(g, theta, ids.push(id), event, and)
+            == if and { test_combo(g, theta, ids, event, and) && test_truth(g, theta, id@, event) }
+                else { test_combo(g, theta, ids, event, and) || test_truth(g, theta, id@, event) },
     {
         if and {
-            if test_combo(g, sym, theta, ids.push(id), event, and) {
-                assert(test_truth(g, sym, theta, ids.push(id)[ids.len() as int]@, event));
-                assert forall|i: int| 0 <= i < ids.len() implies test_truth(g, sym, theta, ids[i]@, event) by {
+            if test_combo(g, theta, ids.push(id), event, and) {
+                assert(test_truth(g, theta, ids.push(id)[ids.len() as int]@, event));
+                assert forall|i: int| 0 <= i < ids.len() implies test_truth(g, theta, ids[i]@, event) by {
                     assert(ids.push(id)[i] == ids[i]);
                 }
             } else {
-                let i = choose|i: int| 0 <= i < ids.push(id).len() && !test_truth(g, sym, theta, ids.push(id)[i]@, event);
+                let i = choose|i: int| 0 <= i < ids.push(id).len() && !test_truth(g, theta, ids.push(id)[i]@, event);
             }
         } else {
-            if test_combo(g, sym, theta, ids.push(id), event, and) {
-                let i = choose|i: int| 0 <= i < ids.push(id).len() && test_truth(g, sym, theta, ids.push(id)[i]@, event);
+            if test_combo(g, theta, ids.push(id), event, and) {
+                let i = choose|i: int| 0 <= i < ids.push(id).len() && test_truth(g, theta, ids.push(id)[i]@, event);
             } else {
-                assert(!test_truth(g, sym, theta, ids.push(id)[ids.len() as int]@, event));
-                assert forall|i: int| 0 <= i < ids.len() implies !test_truth(g, sym, theta, ids[i]@, event) by {
+                assert(!test_truth(g, theta, ids.push(id)[ids.len() as int]@, event));
+                assert forall|i: int| 0 <= i < ids.len() implies !test_truth(g, theta, ids[i]@, event) by {
                     assert(ids.push(id)[i] == ids[i]);
                 }
             }
@@ -4953,8 +4904,8 @@ pub(crate) mod verify {
 
     pub proof fn test_lemma_combo_extends(a: model::Graph, b: model::Graph, ids: Seq<TestId>)
         requires model::graph_extends(a, b), test_ids_valid(a, ids),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, and: bool|
-            test_combo(a, sym, theta, ids, event, and) == test_combo(b, sym, theta, ids, event, and),
+        ensures forall|theta: Subst, event: EventView, and: bool|
+            test_combo(a, theta, ids, event, and) == test_combo(b, theta, ids, event, and),
     {
         assert forall|i: int| 0 <= i < ids.len()
             implies model::lift_test(a, ids[i]@) == model::lift_test(b, ids[i]@) by {
@@ -4981,9 +4932,9 @@ pub(crate) mod verify {
         requires test_absorbs(g, left, and), forall|id: TestId| left.contains(id) ==> right.contains(id),
         ensures test_absorbs(g, right, and),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies test_combo(g, sym, theta, right, event, and) == !and by {
-            test_lemma_combo_inclusion(g, sym, theta, event, left, right, and);
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies test_combo(g, theta, right, event, and) == !and by {
+            test_lemma_combo_inclusion(g, theta, event, left, right, and);
         }
     }
 
@@ -4997,12 +4948,12 @@ pub(crate) mod verify {
                     }),
         ensures test_absorbs(g, seq![a, b], and),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies test_combo(g, sym, theta, seq![a, b], event, and) == !and by {
-            test_lemma_truth(g, sym, theta, a@, event);
-            test_lemma_truth(g, sym, theta, b@, event);
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies test_combo(g, theta, seq![a, b], event, and) == !and by {
+            test_lemma_truth(g, theta, a@, event);
+            test_lemma_truth(g, theta, b@, event);
             if !test_opposite(g, a, b) {
-                test_lemma_distinct_atoms(sym, theta, model::test_node_head(g.tests[a@ as int]),
+                test_lemma_distinct_atoms(theta, model::test_node_head(g.tests[a@ as int]),
                     model::test_node_head(g.tests[b@ as int]), event);
             }
         }
@@ -5039,25 +4990,25 @@ pub(crate) mod verify {
             test_complement_covered(g, test_children(g, a), siblings),
         ensures test_absorbs(g, seq![a] + siblings, and),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies test_combo(g, sym, theta, seq![a] + siblings, event, and) == !and by {
-            test_lemma_truth(g, sym, theta, a@, event);
-            test_lemma_combo_concat(g, sym, theta, event, seq![a], siblings, and);
-            test_lemma_combo_push(g, sym, theta, event, Seq::empty(), a, and);
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies test_combo(g, theta, seq![a] + siblings, event, and) == !and by {
+            test_lemma_truth(g, theta, a@, event);
+            test_lemma_combo_concat(g, theta, event, seq![a], siblings, and);
+            test_lemma_combo_push(g, theta, event, Seq::empty(), a, and);
             if and {
-                if test_combo(g, sym, theta, siblings, event, and) {
+                if test_combo(g, theta, siblings, event, and) {
                     assert forall|child: nat| test_children(g, a).contains(child)
-                        implies !test_truth(g, sym, theta, child, event) by {
+                        implies !test_truth(g, theta, child, event) by {
                         let i = choose|i: int| 0 <= i < siblings.len() && test_opposite_nat(g, child, siblings[i]@);
                     }
-                    assert(!test_truth(g, sym, theta, a@, event));
+                    assert(!test_truth(g, theta, a@, event));
                 }
-            } else if !test_combo(g, sym, theta, siblings, event, and) {
+            } else if !test_combo(g, theta, siblings, event, and) {
                 assert forall|child: nat| test_children(g, a).contains(child)
-                    implies test_truth(g, sym, theta, child, event) by {
+                    implies test_truth(g, theta, child, event) by {
                     let i = choose|i: int| 0 <= i < siblings.len() && test_opposite_nat(g, child, siblings[i]@);
                 }
-                assert(test_truth(g, sym, theta, a@, event));
+                assert(test_truth(g, theta, a@, event));
             }
         }
     }
@@ -5069,24 +5020,24 @@ pub(crate) mod verify {
             before.is_prefix_of(after), after.len() == before.len() + test_children(g, id).len(),
             forall|i: int| 0 <= i < test_children(g, id).len()
                 ==> #[trigger] after[before.len() + i]@ == test_children(g, id)[i],
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_combo(g, sym, theta, after, event, and) == test_combo(g, sym, theta, before.push(id), event, and),
+        ensures forall|theta: Subst, event: EventView|
+            test_combo(g, theta, after, event, and) == test_combo(g, theta, before.push(id), event, and),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_combo(g, sym, theta, after, event, and) == test_combo(g, sym, theta, before.push(id), event, and) by {
-            test_lemma_truth(g, sym, theta, id@, event);
-            test_lemma_combo_push(g, sym, theta, event, before, id, and);
+        assert forall|theta: Subst, event: EventView|
+            test_combo(g, theta, after, event, and) == test_combo(g, theta, before.push(id), event, and) by {
+            test_lemma_truth(g, theta, id@, event);
+            test_lemma_combo_push(g, theta, event, before, id, and);
             if and {
-                if test_combo(g, sym, theta, after, event, and) {
-                    assert forall|i: int| 0 <= i < before.len() implies test_truth(g, sym, theta, before[i]@, event) by {
+                if test_combo(g, theta, after, event, and) {
+                    assert forall|i: int| 0 <= i < before.len() implies test_truth(g, theta, before[i]@, event) by {
                         assert(after[i] == before[i]);
                     }
-                    assert forall|child: nat| test_children(g, id).contains(child) implies test_truth(g, sym, theta, child, event) by {
+                    assert forall|child: nat| test_children(g, id).contains(child) implies test_truth(g, theta, child, event) by {
                         let i = choose|i: int| 0 <= i < test_children(g, id).len() && test_children(g, id)[i] == child;
-                        assert(test_truth(g, sym, theta, after[before.len() + i]@, event));
+                        assert(test_truth(g, theta, after[before.len() + i]@, event));
                     }
                 } else {
-                    let i = choose|i: int| 0 <= i < after.len() && !test_truth(g, sym, theta, after[i]@, event);
+                    let i = choose|i: int| 0 <= i < after.len() && !test_truth(g, theta, after[i]@, event);
                     if i < before.len() { assert(after[i] == before[i]); }
                     else {
                         let j = i - before.len() as int;
@@ -5098,8 +5049,8 @@ pub(crate) mod verify {
                     }
                 }
             } else {
-                if test_combo(g, sym, theta, after, event, and) {
-                    let i = choose|i: int| 0 <= i < after.len() && test_truth(g, sym, theta, after[i]@, event);
+                if test_combo(g, theta, after, event, and) {
+                    let i = choose|i: int| 0 <= i < after.len() && test_truth(g, theta, after[i]@, event);
                     if i < before.len() { assert(after[i] == before[i]); }
                     else {
                         let j = i - before.len() as int;
@@ -5110,12 +5061,12 @@ pub(crate) mod verify {
                         assert(test_children(g, id).contains(after[i]@));
                     }
                 } else {
-                    assert forall|i: int| 0 <= i < before.len() implies !test_truth(g, sym, theta, before[i]@, event) by {
+                    assert forall|i: int| 0 <= i < before.len() implies !test_truth(g, theta, before[i]@, event) by {
                         assert(after[i] == before[i]);
                     }
-                    assert forall|child: nat| test_children(g, id).contains(child) implies !test_truth(g, sym, theta, child, event) by {
+                    assert forall|child: nat| test_children(g, id).contains(child) implies !test_truth(g, theta, child, event) by {
                         let i = choose|i: int| 0 <= i < test_children(g, id).len() && test_children(g, id)[i] == child;
-                        assert(!test_truth(g, sym, theta, after[before.len() + i]@, event));
+                        assert(!test_truth(g, theta, after[before.len() + i]@, event));
                     }
                 }
             }
@@ -5165,16 +5116,16 @@ pub(crate) mod verify {
     pub proof fn test_lemma_constants_semantics(g: model::Graph)
         requires model::graph_wf(g),
         ensures g.constants.test_true < g.tests.len(), g.constants.test_false < g.tests.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_truth(g, sym, theta, g.constants.test_true, event)
-                    && !test_truth(g, sym, theta, g.constants.test_false, event),
+            forall|theta: Subst, event: EventView|
+                test_truth(g, theta, g.constants.test_true, event)
+                    && !test_truth(g, theta, g.constants.test_false, event),
     {
         model::lemma_graph_wf_elim(g);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_truth(g, sym, theta, g.constants.test_true, event)
-                && !test_truth(g, sym, theta, g.constants.test_false, event) by {
-            test_lemma_truth(g, sym, theta, g.constants.test_true, event);
-            test_lemma_truth(g, sym, theta, g.constants.test_false, event);
+        assert forall|theta: Subst, event: EventView|
+            test_truth(g, theta, g.constants.test_true, event)
+                && !test_truth(g, theta, g.constants.test_false, event) by {
+            test_lemma_truth(g, theta, g.constants.test_true, event);
+            test_lemma_truth(g, theta, g.constants.test_false, event);
         }
     }
 
@@ -5356,52 +5307,52 @@ pub(crate) mod verify {
     }
 
     #[verifier::inline]
-    pub open spec fn test_truth(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, id: nat, event: Data) -> bool {
-        model::test_holds(sym, theta, model::lift_test(g, id), event)
+    pub open spec fn test_truth(g: model::Graph, theta: Subst, id: nat, event: EventView) -> bool {
+        model::test_holds(theta, model::lift_test(g, id), event)
     }
 
-    pub proof fn test_lemma_truth(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, id: nat, event: Data)
+    pub proof fn test_lemma_truth(g: model::Graph, theta: Subst, id: nat, event: EventView)
         requires model::graph_wf(g), id < g.tests.len(),
-        ensures test_truth(g, sym, theta, id, event) == match g.tests[id as int] {
+        ensures test_truth(g, theta, id, event) == match g.tests[id as int] {
             model::TestNode::True => true,
             model::TestNode::False => false,
-            model::TestNode::Atom(p, b) => model::primitive_holds(sym, theta, p, event) == b,
+            model::TestNode::Atom(p, b) => model::primitive_holds(theta, p, event) == b,
             model::TestNode::And(cs) => forall|child: nat| #[trigger] cs.contains(child)
-                ==> test_truth(g, sym, theta, child, event),
+                ==> test_truth(g, theta, child, event),
             model::TestNode::Or(cs) => exists|child: nat| cs.contains(child)
-                && test_truth(g, sym, theta, child, event),
+                && test_truth(g, theta, child, event),
         },
     {
         model::lemma_graph_test_wf(g, id);
         match g.tests[id as int] {
             model::TestNode::And(cs) => {
                 let lifted = model::lift_tests(g, cs, id);
-                test_lemma_semantics_unfold(sym, theta, event, model::Test::And(lifted));
+                test_lemma_semantics_unfold(theta, event, model::Test::And(lifted));
                 assert forall|i: int| 0 <= i < cs.len()
 
                     implies lifted[i] == model::lift_test(g, cs[i]) by {}
-                if test_truth(g, sym, theta, id, event) {
-                    assert forall|child: nat| cs.contains(child) implies test_truth(g, sym, theta, child, event) by {
+                if test_truth(g, theta, id, event) {
+                    assert forall|child: nat| cs.contains(child) implies test_truth(g, theta, child, event) by {
                         let i = choose|i: int| 0 <= i < cs.len() && cs[i] == child;
-                        test_lemma_compound_child(sym, theta, event, lifted, i);
+                        test_lemma_compound_child(theta, event, lifted, i);
                     }
                 } else {
-                    let i = choose|i: int| 0 <= i < lifted.len() && !model::test_holds(sym, theta, lifted[i], event);
+                    let i = choose|i: int| 0 <= i < lifted.len() && !model::test_holds(theta, lifted[i], event);
                     assert(cs.contains(cs[i]));
                 }
             },
             model::TestNode::Or(cs) => {
                 let lifted = model::lift_tests(g, cs, id);
-                test_lemma_semantics_unfold(sym, theta, event, model::Test::Or(lifted));
+                test_lemma_semantics_unfold(theta, event, model::Test::Or(lifted));
                 assert forall|i: int| 0 <= i < cs.len()
                     implies lifted[i] == model::lift_test(g, cs[i]) by {}
-                if test_truth(g, sym, theta, id, event) {
-                    let i = choose|i: int| 0 <= i < lifted.len() && model::test_holds(sym, theta, lifted[i], event);
+                if test_truth(g, theta, id, event) {
+                    let i = choose|i: int| 0 <= i < lifted.len() && model::test_holds(theta, lifted[i], event);
                     assert(cs.contains(cs[i]));
                 } else {
-                    assert forall|child: nat| cs.contains(child) implies !test_truth(g, sym, theta, child, event) by {
+                    assert forall|child: nat| cs.contains(child) implies !test_truth(g, theta, child, event) by {
                         let i = choose|i: int| 0 <= i < cs.len() && cs[i] == child;
-                        test_lemma_compound_child(sym, theta, event, lifted, i);
+                        test_lemma_compound_child(theta, event, lifted, i);
                     }
                 }
             },
@@ -5410,45 +5361,45 @@ pub(crate) mod verify {
     }
 
     pub proof fn test_lemma_negation_semantics(g: model::Graph, relation: Set<(nat, nat)>,
-        left: nat, right: nat, sym: model::Symbols, theta: Seq<Data>, event: Data)
+        left: nat, right: nat, theta: Subst, event: EventView)
         requires model::graph_wf(g), test_negation_witness(g, relation), relation.contains((left, right)),
-        ensures test_truth(g, sym, theta, left, event) != test_truth(g, sym, theta, right, event),
+        ensures test_truth(g, theta, left, event) != test_truth(g, theta, right, event),
         decreases left,
     {
         test_lemma_negation_witness_elim(g, relation);
         reveal(test_negation_row);
         assert(test_negation_row(g, relation, left, right));
-        test_lemma_truth(g, sym, theta, left, event);
-        test_lemma_truth(g, sym, theta, right, event);
+        test_lemma_truth(g, theta, left, event);
+        test_lemma_truth(g, theta, right, event);
         match (g.tests[left as int], g.tests[right as int]) {
             (model::TestNode::And(cs), model::TestNode::Or(ds)) => {
                 assert forall|a: nat, b: nat| cs.contains(a) && ds.contains(b) && relation.contains((a, b))
-                    implies test_truth(g, sym, theta, a, event) != test_truth(g, sym, theta, b, event) by {
+                    implies test_truth(g, theta, a, event) != test_truth(g, theta, b, event) by {
                     let i = choose|i: int| 0 <= i < cs.len() && cs[i] == a;
-                    test_lemma_negation_semantics(g, relation, a, b, sym, theta, event);
+                    test_lemma_negation_semantics(g, relation, a, b, theta, event);
                 }
-                if test_truth(g, sym, theta, left, event) {
-                    assert forall|b: nat| ds.contains(b) implies !test_truth(g, sym, theta, b, event) by {
+                if test_truth(g, theta, left, event) {
+                    assert forall|b: nat| ds.contains(b) implies !test_truth(g, theta, b, event) by {
                         let a = choose|a: nat| cs.contains(a) && relation.contains((a, b));
                     }
                 } else {
-                    let a = choose|a: nat| cs.contains(a) && !test_truth(g, sym, theta, a, event);
+                    let a = choose|a: nat| cs.contains(a) && !test_truth(g, theta, a, event);
                     let b = choose|b: nat| ds.contains(b) && relation.contains((a, b));
-                    assert(test_truth(g, sym, theta, b, event));
+                    assert(test_truth(g, theta, b, event));
                 }
             },
             (model::TestNode::Or(cs), model::TestNode::And(ds)) => {
                 assert forall|a: nat, b: nat| cs.contains(a) && ds.contains(b) && relation.contains((a, b))
-                    implies test_truth(g, sym, theta, a, event) != test_truth(g, sym, theta, b, event) by {
+                    implies test_truth(g, theta, a, event) != test_truth(g, theta, b, event) by {
                     let i = choose|i: int| 0 <= i < cs.len() && cs[i] == a;
-                    test_lemma_negation_semantics(g, relation, a, b, sym, theta, event);
+                    test_lemma_negation_semantics(g, relation, a, b, theta, event);
                 }
-                if test_truth(g, sym, theta, left, event) {
-                    let a = choose|a: nat| cs.contains(a) && test_truth(g, sym, theta, a, event);
+                if test_truth(g, theta, left, event) {
+                    let a = choose|a: nat| cs.contains(a) && test_truth(g, theta, a, event);
                     let b = choose|b: nat| ds.contains(b) && relation.contains((a, b));
-                    assert(!test_truth(g, sym, theta, b, event));
+                    assert(!test_truth(g, theta, b, event));
                 } else {
-                    assert forall|b: nat| ds.contains(b) implies test_truth(g, sym, theta, b, event) by {
+                    assert forall|b: nat| ds.contains(b) implies test_truth(g, theta, b, event) by {
                         let a = choose|a: nat| cs.contains(a) && relation.contains((a, b));
                     }
                 }
@@ -5830,8 +5781,8 @@ pub(crate) mod verify {
     pub proof fn test_lemma_not_done(g: model::Graph, values: Seq<TestId>, root: TestId)
         requires model::graph_wf(g), test_not_state(g, Seq::empty(), values, root),
         ensures values.len() == 1, values[0]@ < g.tests.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-                test_truth(g, sym, theta, values[0]@, event) != test_truth(g, sym, theta, root@, event),
+            forall|theta: Subst, event: EventView|
+                test_truth(g, theta, values[0]@, event) != test_truth(g, theta, root@, event),
     {
         let (origins, relation) = choose|origins: Seq<nat>, relation: Set<(nat, nat)>|
             origins.len() == values.len() && test_negation_witness(g, relation)
@@ -5842,9 +5793,9 @@ pub(crate) mod verify {
         test_lemma_negation_witness_elim(g, relation);
         reveal(test_negation_row);
         assert(test_negation_row(g, relation, root@, values[0]@));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            test_truth(g, sym, theta, values[0]@, event) != test_truth(g, sym, theta, root@, event) by {
-            test_lemma_negation_semantics(g, relation, root@, values[0]@, sym, theta, event);
+        assert forall|theta: Subst, event: EventView|
+            test_truth(g, theta, values[0]@, event) != test_truth(g, theta, root@, event) by {
+            test_lemma_negation_semantics(g, relation, root@, values[0]@, theta, event);
         }
     }
 
@@ -5956,18 +5907,18 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn test_lemma_combo_concat(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data,
+    pub proof fn test_lemma_combo_concat(g: model::Graph, theta: Subst, event: EventView,
         left: Seq<TestId>, right: Seq<TestId>, and: bool)
-        ensures test_combo(g, sym, theta, left + right, event, and)
-            == if and { test_combo(g, sym, theta, left, event, and) && test_combo(g, sym, theta, right, event, and) }
-                else { test_combo(g, sym, theta, left, event, and) || test_combo(g, sym, theta, right, event, and) },
+        ensures test_combo(g, theta, left + right, event, and)
+            == if and { test_combo(g, theta, left, event, and) && test_combo(g, theta, right, event, and) }
+                else { test_combo(g, theta, left, event, and) || test_combo(g, theta, right, event, and) },
         decreases right.len(),
     {
         if right.len() == 0 { assert(left + right =~= left); }
         else {
-            test_lemma_combo_concat(g, sym, theta, event, left, right.drop_last(), and);
-            test_lemma_combo_push(g, sym, theta, event, right.drop_last(), right.last(), and);
-            test_lemma_combo_push(g, sym, theta, event, left + right.drop_last(), right.last(), and);
+            test_lemma_combo_concat(g, theta, event, left, right.drop_last(), and);
+            test_lemma_combo_push(g, theta, event, right.drop_last(), right.last(), and);
+            test_lemma_combo_push(g, theta, event, left + right.drop_last(), right.last(), and);
             assert(right.drop_last().push(right.last()) =~= right);
             assert((left + right.drop_last()).push(right.last()) =~= left + right);
         }
@@ -6060,15 +6011,15 @@ pub(crate) mod verify {
         model::lemma_graph_wf_elim(g);
     }
 
-    pub proof fn regex_star_nil<L>(sem: spec_fn(L, Data) -> bool, r: language::Regex<L>)
+    pub proof fn regex_star_nil<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>)
         ensures language::lang(sem, language::Regex::Star(Box::new(r)), Seq::empty()),
     {
-        let parts = Seq::<Seq<Data>>::empty();
-        assert(parts.flatten() == Seq::<Data>::empty());
+        let parts = Seq::<Seq<EventView>>::empty();
+        assert(parts.flatten() == Seq::<EventView>::empty());
         assert(forall|i: int| 0 <= i < parts.len() ==> language::lang(sem, r, parts[i]));
     }
 
-    pub proof fn regex_star_single<L>(sem: spec_fn(L, Data) -> bool, r: language::Regex<L>, word: Seq<Data>)
+    pub proof fn regex_star_single<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, word: Seq<EventView>)
         requires language::lang(sem, r, word),
         ensures language::lang(sem, language::Regex::Star(Box::new(r)), word),
     {
@@ -6079,14 +6030,14 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_star_join<L>(sem: spec_fn(L, Data) -> bool, r: language::Regex<L>, a: Seq<Data>, b: Seq<Data>)
+    pub proof fn regex_star_join<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, a: Seq<EventView>, b: Seq<EventView>)
         requires language::lang(sem, language::Regex::Star(Box::new(r)), a),
             language::lang(sem, language::Regex::Star(Box::new(r)), b),
         ensures language::lang(sem, language::Regex::Star(Box::new(r)), a + b),
     {
-        let ap = choose|p: Seq<Seq<Data>>| a == p.flatten()
+        let ap = choose|p: Seq<Seq<EventView>>| a == p.flatten()
             && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, r, p[i]);
-        let bp = choose|p: Seq<Seq<Data>>| b == p.flatten()
+        let bp = choose|p: Seq<Seq<EventView>>| b == p.flatten()
             && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, r, p[i]);
         let parts = ap + bp;
         vstd::seq_lib::lemma_flatten_concat(ap, bp);
@@ -6097,7 +6048,7 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_star_parts<L>(sem: spec_fn(L, Data) -> bool, r: language::Regex<L>, parts: Seq<Seq<Data>>)
+    pub proof fn regex_star_parts<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, parts: Seq<Seq<EventView>>)
         requires forall|i: int| 0 <= i < parts.len() ==> language::lang(sem, language::Regex::Star(Box::new(r)), parts[i]),
         ensures language::lang(sem, language::Regex::Star(Box::new(r)), parts.flatten()),
         decreases parts.len(),
@@ -6114,12 +6065,12 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_star_collapse<L>(sem: spec_fn(L, Data) -> bool, r: language::Regex<L>, word: Seq<Data>)
+    pub proof fn regex_star_collapse<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, word: Seq<EventView>)
         ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word)
             == language::lang(sem, language::Regex::Star(Box::new(r)), word),
     {
         if language::lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word) {
-            let parts = choose|p: Seq<Seq<Data>>| word == p.flatten()
+            let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
                 && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::Star(Box::new(r)), p[i]);
             regex_star_parts(sem, r, parts);
         }
@@ -6128,36 +6079,36 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_star_constants<L>(sem: spec_fn(L, Data) -> bool, word: Seq<Data>)
+    pub proof fn regex_star_constants<L>(sem: spec_fn(L, EventView) -> bool, word: Seq<EventView>)
         ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) == (word.len() == 0),
             language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) == (word.len() == 0),
             language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::All)), word),
     {
         if language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) {
-            let parts = choose|p: Seq<Seq<Data>>| word == p.flatten()
+            let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
                 && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::<L>::Empty, p[i]);
             assert(parts.len() == 0) by { if parts.len() > 0 { assert(language::lang(sem, language::Regex::<L>::Empty, parts[0])); } }
         }
         if language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) {
-            let parts = choose|p: Seq<Seq<Data>>| word == p.flatten()
+            let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
                 && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::<L>::Epsilon, p[i]);
             language::lemma_flatten_empty(parts);
         }
         if word.len() == 0 {
-            assert(word =~= Seq::<Data>::empty());
+            assert(word =~= Seq::<EventView>::empty());
             regex_star_nil(sem, language::Regex::<L>::Empty);
             regex_star_nil(sem, language::Regex::<L>::Epsilon);
         }
         regex_star_single(sem, language::Regex::<L>::All, word);
     }
 
-    pub proof fn regex_star_test_true<L>(sem: spec_fn(L, Data) -> bool, leaf: L, word: Seq<Data>)
-        requires forall|event: Data| #[trigger] sem(leaf, event),
+    pub proof fn regex_star_test_true<L>(sem: spec_fn(L, EventView) -> bool, leaf: L, word: Seq<EventView>)
+        requires forall|event: EventView| #[trigger] sem(leaf, event),
         ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::Test(leaf))), word),
         decreases word.len(),
     {
         if word.len() == 0 {
-            assert(word =~= Seq::<Data>::empty());
+            assert(word =~= Seq::<EventView>::empty());
             regex_star_nil(sem, language::Regex::Test(leaf));
         } else {
             let tail = word.drop_first();
@@ -6171,46 +6122,46 @@ pub(crate) mod verify {
 
     pub proof fn regex_star_laws(g: model::Graph, id: nat)
         requires model::graph_wf(g), id < g.regexes.len(),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            #![trigger language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
             match g.regexes[id as int].kind {
                 model::RegexKindNode::Empty | model::RegexKindNode::Epsilon =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == (word.len() == 0),
                 model::RegexKindNode::All =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Test(t) => t == g.constants.test_true ==>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Star(_) =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
-                        == model::regex_lang(g, sym, theta, id, word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                        == model::regex_lang(g, theta, id, word),
                 _ => true,
             },
     {
         regex_unfold(g, id);
         regex_constants(g);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
+        assert forall|theta: Subst, word: Seq<EventView>|
+            #![trigger language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
             match g.regexes[id as int].kind {
                 model::RegexKindNode::Empty | model::RegexKindNode::Epsilon =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == (word.len() == 0),
                 model::RegexKindNode::All =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Test(t) => t == g.constants.test_true ==>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Star(_) =>
-                    language::lang(model::gsem(sym, theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
-                        == model::regex_lang(g, sym, theta, id, word),
+                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                        == model::regex_lang(g, theta, id, word),
                 _ => true,
             } by {
-            let sem = model::gsem(sym, theta);
+            let sem = model::gsem(theta);
             match g.regexes[id as int].kind {
                 model::RegexKindNode::Empty | model::RegexKindNode::Epsilon | model::RegexKindNode::All => {
                     regex_star_constants(sem, word);
                 },
                 model::RegexKindNode::Test(t) => if t == g.constants.test_true {
-                    assert(forall|event: Data| #[trigger] sem(model::Test::True, event));
+                    assert(forall|event: EventView| #[trigger] sem(model::Test::True, event));
                     regex_star_test_true(sem, model::Test::True, word);
                 },
                 model::RegexKindNode::Star(r) => { regex_star_collapse(sem, model::lift_regex(g, r), word); },
@@ -6227,18 +6178,18 @@ pub(crate) mod verify {
         }
     }
 
-    pub open spec fn regex_concat_nats(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<nat>, word: Seq<Data>) -> bool {
-        language::lang(model::gsem(sym, theta), language::Regex::Concat(model::lift_regexes(g, ids)), word)
+    pub open spec fn regex_concat_nats(g: model::Graph, theta: Subst, ids: Seq<nat>, word: Seq<EventView>) -> bool {
+        language::lang(model::gsem(theta), language::Regex::Concat(model::lift_regexes(g, ids)), word)
     }
 
-    pub proof fn regex_concat_append<L>(sem: spec_fn(L, Data) -> bool, a: Seq<language::Regex<L>>, b: Seq<language::Regex<L>>, word: Seq<Data>)
+    pub proof fn regex_concat_append<L>(sem: spec_fn(L, EventView) -> bool, a: Seq<language::Regex<L>>, b: Seq<language::Regex<L>>, word: Seq<EventView>)
         ensures language::lang(sem, language::Regex::Concat(a + b), word)
-            == (exists|u: Seq<Data>, v: Seq<Data>| word == u + v
+            == (exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                 && language::lang(sem, language::Regex::Concat(a), u)
                 && language::lang(sem, language::Regex::Concat(b), v)),
     {
         if language::lang(sem, language::Regex::Concat(a + b), word) {
-            let parts = choose|p: Seq<Seq<Data>>| p.len() == (a + b).len() && word == p.flatten()
+            let parts = choose|p: Seq<Seq<EventView>>| p.len() == (a + b).len() && word == p.flatten()
                 && forall|i: int| 0 <= i < (a + b).len() ==> language::lang(sem, (a + b)[i], p[i]);
             let ap = parts.subrange(0, a.len() as int);
             let bp = parts.subrange(a.len() as int, parts.len() as int);
@@ -6255,15 +6206,15 @@ pub(crate) mod verify {
             assert(language::lang(sem, language::Regex::Concat(a), ap.flatten()));
             assert(language::lang(sem, language::Regex::Concat(b), bp.flatten()));
         }
-        if exists|u: Seq<Data>, v: Seq<Data>| word == u + v
+        if exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
             && language::lang(sem, language::Regex::Concat(a), u)
             && language::lang(sem, language::Regex::Concat(b), v) {
-            let (u, v) = choose|u: Seq<Data>, v: Seq<Data>| word == u + v
+            let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                 && language::lang(sem, language::Regex::Concat(a), u)
                 && language::lang(sem, language::Regex::Concat(b), v);
-            let ap = choose|p: Seq<Seq<Data>>| p.len() == a.len() && u == p.flatten()
+            let ap = choose|p: Seq<Seq<EventView>>| p.len() == a.len() && u == p.flatten()
                 && forall|i: int| 0 <= i < a.len() ==> language::lang(sem, a[i], p[i]);
-            let bp = choose|p: Seq<Seq<Data>>| p.len() == b.len() && v == p.flatten()
+            let bp = choose|p: Seq<Seq<EventView>>| p.len() == b.len() && v == p.flatten()
                 && forall|i: int| 0 <= i < b.len() ==> language::lang(sem, b[i], p[i]);
             let parts = ap + bp;
             vstd::seq_lib::lemma_flatten_concat(ap, bp);
@@ -6275,61 +6226,61 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_concat_empty<L>(sem: spec_fn(L, Data) -> bool, word: Seq<Data>)
+    pub proof fn regex_concat_empty<L>(sem: spec_fn(L, EventView) -> bool, word: Seq<EventView>)
         ensures language::lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) == (word.len() == 0),
     {
         if language::lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) {
-            let parts = choose|p: Seq<Seq<Data>>| p.len() == 0 && word == p.flatten()
+            let parts = choose|p: Seq<Seq<EventView>>| p.len() == 0 && word == p.flatten()
                 && forall|i: int| 0 <= i < 0 ==> language::lang(sem, Seq::<language::Regex<L>>::empty()[i], p[i]);
-            assert(parts =~= Seq::<Seq<Data>>::empty());
+            assert(parts =~= Seq::<Seq<EventView>>::empty());
         }
         if word.len() == 0 {
-            let parts = Seq::<Seq<Data>>::empty();
+            let parts = Seq::<Seq<EventView>>::empty();
             assert(word =~= parts.flatten());
             assert(forall|i: int| 0 <= i < 0 ==> language::lang(sem, Seq::<language::Regex<L>>::empty()[i], parts[i]));
         }
     }
 
-    pub proof fn regex_concat_replace<L>(sem: spec_fn(L, Data) -> bool, prefix: Seq<language::Regex<L>>, tail: Seq<language::Regex<L>>, r: language::Regex<L>)
-        requires forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(tail), word) == language::lang(sem, r, word),
-        ensures forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
+    pub proof fn regex_concat_replace<L>(sem: spec_fn(L, EventView) -> bool, prefix: Seq<language::Regex<L>>, tail: Seq<language::Regex<L>>, r: language::Regex<L>)
+        requires forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), word) == language::lang(sem, r, word),
+        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
             == language::lang(sem, language::Regex::Concat(prefix.push(r)), word),
     {
-        assert forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
+        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
             == language::lang(sem, language::Regex::Concat(prefix.push(r)), word) by {
             assert(prefix.push(r) =~= prefix + seq![r]);
             regex_concat_append(sem, prefix, tail, word);
             regex_concat_append(sem, prefix, seq![r], word);
             if language::lang(sem, language::Regex::Concat(prefix + tail), word) {
-                let (u, v) = choose|u: Seq<Data>, v: Seq<Data>| word == u + v
+                let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                     && language::lang(sem, language::Regex::Concat(prefix), u)
                     && language::lang(sem, language::Regex::Concat(tail), v);
                 assert(language::lang(sem, r, v));
                 language::lemma_concat_singleton(sem, r, v);
-                assert(exists|u: Seq<Data>, v: Seq<Data>| word == u + v
+                assert(exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                     && language::lang(sem, language::Regex::Concat(prefix), u)
                     && language::lang(sem, language::Regex::Concat(seq![r]), v));
             }
             if language::lang(sem, language::Regex::Concat(prefix.push(r)), word) {
-                let (u, v) = choose|u: Seq<Data>, v: Seq<Data>| word == u + v
+                let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                     && language::lang(sem, language::Regex::Concat(prefix), u)
                     && language::lang(sem, language::Regex::Concat(seq![r]), v);
                 language::lemma_concat_singleton(sem, r, v);
                 assert(language::lang(sem, language::Regex::Concat(tail), v));
-                assert(exists|u: Seq<Data>, v: Seq<Data>| word == u + v
+                assert(exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                     && language::lang(sem, language::Regex::Concat(prefix), u)
                     && language::lang(sem, language::Regex::Concat(tail), v));
             }
         }
     }
 
-    pub proof fn regex_concat_append_congruent<L>(sem: spec_fn(L, Data) -> bool, left: Seq<language::Regex<L>>, right: Seq<language::Regex<L>>, suffix: Seq<language::Regex<L>>)
-        requires forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(left), word)
+    pub proof fn regex_concat_append_congruent<L>(sem: spec_fn(L, EventView) -> bool, left: Seq<language::Regex<L>>, right: Seq<language::Regex<L>>, suffix: Seq<language::Regex<L>>)
+        requires forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
             == language::lang(sem, language::Regex::Concat(right), word),
-        ensures forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(left + suffix), word)
+        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left + suffix), word)
             == language::lang(sem, language::Regex::Concat(right + suffix), word),
     {
-        assert forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(left + suffix), word)
+        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left + suffix), word)
             == language::lang(sem, language::Regex::Concat(right + suffix), word) by {
             regex_concat_append(sem, left, suffix, word);
             regex_concat_append(sem, right, suffix, word);
@@ -6343,18 +6294,18 @@ pub(crate) mod verify {
                 model::RegexKindNode::Concat(cs) => cs,
                 _ => seq![id],
             },
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_concat_nats(g, sym, theta, after, word)
-                == regex_concat_nats(g, sym, theta, before.push(id), word),
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            regex_concat_nats(g, theta, after, word)
+                == regex_concat_nats(g, theta, before.push(id), word),
     {
         hide(language::lang);
         hide(model::tables_wf);
         hide(model::lift_regex);
         regex_unfold(g, id);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_concat_nats(g, sym, theta, after, word)
-                == regex_concat_nats(g, sym, theta, before.push(id), word) by {
-            let sem = model::gsem(sym, theta);
+        assert forall|theta: Subst, word: Seq<EventView>|
+            regex_concat_nats(g, theta, after, word)
+                == regex_concat_nats(g, theta, before.push(id), word) by {
+            let sem = model::gsem(theta);
             let lhs = model::lift_regexes(g, before);
             let rhs = match g.regexes[id as int].kind {
                 model::RegexKindNode::Epsilon => Seq::empty(),
@@ -6364,7 +6315,7 @@ pub(crate) mod verify {
             assert(model::lift_regexes(g, after) =~= lhs + rhs);
             assert(model::lift_regexes(g, before.push(id)) =~= lhs + seq![model::lift_regex(g, id)]);
             assert(lhs.push(model::lift_regex(g, id)) =~= lhs + seq![model::lift_regex(g, id)]);
-            assert forall|v: Seq<Data>| language::lang(sem, language::Regex::Concat(rhs), v)
+            assert forall|v: Seq<EventView>| language::lang(sem, language::Regex::Concat(rhs), v)
                 == language::lang(sem, model::lift_regex(g, id), v) by {
                 language::lemma_concat_singleton(sem, model::lift_regex(g, id), v);
                 match g.regexes[id as int].kind {
@@ -6415,10 +6366,10 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_concat_flat_law(g: model::Graph, ids: Seq<RegexId>, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>)
+    pub proof fn regex_concat_flat_law(g: model::Graph, ids: Seq<RegexId>, theta: Subst, word: Seq<EventView>)
         requires model::graph_wf(g), regex_ids_valid(g, ids),
-        ensures regex_concat_nats(g, sym, theta, regex_concat_flat(g, ids), word)
-            == concat_combo(g, sym, theta, ids, word),
+        ensures regex_concat_nats(g, theta, regex_concat_flat(g, ids), word)
+            == concat_combo(g, theta, ids, word),
         decreases ids.len(),
     {
         hide(language::lang);
@@ -6429,15 +6380,15 @@ pub(crate) mod verify {
             let id = ids.last()@;
             let flat = regex_concat_flat(g, before);
             regex_concat_step_law(g, flat, id, flat + regex_concat_piece(g, id));
-            let sem = model::gsem(sym, theta);
+            let sem = model::gsem(theta);
             let flat_lifts = model::lift_regexes(g, flat);
             let input_lifts = model::lift_regexes(g, model::regex_ids(before));
             let last_lifts = seq![model::lift_regex(g, id)];
             assert(model::lift_regexes(g, flat.push(id)) =~= flat_lifts + last_lifts);
             assert(model::lift_regexes(g, model::regex_ids(ids)) =~= input_lifts + last_lifts);
-            assert forall|v: Seq<Data>| language::lang(sem, language::Regex::Concat(flat_lifts), v)
+            assert forall|v: Seq<EventView>| language::lang(sem, language::Regex::Concat(flat_lifts), v)
                 == language::lang(sem, language::Regex::Concat(input_lifts), v) by {
-                regex_concat_flat_law(g, before, sym, theta, v);
+                regex_concat_flat_law(g, before, theta, v);
             }
             regex_concat_append_congruent(sem, flat_lifts, input_lifts, last_lifts);
         } else {
@@ -6448,17 +6399,17 @@ pub(crate) mod verify {
     pub proof fn regex_concat_absorber(g: model::Graph, ids: Seq<RegexId>, index: int)
         requires model::graph_wf(g), regex_ids_valid(g, ids), 0 <= index < ids.len(),
             g.regexes[ids[index]@ as int].kind == model::RegexKindNode::Empty,
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| !concat_combo(g, sym, theta, ids, word),
+        ensures forall|theta: Subst, word: Seq<EventView>| !concat_combo(g, theta, ids, word),
     {
         regex_unfold(g, ids[index]@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            !concat_combo(g, sym, theta, ids, word) by {
-            if concat_combo(g, sym, theta, ids, word) {
+        assert forall|theta: Subst, word: Seq<EventView>|
+            !concat_combo(g, theta, ids, word) by {
+            if concat_combo(g, theta, ids, word) {
                 let lifts = model::lift_regexes(g, model::regex_ids(ids));
-                let parts = choose|p: Seq<Seq<Data>>| p.len() == lifts.len() && word == p.flatten()
-                    && forall|i: int| 0 <= i < lifts.len() ==> language::lang(model::gsem(sym, theta), lifts[i], p[i]);
+                let parts = choose|p: Seq<Seq<EventView>>| p.len() == lifts.len() && word == p.flatten()
+                    && forall|i: int| 0 <= i < lifts.len() ==> language::lang(model::gsem(theta), lifts[i], p[i]);
                 assert(lifts[index] == language::Regex::Empty);
-                assert(language::lang(model::gsem(sym, theta), lifts[index], parts[index]));
+                assert(language::lang(model::gsem(theta), lifts[index], parts[index]));
             }
         }
     }
@@ -6469,18 +6420,18 @@ pub(crate) mod verify {
     }
 
     pub proof fn regex_concat_congruent<L>(
-        sem: spec_fn(L, Data) -> bool, left: Seq<language::Regex<L>>, right: Seq<language::Regex<L>>,
+        sem: spec_fn(L, EventView) -> bool, left: Seq<language::Regex<L>>, right: Seq<language::Regex<L>>,
     )
         requires left.len() == right.len(),
-            forall|i: int, word: Seq<Data>| 0 <= i < left.len()
+            forall|i: int, word: Seq<EventView>| 0 <= i < left.len()
                 ==> language::lang(sem, left[i], word) == language::lang(sem, right[i], word),
-        ensures forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(left), word)
+        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
             == language::lang(sem, language::Regex::Concat(right), word),
     {
-        assert forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(left), word)
+        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
             == language::lang(sem, language::Regex::Concat(right), word) by {
             if language::lang(sem, language::Regex::Concat(left), word) {
-                let parts = choose|p: Seq<Seq<Data>>| p.len() == left.len() && word == p.flatten()
+                let parts = choose|p: Seq<Seq<EventView>>| p.len() == left.len() && word == p.flatten()
                     && forall|i: int| 0 <= i < left.len() ==> language::lang(sem, left[i], p[i]);
                 assert forall|i: int| 0 <= i < right.len() implies language::lang(sem, right[i], parts[i]) by {
                     assert(language::lang(sem, left[i], parts[i]));
@@ -6488,7 +6439,7 @@ pub(crate) mod verify {
                 assert(language::lang(sem, language::Regex::Concat(right), word));
             }
             if language::lang(sem, language::Regex::Concat(right), word) {
-                let parts = choose|p: Seq<Seq<Data>>| p.len() == right.len() && word == p.flatten()
+                let parts = choose|p: Seq<Seq<EventView>>| p.len() == right.len() && word == p.flatten()
                     && forall|i: int| 0 <= i < right.len() ==> language::lang(sem, right[i], p[i]);
                 assert forall|i: int| 0 <= i < left.len() implies language::lang(sem, left[i], parts[i]) by {
                     assert(language::lang(sem, right[i], parts[i]));
@@ -6700,8 +6651,8 @@ pub(crate) mod verify {
     pub proof fn regex_concat_extends(a: model::Graph, b: model::Graph, ids: Seq<RegexId>)
         requires model::graph_wf(a), model::graph_extends(a, b), regex_ids_valid(a, ids),
         ensures regex_ids_valid(b, ids),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-                concat_combo(a, sym, theta, ids, word) == concat_combo(b, sym, theta, ids, word),
+            forall|theta: Subst, word: Seq<EventView>|
+                concat_combo(a, theta, ids, word) == concat_combo(b, theta, ids, word),
     {
         model::lemma_graph_wf_elim(a);
         model::lemma_lift_stable_under_extends(a, b);
@@ -6711,14 +6662,14 @@ pub(crate) mod verify {
     pub proof fn regex_concat_normalization_extends(a: model::Graph, b: model::Graph, original: Seq<RegexId>, flat: Seq<RegexId>)
         requires model::graph_wf(a), model::graph_extends(a, b), regex_ids_valid(a, original), regex_ids_valid(a, flat),
             model::regex_ids(flat) == regex_concat_flat(a, original),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            concat_combo(b, sym, theta, flat, word) == concat_combo(b, sym, theta, original, word),
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            concat_combo(b, theta, flat, word) == concat_combo(b, theta, original, word),
     {
         regex_concat_extends(a, b, original);
         regex_concat_extends(a, b, flat);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            concat_combo(b, sym, theta, flat, word) == concat_combo(b, sym, theta, original, word) by {
-            regex_concat_flat_law(a, original, sym, theta, word);
+        assert forall|theta: Subst, word: Seq<EventView>|
+            concat_combo(b, theta, flat, word) == concat_combo(b, theta, original, word) by {
+            regex_concat_flat_law(a, original, theta, word);
         }
     }
 
@@ -6747,12 +6698,12 @@ pub(crate) mod verify {
         }
     }
 
-    pub open spec fn regex_combo_nats(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, ids: Seq<nat>, word: Seq<Data>, intersect: bool) -> bool {
-        if intersect { forall|i: int| 0 <= i < ids.len() ==> model::regex_lang(g, sym, theta, ids[i], word) }
-        else { exists|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, ids[i], word) }
+    pub open spec fn regex_combo_nats(g: model::Graph, theta: Subst, ids: Seq<nat>, word: Seq<EventView>, intersect: bool) -> bool {
+        if intersect { forall|i: int| 0 <= i < ids.len() ==> model::regex_lang(g, theta, ids[i], word) }
+        else { exists|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, ids[i], word) }
     }
 
-    pub proof fn regex_language_unfold<L>(sem: spec_fn(L, Data) -> bool, regex: language::Regex<L>, word: Seq<Data>)
+    pub proof fn regex_language_unfold<L>(sem: spec_fn(L, EventView) -> bool, regex: language::Regex<L>, word: Seq<EventView>)
         ensures match regex {
             language::Regex::Union(cs) => language::lang(sem, regex, word) == (exists|i: int| 0 <= i < cs.len() && language::lang(sem, cs[i], word)),
             language::Regex::Intersect(cs) => language::lang(sem, regex, word) == (forall|i: int| 0 <= i < cs.len() ==> language::lang(sem, cs[i], word)),
@@ -6770,43 +6721,43 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_node_language(g: model::Graph, id: nat, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>)
+    pub proof fn regex_node_language(g: model::Graph, id: nat, theta: Subst, word: Seq<EventView>)
         requires model::graph_wf(g), id < g.regexes.len(),
         ensures match g.regexes[id as int].kind {
-            model::RegexKindNode::Union(cs) => model::regex_lang(g, sym, theta, id, word) == regex_combo_nats(g, sym, theta, cs, word, false),
-            model::RegexKindNode::Intersect(cs) => model::regex_lang(g, sym, theta, id, word) == regex_combo_nats(g, sym, theta, cs, word, true),
-            model::RegexKindNode::Test(t) => model::regex_lang(g, sym, theta, id, word)
-                == (word.len() == 1 && model::test_holds(sym, theta, model::lift_test(g, t), word[0])),
-            model::RegexKindNode::Not(r) => model::regex_lang(g, sym, theta, id, word) == !model::regex_lang(g, sym, theta, r, word),
-            model::RegexKindNode::Empty => !model::regex_lang(g, sym, theta, id, word),
-            model::RegexKindNode::All => model::regex_lang(g, sym, theta, id, word),
-            model::RegexKindNode::Epsilon => model::regex_lang(g, sym, theta, id, word) == (word.len() == 0),
+            model::RegexKindNode::Union(cs) => model::regex_lang(g, theta, id, word) == regex_combo_nats(g, theta, cs, word, false),
+            model::RegexKindNode::Intersect(cs) => model::regex_lang(g, theta, id, word) == regex_combo_nats(g, theta, cs, word, true),
+            model::RegexKindNode::Test(t) => model::regex_lang(g, theta, id, word)
+                == (word.len() == 1 && model::test_holds(theta, model::lift_test(g, t), word[0])),
+            model::RegexKindNode::Not(r) => model::regex_lang(g, theta, id, word) == !model::regex_lang(g, theta, r, word),
+            model::RegexKindNode::Empty => !model::regex_lang(g, theta, id, word),
+            model::RegexKindNode::All => model::regex_lang(g, theta, id, word),
+            model::RegexKindNode::Epsilon => model::regex_lang(g, theta, id, word) == (word.len() == 0),
             _ => true,
         },
     {
         regex_unfold(g, id);
-        let sem = model::gsem(sym, theta);
+        let sem = model::gsem(theta);
         regex_language_unfold(sem, model::lift_regex(g, id), word);
         match g.regexes[id as int].kind {
             model::RegexKindNode::Union(cs) => {
-                if model::regex_lang(g, sym, theta, id, word) {
+                if model::regex_lang(g, theta, id, word) {
                     let i = choose|i: int| 0 <= i < cs.len() && language::lang(sem, model::lift_regexes(g, cs)[i], word);
-                    assert(model::regex_lang(g, sym, theta, cs[i], word));
+                    assert(model::regex_lang(g, theta, cs[i], word));
                 }
-                if regex_combo_nats(g, sym, theta, cs, word, false) {
-                    let i = choose|i: int| 0 <= i < cs.len() && model::regex_lang(g, sym, theta, cs[i], word);
+                if regex_combo_nats(g, theta, cs, word, false) {
+                    let i = choose|i: int| 0 <= i < cs.len() && model::regex_lang(g, theta, cs[i], word);
                     assert(language::lang(sem, model::lift_regexes(g, cs)[i], word));
                 }
             },
             model::RegexKindNode::Intersect(cs) => {
-                if model::regex_lang(g, sym, theta, id, word) {
-                    assert forall|i: int| 0 <= i < cs.len() implies model::regex_lang(g, sym, theta, cs[i], word) by {
+                if model::regex_lang(g, theta, id, word) {
+                    assert forall|i: int| 0 <= i < cs.len() implies model::regex_lang(g, theta, cs[i], word) by {
                         assert(language::lang(sem, model::lift_regexes(g, cs)[i], word));
                     }
                 }
-                if regex_combo_nats(g, sym, theta, cs, word, true) {
+                if regex_combo_nats(g, theta, cs, word, true) {
                     assert forall|i: int| 0 <= i < cs.len() implies language::lang(sem, model::lift_regexes(g, cs)[i], word) by {
-                        assert(model::regex_lang(g, sym, theta, cs[i], word));
+                        assert(model::regex_lang(g, theta, cs[i], word));
                     }
                 }
             },
@@ -6814,36 +6765,36 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_absorption_implication(g: model::Graph, a: nat, b: nat, intersect: bool, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>)
+    pub proof fn regex_absorption_implication(g: model::Graph, a: nat, b: nat, intersect: bool, theta: Subst, word: Seq<EventView>)
         requires model::graph_wf(g), a < g.regexes.len(), b < g.regexes.len(), regex_absorbed_by(g, a, b, intersect),
-        ensures if intersect { model::regex_lang(g, sym, theta, b, word) ==> model::regex_lang(g, sym, theta, a, word) }
-            else { model::regex_lang(g, sym, theta, a, word) ==> model::regex_lang(g, sym, theta, b, word) },
+        ensures if intersect { model::regex_lang(g, theta, b, word) ==> model::regex_lang(g, theta, a, word) }
+            else { model::regex_lang(g, theta, a, word) ==> model::regex_lang(g, theta, b, word) },
     {
-        regex_node_language(g, a, sym, theta, word);
-        regex_node_language(g, b, sym, theta, word);
+        regex_node_language(g, a, theta, word);
+        regex_node_language(g, b, theta, word);
         regex_children_count(g, a);
         regex_children_count(g, b);
         let ac = regex_children(g, a);
         let bc = regex_children(g, b);
-        if intersect && model::regex_lang(g, sym, theta, b, word) {
+        if intersect && model::regex_lang(g, theta, b, word) {
             if regex_dual(g, b, intersect) {
-                let j = choose|j: int| 0 <= j < bc.len() && model::regex_lang(g, sym, theta, bc[j], word);
+                let j = choose|j: int| 0 <= j < bc.len() && model::regex_lang(g, theta, bc[j], word);
                 let k = choose|k: int| 0 <= k < ac.len() && ac[k] == bc[j];
-                assert(model::regex_lang(g, sym, theta, ac[k], word));
+                assert(model::regex_lang(g, theta, ac[k], word));
             } else {
                 let k = choose|k: int| 0 <= k < ac.len() && ac[k] == b;
-                assert(model::regex_lang(g, sym, theta, ac[k], word));
+                assert(model::regex_lang(g, theta, ac[k], word));
             }
         }
-        if !intersect && model::regex_lang(g, sym, theta, a, word) {
+        if !intersect && model::regex_lang(g, theta, a, word) {
             if regex_dual(g, b, intersect) {
-                assert forall|j: int| 0 <= j < bc.len() implies model::regex_lang(g, sym, theta, bc[j], word) by {
+                assert forall|j: int| 0 <= j < bc.len() implies model::regex_lang(g, theta, bc[j], word) by {
                     let k = choose|k: int| 0 <= k < ac.len() && ac[k] == bc[j];
-                    assert(model::regex_lang(g, sym, theta, ac[k], word));
+                    assert(model::regex_lang(g, theta, ac[k], word));
                 }
             } else {
                 let k = choose|k: int| 0 <= k < ac.len() && ac[k] == b;
-                assert(model::regex_lang(g, sym, theta, ac[k], word));
+                assert(model::regex_lang(g, theta, ac[k], word));
             }
         }
     }
@@ -6879,43 +6830,43 @@ pub(crate) mod verify {
         regex_exists_prefix(|i: int| regex_nonnullable_except_not_epsilon(g, ids[i]@, epsilon@), index);
     }
 
-    pub proof fn regex_remove_covered(g: model::Graph, ids: Seq<RegexId>, index: int, witness: int, intersect: bool, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>)
+    pub proof fn regex_remove_covered(g: model::Graph, ids: Seq<RegexId>, index: int, witness: int, intersect: bool, theta: Subst, word: Seq<EventView>)
         requires 0 <= index < ids.len(), 0 <= witness < ids.len(), witness != index,
-            if intersect { model::regex_lang(g, sym, theta, ids[witness]@, word) ==> model::regex_lang(g, sym, theta, ids[index]@, word) }
-            else { model::regex_lang(g, sym, theta, ids[index]@, word) ==> model::regex_lang(g, sym, theta, ids[witness]@, word) },
-        ensures regex_combo(g, sym, theta, ids.remove(index), word, intersect) == regex_combo(g, sym, theta, ids, word, intersect),
+            if intersect { model::regex_lang(g, theta, ids[witness]@, word) ==> model::regex_lang(g, theta, ids[index]@, word) }
+            else { model::regex_lang(g, theta, ids[index]@, word) ==> model::regex_lang(g, theta, ids[witness]@, word) },
+        ensures regex_combo(g, theta, ids.remove(index), word, intersect) == regex_combo(g, theta, ids, word, intersect),
     {
         let reduced = ids.remove(index);
         let witness_after = if witness < index { witness } else { witness - 1 };
         assert(reduced[witness_after] == ids[witness]);
         if intersect {
-            if regex_combo(g, sym, theta, reduced, word, true) {
-                assert(model::regex_lang(g, sym, theta, ids[witness]@, word));
-                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, sym, theta, ids[i]@, word) by {
+            if regex_combo(g, theta, reduced, word, true) {
+                assert(model::regex_lang(g, theta, ids[witness]@, word));
+                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, theta, ids[i]@, word) by {
                     if i != index {
                         let j = if i < index { i } else { i - 1 };
                         assert(reduced[j] == ids[i]);
-                        assert(model::regex_lang(g, sym, theta, reduced[j]@, word));
+                        assert(model::regex_lang(g, theta, reduced[j]@, word));
                     }
                 }
             }
-            if regex_combo(g, sym, theta, ids, word, true) {
-                assert forall|j: int| 0 <= j < reduced.len() implies model::regex_lang(g, sym, theta, reduced[j]@, word) by {
+            if regex_combo(g, theta, ids, word, true) {
+                assert forall|j: int| 0 <= j < reduced.len() implies model::regex_lang(g, theta, reduced[j]@, word) by {
                     let i = if j < index { j } else { j + 1 };
                     assert(reduced[j] == ids[i]);
                 }
             }
         } else {
-            if regex_combo(g, sym, theta, ids, word, false) {
-                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, ids[i]@, word);
+            if regex_combo(g, theta, ids, word, false) {
+                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, ids[i]@, word);
                 let j = if i == index { witness_after } else if i < index { i } else { i - 1 };
-                assert(model::regex_lang(g, sym, theta, reduced[j]@, word));
+                assert(model::regex_lang(g, theta, reduced[j]@, word));
             }
-            if regex_combo(g, sym, theta, reduced, word, false) {
-                let j = choose|j: int| 0 <= j < reduced.len() && model::regex_lang(g, sym, theta, reduced[j]@, word);
+            if regex_combo(g, theta, reduced, word, false) {
+                let j = choose|j: int| 0 <= j < reduced.len() && model::regex_lang(g, theta, reduced[j]@, word);
                 let i = if j < index { j } else { j + 1 };
                 assert(reduced[j] == ids[i]);
-                assert(model::regex_lang(g, sym, theta, ids[i]@, word));
+                assert(model::regex_lang(g, theta, ids[i]@, word));
             }
         }
     }
@@ -6925,36 +6876,36 @@ pub(crate) mod verify {
             regex_stats_prefix(g, ids, ids.len(), epsilon, stats, false), epsilon@ == g.constants.epsilon,
             !regex_retained(g, ids, index, mode, stats),
         ensures regex_ids_valid(g, ids.remove(index)),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> regex_combo(g, sym, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, sym, theta, ids, word, mode.intersect),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> regex_combo(g, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, theta, ids, word, mode.intersect),
     {
         regex_constants(g);
         let a = ids[index]@;
         regex_unfold(g, a);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            implies regex_combo(g, sym, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, sym, theta, ids, word, mode.intersect) by {
-            let sem = model::gsem(sym, theta);
+        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            implies regex_combo(g, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, theta, ids, word, mode.intersect) by {
+            let sem = model::gsem(theta);
             if exists|i: int| 0 <= i < ids.len() && regex_absorbed_by(g, a, ids[i]@, mode.intersect) {
                 let witness = choose|i: int| 0 <= i < ids.len() && regex_absorbed_by(g, a, ids[i]@, mode.intersect);
-                regex_absorption_implication(g, a, ids[witness]@, mode.intersect, sym, theta, word);
-                regex_remove_covered(g, ids, index, witness, mode.intersect, sym, theta, word);
+                regex_absorption_implication(g, a, ids[witness]@, mode.intersect, theta, word);
+                regex_remove_covered(g, ids, index, witness, mode.intersect, theta, word);
             } else if !mode.intersect {
                 let witness = choose|i: int| 0 <= i < ids.len() && ids[i]@ != g.constants.epsilon && language::nullable(model::lift_regex(g, ids[i]@));
                 language::lemma_nullable_iff_nil(sem, model::lift_regex(g, ids[witness]@));
-                if model::regex_lang(g, sym, theta, a, word) {
-                    assert(word =~= Seq::<Data>::empty());
+                if model::regex_lang(g, theta, a, word) {
+                    assert(word =~= Seq::<EventView>::empty());
                 }
-                regex_remove_covered(g, ids, index, witness, false, sym, theta, word);
+                regex_remove_covered(g, ids, index, witness, false, theta, word);
             } else {
                 let witness = choose|i: int| 0 <= i < ids.len() && regex_nonnullable_except_not_epsilon(g, ids[i]@, g.constants.epsilon);
                 regex_unfold(g, ids[witness]@);
                 language::lemma_nullable_iff_nil(sem, model::lift_regex(g, ids[witness]@));
-                regex_node_language(g, a, sym, theta, word);
+                regex_node_language(g, a, theta, word);
                 regex_language_unfold(sem, model::lift_regex(g, g.constants.epsilon), word);
-                if model::regex_lang(g, sym, theta, ids[witness]@, word) {
-                    if word.len() == 0 { assert(word =~= Seq::<Data>::empty()); }
+                if model::regex_lang(g, theta, ids[witness]@, word) {
+                    if word.len() == 0 { assert(word =~= Seq::<EventView>::empty()); }
                 }
-                regex_remove_covered(g, ids, index, witness, true, sym, theta, word);
+                regex_remove_covered(g, ids, index, witness, true, theta, word);
             }
         }
         assert forall|i: int| 0 <= i < ids.remove(index).len() implies ids.remove(index)[i]@ < g.regexes.len() by {
@@ -6964,8 +6915,8 @@ pub(crate) mod verify {
     }
 
     pub open spec fn regex_equivalent(g: model::Graph, left: Seq<RegexId>, right: Seq<RegexId>, intersect: bool) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            ==> regex_combo(g, sym, theta, left, word, intersect) == regex_combo(g, sym, theta, right, word, intersect)
+        forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            ==> regex_combo(g, theta, left, word, intersect) == regex_combo(g, theta, right, word, intersect)
     }
 
     pub proof fn regex_ids_shape(ids: Seq<RegexId>)
@@ -6982,39 +6933,39 @@ pub(crate) mod verify {
         requires forall|id: RegexId| left.contains(id) == right.contains(id),
         ensures regex_equivalent(g, left, right, intersect),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            implies regex_combo(g, sym, theta, left, word, intersect) == regex_combo(g, sym, theta, right, word, intersect) by {
+        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            implies regex_combo(g, theta, left, word, intersect) == regex_combo(g, theta, right, word, intersect) by {
             if intersect {
-                if regex_combo(g, sym, theta, left, word, true) {
-                    assert forall|i: int| 0 <= i < right.len() implies model::regex_lang(g, sym, theta, right[i]@, word) by {
+                if regex_combo(g, theta, left, word, true) {
+                    assert forall|i: int| 0 <= i < right.len() implies model::regex_lang(g, theta, right[i]@, word) by {
                         assert(right.contains(right[i]));
                         assert(left.contains(right[i]));
                         let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                        assert(model::regex_lang(g, sym, theta, left[j]@, word));
+                        assert(model::regex_lang(g, theta, left[j]@, word));
                     }
                 }
-                if regex_combo(g, sym, theta, right, word, true) {
-                    assert forall|i: int| 0 <= i < left.len() implies model::regex_lang(g, sym, theta, left[i]@, word) by {
+                if regex_combo(g, theta, right, word, true) {
+                    assert forall|i: int| 0 <= i < left.len() implies model::regex_lang(g, theta, left[i]@, word) by {
                         assert(left.contains(left[i]));
                         assert(right.contains(left[i]));
                         let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                        assert(model::regex_lang(g, sym, theta, right[j]@, word));
+                        assert(model::regex_lang(g, theta, right[j]@, word));
                     }
                 }
             } else {
-                if regex_combo(g, sym, theta, left, word, false) {
-                    let i = choose|i: int| 0 <= i < left.len() && model::regex_lang(g, sym, theta, left[i]@, word);
+                if regex_combo(g, theta, left, word, false) {
+                    let i = choose|i: int| 0 <= i < left.len() && model::regex_lang(g, theta, left[i]@, word);
                     assert(left.contains(left[i]));
                     assert(right.contains(left[i]));
                     let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                    assert(model::regex_lang(g, sym, theta, right[j]@, word));
+                    assert(model::regex_lang(g, theta, right[j]@, word));
                 }
-                if regex_combo(g, sym, theta, right, word, false) {
-                    let i = choose|i: int| 0 <= i < right.len() && model::regex_lang(g, sym, theta, right[i]@, word);
+                if regex_combo(g, theta, right, word, false) {
+                    let i = choose|i: int| 0 <= i < right.len() && model::regex_lang(g, theta, right[i]@, word);
                     assert(right.contains(right[i]));
                     assert(left.contains(right[i]));
                     let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                    assert(model::regex_lang(g, sym, theta, left[j]@, word));
+                    assert(model::regex_lang(g, theta, left[j]@, word));
                 }
             }
         }
@@ -7031,37 +6982,37 @@ pub(crate) mod verify {
         regex_combo_members(g, left, right, intersect);
     }
 
-    pub proof fn regex_combo_push(g: model::Graph, ids: Seq<RegexId>, id: RegexId, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>, intersect: bool)
-        ensures regex_combo(g, sym, theta, ids.push(id), word, intersect)
-            == if intersect { regex_combo(g, sym, theta, ids, word, true) && model::regex_lang(g, sym, theta, id@, word) }
-                else { regex_combo(g, sym, theta, ids, word, false) || model::regex_lang(g, sym, theta, id@, word) },
+    pub proof fn regex_combo_push(g: model::Graph, ids: Seq<RegexId>, id: RegexId, theta: Subst, word: Seq<EventView>, intersect: bool)
+        ensures regex_combo(g, theta, ids.push(id), word, intersect)
+            == if intersect { regex_combo(g, theta, ids, word, true) && model::regex_lang(g, theta, id@, word) }
+                else { regex_combo(g, theta, ids, word, false) || model::regex_lang(g, theta, id@, word) },
     {
-        regex_exists_prefix(|i: int| model::regex_lang(g, sym, theta, ids.push(id)[i]@, word), ids.len() as int);
+        regex_exists_prefix(|i: int| model::regex_lang(g, theta, ids.push(id)[i]@, word), ids.len() as int);
         if intersect {
-            if regex_combo(g, sym, theta, ids.push(id), word, true) {
-                assert(model::regex_lang(g, sym, theta, ids.push(id)[ids.len() as int]@, word));
-                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, sym, theta, ids[i]@, word) by {
+            if regex_combo(g, theta, ids.push(id), word, true) {
+                assert(model::regex_lang(g, theta, ids.push(id)[ids.len() as int]@, word));
+                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, theta, ids[i]@, word) by {
                     assert(ids.push(id)[i] == ids[i]);
                 }
             }
-            if regex_combo(g, sym, theta, ids, word, true) && model::regex_lang(g, sym, theta, id@, word) {
-                assert forall|i: int| 0 <= i < ids.push(id).len() implies model::regex_lang(g, sym, theta, ids.push(id)[i]@, word) by {
+            if regex_combo(g, theta, ids, word, true) && model::regex_lang(g, theta, id@, word) {
+                assert forall|i: int| 0 <= i < ids.push(id).len() implies model::regex_lang(g, theta, ids.push(id)[i]@, word) by {
                     if i < ids.len() { assert(ids.push(id)[i] == ids[i]); }
                     else { assert(ids.push(id)[i] == id); }
                 }
             }
         } else {
-            if regex_combo(g, sym, theta, ids.push(id), word, false) {
-                let i = choose|i: int| 0 <= i < ids.push(id).len() && model::regex_lang(g, sym, theta, ids.push(id)[i]@, word);
-                if i < ids.len() { assert(ids.push(id)[i] == ids[i]); assert(regex_combo(g, sym, theta, ids, word, false)); }
+            if regex_combo(g, theta, ids.push(id), word, false) {
+                let i = choose|i: int| 0 <= i < ids.push(id).len() && model::regex_lang(g, theta, ids.push(id)[i]@, word);
+                if i < ids.len() { assert(ids.push(id)[i] == ids[i]); assert(regex_combo(g, theta, ids, word, false)); }
                 else { assert(ids.push(id)[i] == id); }
             }
-            if regex_combo(g, sym, theta, ids, word, false) {
-                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, ids[i]@, word);
-                assert(ids.push(id)[i] == ids[i]); assert(regex_combo(g, sym, theta, ids.push(id), word, false));
+            if regex_combo(g, theta, ids, word, false) {
+                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, ids[i]@, word);
+                assert(ids.push(id)[i] == ids[i]); assert(regex_combo(g, theta, ids.push(id), word, false));
             }
-            if model::regex_lang(g, sym, theta, id@, word) {
-                assert(ids.push(id)[ids.len() as int] == id); assert(regex_combo(g, sym, theta, ids.push(id), word, false));
+            if model::regex_lang(g, theta, id@, word) {
+                assert(ids.push(id)[ids.len() as int] == id); assert(regex_combo(g, theta, ids.push(id), word, false));
             }
         }
     }
@@ -7075,8 +7026,8 @@ pub(crate) mod verify {
         assert(model::bounded(model::regex_ids(ids), g.regexes.len()));
         assert(model::lift_regexes_bounded(g, model::regex_ids(ids), g.regexes.len()) =~= model::lift_regexes(g, model::regex_ids(ids)));
         let cs = model::lift_regexes(g, model::regex_ids(ids));
-        let sem = |test: model::Test, event: Data| true;
-        let word = Seq::<Data>::empty();
+        let sem = |test: model::Test, event: EventView| true;
+        let word = Seq::<EventView>::empty();
         let root = if intersect { language::Regex::Intersect(cs) } else { language::Regex::Union(cs) };
         language::lemma_nullable_iff_nil(sem, root);
         regex_language_unfold(sem, root, word);
@@ -7106,14 +7057,14 @@ pub(crate) mod verify {
         }
     }
 
-    pub open spec fn regex_test_combo(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, tests: Seq<TestId>, word: Seq<Data>, intersect: bool) -> bool {
+    pub open spec fn regex_test_combo(g: model::Graph, theta: Subst, tests: Seq<TestId>, word: Seq<EventView>, intersect: bool) -> bool {
         if tests.len() == 0 { intersect }
-        else { word.len() == 1 && test_combo(g, sym, theta, tests, word[0], intersect) }
+        else { word.len() == 1 && test_combo(g, theta, tests, word[0], intersect) }
     }
 
-    pub open spec fn regex_group_combo(g: model::Graph, sym: model::Symbols, theta: Seq<Data>, tests: Seq<TestId>, others: Seq<RegexId>, word: Seq<Data>, intersect: bool) -> bool {
-        if intersect { regex_test_combo(g, sym, theta, tests, word, true) && regex_combo(g, sym, theta, others, word, true) }
-        else { regex_test_combo(g, sym, theta, tests, word, false) || regex_combo(g, sym, theta, others, word, false) }
+    pub open spec fn regex_group_combo(g: model::Graph, theta: Subst, tests: Seq<TestId>, others: Seq<RegexId>, word: Seq<EventView>, intersect: bool) -> bool {
+        if intersect { regex_test_combo(g, theta, tests, word, true) && regex_combo(g, theta, others, word, true) }
+        else { regex_test_combo(g, theta, tests, word, false) || regex_combo(g, theta, others, word, false) }
     }
 
     pub proof fn regex_split_preserves(g: model::Graph, id: RegexId, tests: Seq<TestId>, others: Seq<RegexId>, next_tests: Seq<TestId>, next_others: Seq<RegexId>, intersect: bool)
@@ -7122,22 +7073,22 @@ pub(crate) mod verify {
                 model::RegexKindNode::Test(t) => model::test_ids(next_tests) == model::test_ids(tests).push(t) && next_others == others,
                 _ => next_tests == tests && next_others == others.push(id),
             },
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger regex_group_combo(g, sym, theta, next_tests, next_others, word, intersect)]
-            regex_group_combo(g, sym, theta, next_tests, next_others, word, intersect)
-                == if intersect { regex_group_combo(g, sym, theta, tests, others, word, true) && model::regex_lang(g, sym, theta, id@, word) }
-                    else { regex_group_combo(g, sym, theta, tests, others, word, false) || model::regex_lang(g, sym, theta, id@, word) },
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            #![trigger regex_group_combo(g, theta, next_tests, next_others, word, intersect)]
+            regex_group_combo(g, theta, next_tests, next_others, word, intersect)
+                == if intersect { regex_group_combo(g, theta, tests, others, word, true) && model::regex_lang(g, theta, id@, word) }
+                    else { regex_group_combo(g, theta, tests, others, word, false) || model::regex_lang(g, theta, id@, word) },
     {
         hide(language::lang);
         hide(model::test_holds);
         regex_test_ids_shape(tests);
         regex_test_ids_shape(next_tests);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger regex_group_combo(g, sym, theta, next_tests, next_others, word, intersect)]
-            regex_group_combo(g, sym, theta, next_tests, next_others, word, intersect)
-                == if intersect { regex_group_combo(g, sym, theta, tests, others, word, true) && model::regex_lang(g, sym, theta, id@, word) }
-                    else { regex_group_combo(g, sym, theta, tests, others, word, false) || model::regex_lang(g, sym, theta, id@, word) } by {
-            regex_node_language(g, id@, sym, theta, word);
+        assert forall|theta: Subst, word: Seq<EventView>|
+            #![trigger regex_group_combo(g, theta, next_tests, next_others, word, intersect)]
+            regex_group_combo(g, theta, next_tests, next_others, word, intersect)
+                == if intersect { regex_group_combo(g, theta, tests, others, word, true) && model::regex_lang(g, theta, id@, word) }
+                    else { regex_group_combo(g, theta, tests, others, word, false) || model::regex_lang(g, theta, id@, word) } by {
+            regex_node_language(g, id@, theta, word);
             match g.regexes[id@ as int].kind {
                 model::RegexKindNode::Test(t) => {
                     assert(next_tests.len() == tests.len() + 1);
@@ -7150,29 +7101,29 @@ pub(crate) mod verify {
                     if word.len() == 1 {
                         let event = word[0];
                         if intersect {
-                            if test_combo(g, sym, theta, next_tests, event, true) {
-                                assert(model::test_holds(sym, theta, model::lift_test(g, next_tests[tests.len() as int]@), event));
-                                assert forall|i: int| 0 <= i < tests.len() implies model::test_holds(sym, theta, model::lift_test(g, tests[i]@), event) by {
+                            if test_combo(g, theta, next_tests, event, true) {
+                                assert(model::test_holds(theta, model::lift_test(g, next_tests[tests.len() as int]@), event));
+                                assert forall|i: int| 0 <= i < tests.len() implies model::test_holds(theta, model::lift_test(g, tests[i]@), event) by {
                                     assert(next_tests[i] == tests[i]);
                                 }
                             }
-                            if test_combo(g, sym, theta, tests, event, true) && model::test_holds(sym, theta, model::lift_test(g, t), event) {
-                                assert forall|i: int| 0 <= i < next_tests.len() implies model::test_holds(sym, theta, model::lift_test(g, next_tests[i]@), event) by {
+                            if test_combo(g, theta, tests, event, true) && model::test_holds(theta, model::lift_test(g, t), event) {
+                                assert forall|i: int| 0 <= i < next_tests.len() implies model::test_holds(theta, model::lift_test(g, next_tests[i]@), event) by {
                                     if i < tests.len() { assert(next_tests[i] == tests[i]); }
                                     else { assert(next_tests[i]@ == t); }
                                 }
                             }
                         } else {
-                            regex_exists_prefix(|i: int| model::test_holds(sym, theta, model::lift_test(g, next_tests[i]@), event), tests.len() as int);
-                            if test_combo(g, sym, theta, tests, event, false) {
-                                let i = choose|i: int| 0 <= i < tests.len() && model::test_holds(sym, theta, model::lift_test(g, tests[i]@), event);
+                            regex_exists_prefix(|i: int| model::test_holds(theta, model::lift_test(g, next_tests[i]@), event), tests.len() as int);
+                            if test_combo(g, theta, tests, event, false) {
+                                let i = choose|i: int| 0 <= i < tests.len() && model::test_holds(theta, model::lift_test(g, tests[i]@), event);
                                 assert(next_tests[i] == tests[i]);
-                                assert(test_combo(g, sym, theta, next_tests, event, false));
+                                assert(test_combo(g, theta, next_tests, event, false));
                             }
                         }
                     }
                 },
-                _ => { regex_combo_push(g, others, id, sym, theta, word, intersect); },
+                _ => { regex_combo_push(g, others, id, theta, word, intersect); },
             }
         }
     }
@@ -7180,11 +7131,11 @@ pub(crate) mod verify {
     pub proof fn regex_collect_preserves(g: model::Graph, id: RegexId, before: Seq<RegexId>, after: Seq<RegexId>, mode: RegexModeModel)
         requires model::graph_wf(g), id@ < g.regexes.len(), regex_mode_wf(g, mode), id != mode.absorber,
             model::regex_ids(after) == model::regex_ids(before) + regex_set_piece(g, id@, mode),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger regex_combo(g, sym, theta, after, word, mode.intersect)]
-            regex_combo(g, sym, theta, after, word, mode.intersect)
-                == if mode.intersect { regex_combo(g, sym, theta, before, word, true) && model::regex_lang(g, sym, theta, id@, word) }
-                    else { regex_combo(g, sym, theta, before, word, false) || model::regex_lang(g, sym, theta, id@, word) },
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            #![trigger regex_combo(g, theta, after, word, mode.intersect)]
+            regex_combo(g, theta, after, word, mode.intersect)
+                == if mode.intersect { regex_combo(g, theta, before, word, true) && model::regex_lang(g, theta, id@, word) }
+                    else { regex_combo(g, theta, before, word, false) || model::regex_lang(g, theta, id@, word) },
     {
         hide(language::lang);
         hide(model::lift_regex);
@@ -7200,61 +7151,61 @@ pub(crate) mod verify {
             assert(model::regex_ids(after)[i] == model::regex_ids(before)[i]);
             assert(after[i]@ == before[i]@);
         }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            #![trigger regex_combo(g, sym, theta, after, word, mode.intersect)]
-            regex_combo(g, sym, theta, after, word, mode.intersect)
-                == if mode.intersect { regex_combo(g, sym, theta, before, word, true) && model::regex_lang(g, sym, theta, id@, word) }
-                    else { regex_combo(g, sym, theta, before, word, false) || model::regex_lang(g, sym, theta, id@, word) } by {
-            regex_node_language(g, id@, sym, theta, word);
-            regex_language_unfold(model::gsem(sym, theta), language::Regex::Empty, word);
-            regex_language_unfold(model::gsem(sym, theta), language::Regex::All, word);
+        assert forall|theta: Subst, word: Seq<EventView>|
+            #![trigger regex_combo(g, theta, after, word, mode.intersect)]
+            regex_combo(g, theta, after, word, mode.intersect)
+                == if mode.intersect { regex_combo(g, theta, before, word, true) && model::regex_lang(g, theta, id@, word) }
+                    else { regex_combo(g, theta, before, word, false) || model::regex_lang(g, theta, id@, word) } by {
+            regex_node_language(g, id@, theta, word);
+            regex_language_unfold(model::gsem(theta), language::Regex::Empty, word);
+            regex_language_unfold(model::gsem(theta), language::Regex::All, word);
             let pivot = before.len() as int;
             if mode.intersect {
-                if regex_combo(g, sym, theta, after, word, true) {
-                    assert forall|i: int| 0 <= i < before.len() implies model::regex_lang(g, sym, theta, before[i]@, word) by {
+                if regex_combo(g, theta, after, word, true) {
+                    assert forall|i: int| 0 <= i < before.len() implies model::regex_lang(g, theta, before[i]@, word) by {
                         assert(after[i] == before[i]);
                     }
                     if id != mode.identity {
                         if g.regexes[id@ as int].kind is Intersect {
                             let cs = regex_children(g, id@);
-                            assert forall|i: int| 0 <= i < cs.len() implies model::regex_lang(g, sym, theta, cs[i], word) by {
+                            assert forall|i: int| 0 <= i < cs.len() implies model::regex_lang(g, theta, cs[i], word) by {
                                 assert(after[pivot + i]@ == cs[i]);
                             }
                         } else { assert(after[pivot] == id); }
                     }
                 }
-                if regex_combo(g, sym, theta, before, word, true) && model::regex_lang(g, sym, theta, id@, word) {
-                    assert forall|i: int| 0 <= i < after.len() implies model::regex_lang(g, sym, theta, after[i]@, word) by {
+                if regex_combo(g, theta, before, word, true) && model::regex_lang(g, theta, id@, word) {
+                    assert forall|i: int| 0 <= i < after.len() implies model::regex_lang(g, theta, after[i]@, word) by {
                         if i < pivot { assert(after[i] == before[i]); }
                         else if g.regexes[id@ as int].kind is Intersect { assert(after[i]@ == regex_children(g, id@)[i - pivot]); }
                         else { assert(after[i] == id); }
                     }
                 }
             } else {
-                if regex_combo(g, sym, theta, after, word, false) {
-                    let i = choose|i: int| 0 <= i < after.len() && model::regex_lang(g, sym, theta, after[i]@, word);
+                if regex_combo(g, theta, after, word, false) {
+                    let i = choose|i: int| 0 <= i < after.len() && model::regex_lang(g, theta, after[i]@, word);
                     if i < pivot { assert(after[i] == before[i]); }
                     else if g.regexes[id@ as int].kind is Union { assert(after[i]@ == regex_children(g, id@)[i - pivot]); }
                     else { assert(after[i] == id); }
                 }
-                if regex_combo(g, sym, theta, before, word, false) {
-                    let i = choose|i: int| 0 <= i < before.len() && model::regex_lang(g, sym, theta, before[i]@, word);
+                if regex_combo(g, theta, before, word, false) {
+                    let i = choose|i: int| 0 <= i < before.len() && model::regex_lang(g, theta, before[i]@, word);
                     assert(after[i] == before[i]);
-                    assert(regex_combo(g, sym, theta, after, word, false));
+                    assert(regex_combo(g, theta, after, word, false));
                 }
-                if model::regex_lang(g, sym, theta, id@, word) {
+                if model::regex_lang(g, theta, id@, word) {
                     assert(id != mode.identity);
                     if g.regexes[id@ as int].kind is Union {
                         let cs = regex_children(g, id@);
                         assert(regex_set_piece(g, id@, mode) == cs);
-                        let i = choose|i: int| 0 <= i < cs.len() && model::regex_lang(g, sym, theta, cs[i], word);
+                        let i = choose|i: int| 0 <= i < cs.len() && model::regex_lang(g, theta, cs[i], word);
                         assert(after[pivot + i]@ == cs[i]);
-                        assert(regex_combo(g, sym, theta, after, word, false));
+                        assert(regex_combo(g, theta, after, word, false));
                     } else {
                         assert(regex_set_piece(g, id@, mode) == seq![id@]);
                         assert(after[pivot]@ == id@);
                         assert(after[pivot] == id);
-                        assert(regex_combo(g, sym, theta, after, word, false));
+                        assert(regex_combo(g, theta, after, word, false));
                     }
                 }
             }
@@ -7264,41 +7215,41 @@ pub(crate) mod verify {
     pub proof fn regex_stats_decisions(g: model::Graph, ids: Seq<RegexId>, epsilon: RegexId, stats: RegexStatsModel, intersect: bool)
         requires model::graph_wf(g), regex_ids_valid(g, ids), epsilon@ == g.constants.epsilon,
             regex_stats_prefix(g, ids, ids.len(), epsilon, stats, true),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            (stats.complement ==> regex_combo(g, sym, theta, ids, word, intersect) == !intersect)
-            && (intersect && stats.epsilon ==> regex_combo(g, sym, theta, ids, word, true) == (stats.all_nullable && word.len() == 0)),
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            (stats.complement ==> regex_combo(g, theta, ids, word, intersect) == !intersect)
+            && (intersect && stats.epsilon ==> regex_combo(g, theta, ids, word, true) == (stats.all_nullable && word.len() == 0)),
     {
         assert(ids.subrange(0, ids.len() as int) =~= ids);
         regex_constants(g);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            (stats.complement ==> regex_combo(g, sym, theta, ids, word, intersect) == !intersect)
-            && (intersect && stats.epsilon ==> regex_combo(g, sym, theta, ids, word, true) == (stats.all_nullable && word.len() == 0)) by {
+        assert forall|theta: Subst, word: Seq<EventView>|
+            (stats.complement ==> regex_combo(g, theta, ids, word, intersect) == !intersect)
+            && (intersect && stats.epsilon ==> regex_combo(g, theta, ids, word, true) == (stats.all_nullable && word.len() == 0)) by {
             if stats.complement {
                 let i = choose|i: int| 0 <= i < ids.len() && regex_has_complement_model(g, ids[i]@, ids);
                 let inner = match g.regexes[ids[i]@ as int].kind { model::RegexKindNode::Not(r) => r, _ => 0nat };
                 let j = choose|j: int| 0 <= j < ids.len() && ids[j]@ == inner;
-                regex_node_language(g, ids[i]@, sym, theta, word);
-                if intersect && regex_combo(g, sym, theta, ids, word, true) {
-                    assert(model::regex_lang(g, sym, theta, ids[i]@, word));
-                    assert(model::regex_lang(g, sym, theta, ids[j]@, word));
+                regex_node_language(g, ids[i]@, theta, word);
+                if intersect && regex_combo(g, theta, ids, word, true) {
+                    assert(model::regex_lang(g, theta, ids[i]@, word));
+                    assert(model::regex_lang(g, theta, ids[j]@, word));
                 }
                 if !intersect {
-                    assert(model::regex_lang(g, sym, theta, ids[i]@, word) || model::regex_lang(g, sym, theta, ids[j]@, word));
+                    assert(model::regex_lang(g, theta, ids[i]@, word) || model::regex_lang(g, theta, ids[j]@, word));
                 }
             }
             if intersect && stats.epsilon {
                 let i = choose|i: int| 0 <= i < ids.len() && ids[i] == epsilon;
-                if regex_combo(g, sym, theta, ids, word, true) {
-                    assert(model::regex_lang(g, sym, theta, ids[i]@, word));
-                    assert(word =~= Seq::<Data>::empty());
+                if regex_combo(g, theta, ids, word, true) {
+                    assert(model::regex_lang(g, theta, ids[i]@, word));
+                    assert(word =~= Seq::<EventView>::empty());
                     assert forall|j: int| 0 <= j < ids.len() implies language::nullable(model::lift_regex(g, ids[j]@)) by {
-                        language::lemma_nullable_iff_nil(model::gsem(sym, theta), model::lift_regex(g, ids[j]@));
+                        language::lemma_nullable_iff_nil(model::gsem(theta), model::lift_regex(g, ids[j]@));
                     }
                 }
                 if stats.all_nullable && word.len() == 0 {
-                    assert(word =~= Seq::<Data>::empty());
-                    assert forall|j: int| 0 <= j < ids.len() implies model::regex_lang(g, sym, theta, ids[j]@, word) by {
-                        language::lemma_nullable_iff_nil(model::gsem(sym, theta), model::lift_regex(g, ids[j]@));
+                    assert(word =~= Seq::<EventView>::empty());
+                    assert forall|j: int| 0 <= j < ids.len() implies model::regex_lang(g, theta, ids[j]@, word) by {
+                        language::lemma_nullable_iff_nil(model::gsem(theta), model::lift_regex(g, ids[j]@));
                     }
                 }
             }
@@ -7307,8 +7258,8 @@ pub(crate) mod verify {
 
     pub proof fn regex_combo_extends(a: model::Graph, b: model::Graph, ids: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(a), model::graph_extends(a, b), regex_ids_valid(a, ids),
-        ensures regex_ids_valid(b, ids), forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_combo(a, sym, theta, ids, word, intersect) == regex_combo(b, sym, theta, ids, word, intersect),
+        ensures regex_ids_valid(b, ids), forall|theta: Subst, word: Seq<EventView>|
+            regex_combo(a, theta, ids, word, intersect) == regex_combo(b, theta, ids, word, intersect),
     {
         model::lemma_graph_wf_elim(a);
         model::lemma_lift_stable_under_extends(a, b);
@@ -7316,8 +7267,8 @@ pub(crate) mod verify {
 
     pub proof fn regex_group_extends(a: model::Graph, b: model::Graph, tests: Seq<TestId>, others: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(a), model::graph_extends(a, b), test_ids_valid(a, tests), regex_ids_valid(a, others),
-        ensures test_ids_valid(b, tests), regex_ids_valid(b, others), forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_group_combo(a, sym, theta, tests, others, word, intersect) == regex_group_combo(b, sym, theta, tests, others, word, intersect),
+        ensures test_ids_valid(b, tests), regex_ids_valid(b, others), forall|theta: Subst, word: Seq<EventView>|
+            regex_group_combo(a, theta, tests, others, word, intersect) == regex_group_combo(b, theta, tests, others, word, intersect),
     {
         model::lemma_graph_wf_elim(a);
         model::lemma_lift_stable_under_extends(a, b);
@@ -7325,43 +7276,43 @@ pub(crate) mod verify {
     }
 
     pub open spec fn regex_split_prefix(g: model::Graph, flat: Seq<RegexId>, tests: Seq<TestId>, others: Seq<RegexId>, count: nat) -> bool {
-        count <= flat.len() && forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>, intersect: bool|
-            regex_group_combo(g, sym, theta, tests, others, word, intersect)
-                == regex_combo(g, sym, theta, flat.subrange(0, count as int), word, intersect)
+        count <= flat.len() && forall|theta: Subst, word: Seq<EventView>, intersect: bool|
+            regex_group_combo(g, theta, tests, others, word, intersect)
+                == regex_combo(g, theta, flat.subrange(0, count as int), word, intersect)
     }
 
-    pub proof fn regex_combo_prefix(g: model::Graph, ids: Seq<RegexId>, index: int, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>, intersect: bool)
+    pub proof fn regex_combo_prefix(g: model::Graph, ids: Seq<RegexId>, index: int, theta: Subst, word: Seq<EventView>, intersect: bool)
         requires 0 <= index < ids.len(),
-        ensures regex_combo(g, sym, theta, ids.subrange(0, index + 1), word, intersect)
-            == if intersect { regex_combo(g, sym, theta, ids.subrange(0, index), word, true) && model::regex_lang(g, sym, theta, ids[index]@, word) }
-                else { regex_combo(g, sym, theta, ids.subrange(0, index), word, false) || model::regex_lang(g, sym, theta, ids[index]@, word) },
+        ensures regex_combo(g, theta, ids.subrange(0, index + 1), word, intersect)
+            == if intersect { regex_combo(g, theta, ids.subrange(0, index), word, true) && model::regex_lang(g, theta, ids[index]@, word) }
+                else { regex_combo(g, theta, ids.subrange(0, index), word, false) || model::regex_lang(g, theta, ids[index]@, word) },
     {
         assert(ids.subrange(0, index + 1) =~= ids.subrange(0, index).push(ids[index]));
-        regex_combo_push(g, ids.subrange(0, index), ids[index], sym, theta, word, intersect);
+        regex_combo_push(g, ids.subrange(0, index), ids[index], theta, word, intersect);
     }
 
     pub proof fn regex_absorber_member(g: model::Graph, children: Seq<RegexId>, index: int, mode: RegexModeModel)
         requires model::graph_wf(g), regex_ids_valid(g, children), 0 <= index < children.len(),
             regex_mode_wf(g, mode), children[index] == mode.absorber,
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_combo(g, sym, theta, children, word, mode.intersect) == !mode.intersect,
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            regex_combo(g, theta, children, word, mode.intersect) == !mode.intersect,
     {
         regex_constants(g);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            regex_combo(g, sym, theta, children, word, mode.intersect) == !mode.intersect by {
-            if mode.intersect && regex_combo(g, sym, theta, children, word, true) {
-                assert(model::regex_lang(g, sym, theta, children[index]@, word));
+        assert forall|theta: Subst, word: Seq<EventView>|
+            regex_combo(g, theta, children, word, mode.intersect) == !mode.intersect by {
+            if mode.intersect && regex_combo(g, theta, children, word, true) {
+                assert(model::regex_lang(g, theta, children[index]@, word));
             }
-            if !mode.intersect { assert(model::regex_lang(g, sym, theta, children[index]@, word)); }
+            if !mode.intersect { assert(model::regex_lang(g, theta, children[index]@, word)); }
         }
     }
 
     pub proof fn regex_group_equivalence_extends(g: model::Graph, next: model::Graph, original: Seq<RegexId>, tests: Seq<TestId>, others: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(g), model::graph_extends(g, next), regex_ids_valid(g, original), test_ids_valid(g, tests), regex_ids_valid(g, others),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> regex_group_combo(g, sym, theta, tests, others, word, intersect) == regex_combo(g, sym, theta, original, word, intersect),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-            ==> regex_group_combo(next, sym, theta, tests, others, word, intersect) == regex_combo(next, sym, theta, original, word, intersect),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> regex_group_combo(g, theta, tests, others, word, intersect) == regex_combo(g, theta, original, word, intersect),
+        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            ==> regex_group_combo(next, theta, tests, others, word, intersect) == regex_combo(next, theta, original, word, intersect),
     {
         regex_group_extends(g, next, tests, others, intersect);
         regex_combo_extends(g, next, original, intersect);
@@ -7409,9 +7360,9 @@ pub(crate) mod verify {
 
     pub proof fn regex_set_result(g: model::Graph, ids: Seq<RegexId>, original: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(g), regex_ids_valid(g, ids), regex_ids_valid(g, original), regex_equivalent(g, ids, original, intersect),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym) ==>
-            (ids.len() == 0 ==> regex_combo(g, sym, theta, original, word, intersect) == intersect)
-            && (ids.len() == 1 ==> regex_combo(g, sym, theta, original, word, intersect) == model::regex_lang(g, sym, theta, ids[0]@, word)),
+        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta) ==>
+            (ids.len() == 0 ==> regex_combo(g, theta, original, word, intersect) == intersect)
+            && (ids.len() == 1 ==> regex_combo(g, theta, original, word, intersect) == model::regex_lang(g, theta, ids[0]@, word)),
     {
         if ids.len() == 1 { assert(ids =~= seq![ids[0]]); }
     }
@@ -7422,10 +7373,10 @@ pub(crate) mod verify {
 
     pub proof fn regex_test_connective_extends(g: model::Graph, next: model::Graph, tests: Seq<TestId>, id: TestId, intersect: bool)
         requires model::graph_wf(g), model::graph_extends(g, next), test_ids_valid(g, tests), id@ < g.tests.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> model::test_holds(sym, theta, model::lift_test(g, id@), event) == test_combo(g, sym, theta, tests, event, intersect),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            ==> model::test_holds(sym, theta, model::lift_test(next, id@), event) == test_combo(next, sym, theta, tests, event, intersect),
+            forall|theta: Subst, event: EventView| language::event_wf(theta)
+                ==> model::test_holds(theta, model::lift_test(g, id@), event) == test_combo(g, theta, tests, event, intersect),
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+            ==> model::test_holds(theta, model::lift_test(next, id@), event) == test_combo(next, theta, tests, event, intersect),
     {
         hide(model::test_holds);
         hide(language::lang);
@@ -7433,12 +7384,12 @@ pub(crate) mod verify {
         assert forall|i: int| 0 <= i < tests.len() implies model::lift_test(g, tests[i]@) == model::lift_test(next, tests[i]@) by {
             model::lemma_lift_test_stable(g, next, tests[i]@);
         }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            implies model::test_holds(sym, theta, model::lift_test(next, id@), event) == test_combo(next, sym, theta, tests, event, intersect) by {
-            assert(model::test_holds(sym, theta, model::lift_test(g, id@), event) == test_combo(g, sym, theta, tests, event, intersect));
-            assert forall|i: int| 0 <= i < tests.len() implies model::test_holds(sym, theta, model::lift_test(g, tests[i]@), event)
-                == model::test_holds(sym, theta, model::lift_test(next, tests[i]@), event) by {};
-            assert(test_combo(g, sym, theta, tests, event, intersect) == test_combo(next, sym, theta, tests, event, intersect));
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            implies model::test_holds(theta, model::lift_test(next, id@), event) == test_combo(next, theta, tests, event, intersect) by {
+            assert(model::test_holds(theta, model::lift_test(g, id@), event) == test_combo(g, theta, tests, event, intersect));
+            assert forall|i: int| 0 <= i < tests.len() implies model::test_holds(theta, model::lift_test(g, tests[i]@), event)
+                == model::test_holds(theta, model::lift_test(next, tests[i]@), event) by {};
+            assert(test_combo(g, theta, tests, event, intersect) == test_combo(next, theta, tests, event, intersect));
         }
     }
 
@@ -7455,43 +7406,35 @@ pub(crate) mod verify {
         }
     }
 
-    pub proof fn regex_combo_ids(g: model::Graph, ids: Seq<RegexId>, sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>, intersect: bool)
-        ensures regex_combo_nats(g, sym, theta, model::regex_ids(ids), word, intersect)
-            == regex_combo(g, sym, theta, ids, word, intersect),
+    pub proof fn regex_combo_ids(g: model::Graph, ids: Seq<RegexId>, theta: Subst, word: Seq<EventView>, intersect: bool)
+        ensures regex_combo_nats(g, theta, model::regex_ids(ids), word, intersect)
+            == regex_combo(g, theta, ids, word, intersect),
     {
         regex_ids_shape(ids);
         if intersect {
-            if regex_combo_nats(g, sym, theta, model::regex_ids(ids), word, true) {
-                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, sym, theta, ids[i]@, word) by {
-                    assert(model::regex_lang(g, sym, theta, model::regex_ids(ids)[i], word));
+            if regex_combo_nats(g, theta, model::regex_ids(ids), word, true) {
+                assert forall|i: int| 0 <= i < ids.len() implies model::regex_lang(g, theta, ids[i]@, word) by {
+                    assert(model::regex_lang(g, theta, model::regex_ids(ids)[i], word));
                 }
             }
-            if regex_combo(g, sym, theta, ids, word, true) {
-                assert forall|i: int| 0 <= i < model::regex_ids(ids).len() implies model::regex_lang(g, sym, theta, model::regex_ids(ids)[i], word) by {
-                    assert(model::regex_lang(g, sym, theta, ids[i]@, word));
+            if regex_combo(g, theta, ids, word, true) {
+                assert forall|i: int| 0 <= i < model::regex_ids(ids).len() implies model::regex_lang(g, theta, model::regex_ids(ids)[i], word) by {
+                    assert(model::regex_lang(g, theta, ids[i]@, word));
                 }
             }
         } else {
-            if regex_combo_nats(g, sym, theta, model::regex_ids(ids), word, false) {
-                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, model::regex_ids(ids)[i], word);
-                assert(model::regex_lang(g, sym, theta, ids[i]@, word));
+            if regex_combo_nats(g, theta, model::regex_ids(ids), word, false) {
+                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, model::regex_ids(ids)[i], word);
+                assert(model::regex_lang(g, theta, ids[i]@, word));
             }
-            if regex_combo(g, sym, theta, ids, word, false) {
-                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, sym, theta, ids[i]@, word);
-                assert(model::regex_lang(g, sym, theta, model::regex_ids(ids)[i], word));
+            if regex_combo(g, theta, ids, word, false) {
+                let i = choose|i: int| 0 <= i < ids.len() && model::regex_lang(g, theta, ids[i]@, word);
+                assert(model::regex_lang(g, theta, model::regex_ids(ids)[i], word));
             }
         }
     }
 
 
-    pub proof fn test_lemma_not_constant_rows(g: model::Graph)
-        requires model::graph_wf(g),
-        ensures g.constants.test_true < g.tests.len(), g.constants.test_false < g.tests.len(),
-            g.tests[g.constants.test_true as int] == model::TestNode::True,
-            g.tests[g.constants.test_false as int] == model::TestNode::False,
-    {
-        model::lemma_graph_wf_elim(g);
-    }
 
     pub proof fn test_lemma_not_leaf_effect(g: model::Graph, id: TestId,
         tasks: Seq<(TestId, bool)>, prior: Seq<TestId>, values: Seq<TestId>, finish: bool)
@@ -7557,36 +7500,36 @@ pub(crate) mod verify {
     // Guarded transition continuation semantics.
     #[verifier::reject_recursive_types(C)]
     pub struct GuardedTransition<L, C> {
-        pub guard: spec_fn(C, Data) -> bool,
+        pub guard: spec_fn(C, EventView) -> bool,
         pub term: language::Transition<L>,
     }
 
     pub open spec fn guarded_semantics<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, ctx: C,
-    ) -> spec_fn(L, Data) -> bool {
-        |leaf: L, event: Data| sem(ctx, leaf, event)
+        sem: spec_fn(C, L, EventView) -> bool, ctx: C,
+    ) -> spec_fn(L, EventView) -> bool {
+        |leaf: L, event: EventView| sem(ctx, leaf, event)
     }
 
     pub open spec fn guarded_language<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, ctx: C, event: Data,
-        value: GuardedTransition<L, C>, word: Seq<Data>,
+        sem: spec_fn(C, L, EventView) -> bool, ctx: C, event: EventView,
+        value: GuardedTransition<L, C>, word: Seq<EventView>,
     ) -> bool {
         let context_sem = guarded_semantics(sem, ctx);
         language::lang(context_sem, language::interp_transition(context_sem, event, value.term), word)
     }
 
     pub open spec fn guarded_refines<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: GuardedTransition<L, C>, after: GuardedTransition<L, C>,
     ) -> bool {
-        forall|ctx: C, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event)
-            ==> (after.guard)(ctx, event) && forall|word: Seq<Data>|
+        forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event)
+            ==> (after.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, before, word)
                     == guarded_language(sem, ctx, event, after, word)
     }
 
     pub open spec fn guarded_stack_refines<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>,
     ) -> bool {
         before.len() == after.len() && forall|i: int| 0 <= i < before.len()
@@ -7594,13 +7537,13 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_constant<L, C>(term: language::Transition<L>) -> GuardedTransition<L, C> {
-        GuardedTransition { guard: |ctx: C, event: Data| true, term }
+        GuardedTransition { guard: |ctx: C, event: EventView| true, term }
     }
 
     pub open spec fn guarded_clean<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, path: L, term: language::Transition<L>,
+        sem: spec_fn(C, L, EventView) -> bool, path: L, term: language::Transition<L>,
     ) -> GuardedTransition<L, C> {
-        GuardedTransition { guard: |ctx: C, event: Data| sem(ctx, path, event), term }
+        GuardedTransition { guard: |ctx: C, event: EventView| sem(ctx, path, event), term }
     }
 
     pub open spec fn guarded_not<L, C>(value: GuardedTransition<L, C>) -> GuardedTransition<L, C> {
@@ -7620,7 +7563,7 @@ pub(crate) mod verify {
         values: Seq<GuardedTransition<L, C>>, intersect: bool,
     ) -> GuardedTransition<L, C> {
         GuardedTransition {
-            guard: |ctx: C, event: Data| forall|i: int| 0 <= i < values.len() ==> #[trigger] (values[i].guard)(ctx, event),
+            guard: |ctx: C, event: EventView| forall|i: int| 0 <= i < values.len() ==> #[trigger] (values[i].guard)(ctx, event),
             term: if intersect {
                 language::Transition::Intersect(values.map(|i: int, v: GuardedTransition<L, C>| v.term))
             } else {
@@ -7630,11 +7573,11 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_if<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L,
         yes: GuardedTransition<L, C>, no: GuardedTransition<L, C>,
     ) -> GuardedTransition<L, C> {
         GuardedTransition {
-            guard: |ctx: C, event: Data| if sem(ctx, test, event) {
+            guard: |ctx: C, event: EventView| if sem(ctx, test, event) {
                 (yes.guard)(ctx, event)
             } else { (no.guard)(ctx, event) },
             term: language::Transition::If(test, Box::new(yes.term), Box::new(no.term)),
@@ -7642,25 +7585,25 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_clean_if<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L, path: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L, path: L,
         yes: GuardedTransition<L, C>, no: GuardedTransition<L, C>,
     ) -> GuardedTransition<L, C> {
         let value = guarded_if(sem, test, yes, no);
         GuardedTransition {
-            guard: |ctx: C, event: Data| sem(ctx, path, event) && (value.guard)(ctx, event),
+            guard: |ctx: C, event: EventView| sem(ctx, path, event) && (value.guard)(ctx, event),
             term: value.term,
         }
     }
 
     pub proof fn guarded_lemma_refines_refl<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         value: GuardedTransition<L, C>,
     )
         ensures guarded_refines(sem, valid, value, value),
     {}
 
     pub proof fn guarded_lemma_refines_transitive<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         a: GuardedTransition<L, C>, b: GuardedTransition<L, C>, c: GuardedTransition<L, C>,
     )
         requires guarded_refines(sem, valid, a, b), guarded_refines(sem, valid, b, c),
@@ -7668,7 +7611,7 @@ pub(crate) mod verify {
     {}
 
     pub proof fn guarded_lemma_stack_transitive<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         a: Seq<GuardedTransition<L, C>>, b: Seq<GuardedTransition<L, C>>, c: Seq<GuardedTransition<L, C>>,
     )
         requires guarded_stack_refines(sem, valid, a, b), guarded_stack_refines(sem, valid, b, c),
@@ -7680,19 +7623,19 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_not_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: GuardedTransition<L, C>, after: GuardedTransition<L, C>,
     )
         requires guarded_refines(sem, valid, before, after),
         ensures guarded_refines(sem, valid, guarded_not(before), guarded_not(after)),
     {
-        assert forall|ctx: C, event: Data| valid(ctx) && #[trigger] (guarded_not(before).guard)(ctx, event)
-            implies (guarded_not(after).guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (guarded_not(before).guard)(ctx, event)
+            implies (guarded_not(after).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_not(before), word)
                     == guarded_language(sem, ctx, event, guarded_not(after), word) by {
             assert((before.guard)(ctx, event));
             assert((after.guard)(ctx, event));
-            assert forall|word: Seq<Data>|
+            assert forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_not(before), word)
                     == guarded_language(sem, ctx, event, guarded_not(after), word) by {
                 assert(guarded_language(sem, ctx, event, before, word)
@@ -7704,15 +7647,15 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_if_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, test: L,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, test: L,
         a0: GuardedTransition<L, C>, a1: GuardedTransition<L, C>,
         b0: GuardedTransition<L, C>, b1: GuardedTransition<L, C>,
     )
         requires guarded_refines(sem, valid, a0, a1), guarded_refines(sem, valid, b0, b1),
         ensures guarded_refines(sem, valid, guarded_if(sem, test, a0, b0), guarded_if(sem, test, a1, b1)),
     {
-        assert forall|ctx: C, event: Data| valid(ctx) && #[trigger] (guarded_if(sem, test, a0, b0).guard)(ctx, event)
-            implies (guarded_if(sem, test, a1, b1).guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (guarded_if(sem, test, a0, b0).guard)(ctx, event)
+            implies (guarded_if(sem, test, a1, b1).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_if(sem, test, a0, b0), word)
                     == guarded_language(sem, ctx, event, guarded_if(sem, test, a1, b1), word) by {
             if sem(ctx, test, event) {
@@ -7722,7 +7665,7 @@ pub(crate) mod verify {
                 assert((b0.guard)(ctx, event));
                 assert((b1.guard)(ctx, event));
             }
-            assert forall|word: Seq<Data>|
+            assert forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_if(sem, test, a0, b0), word)
                     == guarded_language(sem, ctx, event, guarded_if(sem, test, a1, b1), word) by {
                 if sem(ctx, test, event) {
@@ -7739,15 +7682,15 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_set_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>, intersect: bool,
     )
         requires guarded_stack_refines(sem, valid, before, after),
         ensures guarded_refines(sem, valid, guarded_set(before, intersect), guarded_set(after, intersect)),
     {
-        assert forall|ctx: C, event: Data| valid(ctx)
+        assert forall|ctx: C, event: EventView| valid(ctx)
             && #[trigger] (guarded_set(before, intersect).guard)(ctx, event)
-            implies (guarded_set(after, intersect).guard)(ctx, event) && forall|word: Seq<Data>|
+            implies (guarded_set(after, intersect).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_set(before, intersect), word)
                     == guarded_language(sem, ctx, event, guarded_set(after, intersect), word) by {
             assert forall|i: int| 0 <= i < after.len() implies (after[i].guard)(ctx, event) by {
@@ -7756,7 +7699,7 @@ pub(crate) mod verify {
             let context_sem = guarded_semantics(sem, ctx);
             let left = before.map(|i: int, value: GuardedTransition<L, C>| value.term);
             let right = after.map(|i: int, value: GuardedTransition<L, C>| value.term);
-            assert forall|word: Seq<Data>|
+            assert forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_set(before, intersect), word)
                     == guarded_language(sem, ctx, event, guarded_set(after, intersect), word) by {
                 assert forall|i: int| 0 <= i < before.len() implies
@@ -7791,15 +7734,15 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_append_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: GuardedTransition<L, C>, after: GuardedTransition<L, C>, suffix: language::Regex<L>,
     )
         requires guarded_refines(sem, valid, before, after),
         ensures guarded_refines(sem, valid, guarded_append(before, suffix), guarded_append(after, suffix)),
     {
-        assert forall|ctx: C, event: Data| valid(ctx)
+        assert forall|ctx: C, event: EventView| valid(ctx)
             && #[trigger] (guarded_append(before, suffix).guard)(ctx, event)
-            implies (guarded_append(after, suffix).guard)(ctx, event) && forall|word: Seq<Data>|
+            implies (guarded_append(after, suffix).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_append(before, suffix), word)
                     == guarded_language(sem, ctx, event, guarded_append(after, suffix), word) by {
             assert((before.guard)(ctx, event));
@@ -7807,7 +7750,7 @@ pub(crate) mod verify {
             let context_sem = guarded_semantics(sem, ctx);
             let left = seq![language::interp_transition(context_sem, event, before.term), suffix];
             let right = seq![language::interp_transition(context_sem, event, after.term), suffix];
-            assert forall|i: int, word: Seq<Data>| 0 <= i < left.len() implies
+            assert forall|i: int, word: Seq<EventView>| 0 <= i < left.len() implies
                 language::lang(context_sem, left[i], word) == language::lang(context_sem, right[i], word) by {
                 if i == 0 {
                     assert(guarded_language(sem, ctx, event, before, word)
@@ -7838,7 +7781,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_apply<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, action: GuardedAction<L>,
+        sem: spec_fn(C, L, EventView) -> bool, action: GuardedAction<L>,
         values: Seq<GuardedTransition<L, C>>,
     ) -> Option<Seq<GuardedTransition<L, C>>> {
         match action {
@@ -7886,7 +7829,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_run<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, tasks: Seq<GuardedAction<L>>,
+        sem: spec_fn(C, L, EventView) -> bool, tasks: Seq<GuardedAction<L>>,
         values: Seq<GuardedTransition<L, C>>,
     ) -> Option<Seq<GuardedTransition<L, C>>>
         decreases tasks.len(),
@@ -7901,7 +7844,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_program_refines<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Option<Seq<GuardedTransition<L, C>>>, after: Option<Seq<GuardedTransition<L, C>>>,
     ) -> bool {
         match before {
@@ -7914,7 +7857,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_program_transitive<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         a: Option<Seq<GuardedTransition<L, C>>>, b: Option<Seq<GuardedTransition<L, C>>>,
         c: Option<Seq<GuardedTransition<L, C>>>,
     )
@@ -7931,7 +7874,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_stack_slice<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>, start: int, end: int,
     )
         requires guarded_stack_refines(sem, valid, before, after), 0 <= start <= end <= before.len(),
@@ -7945,7 +7888,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_stack_push<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>,
         left: GuardedTransition<L, C>, right: GuardedTransition<L, C>,
     )
@@ -7962,7 +7905,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_run_prefix<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, prefix: Seq<GuardedAction<L>>, suffix: Seq<GuardedAction<L>>,
+        sem: spec_fn(C, L, EventView) -> bool, prefix: Seq<GuardedAction<L>>, suffix: Seq<GuardedAction<L>>,
         values: Seq<GuardedTransition<L, C>>,
     )
         ensures guarded_run(sem, prefix + suffix, values) == match guarded_run(sem, suffix, values) {
@@ -7982,7 +7925,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_clean_if_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, test: L, path: L,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, test: L, path: L,
         a0: GuardedTransition<L, C>, a1: GuardedTransition<L, C>,
         b0: GuardedTransition<L, C>, b1: GuardedTransition<L, C>,
     )
@@ -7991,14 +7934,14 @@ pub(crate) mod verify {
             guarded_clean_if(sem, test, path, a0, b0), guarded_clean_if(sem, test, path, a1, b1)),
     {
         guarded_lemma_if_congruent(sem, valid, test, a0, a1, b0, b1);
-        assert forall|ctx: C, event: Data| valid(ctx)
+        assert forall|ctx: C, event: EventView| valid(ctx)
             && #[trigger] (guarded_clean_if(sem, test, path, a0, b0).guard)(ctx, event)
-            implies (guarded_clean_if(sem, test, path, a1, b1).guard)(ctx, event) && forall|word: Seq<Data>|
+            implies (guarded_clean_if(sem, test, path, a1, b1).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_clean_if(sem, test, path, a0, b0), word)
                     == guarded_language(sem, ctx, event, guarded_clean_if(sem, test, path, a1, b1), word) by {
             assert((guarded_if(sem, test, a0, b0).guard)(ctx, event));
             assert((guarded_if(sem, test, a1, b1).guard)(ctx, event));
-            assert forall|word: Seq<Data>|
+            assert forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, guarded_clean_if(sem, test, path, a0, b0), word)
                     == guarded_language(sem, ctx, event, guarded_clean_if(sem, test, path, a1, b1), word) by {
                 assert(guarded_language(sem, ctx, event, guarded_if(sem, test, a0, b0), word)
@@ -8008,7 +7951,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_stack_refl<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, values: Seq<GuardedTransition<L, C>>,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, values: Seq<GuardedTransition<L, C>>,
     )
         ensures guarded_stack_refines(sem, valid, values, values),
     {
@@ -8018,7 +7961,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_stack_concat<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         a0: Seq<GuardedTransition<L, C>>, a1: Seq<GuardedTransition<L, C>>,
         b0: Seq<GuardedTransition<L, C>>, b1: Seq<GuardedTransition<L, C>>,
     )
@@ -8038,7 +7981,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_reduce_set_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>, count: nat, intersect: bool,
     )
         requires guarded_stack_refines(sem, valid, before, after), count <= before.len(),
@@ -8059,7 +8002,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_apply_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, action: GuardedAction<L>,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, action: GuardedAction<L>,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>,
     )
         requires guarded_stack_refines(sem, valid, before, after),
@@ -8163,7 +8106,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_run_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, tasks: Seq<GuardedAction<L>>,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, tasks: Seq<GuardedAction<L>>,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>,
     )
         requires guarded_stack_refines(sem, valid, before, after),
@@ -8181,20 +8124,19 @@ pub(crate) mod verify {
 
     // Native transition work-stack representation.
     pub struct TransitionContext {
-        pub symbols: model::Symbols,
-        pub bindings: Seq<Data>,
+        pub bindings: Subst,
     }
 
     pub type TransitionMeaning = GuardedTransition<model::Test, TransitionContext>;
     pub type TransitionAction = GuardedAction<model::Test>;
 
-    pub open spec fn transition_context_sem() -> spec_fn(TransitionContext, model::Test, Data) -> bool {
-        |ctx: TransitionContext, test: model::Test, event: Data|
-            model::test_holds(ctx.symbols, ctx.bindings, test, event)
+    pub open spec fn transition_context_sem() -> spec_fn(TransitionContext, model::Test, EventView) -> bool {
+        |ctx: TransitionContext, test: model::Test, event: EventView|
+            model::test_holds(ctx.bindings, test, event)
     }
 
     pub open spec fn transition_context_valid() -> spec_fn(TransitionContext) -> bool {
-        |ctx: TransitionContext| model::symbols_wf(ctx.symbols)
+        |ctx: TransitionContext| language::event_wf(ctx.bindings)
     }
 
     pub enum ActionShape {
@@ -8302,12 +8244,12 @@ pub(crate) mod verify {
     }
 
     pub open spec fn transition_if_combo(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, test: TestId,
-        yes: TransitionId, no: TransitionId, event: Data, word: Seq<Data>,
+        g: model::Graph, theta: Subst, test: TestId,
+        yes: TransitionId, no: TransitionId, event: EventView, word: Seq<EventView>,
     ) -> bool {
-        if model::test_holds(sym, theta, model::lift_test(g, test@), event) {
-            transition_lang(g, sym, theta, yes, event, word)
-        } else { transition_lang(g, sym, theta, no, event, word) }
+        if model::test_holds(theta, model::lift_test(g, test@), event) {
+            transition_lang(g, theta, yes, event, word)
+        } else { transition_lang(g, theta, no, event, word) }
     }
 
     #[verifier::opaque]
@@ -8328,16 +8270,16 @@ pub(crate) mod verify {
     }
 
     pub proof fn transition_lemma_context_sem(ctx: TransitionContext)
-        ensures guarded_semantics(transition_context_sem(), ctx) == model::gsem(ctx.symbols, ctx.bindings),
+        ensures guarded_semantics(transition_context_sem(), ctx) == model::gsem(ctx.bindings),
     {
-        assert(guarded_semantics(transition_context_sem(), ctx) =~= model::gsem(ctx.symbols, ctx.bindings));
+        assert(guarded_semantics(transition_context_sem(), ctx) =~= model::gsem(ctx.bindings));
     }
 
     pub proof fn transition_lemma_known_language(
-        g: model::Graph, id: TransitionId, ctx: TransitionContext, event: Data, word: Seq<Data>,
+        g: model::Graph, id: TransitionId, ctx: TransitionContext, event: EventView, word: Seq<EventView>,
     )
         ensures guarded_language(transition_context_sem(), ctx, event, transition_known(g, id), word)
-            == transition_lang(g, ctx.symbols, ctx.bindings, id, event, word),
+            == transition_lang(g, ctx.bindings, id, event, word),
     {
         transition_lemma_context_sem(ctx);
     }
@@ -8445,7 +8387,7 @@ pub(crate) mod verify {
 
 
     pub proof fn guarded_lemma_run_result_congruent<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, tasks: Seq<GuardedAction<L>>,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, tasks: Seq<GuardedAction<L>>,
         before: Option<Seq<GuardedTransition<L, C>>>, after: Option<Seq<GuardedTransition<L, C>>>,
     )
         requires guarded_program_refines(sem, valid, before, after),
@@ -8460,7 +8402,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_frame_effect<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         prefix: Seq<GuardedAction<L>>, expansion: Seq<GuardedAction<L>>, action: GuardedAction<L>,
         before: Seq<GuardedTransition<L, C>>, after: Seq<GuardedTransition<L, C>>,
     )
@@ -8594,7 +8536,7 @@ pub(crate) mod verify {
 
 
     pub proof fn guarded_lemma_run_singleton<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, action: GuardedAction<L>, values: Seq<GuardedTransition<L, C>>,
+        sem: spec_fn(C, L, EventView) -> bool, action: GuardedAction<L>, values: Seq<GuardedTransition<L, C>>,
     )
         ensures guarded_run(sem, seq![action], values) == guarded_apply(sem, action, values),
     {
@@ -8660,7 +8602,7 @@ pub(crate) mod verify {
         ensures transition_collect_work(g, id, intersect) >= 1,
     {}
 
-    // ----- termination cost arithmetic (transition_machine) -----
+    // ----- termination cost arithmetic (Action::run) -----
     pub open spec fn n4(d: nat) -> nat
         decreases d,
     {
@@ -9236,7 +9178,7 @@ pub(crate) mod verify {
         assert(a * b >= 0) by (nonlinear_arith);
     }
 
-    /// `transition_collect([a, b], true)` stays within `pair_bound`.
+    /// `TransitionId::collect([a, b], true)` stays within `pair_bound`.
     pub proof fn collect_lemma_pair_bound(g: model::Graph, a: TransitionId, b: TransitionId)
         ensures collect_bound(g, seq![a, b], true) == pair_bound(tdepth(g, a@), tdepth(g, b@)),
     {
@@ -9647,7 +9589,7 @@ pub(crate) mod verify {
         }
     }
 
-    // ===== transition_machine termination: per-node depth bounds and an abstract run of the task stack =====
+    // ===== Action::run termination: per-node depth bounds and an abstract run of the task stack =====
 
     /// Depth bound of a transition node: `1 + max` at `If`, additive at `Union`, multiplicative at
     /// `Intersect`, `4^d` at `Not`, `2d + 1` at `Append`.
@@ -9885,7 +9827,7 @@ pub(crate) mod verify {
         }
     }
 
-    /// Termination measure of `transition_machine`.
+    /// Termination measure of `Action::run`.
     pub open spec fn machine_cost(g: model::Graph, tasks: Seq<ActionShape>, values: Seq<TransitionId>) -> nat {
         machine_run(g, tasks, value_depths(g, values)).0
     }
@@ -10283,6 +10225,13 @@ pub(crate) mod verify {
         ensures machine_cost(g1, transition_clean_if_tasks(g1, test, a, b, yes, no, pending), v0)
             < machine_cost(g0, pending.push(ActionShape::Clean(id@, path@)), v0),
     {
+        // Keep irrelevant recursive costs opaque while proving this local scheduling bound.
+        hide(clean_cost);
+        hide(not_cost);
+        hide(append_cost);
+        hide(pair_cost);
+        hide(pair_cost_upto);
+        hide(tdepth);
         model::lemma_graph_transition_wf(g0, id@);
         tdepth_lemma_unfold(g0, id@);
         tdepth_lemma_extends(g0, g1, a@);
@@ -10292,22 +10241,36 @@ pub(crate) mod verify {
         let da = tdepth(g0, a@);
         let db = tdepth(g0, b@);
         let d = tdepth(g0, id@);
+        let m = (d - 1) as nat;
+        assert(d == if_bound(da, db));
+        assert(d >= 2);
+        assert(da <= m && db <= m);
         let s0 = value_depths(g0, v0);
         value_depths_lemma_extends(g0, g1, v0);
+        assert(value_depths(g1, v0) == s0);
         let task = ActionShape::Clean(id@, path@);
-        lemma_clean_cost_mono(da, (d - 1) as nat);
-        lemma_clean_cost_mono(db, (d - 1) as nat);
+        assert(action_cost(g0, task, s0) == clean_cost(d));
+        assert(action_next(g0, task, s0) == s0.push(d));
+        assert(le_pointwise(s0, s0));
+        lemma_clean_cost_mono(da, m);
+        lemma_clean_cost_mono(db, m);
+        assert(clean_cost(d) >= 4 + d + 3 * clean_cost(m)) by {
+            reveal_with_fuel(clean_cost, 1);
+        }
+        assert(1 + clean_cost(da) + clean_cost(db) < clean_cost(d));
         let tasks = transition_clean_if_tasks(g1, test, a, b, yes, no, pending);
         if yes@ == g1.constants.test_false {
             let added = seq![ActionShape::Clean(b@, no@)];
             assert(tasks =~= pending + added);
             machine_lemma_run1(g1, added[0], s0);
+            assert(machine_run(g1, added, s0) == (clean_cost(db), s0.push(db)));
             le_pointwise_push(s0, s0, db, d);
             machine_lemma_step(g0, g1, pending, task, added, v0, v0);
         } else if no@ == g1.constants.test_false {
             let added = seq![ActionShape::Clean(a@, yes@)];
             assert(tasks =~= pending + added);
             machine_lemma_run1(g1, added[0], s0);
+            assert(machine_run(g1, added, s0) == (clean_cost(da), s0.push(da)));
             le_pointwise_push(s0, s0, da, d);
             machine_lemma_step(g0, g1, pending, task, added, v0, v0);
         } else {
@@ -10318,6 +10281,7 @@ pub(crate) mod verify {
             assert(abs_pop(s2, 2) =~= s0);
             assert(abs_peek(s2, 1) == da);
             assert(abs_peek(s2, 0) == db);
+            assert(machine_run(g1, added, s0) == (clean_cost(da) + clean_cost(db) + 1, s0.push(d)));
             le_pointwise_push(s0, s0, d, d);
             machine_lemma_step(g0, g1, pending, task, added, v0, v0);
         }
@@ -11403,7 +11367,7 @@ pub(crate) mod verify {
         lemma_bounds_pos(value_depths(g, ids));
     }
 
-    /// Depth of the three possible results of `transition_collect`.
+    /// Depth of the three possible results of `TransitionId::collect`.
     pub proof fn collect_lemma_final(
         entry: model::Graph, g: model::Graph, original: Seq<TransitionId>, flat: Seq<TransitionId>, intersect: bool,
     )
@@ -11437,17 +11401,17 @@ pub(crate) mod verify {
     }
 
     pub open spec fn transition_collect_combo(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, pending: Seq<TransitionId>,
-        flat: Seq<TransitionId>, constants: Seq<RegexId>, event: Data, word: Seq<Data>, intersect: bool,
+        g: model::Graph, theta: Subst, pending: Seq<TransitionId>,
+        flat: Seq<TransitionId>, constants: Seq<RegexId>, event: EventView, word: Seq<EventView>, intersect: bool,
     ) -> bool {
         if intersect {
-            transition_combo(g, sym, theta, pending, event, word, true)
-                && transition_combo(g, sym, theta, flat, event, word, true)
-                && regex_combo(g, sym, theta, constants, word, true)
+            transition_combo(g, theta, pending, event, word, true)
+                && transition_combo(g, theta, flat, event, word, true)
+                && regex_combo(g, theta, constants, word, true)
         } else {
-            transition_combo(g, sym, theta, pending, event, word, false)
-                || transition_combo(g, sym, theta, flat, event, word, false)
-                || regex_combo(g, sym, theta, constants, word, false)
+            transition_combo(g, theta, pending, event, word, false)
+                || transition_combo(g, theta, flat, event, word, false)
+                || regex_combo(g, theta, constants, word, false)
         }
     }
 
@@ -11498,58 +11462,58 @@ pub(crate) mod verify {
     }
 
     pub proof fn transition_lemma_combo_concat(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, left: Seq<TransitionId>, right: Seq<TransitionId>,
-        event: Data, word: Seq<Data>, intersect: bool,
+        g: model::Graph, theta: Subst, left: Seq<TransitionId>, right: Seq<TransitionId>,
+        event: EventView, word: Seq<EventView>, intersect: bool,
     )
-        ensures transition_combo(g, sym, theta, left + right, event, word, intersect)
+        ensures transition_combo(g, theta, left + right, event, word, intersect)
             == if intersect {
-                transition_combo(g, sym, theta, left, event, word, true)
-                    && transition_combo(g, sym, theta, right, event, word, true)
+                transition_combo(g, theta, left, event, word, true)
+                    && transition_combo(g, theta, right, event, word, true)
             } else {
-                transition_combo(g, sym, theta, left, event, word, false)
-                    || transition_combo(g, sym, theta, right, event, word, false)
+                transition_combo(g, theta, left, event, word, false)
+                    || transition_combo(g, theta, right, event, word, false)
             },
     {
         if intersect {
-            if transition_combo(g, sym, theta, left + right, event, word, true) {
-                assert forall|i: int| 0 <= i < left.len() implies transition_lang(g, sym, theta, left[i], event, word) by {
+            if transition_combo(g, theta, left + right, event, word, true) {
+                assert forall|i: int| 0 <= i < left.len() implies transition_lang(g, theta, left[i], event, word) by {
                     assert((left + right)[i] == left[i]);
-                    assert(transition_lang(g, sym, theta, (left + right)[i], event, word));
+                    assert(transition_lang(g, theta, (left + right)[i], event, word));
                 }
-                assert forall|i: int| 0 <= i < right.len() implies transition_lang(g, sym, theta, right[i], event, word) by {
+                assert forall|i: int| 0 <= i < right.len() implies transition_lang(g, theta, right[i], event, word) by {
                     assert((left + right)[left.len() as int + i] == right[i]);
-                    assert(transition_lang(g, sym, theta, (left + right)[left.len() as int + i], event, word));
+                    assert(transition_lang(g, theta, (left + right)[left.len() as int + i], event, word));
                 }
             }
-            if transition_combo(g, sym, theta, left, event, word, true)
-                && transition_combo(g, sym, theta, right, event, word, true) {
+            if transition_combo(g, theta, left, event, word, true)
+                && transition_combo(g, theta, right, event, word, true) {
                 assert forall|i: int| 0 <= i < (left + right).len() implies
-                    transition_lang(g, sym, theta, (left + right)[i], event, word) by {
+                    transition_lang(g, theta, (left + right)[i], event, word) by {
                     if i < left.len() { assert((left + right)[i] == left[i]); }
                     else { assert((left + right)[i] == right[i - left.len() as int]); }
                 }
             }
         } else {
-            if transition_combo(g, sym, theta, left + right, event, word, false) {
+            if transition_combo(g, theta, left + right, event, word, false) {
                 let i = choose|i: int| 0 <= i < (left + right).len()
-                    && transition_lang(g, sym, theta, (left + right)[i], event, word);
+                    && transition_lang(g, theta, (left + right)[i], event, word);
                 if i < left.len() {
                     assert((left + right)[i] == left[i]);
-                    assert(transition_combo(g, sym, theta, left, event, word, false));
+                    assert(transition_combo(g, theta, left, event, word, false));
                 } else {
                     assert((left + right)[i] == right[i - left.len() as int]);
-                    assert(transition_combo(g, sym, theta, right, event, word, false));
+                    assert(transition_combo(g, theta, right, event, word, false));
                 }
             }
-            if transition_combo(g, sym, theta, left, event, word, false) {
-                let i = choose|i: int| 0 <= i < left.len() && transition_lang(g, sym, theta, left[i], event, word);
-                assert(transition_lang(g, sym, theta, (left + right)[i], event, word));
-                assert(transition_combo(g, sym, theta, left + right, event, word, false));
+            if transition_combo(g, theta, left, event, word, false) {
+                let i = choose|i: int| 0 <= i < left.len() && transition_lang(g, theta, left[i], event, word);
+                assert(transition_lang(g, theta, (left + right)[i], event, word));
+                assert(transition_combo(g, theta, left + right, event, word, false));
             }
-            if transition_combo(g, sym, theta, right, event, word, false) {
-                let i = choose|i: int| 0 <= i < right.len() && transition_lang(g, sym, theta, right[i], event, word);
-                assert(transition_lang(g, sym, theta, (left + right)[left.len() as int + i], event, word));
-                assert(transition_combo(g, sym, theta, left + right, event, word, false));
+            if transition_combo(g, theta, right, event, word, false) {
+                let i = choose|i: int| 0 <= i < right.len() && transition_lang(g, theta, right[i], event, word);
+                assert(transition_lang(g, theta, (left + right)[left.len() as int + i], event, word));
+                assert(transition_combo(g, theta, left + right, event, word, false));
             }
         }
     }
@@ -11557,13 +11521,13 @@ pub(crate) mod verify {
     pub proof fn transition_lemma_constant(g: model::Graph, id: TransitionId, regex: RegexId)
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::Const(regex@),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word) == model::regex_lang(g, sym, theta, regex@, word),
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word) == model::regex_lang(g, theta, regex@, word),
     {
         transition_unfold(g, id@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word) == model::regex_lang(g, sym, theta, regex@, word) by {
-            language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(g, regex@));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word) == model::regex_lang(g, theta, regex@, word) by {
+            language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(g, regex@));
         }
     }
 
@@ -11574,18 +11538,18 @@ pub(crate) mod verify {
             g.transitions[id@ as int] == if intersect {
                 model::TransitionNode::Intersect(model::transition_ids(children))
             } else { model::TransitionNode::Union(model::transition_ids(children)) },
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word)
-                == transition_combo(g, sym, theta, children, event, word, intersect),
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word)
+                == transition_combo(g, theta, children, event, word, intersect),
     {
         transition_unfold(g, id@);
         let terms = model::transition_ids(children).map(|i: int, child: nat| model::lift_transition(g, child));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word)
-                == transition_combo(g, sym, theta, children, event, word, intersect) by {
-            let sem = model::gsem(sym, theta);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word)
+                == transition_combo(g, theta, children, event, word, intersect) by {
+            let sem = model::gsem(theta);
             assert forall|i: int| 0 <= i < children.len() implies
-                transition_lang(g, sym, theta, children[i], event, word)
+                transition_lang(g, theta, children[i], event, word)
                     == language::lang(sem, language::interp_transition(sem, event, terms[i]), word) by {
                 assert(terms[i] == model::lift_transition(g, children[i]@));
             }
@@ -11593,14 +11557,14 @@ pub(crate) mod verify {
                 language::lemma_interp_intersect(sem, event, terms, word);
             } else {
                 language::lemma_interp_union(sem, event, terms, word);
-                if transition_lang(g, sym, theta, id, event, word) {
+                if transition_lang(g, theta, id, event, word) {
                     let i = choose|i: int| 0 <= i < terms.len()
                         && language::lang(sem, language::interp_transition(sem, event, terms[i]), word);
-                    assert(transition_lang(g, sym, theta, children[i], event, word));
+                    assert(transition_lang(g, theta, children[i], event, word));
                 }
-                if transition_combo(g, sym, theta, children, event, word, false) {
+                if transition_combo(g, theta, children, event, word, false) {
                     let i = choose|i: int| 0 <= i < children.len()
-                        && transition_lang(g, sym, theta, children[i], event, word);
+                        && transition_lang(g, theta, children[i], event, word);
                     assert(language::lang(sem, language::interp_transition(sem, event, terms[i]), word));
                 }
             }
@@ -11610,30 +11574,30 @@ pub(crate) mod verify {
     pub proof fn transition_lemma_identities(g: model::Graph, mode: TransitionModeModel)
         requires model::graph_wf(g), transition_mode_valid(g, mode),
         ensures mode.identity@ < g.transitions.len(), mode.absorber@ < g.transitions.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-                transition_lang(g, sym, theta, mode.identity, event, word) == mode.intersect,
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-                transition_lang(g, sym, theta, mode.absorber, event, word) == !mode.intersect,
+            forall|theta: Subst, event: EventView, word: Seq<EventView>|
+                transition_lang(g, theta, mode.identity, event, word) == mode.intersect,
+            forall|theta: Subst, event: EventView, word: Seq<EventView>|
+                transition_lang(g, theta, mode.absorber, event, word) == !mode.intersect,
     {
         model::lemma_graph_wf_elim(g);
         transition_unfold(g, mode.identity@);
         transition_unfold(g, mode.absorber@);
         regex_unfold(g, g.constants.empty);
         regex_unfold(g, g.constants.all);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, mode.identity, event, word) == mode.intersect by {
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, mode.identity, event, word) == mode.intersect by {
             if mode.intersect {
-                language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(g, g.constants.all));
+                language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(g, g.constants.all));
             } else {
-                language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(g, g.constants.empty));
+                language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(g, g.constants.empty));
             }
         }
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, mode.absorber, event, word) == !mode.intersect by {
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, mode.absorber, event, word) == !mode.intersect by {
             if mode.intersect {
-                language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(g, g.constants.empty));
+                language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(g, g.constants.empty));
             } else {
-                language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(g, g.constants.all));
+                language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(g, g.constants.all));
             }
         }
     }
@@ -11642,10 +11606,10 @@ pub(crate) mod verify {
         g: model::Graph, mode: TransitionModeModel, pending: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>,
         next_pending: Seq<TransitionId>, next_flat: Seq<TransitionId>, next_constants: Seq<RegexId>, collapsed: bool,
     ) -> bool {
-        (forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
+        (forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == if collapsed { !mode.intersect } else {
-                    transition_collect_combo(g, sym, theta, next_pending, next_flat, next_constants, event, word, mode.intersect)
+                    transition_collect_combo(g, theta, next_pending, next_flat, next_constants, event, word, mode.intersect)
                 })
         && (!collapsed && pending.len() > 0 ==> transition_pending_work(g, next_pending, mode.intersect)
             < transition_pending_work(g, pending, mode.intersect))
@@ -11670,10 +11634,10 @@ pub(crate) mod verify {
         transition_lemma_identities(g, mode);
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
-                == transition_collect_combo(g, sym, theta, pending.drop_last(), flat, constants, event, word, mode.intersect) by {
-            transition_lemma_combo_concat(g, sym, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
+                == transition_collect_combo(g, theta, pending.drop_last(), flat, constants, event, word, mode.intersect) by {
+            transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
         }
     }
 
@@ -11682,14 +11646,14 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), transition_mode_valid(g, mode),
             pending.len() > 0, pending.last() == mode.absorber,
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect,
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect,
     {
         transition_lemma_identities(g, mode);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect by {
-            transition_lemma_combo_concat(g, sym, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect by {
+            transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
         }
     }
 
@@ -11703,11 +11667,11 @@ pub(crate) mod verify {
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
         assert(flat + seq![pending.last()] =~= flat.push(pending.last()));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
-                == transition_collect_combo(g, sym, theta, pending.drop_last(), flat.push(pending.last()), constants, event, word, mode.intersect) by {
-            transition_lemma_combo_concat(g, sym, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
-            transition_lemma_combo_concat(g, sym, theta, flat, seq![pending.last()], event, word, mode.intersect);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
+                == transition_collect_combo(g, theta, pending.drop_last(), flat.push(pending.last()), constants, event, word, mode.intersect) by {
+            transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
+            transition_lemma_combo_concat(g, theta, flat, seq![pending.last()], event, word, mode.intersect);
         }
     }
 
@@ -11722,16 +11686,16 @@ pub(crate) mod verify {
         transition_lemma_constant(g, pending.last(), regex);
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
-                == transition_collect_combo(g, sym, theta, pending.drop_last(), flat, constants.push(regex), event, word, mode.intersect) by {
-            transition_lemma_combo_concat(g, sym, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
-            transition_lemma_regex_combo_push(g, sym, theta, constants, regex, word, mode.intersect);
-            assert(regex_combo(g, sym, theta, constants.push(regex), word, mode.intersect)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
+                == transition_collect_combo(g, theta, pending.drop_last(), flat, constants.push(regex), event, word, mode.intersect) by {
+            transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
+            transition_lemma_regex_combo_push(g, theta, constants, regex, word, mode.intersect);
+            assert(regex_combo(g, theta, constants.push(regex), word, mode.intersect)
                 == if mode.intersect {
-                    regex_combo(g, sym, theta, constants, word, true) && model::regex_lang(g, sym, theta, regex@, word)
+                    regex_combo(g, theta, constants, word, true) && model::regex_lang(g, theta, regex@, word)
                 } else {
-                    regex_combo(g, sym, theta, constants, word, false) || model::regex_lang(g, sym, theta, regex@, word)
+                    regex_combo(g, theta, constants, word, false) || model::regex_lang(g, theta, regex@, word)
                 });
         }
     }
@@ -11757,11 +11721,11 @@ pub(crate) mod verify {
         assert(transition_children(g, id@) == model::transition_ids(children));
         assert(prefix.push(id) =~= pending);
         transition_lemma_children_language(g, id, children, mode.intersect);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
-                == transition_collect_combo(g, sym, theta, prefix + children, flat, constants, event, word, mode.intersect) by {
-            transition_lemma_combo_concat(g, sym, theta, prefix, seq![id], event, word, mode.intersect);
-            transition_lemma_combo_concat(g, sym, theta, prefix, children, event, word, mode.intersect);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
+                == transition_collect_combo(g, theta, prefix + children, flat, constants, event, word, mode.intersect) by {
+            transition_lemma_combo_concat(g, theta, prefix, seq![id], event, word, mode.intersect);
+            transition_lemma_combo_concat(g, theta, prefix, children, event, word, mode.intersect);
         }
     }
 
@@ -11793,46 +11757,46 @@ pub(crate) mod verify {
     }
 
     pub proof fn transition_lemma_regex_combo_push(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, values: Seq<RegexId>, value: RegexId, word: Seq<Data>, intersect: bool,
+        g: model::Graph, theta: Subst, values: Seq<RegexId>, value: RegexId, word: Seq<EventView>, intersect: bool,
     )
-        ensures regex_combo(g, sym, theta, values.push(value), word, intersect)
+        ensures regex_combo(g, theta, values.push(value), word, intersect)
             == if intersect {
-                regex_combo(g, sym, theta, values, word, true) && model::regex_lang(g, sym, theta, value@, word)
+                regex_combo(g, theta, values, word, true) && model::regex_lang(g, theta, value@, word)
             } else {
-                regex_combo(g, sym, theta, values, word, false) || model::regex_lang(g, sym, theta, value@, word)
+                regex_combo(g, theta, values, word, false) || model::regex_lang(g, theta, value@, word)
             },
     {
         if intersect {
-            if regex_combo(g, sym, theta, values.push(value), word, true) {
-                assert(model::regex_lang(g, sym, theta, values.push(value)[values.len() as int]@, word));
-                assert forall|i: int| 0 <= i < values.len() implies model::regex_lang(g, sym, theta, values[i]@, word) by {
+            if regex_combo(g, theta, values.push(value), word, true) {
+                assert(model::regex_lang(g, theta, values.push(value)[values.len() as int]@, word));
+                assert forall|i: int| 0 <= i < values.len() implies model::regex_lang(g, theta, values[i]@, word) by {
                     assert(values.push(value)[i] == values[i]);
                 }
             }
-            if regex_combo(g, sym, theta, values, word, true) && model::regex_lang(g, sym, theta, value@, word) {
+            if regex_combo(g, theta, values, word, true) && model::regex_lang(g, theta, value@, word) {
                 assert forall|i: int| 0 <= i < values.push(value).len() implies
-                    model::regex_lang(g, sym, theta, values.push(value)[i]@, word) by {
+                    model::regex_lang(g, theta, values.push(value)[i]@, word) by {
                     if i < values.len() { assert(values.push(value)[i] == values[i]); }
                     else { assert(i == values.len()); }
                 }
             }
         } else {
-            if regex_combo(g, sym, theta, values.push(value), word, false) {
+            if regex_combo(g, theta, values.push(value), word, false) {
                 let i = choose|i: int| 0 <= i < values.push(value).len()
-                    && model::regex_lang(g, sym, theta, values.push(value)[i]@, word);
+                    && model::regex_lang(g, theta, values.push(value)[i]@, word);
                 if i < values.len() {
                     assert(values.push(value)[i] == values[i]);
-                    assert(regex_combo(g, sym, theta, values, word, false));
+                    assert(regex_combo(g, theta, values, word, false));
                 } else { assert(i == values.len()); }
             }
-            if regex_combo(g, sym, theta, values, word, false) {
-                let i = choose|i: int| 0 <= i < values.len() && model::regex_lang(g, sym, theta, values[i]@, word);
-                assert(model::regex_lang(g, sym, theta, values.push(value)[i]@, word));
-                assert(regex_combo(g, sym, theta, values.push(value), word, false));
+            if regex_combo(g, theta, values, word, false) {
+                let i = choose|i: int| 0 <= i < values.len() && model::regex_lang(g, theta, values[i]@, word);
+                assert(model::regex_lang(g, theta, values.push(value)[i]@, word));
+                assert(regex_combo(g, theta, values.push(value), word, false));
             }
-            if model::regex_lang(g, sym, theta, value@, word) {
-                assert(model::regex_lang(g, sym, theta, values.push(value)[values.len() as int]@, word));
-                assert(regex_combo(g, sym, theta, values.push(value), word, false));
+            if model::regex_lang(g, theta, value@, word) {
+                assert(model::regex_lang(g, theta, values.push(value)[values.len() as int]@, word));
+                assert(regex_combo(g, theta, values.push(value), word, false));
             }
         }
     }
@@ -11881,17 +11845,17 @@ pub(crate) mod verify {
 
 
     pub open spec fn transition_equivalent(g: model::Graph, left: Seq<TransitionId>, right: Seq<TransitionId>, intersect: bool) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_combo(g, sym, theta, left, event, word, intersect)
-                == transition_combo(g, sym, theta, right, event, word, intersect)
+        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_combo(g, theta, left, event, word, intersect)
+                == transition_combo(g, theta, right, event, word, intersect)
     }
 
     pub proof fn transition_combo_extends(before: model::Graph, after: model::Graph, ids: Seq<TransitionId>, intersect: bool)
         requires model::graph_wf(before), model::graph_extends(before, after), transition_ids_valid(before, ids),
         ensures transition_ids_valid(after, ids),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-                transition_combo(before, sym, theta, ids, event, word, intersect)
-                    == transition_combo(after, sym, theta, ids, event, word, intersect),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>|
+                transition_combo(before, theta, ids, event, word, intersect)
+                    == transition_combo(after, theta, ids, event, word, intersect),
     {
         model::lemma_graph_wf_elim(before);
         model::lemma_lift_stable_under_extends(before, after);
@@ -11933,36 +11897,36 @@ pub(crate) mod verify {
         requires forall|id: TransitionId| left.contains(id) == right.contains(id),
         ensures transition_equivalent(g, left, right, intersect),
     {
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_combo(g, sym, theta, left, event, word, intersect)
-                == transition_combo(g, sym, theta, right, event, word, intersect) by {
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_combo(g, theta, left, event, word, intersect)
+                == transition_combo(g, theta, right, event, word, intersect) by {
             if intersect {
-                if transition_combo(g, sym, theta, left, event, word, true) {
-                    assert forall|i: int| 0 <= i < right.len() implies transition_lang(g, sym, theta, right[i], event, word) by {
+                if transition_combo(g, theta, left, event, word, true) {
+                    assert forall|i: int| 0 <= i < right.len() implies transition_lang(g, theta, right[i], event, word) by {
                         assert(right.contains(right[i])); assert(left.contains(right[i]));
                         let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                        assert(transition_lang(g, sym, theta, left[j], event, word));
+                        assert(transition_lang(g, theta, left[j], event, word));
                     }
                 }
-                if transition_combo(g, sym, theta, right, event, word, true) {
-                    assert forall|i: int| 0 <= i < left.len() implies transition_lang(g, sym, theta, left[i], event, word) by {
+                if transition_combo(g, theta, right, event, word, true) {
+                    assert forall|i: int| 0 <= i < left.len() implies transition_lang(g, theta, left[i], event, word) by {
                         assert(left.contains(left[i])); assert(right.contains(left[i]));
                         let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                        assert(transition_lang(g, sym, theta, right[j], event, word));
+                        assert(transition_lang(g, theta, right[j], event, word));
                     }
                 }
             } else {
-                if transition_combo(g, sym, theta, left, event, word, false) {
-                    let i = choose|i: int| 0 <= i < left.len() && transition_lang(g, sym, theta, left[i], event, word);
+                if transition_combo(g, theta, left, event, word, false) {
+                    let i = choose|i: int| 0 <= i < left.len() && transition_lang(g, theta, left[i], event, word);
                     assert(left.contains(left[i])); assert(right.contains(left[i]));
                     let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                    assert(transition_lang(g, sym, theta, right[j], event, word));
+                    assert(transition_lang(g, theta, right[j], event, word));
                 }
-                if transition_combo(g, sym, theta, right, event, word, false) {
-                    let i = choose|i: int| 0 <= i < right.len() && transition_lang(g, sym, theta, right[i], event, word);
+                if transition_combo(g, theta, right, event, word, false) {
+                    let i = choose|i: int| 0 <= i < right.len() && transition_lang(g, theta, right[i], event, word);
                     assert(right.contains(right[i])); assert(left.contains(right[i]));
                     let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                    assert(transition_lang(g, sym, theta, left[j], event, word));
+                    assert(transition_lang(g, theta, left[j], event, word));
                 }
             }
         }
@@ -11971,9 +11935,9 @@ pub(crate) mod verify {
     pub open spec fn transition_collected(
         g: model::Graph, original: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>, intersect: bool,
     ) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_combo(g, sym, theta, original, event, word, intersect)
-                == transition_collect_combo(g, sym, theta, Seq::empty(), flat, constants, event, word, intersect)
+        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_combo(g, theta, original, event, word, intersect)
+                == transition_collect_combo(g, theta, Seq::empty(), flat, constants, event, word, intersect)
     }
 
     pub proof fn transition_lemma_extends_transitive(a: model::Graph, b: model::Graph, c: model::Graph)
@@ -12000,50 +11964,50 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), transition_mode_valid(g, mode),
             transition_collected(g, original, flat, constants, mode.intersect),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(g, sym, theta, grouped, event, word) == regex_combo(g, sym, theta, constants, word, mode.intersect),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(g, theta, grouped, event, word) == regex_combo(g, theta, constants, word, mode.intersect),
         ensures
             transition_equivalent(g, original, flat.push(grouped), mode.intersect),
             grouped == mode.identity ==> transition_equivalent(g, original, flat, mode.intersect),
-            grouped == mode.absorber ==> forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                    == transition_lang(g, sym, theta, mode.absorber, event, word),
+            grouped == mode.absorber ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_combo(g, theta, original, event, word, mode.intersect)
+                    == transition_lang(g, theta, mode.absorber, event, word),
     {
         hide(transition_lang);
         hide(transition_combo);
         hide(regex_combo);
         transition_lemma_identities(g, mode);
         assert(flat + seq![grouped] =~= flat.push(grouped));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                == transition_combo(g, sym, theta, flat.push(grouped), event, word, mode.intersect) by {
-            transition_lemma_combo_concat(g, sym, theta, flat, seq![grouped], event, word, mode.intersect);
-            transition_lemma_singleton_combo(g, grouped, sym, theta, event, word, mode.intersect);
-            transition_lemma_empty_combos(g, sym, theta, event, word, mode.intersect);
-            assert(transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                == transition_collect_combo(g, sym, theta, Seq::empty(), flat, constants, event, word, mode.intersect));
-            assert(transition_lang(g, sym, theta, grouped, event, word)
-                == regex_combo(g, sym, theta, constants, word, mode.intersect));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_combo(g, theta, original, event, word, mode.intersect)
+                == transition_combo(g, theta, flat.push(grouped), event, word, mode.intersect) by {
+            transition_lemma_combo_concat(g, theta, flat, seq![grouped], event, word, mode.intersect);
+            transition_lemma_singleton_combo(g, grouped, theta, event, word, mode.intersect);
+            transition_lemma_empty_combos(g, theta, event, word, mode.intersect);
+            assert(transition_combo(g, theta, original, event, word, mode.intersect)
+                == transition_collect_combo(g, theta, Seq::empty(), flat, constants, event, word, mode.intersect));
+            assert(transition_lang(g, theta, grouped, event, word)
+                == regex_combo(g, theta, constants, word, mode.intersect));
         }
         if grouped == mode.identity {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                implies transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                    == transition_combo(g, sym, theta, flat, event, word, mode.intersect) by {
-                transition_lemma_combo_concat(g, sym, theta, flat, seq![grouped], event, word, mode.intersect);
-                transition_lemma_singleton_combo(g, grouped, sym, theta, event, word, mode.intersect);
-                assert(transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                    == transition_combo(g, sym, theta, flat.push(grouped), event, word, mode.intersect));
-                assert(transition_lang(g, sym, theta, grouped, event, word) == mode.intersect);
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                implies transition_combo(g, theta, original, event, word, mode.intersect)
+                    == transition_combo(g, theta, flat, event, word, mode.intersect) by {
+                transition_lemma_combo_concat(g, theta, flat, seq![grouped], event, word, mode.intersect);
+                transition_lemma_singleton_combo(g, grouped, theta, event, word, mode.intersect);
+                assert(transition_combo(g, theta, original, event, word, mode.intersect)
+                    == transition_combo(g, theta, flat.push(grouped), event, word, mode.intersect));
+                assert(transition_lang(g, theta, grouped, event, word) == mode.intersect);
             }
         }
     }
 
     pub proof fn transition_lemma_set_result(g: model::Graph, ids: Seq<TransitionId>, original: Seq<TransitionId>, intersect: bool)
         requires transition_equivalent(g, ids, original, intersect),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> (ids.len() == 0 ==> transition_combo(g, sym, theta, original, event, word, intersect) == intersect)
-                && (ids.len() == 1 ==> transition_combo(g, sym, theta, original, event, word, intersect)
-                    == transition_lang(g, sym, theta, ids[0], event, word)),
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> (ids.len() == 0 ==> transition_combo(g, theta, original, event, word, intersect) == intersect)
+                && (ids.len() == 1 ==> transition_combo(g, theta, original, event, word, intersect)
+                    == transition_lang(g, theta, ids[0], event, word)),
     {
         if ids.len() == 1 { assert(ids =~= seq![ids[0]]); }
     }
@@ -12075,22 +12039,22 @@ pub(crate) mod verify {
     }
 
     pub proof fn transition_set_law(ids: Seq<TransitionId>, intersect: bool)
-        ensures forall|g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            language::lang(model::gsem(sym, theta), language::interp_transition(model::gsem(sym, theta), event,
+        ensures forall|g: model::Graph, theta: Subst, event: EventView, word: Seq<EventView>|
+            language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
                 transition_unbounded_node(g, if intersect { model::TransitionNode::Intersect(model::transition_ids(ids)) }
                     else { model::TransitionNode::Union(model::transition_ids(ids)) })), word)
-                == transition_combo(g, sym, theta, ids, event, word, intersect),
+                == transition_combo(g, theta, ids, event, word, intersect),
     {
-        assert forall|g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            language::lang(model::gsem(sym, theta), language::interp_transition(model::gsem(sym, theta), event,
+        assert forall|g: model::Graph, theta: Subst, event: EventView, word: Seq<EventView>|
+            language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
                 transition_unbounded_node(g, if intersect { model::TransitionNode::Intersect(model::transition_ids(ids)) }
                     else { model::TransitionNode::Union(model::transition_ids(ids)) })), word)
-                == transition_combo(g, sym, theta, ids, event, word, intersect) by {
-            let sem = model::gsem(sym, theta);
+                == transition_combo(g, theta, ids, event, word, intersect) by {
+            let sem = model::gsem(theta);
             let terms = model::transition_ids(ids).map(|i: int, id: nat| model::lift_transition(g, id));
             assert forall|i: int| 0 <= i < ids.len() implies
                 language::lang(sem, language::interp_transition(sem, event, terms[i]), word)
-                    == transition_lang(g, sym, theta, ids[i], event, word) by {
+                    == transition_lang(g, theta, ids[i], event, word) by {
                 assert(terms[i] == model::lift_transition(g, ids[i]@));
             }
             if intersect {
@@ -12101,10 +12065,10 @@ pub(crate) mod verify {
                     && language::lang(sem, language::interp_transition(sem, event, terms[i]), word) {
                     let i = choose|i: int| 0 <= i < terms.len()
                         && language::lang(sem, language::interp_transition(sem, event, terms[i]), word);
-                    assert(transition_lang(g, sym, theta, ids[i], event, word));
+                    assert(transition_lang(g, theta, ids[i], event, word));
                 }
-                if transition_combo(g, sym, theta, ids, event, word, false) {
-                    let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, sym, theta, ids[i], event, word);
+                if transition_combo(g, theta, ids, event, word, false) {
+                    let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, theta, ids[i], event, word);
                     assert(language::lang(sem, language::interp_transition(sem, event, terms[i]), word));
                 }
             }
@@ -12142,34 +12106,34 @@ pub(crate) mod verify {
     {}
 
     pub proof fn transition_lemma_empty_combos(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>, intersect: bool,
+        g: model::Graph, theta: Subst, event: EventView, word: Seq<EventView>, intersect: bool,
     )
-        ensures transition_combo(g, sym, theta, Seq::empty(), event, word, intersect) == intersect,
-            regex_combo(g, sym, theta, Seq::empty(), word, intersect) == intersect,
+        ensures transition_combo(g, theta, Seq::empty(), event, word, intersect) == intersect,
+            regex_combo(g, theta, Seq::empty(), word, intersect) == intersect,
     {}
 
 
     pub proof fn transition_lemma_singleton_combo(
-        g: model::Graph, id: TransitionId, sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>, intersect: bool,
+        g: model::Graph, id: TransitionId, theta: Subst, event: EventView, word: Seq<EventView>, intersect: bool,
     )
-        ensures transition_combo(g, sym, theta, seq![id], event, word, intersect)
-            == transition_lang(g, sym, theta, id, event, word),
+        ensures transition_combo(g, theta, seq![id], event, word, intersect)
+            == transition_lang(g, theta, id, event, word),
     {
         hide(transition_lang);
         if intersect {
-            if transition_combo(g, sym, theta, seq![id], event, word, true) {
-                assert(transition_lang(g, sym, theta, seq![id][0], event, word));
+            if transition_combo(g, theta, seq![id], event, word, true) {
+                assert(transition_lang(g, theta, seq![id][0], event, word));
             }
-            if transition_lang(g, sym, theta, id, event, word) {
-                assert forall|i: int| 0 <= i < 1 implies transition_lang(g, sym, theta, seq![id][i], event, word) by { assert(i == 0); }
+            if transition_lang(g, theta, id, event, word) {
+                assert forall|i: int| 0 <= i < 1 implies transition_lang(g, theta, seq![id][i], event, word) by { assert(i == 0); }
             }
         } else {
-            if transition_combo(g, sym, theta, seq![id], event, word, false) {
-                let i = choose|i: int| 0 <= i < 1 && transition_lang(g, sym, theta, seq![id][i], event, word);
+            if transition_combo(g, theta, seq![id], event, word, false) {
+                let i = choose|i: int| 0 <= i < 1 && transition_lang(g, theta, seq![id][i], event, word);
                 assert(i == 0);
             }
-            if transition_lang(g, sym, theta, id, event, word) {
-                assert(transition_lang(g, sym, theta, seq![id][0], event, word));
+            if transition_lang(g, theta, id, event, word) {
+                assert(transition_lang(g, theta, seq![id][0], event, word));
             }
         }
     }
@@ -12183,22 +12147,22 @@ pub(crate) mod verify {
             !collapsed ==> pending.len() == 0,
         ensures
             !collapsed ==> transition_collected(g, original, flat, constants, mode.intersect),
-            collapsed ==> forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                    == transition_lang(g, sym, theta, mode.absorber, event, word),
+            collapsed ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_combo(g, theta, original, event, word, mode.intersect)
+                    == transition_lang(g, theta, mode.absorber, event, word),
     {
         hide(transition_lang);
         hide(transition_combo);
         hide(regex_combo);
         transition_lemma_identities(g, mode);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_combo(g, sym, theta, original, event, word, mode.intersect)
-                == if collapsed { transition_lang(g, sym, theta, mode.absorber, event, word) }
-                    else { transition_collect_combo(g, sym, theta, Seq::empty(), flat, constants, event, word, mode.intersect) } by {
-            transition_lemma_empty_combos(g, sym, theta, event, word, mode.intersect);
-            assert(transition_collect_combo(g, sym, theta, original, Seq::empty(), Seq::empty(), event, word, mode.intersect)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_combo(g, theta, original, event, word, mode.intersect)
+                == if collapsed { transition_lang(g, theta, mode.absorber, event, word) }
+                    else { transition_collect_combo(g, theta, Seq::empty(), flat, constants, event, word, mode.intersect) } by {
+            transition_lemma_empty_combos(g, theta, event, word, mode.intersect);
+            assert(transition_collect_combo(g, theta, original, Seq::empty(), Seq::empty(), event, word, mode.intersect)
                 == if collapsed { !mode.intersect } else {
-                    transition_collect_combo(g, sym, theta, pending, flat, constants, event, word, mode.intersect)
+                    transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 });
             if !collapsed { assert(pending =~= Seq::<TransitionId>::empty()); }
         }
@@ -12234,7 +12198,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_atomic_value<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, action: GuardedAction<L>,
+        sem: spec_fn(C, L, EventView) -> bool, action: GuardedAction<L>,
     ) -> Option<GuardedTransition<L, C>> {
         match guarded_apply(sem, action, Seq::empty()) {
             Some(values) => if values.len() == 1 { Some(values[0]) } else { None },
@@ -12243,13 +12207,13 @@ pub(crate) mod verify {
     }
 
     pub open spec fn guarded_atomic_values<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, actions: Seq<GuardedAction<L>>,
+        sem: spec_fn(C, L, EventView) -> bool, actions: Seq<GuardedAction<L>>,
     ) -> Seq<GuardedTransition<L, C>> {
         actions.map(|i: int, action: GuardedAction<L>| guarded_atomic_value(sem, action).unwrap())
     }
 
     pub proof fn guarded_lemma_apply_push<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, action: GuardedAction<L>, values: Seq<GuardedTransition<L, C>>,
+        sem: spec_fn(C, L, EventView) -> bool, action: GuardedAction<L>, values: Seq<GuardedTransition<L, C>>,
     )
         requires guarded_action_pushes(action),
         ensures guarded_atomic_value(sem, action) is Some,
@@ -12266,7 +12230,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_push_sequence<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, actions: Seq<GuardedAction<L>>, values: Seq<GuardedTransition<L, C>>,
+        sem: spec_fn(C, L, EventView) -> bool, actions: Seq<GuardedAction<L>>, values: Seq<GuardedTransition<L, C>>,
     )
         requires forall|i: int| 0 <= i < actions.len() ==> guarded_action_pushes(actions[i]),
         ensures guarded_run(sem, actions.reverse(), values) == Some(values + guarded_atomic_values(sem, actions)),
@@ -12289,16 +12253,16 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_same_term<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         before: GuardedTransition<L, C>, after: GuardedTransition<L, C>,
     )
         requires before.term == after.term,
-            forall|ctx: C, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event) ==> (after.guard)(ctx, event),
+            forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event) ==> (after.guard)(ctx, event),
         ensures guarded_refines(sem, valid, before, after),
     {}
 
     pub proof fn guarded_lemma_clean_set<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         terms: Seq<language::Transition<L>>, path: L, intersect: bool,
     )
         ensures guarded_refines(sem, valid,
@@ -12311,7 +12275,7 @@ pub(crate) mod verify {
         let before = guarded_clean(sem, path,
             if intersect { language::Transition::Intersect(terms) } else { language::Transition::Union(terms) });
         let after = guarded_set(values, intersect);
-        assert forall|ctx: C, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event)
+        assert forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event)
             implies (after.guard)(ctx, event) by {
             assert forall|i: int| 0 <= i < values.len() implies (values[i].guard)(ctx, event) by {
                 assert(values[i] == guarded_clean(sem, path, terms[i]));
@@ -12321,7 +12285,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_apply_set_suffix<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, prefix: Seq<GuardedTransition<L, C>>, values: Seq<GuardedTransition<L, C>>, intersect: bool,
+        sem: spec_fn(C, L, EventView) -> bool, prefix: Seq<GuardedTransition<L, C>>, values: Seq<GuardedTransition<L, C>>, intersect: bool,
     )
         ensures guarded_apply(sem, if intersect { GuardedAction::Intersect(values.len()) } else { GuardedAction::Union(values.len()) },
             prefix + values) == Some(prefix.push(guarded_set(values, intersect))),
@@ -12341,10 +12305,10 @@ pub(crate) mod verify {
 
     pub open spec fn transition_result(g: model::Graph, task: ActionShape, id: TransitionId) -> bool {
         match transition_initial_value(g, task) {
-            Some(expected) => forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-                model::symbols_wf(sym) && (expected.guard)(TransitionContext { symbols: sym, bindings: theta }, event)
-                    ==> guarded_language(transition_context_sem(), TransitionContext { symbols: sym, bindings: theta }, event, expected, word)
-                        == transition_lang(g, sym, theta, id, event, word),
+            Some(expected) => forall|theta: Subst, event: EventView, word: Seq<EventView>|
+                language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+                    ==> guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
+                        == transition_lang(g, theta, id, event, word),
             None => false,
         }
     }
@@ -12361,17 +12325,17 @@ pub(crate) mod verify {
             && guarded_refines(transition_context_sem(), transition_context_valid(), expected, transition_known(g, id)),
     {
         let expected = transition_initial_value(g, task).unwrap();
-        assert forall|ctx: TransitionContext, event: Data| transition_context_valid()(ctx)
+        assert forall|ctx: TransitionContext, event: EventView| transition_context_valid()(ctx)
             && #[trigger] (expected.guard)(ctx, event)
-            implies (transition_known(g, id).guard)(ctx, event) && forall|word: Seq<Data>|
+            implies (transition_known(g, id).guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(transition_context_sem(), ctx, event, expected, word)
                     == guarded_language(transition_context_sem(), ctx, event, transition_known(g, id), word) by {
-            assert(ctx == (TransitionContext { symbols: ctx.symbols, bindings: ctx.bindings }));
-            assert forall|word: Seq<Data>| guarded_language(transition_context_sem(), ctx, event, expected, word)
+            assert(ctx == (TransitionContext { bindings: ctx.bindings }));
+            assert forall|word: Seq<EventView>| guarded_language(transition_context_sem(), ctx, event, expected, word)
                 == guarded_language(transition_context_sem(), ctx, event, transition_known(g, id), word) by {
                 transition_lemma_known_language(g, id, ctx, event, word);
                 assert(guarded_language(transition_context_sem(), ctx, event, expected, word)
-                    == transition_lang(g, ctx.symbols, ctx.bindings, id, event, word));
+                    == transition_lang(g, ctx.bindings, id, event, word));
             }
         }
     }
@@ -12463,11 +12427,11 @@ pub(crate) mod verify {
         ensures transition_result(g, task, id),
     {
         let expected = transition_initial_value(g, task).unwrap();
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            model::symbols_wf(sym) && (expected.guard)(TransitionContext { symbols: sym, bindings: theta }, event)
-            implies #[trigger] guarded_language(transition_context_sem(), TransitionContext { symbols: sym, bindings: theta }, event, expected, word)
-                == transition_lang(g, sym, theta, id, event, word) by {
-            let ctx = TransitionContext { symbols: sym, bindings: theta };
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+            implies #[trigger] guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
+                == transition_lang(g, theta, id, event, word) by {
+            let ctx = TransitionContext { bindings: theta };
             transition_lemma_known_language(g, id, ctx, event, word);
             assert(guarded_language(transition_context_sem(), ctx, event, expected, word)
                 == guarded_language(transition_context_sem(), ctx, event, transition_known(g, id), word));
@@ -12490,16 +12454,10 @@ pub(crate) mod verify {
         transition_lemma_result_same_term(g, ActionShape::Clean(id@, path@), id);
     }
 
-    pub proof fn transition_lemma_constants(g: model::Graph)
-        requires model::graph_wf(g),
-        ensures model::constants_wf(g),
-    {
-        model::lemma_graph_wf_elim(g);
-    }
 
 
     pub open spec fn guarded_clean_branch<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L, path: L, yes: L, no: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L, path: L, yes: L, no: L,
         left: language::Transition<L>, right: language::Transition<L>, yes_false: bool, no_false: bool,
     ) -> GuardedTransition<L, C> {
         if yes_false { guarded_clean(sem, no, right) }
@@ -12508,29 +12466,29 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_clean_branches<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool, test: L, path: L, yes: L, no: L,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool, test: L, path: L, yes: L, no: L,
         left: language::Transition<L>, right: language::Transition<L>, yes_false: bool, no_false: bool,
     )
         requires
-            forall|ctx: C, event: Data| valid(ctx) ==> #[trigger] sem(ctx, yes, event) == (sem(ctx, path, event) && sem(ctx, test, event)),
-            forall|ctx: C, event: Data| valid(ctx) ==> #[trigger] sem(ctx, no, event) == (sem(ctx, path, event) && !sem(ctx, test, event)),
-            yes_false ==> forall|ctx: C, event: Data| valid(ctx) ==> #[trigger] sem(ctx, yes, event) == false,
-            no_false ==> forall|ctx: C, event: Data| valid(ctx) ==> #[trigger] sem(ctx, no, event) == false,
+            forall|ctx: C, event: EventView| valid(ctx) ==> #[trigger] sem(ctx, yes, event) == (sem(ctx, path, event) && sem(ctx, test, event)),
+            forall|ctx: C, event: EventView| valid(ctx) ==> #[trigger] sem(ctx, no, event) == (sem(ctx, path, event) && !sem(ctx, test, event)),
+            yes_false ==> forall|ctx: C, event: EventView| valid(ctx) ==> #[trigger] sem(ctx, yes, event) == false,
+            no_false ==> forall|ctx: C, event: EventView| valid(ctx) ==> #[trigger] sem(ctx, no, event) == false,
         ensures guarded_refines(sem, valid,
             guarded_clean(sem, path, language::Transition::If(test, Box::new(left), Box::new(right))),
             guarded_clean_branch(sem, test, path, yes, no, left, right, yes_false, no_false)),
     {
         let before = guarded_clean(sem, path, language::Transition::If(test, Box::new(left), Box::new(right)));
         let after = guarded_clean_branch(sem, test, path, yes, no, left, right, yes_false, no_false);
-        assert forall|ctx: C, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event)
-            implies (after.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event)
+            implies (after.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, before, word) == guarded_language(sem, ctx, event, after, word) by {
             assert(sem(ctx, path, event));
             assert(sem(ctx, yes, event) == sem(ctx, test, event));
             assert(sem(ctx, no, event) == !sem(ctx, test, event));
             if yes_false { assert(!sem(ctx, test, event)); }
             else if no_false { assert(sem(ctx, test, event)); }
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, before, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, before, word)
                 == guarded_language(sem, ctx, event, after, word) by {
                 let context_sem = guarded_semantics(sem, ctx);
                 language::lemma_interp_if(context_sem, event, test, left, right);
@@ -12550,7 +12508,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn guarded_lemma_clean_branch_run<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L, path: L, yes: L, no: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L, path: L, yes: L, no: L,
         left: language::Transition<L>, right: language::Transition<L>, yes_false: bool, no_false: bool,
         prefix: Seq<GuardedTransition<L, C>>,
     )
@@ -12568,12 +12526,12 @@ pub(crate) mod verify {
 
     pub proof fn transition_test_not_extends(before: model::Graph, after: model::Graph, root: TestId, negated: TestId)
         requires model::graph_wf(before), model::graph_extends(before, after), root@ < before.tests.len(), negated@ < before.tests.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> model::test_holds(sym, theta, model::lift_test(before, negated@), event)
-                    == !model::test_holds(sym, theta, model::lift_test(before, root@), event),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-            ==> model::test_holds(sym, theta, model::lift_test(after, negated@), event)
-                == !model::test_holds(sym, theta, model::lift_test(after, root@), event),
+            forall|theta: Subst, event: EventView| language::event_wf(theta)
+                ==> model::test_holds(theta, model::lift_test(before, negated@), event)
+                    == !model::test_holds(theta, model::lift_test(before, root@), event),
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+            ==> model::test_holds(theta, model::lift_test(after, negated@), event)
+                == !model::test_holds(theta, model::lift_test(after, root@), event),
     {
         hide(model::test_holds);
         model::lemma_graph_wf_elim(before);
@@ -12581,21 +12539,21 @@ pub(crate) mod verify {
     }
 
     pub proof fn transition_lemma_test_pair(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, left: TestId, right: TestId, event: Data,
+        g: model::Graph, theta: Subst, left: TestId, right: TestId, event: EventView,
     )
-        ensures test_combo(g, sym, theta, seq![left, right], event, true)
-            == (model::test_holds(sym, theta, model::lift_test(g, left@), event)
-                && model::test_holds(sym, theta, model::lift_test(g, right@), event)),
+        ensures test_combo(g, theta, seq![left, right], event, true)
+            == (model::test_holds(theta, model::lift_test(g, left@), event)
+                && model::test_holds(theta, model::lift_test(g, right@), event)),
     {
         hide(model::test_holds);
-        if test_combo(g, sym, theta, seq![left, right], event, true) {
-            assert(model::test_holds(sym, theta, model::lift_test(g, seq![left, right][0]@), event));
-            assert(model::test_holds(sym, theta, model::lift_test(g, seq![left, right][1]@), event));
+        if test_combo(g, theta, seq![left, right], event, true) {
+            assert(model::test_holds(theta, model::lift_test(g, seq![left, right][0]@), event));
+            assert(model::test_holds(theta, model::lift_test(g, seq![left, right][1]@), event));
         }
-        if model::test_holds(sym, theta, model::lift_test(g, left@), event)
-            && model::test_holds(sym, theta, model::lift_test(g, right@), event) {
+        if model::test_holds(theta, model::lift_test(g, left@), event)
+            && model::test_holds(theta, model::lift_test(g, right@), event) {
             assert forall|i: int| 0 <= i < 2 implies
-                model::test_holds(sym, theta, model::lift_test(g, seq![left, right][i]@), event) by {
+                model::test_holds(theta, model::lift_test(g, seq![left, right][i]@), event) by {
                 if i == 0 {} else { assert(i == 1); }
             }
         }
@@ -12603,23 +12561,23 @@ pub(crate) mod verify {
 
     pub proof fn transition_lemma_test_constants(g: model::Graph)
         requires model::graph_wf(g),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data|
-            model::test_holds(sym, theta, model::lift_test(g, g.constants.test_true), event)
-                && !model::test_holds(sym, theta, model::lift_test(g, g.constants.test_false), event),
+        ensures forall|theta: Subst, event: EventView|
+            model::test_holds(theta, model::lift_test(g, g.constants.test_true), event)
+                && !model::test_holds(theta, model::lift_test(g, g.constants.test_false), event),
     {
-        transition_lemma_constants(g);
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         assert(model::lift_test(g, g.constants.test_true) == model::Test::True);
         assert(model::lift_test(g, g.constants.test_false) == model::Test::False);
     }
 
     pub open spec fn transition_path_tests(g: model::Graph, path: TestId, test: TestId, yes: TestId, no: TestId) -> bool {
-        forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym) ==>
-            (model::test_holds(sym, theta, model::lift_test(g, yes@), event)
-                == (model::test_holds(sym, theta, model::lift_test(g, path@), event)
-                    && model::test_holds(sym, theta, model::lift_test(g, test@), event)))
-            && (model::test_holds(sym, theta, model::lift_test(g, no@), event)
-                == (model::test_holds(sym, theta, model::lift_test(g, path@), event)
-                    && !model::test_holds(sym, theta, model::lift_test(g, test@), event)))
+        forall|theta: Subst, event: EventView| language::event_wf(theta) ==>
+            (model::test_holds(theta, model::lift_test(g, yes@), event)
+                == (model::test_holds(theta, model::lift_test(g, path@), event)
+                    && model::test_holds(theta, model::lift_test(g, test@), event)))
+            && (model::test_holds(theta, model::lift_test(g, no@), event)
+                == (model::test_holds(theta, model::lift_test(g, path@), event)
+                    && !model::test_holds(theta, model::lift_test(g, test@), event)))
     }
 
     pub open spec fn transition_clean_if_tasks(
@@ -12652,17 +12610,17 @@ pub(crate) mod verify {
         let b = model::lift_transition(g, right@);
         let yes_false = yes@ == g.constants.test_false;
         let no_false = no@ == g.constants.test_false;
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) implies
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) implies
             #[trigger] sem(ctx, yes_term, event) == (sem(ctx, path_term, event) && sem(ctx, condition, event)) by {
-            assert(model::test_holds(ctx.symbols, ctx.bindings, yes_term, event)
-                == (model::test_holds(ctx.symbols, ctx.bindings, path_term, event)
-                    && model::test_holds(ctx.symbols, ctx.bindings, condition, event)));
+            assert(model::test_holds(ctx.bindings, yes_term, event)
+                == (model::test_holds(ctx.bindings, path_term, event)
+                    && model::test_holds(ctx.bindings, condition, event)));
         }
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) implies
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) implies
             #[trigger] sem(ctx, no_term, event) == (sem(ctx, path_term, event) && !sem(ctx, condition, event)) by {
-            assert(model::test_holds(ctx.symbols, ctx.bindings, no_term, event)
-                == (model::test_holds(ctx.symbols, ctx.bindings, path_term, event)
-                    && !model::test_holds(ctx.symbols, ctx.bindings, condition, event)));
+            assert(model::test_holds(ctx.bindings, no_term, event)
+                == (model::test_holds(ctx.bindings, path_term, event)
+                    && !model::test_holds(ctx.bindings, condition, event)));
         }
         guarded_lemma_clean_branches(sem, valid, condition, path_term, yes_term, no_term, a, b, yes_false, no_false);
         let expansion = guarded_clean_branch_tasks(condition, yes_term, no_term, a, b, yes_false, no_false);
@@ -12701,8 +12659,8 @@ pub(crate) mod verify {
 
 
     pub proof fn machine_pair_binary_language<L>(
-        sem: spec_fn(L, Data) -> bool, event: Data,
-        a: language::Transition<L>, b: language::Transition<L>, word: Seq<Data>,
+        sem: spec_fn(L, EventView) -> bool, event: EventView,
+        a: language::Transition<L>, b: language::Transition<L>, word: Seq<EventView>,
     )
         ensures language::lang(sem, language::interp_transition(sem, event,
             language::Transition::Intersect(seq![a, b])), word)
@@ -12747,9 +12705,9 @@ pub(crate) mod verify {
     )
         requires task == ActionShape::Fold(model::transition_ids(ids), 0)
                 || (ids.len() == 2 && task == ActionShape::Pair(ids[0]@, ids[1]@)),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(g, sym, theta, out, event, word)
-                    == transition_combo(g, sym, theta, ids, event, word, true),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(g, theta, out, event, word)
+                    == transition_combo(g, theta, ids, event, word, true),
         ensures transition_result(g, task, out),
     {
         let terms = model::transition_ids(ids).map(|i: int, id: nat| model::lift_transition(g, id));
@@ -12758,20 +12716,20 @@ pub(crate) mod verify {
             assert(terms =~= seq![model::lift_transition(g, ids[0]@), model::lift_transition(g, ids[1]@)]);
         }
         assert(expected.term == language::Transition::Intersect(terms));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            model::symbols_wf(sym) && (expected.guard)(TransitionContext { symbols: sym, bindings: theta }, event)
-            implies guarded_language(transition_context_sem(), TransitionContext { symbols: sym, bindings: theta }, event, expected, word)
-                == transition_lang(g, sym, theta, out, event, word) by {
-            let ctx = TransitionContext { symbols: sym, bindings: theta };
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+            implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
+                == transition_lang(g, theta, out, event, word) by {
+            let ctx = TransitionContext { bindings: theta };
             transition_lemma_context_sem(ctx);
-            language::lemma_interp_intersect(model::gsem(sym, theta), event, terms, word);
+            language::lemma_interp_intersect(model::gsem(theta), event, terms, word);
             assert forall|i: int| 0 <= i < ids.len() implies
-                language::lang(model::gsem(sym, theta), language::interp_transition(model::gsem(sym, theta), event, terms[i]), word)
-                    == transition_lang(g, sym, theta, ids[i], event, word) by {
+                language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event, terms[i]), word)
+                    == transition_lang(g, theta, ids[i], event, word) by {
                 assert(terms[i] == model::lift_transition(g, ids[i]@));
             }
-            assert(transition_lang(g, sym, theta, out, event, word)
-                == transition_combo(g, sym, theta, ids, event, word, true));
+            assert(transition_lang(g, theta, out, event, word)
+                == transition_combo(g, theta, ids, event, word, true));
         }
     }
 
@@ -12786,19 +12744,20 @@ pub(crate) mod verify {
                 && out@ == g.constants.transition_empty),
         ensures transition_result(g, ActionShape::Pair(a@, b@), out),
     {
-        transition_lemma_constants(g);
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_lemma_identities(g, TransitionModeModel { intersect: true, identity: all, absorber: empty });
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(g, sym, theta, out, event, word)
-                == transition_combo(g, sym, theta, seq![a, b], event, word, true) by {
-            assert(transition_lang(g, sym, theta, all, event, word));
-            assert(!transition_lang(g, sym, theta, empty, event, word));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(g, theta, out, event, word)
+                == transition_combo(g, theta, seq![a, b], event, word, true) by {
+            assert(transition_lang(g, theta, all, event, word));
+            assert(!transition_lang(g, theta, empty, event, word));
         }
         machine_pair_set_result(g, seq![a, b], ActionShape::Pair(a@, b@), out);
     }
 
     pub proof fn machine_pair_if_run<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L, path: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L, path: L,
         at: language::Transition<L>, bt: language::Transition<L>,
         ae: language::Transition<L>, be: language::Transition<L>, prefix: Seq<GuardedTransition<L, C>>,
     )
@@ -12818,39 +12777,40 @@ pub(crate) mod verify {
         at: TransitionId, bt: TransitionId, ae: TransitionId, be: TransitionId,
     )
         requires model::graph_wf(g),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> (transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                    == if model::test_holds(sym, theta, model::lift_test(g, test@), event) {
-                        transition_lang(g, sym, theta, at, event, word) && transition_lang(g, sym, theta, bt, event, word)
-                    } else { transition_lang(g, sym, theta, ae, event, word) && transition_lang(g, sym, theta, be, event, word) },
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                    == if model::test_holds(theta, model::lift_test(g, test@), event) {
+                        transition_lang(g, theta, at, event, word) && transition_lang(g, theta, bt, event, word)
+                    } else { transition_lang(g, theta, ae, event, word) && transition_lang(g, theta, be, event, word) },
         ensures guarded_refines(transition_context_sem(), transition_context_valid(),
             transition_initial_value(g, ActionShape::Pair(a@, b@)).unwrap(),
             guarded_clean_if(transition_context_sem(), model::lift_test(g, test@), model::lift_test(g, g.constants.test_true),
                 guarded_constant(language::Transition::Intersect(seq![model::lift_transition(g, at@), model::lift_transition(g, bt@)])),
                 guarded_constant(language::Transition::Intersect(seq![model::lift_transition(g, ae@), model::lift_transition(g, be@)])))),
     {
-        transition_lemma_constants(g);
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         let before = transition_initial_value(g, ActionShape::Pair(a@, b@)).unwrap();
         let yes = guarded_constant(language::Transition::Intersect(seq![model::lift_transition(g, at@), model::lift_transition(g, bt@)]));
         let no = guarded_constant(language::Transition::Intersect(seq![model::lift_transition(g, ae@), model::lift_transition(g, be@)]));
         let after = guarded_clean_if(transition_context_sem(), model::lift_test(g, test@), model::lift_test(g, g.constants.test_true), yes, no);
-        assert forall|ctx: TransitionContext, event: Data| transition_context_valid()(ctx) && #[trigger] (before.guard)(ctx, event)
-            implies (after.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| transition_context_valid()(ctx) && #[trigger] (before.guard)(ctx, event)
+            implies (after.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(transition_context_sem(), ctx, event, before, word)
                     == guarded_language(transition_context_sem(), ctx, event, after, word) by {
             transition_lemma_context_sem(ctx);
-            assert forall|word: Seq<Data>| guarded_language(transition_context_sem(), ctx, event, before, word)
+            assert forall|word: Seq<EventView>| guarded_language(transition_context_sem(), ctx, event, before, word)
                 == guarded_language(transition_context_sem(), ctx, event, after, word) by {
-                let sem = model::gsem(ctx.symbols, ctx.bindings);
+                let sem = model::gsem(ctx.bindings);
                 machine_pair_binary_language(sem, event, model::lift_transition(g, a@), model::lift_transition(g, b@), word);
                 machine_pair_binary_language(sem, event, model::lift_transition(g, at@), model::lift_transition(g, bt@), word);
                 machine_pair_binary_language(sem, event, model::lift_transition(g, ae@), model::lift_transition(g, be@), word);
                 language::lemma_interp_if(sem, event, model::lift_test(g, test@), yes.term, no.term);
-                assert((transition_lang(g, ctx.symbols, ctx.bindings, a, event, word)
-                    && transition_lang(g, ctx.symbols, ctx.bindings, b, event, word))
-                    == if model::test_holds(ctx.symbols, ctx.bindings, model::lift_test(g, test@), event) {
-                        transition_lang(g, ctx.symbols, ctx.bindings, at, event, word) && transition_lang(g, ctx.symbols, ctx.bindings, bt, event, word)
-                    } else { transition_lang(g, ctx.symbols, ctx.bindings, ae, event, word) && transition_lang(g, ctx.symbols, ctx.bindings, be, event, word) });
+                assert((transition_lang(g, ctx.bindings, a, event, word)
+                    && transition_lang(g, ctx.bindings, b, event, word))
+                    == if model::test_holds(ctx.bindings, model::lift_test(g, test@), event) {
+                        transition_lang(g, ctx.bindings, at, event, word) && transition_lang(g, ctx.bindings, bt, event, word)
+                    } else { transition_lang(g, ctx.bindings, ae, event, word) && transition_lang(g, ctx.bindings, be, event, word) });
             }
         }
     }
@@ -12861,11 +12821,11 @@ pub(crate) mod verify {
         pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires model::graph_wf(g),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> (transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                    == if model::test_holds(sym, theta, model::lift_test(g, test@), event) {
-                        transition_lang(g, sym, theta, at, event, word) && transition_lang(g, sym, theta, bt, event, word)
-                    } else { transition_lang(g, sym, theta, ae, event, word) && transition_lang(g, sym, theta, be, event, word) },
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                    == if model::test_holds(theta, model::lift_test(g, test@), event) {
+                        transition_lang(g, theta, at, event, word) && transition_lang(g, theta, bt, event, word)
+                    } else { transition_lang(g, theta, ae, event, word) && transition_lang(g, theta, be, event, word) },
         ensures transition_effect(g, ActionShape::Pair(a@, b@), pending, prior,
             pending.push(ActionShape::CleanIf(test@, g.constants.test_true))
                 .push(ActionShape::Pair(ae@, be@)).push(ActionShape::Pair(at@, bt@)), prior),
@@ -12889,25 +12849,25 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::If(test@, yes@, no@),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word)
-                == if model::test_holds(sym, theta, model::lift_test(g, test@), event) {
-                    transition_lang(g, sym, theta, yes, event, word)
-                } else { transition_lang(g, sym, theta, no, event, word) },
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word)
+                == if model::test_holds(theta, model::lift_test(g, test@), event) {
+                    transition_lang(g, theta, yes, event, word)
+                } else { transition_lang(g, theta, no, event, word) },
     {
         transition_unfold(g, id@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>|
-            transition_lang(g, sym, theta, id, event, word)
-                == if model::test_holds(sym, theta, model::lift_test(g, test@), event) {
-                    transition_lang(g, sym, theta, yes, event, word)
-                } else { transition_lang(g, sym, theta, no, event, word) } by {
-            language::lemma_interp_if(model::gsem(sym, theta), event, model::lift_test(g, test@),
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
+            transition_lang(g, theta, id, event, word)
+                == if model::test_holds(theta, model::lift_test(g, test@), event) {
+                    transition_lang(g, theta, yes, event, word)
+                } else { transition_lang(g, theta, no, event, word) } by {
+            language::lemma_interp_if(model::gsem(theta), event, model::lift_test(g, test@),
                 model::lift_transition(g, yes@), model::lift_transition(g, no@));
         }
     }
 
     pub proof fn machine_pair_empty_run<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, test: L, path: L,
+        sem: spec_fn(C, L, EventView) -> bool, test: L, path: L,
         a: language::Transition<L>, b: language::Transition<L>, empty: GuardedTransition<L, C>,
         prefix: Seq<GuardedTransition<L, C>>,
     )
@@ -12926,15 +12886,16 @@ pub(crate) mod verify {
         guard: TestId, empty: TransitionId, pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires model::graph_wf(g), empty@ == g.constants.transition_empty,
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> (transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                    == (model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                        && transition_lang(g, sym, theta, xt, event, word) && transition_lang(g, sym, theta, yt, event, word)),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                    == (model::test_holds(theta, model::lift_test(g, guard@), event)
+                        && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)),
         ensures transition_effect(g, ActionShape::Pair(a@, b@), pending, prior,
             pending.push(ActionShape::CleanIf(guard@, g.constants.test_true)).push(ActionShape::SwapThen)
                 .push(ActionShape::Pair(xt@, yt@)), prior.push(empty)),
     {
-        transition_lemma_constants(g);
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_unfold(g, empty@);
         regex_unfold(g, g.constants.empty);
         let sem = transition_context_sem();
@@ -12943,22 +12904,22 @@ pub(crate) mod verify {
         let no = transition_known(g, empty);
         let result = guarded_clean_if(sem, model::lift_test(g, guard@), model::lift_test(g, g.constants.test_true), yes, no);
         let expected = transition_initial_value(g, ActionShape::Pair(a@, b@)).unwrap();
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, expected, word) == guarded_language(sem, ctx, event, result, word) by {
             transition_lemma_context_sem(ctx);
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
-                let context_sem = model::gsem(ctx.symbols, ctx.bindings);
+                let context_sem = model::gsem(ctx.bindings);
                 machine_pair_binary_language(context_sem, event, model::lift_transition(g, a@), model::lift_transition(g, b@), word);
                 machine_pair_binary_language(context_sem, event, model::lift_transition(g, xt@), model::lift_transition(g, yt@), word);
                 language::lemma_interp_if(context_sem, event, model::lift_test(g, guard@), yes.term, no.term);
                 language::lemma_interp_const(context_sem, event, language::Regex::Empty);
-                assert((transition_lang(g, ctx.symbols, ctx.bindings, a, event, word)
-                    && transition_lang(g, ctx.symbols, ctx.bindings, b, event, word))
-                    == (model::test_holds(ctx.symbols, ctx.bindings, model::lift_test(g, guard@), event)
-                        && transition_lang(g, ctx.symbols, ctx.bindings, xt, event, word)
-                        && transition_lang(g, ctx.symbols, ctx.bindings, yt, event, word)));
+                assert((transition_lang(g, ctx.bindings, a, event, word)
+                    && transition_lang(g, ctx.bindings, b, event, word))
+                    == (model::test_holds(ctx.bindings, model::lift_test(g, guard@), event)
+                        && transition_lang(g, ctx.bindings, xt, event, word)
+                        && transition_lang(g, ctx.bindings, yt, event, word)));
             }
         }
         let expansion = seq![ActionShape::CleanIf(guard@, g.constants.test_true), ActionShape::SwapThen, ActionShape::Pair(xt@, yt@)];
@@ -12994,7 +12955,7 @@ pub(crate) mod verify {
                 + transition_child_actions(g, if left { a@ } else { b@ },
                     if left { ChildShape::PairLeft(b@) } else { ChildShape::PairRight(a@) }), prior),
     {
-        hide(model::symbols_wf);
+        hide(language::event_wf);
         hide(model::test_holds);
         hide(model::lift_regex);
         hide(model::lift_transition);
@@ -13013,8 +12974,8 @@ pub(crate) mod verify {
         let values = guarded_atomic_values(sem, actions);
         let expected = transition_initial_value(g, ActionShape::Pair(a@, b@)).unwrap();
         let result = guarded_set(values, false);
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, expected, word) == guarded_language(sem, ctx, event, result, word) by {
             assert forall|i: int| 0 <= i < values.len() implies (values[i].guard)(ctx, event) by {
                 assert(actions[i] == if left {
@@ -13022,9 +12983,9 @@ pub(crate) mod verify {
                 } else { GuardedAction::Pair(model::lift_transition(g, a@), terms[i]) });
             }
             transition_lemma_context_sem(ctx);
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
-                let context_sem = model::gsem(ctx.symbols, ctx.bindings);
+                let context_sem = model::gsem(ctx.bindings);
                 let outputs = values.map(|i: int, value: TransitionMeaning| value.term);
                 machine_pair_binary_language(context_sem, event, model::lift_transition(g, a@), model::lift_transition(g, b@), word);
                 language::lemma_interp_union(context_sem, event, terms, word);
@@ -13033,8 +12994,8 @@ pub(crate) mod verify {
                     language::lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word)
                         == if left {
                             language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
-                                && transition_lang(g, ctx.symbols, ctx.bindings, b, event, word)
-                        } else { transition_lang(g, ctx.symbols, ctx.bindings, a, event, word)
+                                && transition_lang(g, ctx.bindings, b, event, word)
+                        } else { transition_lang(g, ctx.bindings, a, event, word)
                             && language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word) } by {
                     if left { machine_pair_binary_language(context_sem, event, terms[i], model::lift_transition(g, b@), word); }
                     else { machine_pair_binary_language(context_sem, event, model::lift_transition(g, a@), terms[i], word); }
@@ -13065,7 +13026,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_pair_fold_schedule<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, valid: spec_fn(C) -> bool,
+        sem: spec_fn(C, L, EventView) -> bool, valid: spec_fn(C) -> bool,
         terms: Seq<language::Transition<L>>, index: nat, head: language::Transition<L>, prefix: Seq<GuardedTransition<L, C>>,
     )
         requires 0 < index < terms.len(),
@@ -13081,11 +13042,11 @@ pub(crate) mod verify {
         let after = if index + 1 < terms.len() { guarded_set(seq![pair] + later, true) } else { pair };
         assert(prefix.push(guarded_constant(head)).drop_last() =~= prefix);
         assert(prefix.push(pair).drop_last() =~= prefix);
-        assert forall|ctx: C, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event)
-            implies (after.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: C, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event)
+            implies (after.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, before, word) == guarded_language(sem, ctx, event, after, word) by {
             assert forall|i: int| 0 <= i < later.len() implies (later[i].guard)(ctx, event) by {};
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, before, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, before, word)
                 == guarded_language(sem, ctx, event, after, word) by {
                 let context_sem = guarded_semantics(sem, ctx);
                 let bs = (seq![guarded_constant(head)] + remaining).map(|i: int, value: GuardedTransition<L, C>| value.term);
@@ -13147,7 +13108,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_pair_fold_first_run<L, C>(
-        sem: spec_fn(C, L, Data) -> bool, terms: Seq<language::Transition<L>>, prefix: Seq<GuardedTransition<L, C>>,
+        sem: spec_fn(C, L, EventView) -> bool, terms: Seq<language::Transition<L>>, prefix: Seq<GuardedTransition<L, C>>,
     )
         requires terms.len() > 0,
         ensures guarded_run(sem, seq![GuardedAction::Fold(terms, 1)], prefix.push(guarded_constant(terms[0])))
@@ -13167,9 +13128,9 @@ pub(crate) mod verify {
         g: model::Graph, ids: Seq<TransitionId>, children: Seq<TransitionId>, pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires children.len() > 0,
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_combo(g, sym, theta, ids, event, word, true)
-                    == transition_combo(g, sym, theta, children, event, word, true),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_combo(g, theta, ids, event, word, true)
+                    == transition_combo(g, theta, children, event, word, true),
         ensures transition_effect(g, ActionShape::Fold(model::transition_ids(ids), 0), pending, prior,
             pending.push(ActionShape::Fold(model::transition_ids(children), 1)), prior.push(children[0])),
     {
@@ -13180,15 +13141,15 @@ pub(crate) mod verify {
         let result = if terms.len() == 1 { guarded_constant(terms[0]) } else {
             guarded_set(terms.map(|i: int, term: language::Transition<model::Test>| guarded_constant(term)), true) };
         let input_terms = model::transition_ids(ids).map(|i: int, id: nat| model::lift_transition(g, id));
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, expected, word) == guarded_language(sem, ctx, event, result, word) by {
             transition_lemma_context_sem(ctx);
             assert forall|i: int| 0 <= i < terms.len() implies
                 (guarded_constant::<model::Test, TransitionContext>(terms[i]).guard)(ctx, event) by {};
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
-                let context_sem = model::gsem(ctx.symbols, ctx.bindings);
+                let context_sem = model::gsem(ctx.bindings);
                 language::lemma_interp_intersect(context_sem, event, input_terms, word);
                 if terms.len() != 1 {
                     assert(terms.map(|i: int, term: language::Transition<model::Test>| guarded_constant::<model::Test, TransitionContext>(term))
@@ -13198,12 +13159,12 @@ pub(crate) mod verify {
                 }
                 assert forall|i: int| 0 <= i < ids.len() implies
                     language::lang(context_sem, language::interp_transition(context_sem, event, input_terms[i]), word)
-                        == transition_lang(g, ctx.symbols, ctx.bindings, ids[i], event, word) by {};
+                        == transition_lang(g, ctx.bindings, ids[i], event, word) by {};
                 assert forall|i: int| 0 <= i < children.len() implies
                     language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
-                        == transition_lang(g, ctx.symbols, ctx.bindings, children[i], event, word) by {};
-                assert(transition_combo(g, ctx.symbols, ctx.bindings, ids, event, word, true)
-                    == transition_combo(g, ctx.symbols, ctx.bindings, children, event, word, true));
+                        == transition_lang(g, ctx.bindings, children[i], event, word) by {};
+                assert(transition_combo(g, ctx.bindings, ids, event, word, true)
+                    == transition_combo(g, ctx.bindings, children, event, word, true));
             }
         }
         let expansion = seq![ActionShape::Fold(model::transition_ids(children), 1)];
@@ -13223,36 +13184,37 @@ pub(crate) mod verify {
             empty@ == g.constants.transition_empty,
             g.transitions[a@ as int] == model::TransitionNode::If(x@, xt@, empty@),
             g.transitions[b@ as int] == model::TransitionNode::If(y@, yt@, empty@),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                    == test_combo(g, sym, theta, seq![x, y], event, true),
+            forall|theta: Subst, event: EventView| language::event_wf(theta)
+                ==> model::test_holds(theta, model::lift_test(g, guard@), event)
+                    == test_combo(g, theta, seq![x, y], event, true),
         ensures
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> (transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                    == (model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                        && transition_lang(g, sym, theta, xt, event, word) && transition_lang(g, sym, theta, yt, event, word)),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                    == (model::test_holds(theta, model::lift_test(g, guard@), event)
+                        && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)),
             guard@ == g.constants.test_false ==> transition_result(g, ActionShape::Pair(a@, b@), empty),
     {
         machine_pair_if_language(g, a, x, xt, empty);
         machine_pair_if_language(g, b, y, yt, empty);
-        transition_lemma_constants(g);
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_unfold(g, empty@);
         regex_unfold(g, g.constants.empty);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies (transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                == (model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                    && transition_lang(g, sym, theta, xt, event, word) && transition_lang(g, sym, theta, yt, event, word)) by {
-            language::lemma_interp_const(model::gsem(sym, theta), event, language::Regex::Empty);
-            assert(model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                == test_combo(g, sym, theta, seq![x, y], event, true));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                == (model::test_holds(theta, model::lift_test(g, guard@), event)
+                    && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)) by {
+            language::lemma_interp_const(model::gsem(theta), event, language::Regex::Empty);
+            assert(model::test_holds(theta, model::lift_test(g, guard@), event)
+                == test_combo(g, theta, seq![x, y], event, true));
         }
         if guard@ == g.constants.test_false {
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                implies transition_lang(g, sym, theta, empty, event, word)
-                    == transition_combo(g, sym, theta, seq![a, b], event, word, true) by {
-                assert((transition_lang(g, sym, theta, a, event, word) && transition_lang(g, sym, theta, b, event, word))
-                    == (model::test_holds(sym, theta, model::lift_test(g, guard@), event)
-                        && transition_lang(g, sym, theta, xt, event, word) && transition_lang(g, sym, theta, yt, event, word)));
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                implies transition_lang(g, theta, empty, event, word)
+                    == transition_combo(g, theta, seq![a, b], event, word, true) by {
+                assert((transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
+                    == (model::test_holds(theta, model::lift_test(g, guard@), event)
+                        && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)));
             }
             machine_pair_set_result(g, seq![a, b], ActionShape::Pair(a@, b@), empty);
         }
@@ -13291,8 +13253,8 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(suffix)),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(g, sym, theta, combined@, word) == concat_combo(g, sym, theta, suffix, word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(g, theta, combined@, word) == concat_combo(g, theta, suffix, word),
         ensures forall|prior: Seq<TransitionId>| #[trigger] transition_effect(g, ActionShape::Clean(id@, path@), base, prior,
             base.push(ActionShape::AppendResult(combined@)).push(ActionShape::Clean(inner@, path@)), prior),
     {
@@ -13304,18 +13266,18 @@ pub(crate) mod verify {
         let combined_term = model::lift_regex(g, combined@);
         let before = guarded_clean(sem, path_term, model::lift_transition(g, id@));
         let after = guarded_append(guarded_clean(sem, path_term, term), combined_term);
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (before.guard)(ctx, event)
-            implies (after.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (before.guard)(ctx, event)
+            implies (after.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, before, word) == guarded_language(sem, ctx, event, after, word) by {
             transition_lemma_context_sem(ctx);
-            let context_sem = model::gsem(ctx.symbols, ctx.bindings);
+            let context_sem = model::gsem(ctx.bindings);
             let suffix_terms = model::lift_regexes(g, model::regex_ids(suffix));
             language::lemma_interp_append(context_sem, event, term, suffix_terms);
             language::lemma_interp_append(context_sem, event, term, seq![combined_term]);
-            assert forall|word: Seq<Data>| language::lang(context_sem, language::Regex::Concat(suffix_terms), word)
+            assert forall|word: Seq<EventView>| language::lang(context_sem, language::Regex::Concat(suffix_terms), word)
                 == language::lang(context_sem, combined_term, word) by {
-                assert(model::regex_lang(g, ctx.symbols, ctx.bindings, combined@, word)
-                    == concat_combo(g, ctx.symbols, ctx.bindings, suffix, word));
+                assert(model::regex_lang(g, ctx.bindings, combined@, word)
+                    == concat_combo(g, ctx.bindings, suffix, word));
             }
             regex_concat_replace(context_sem, seq![language::interp_transition(context_sem, event, term)], suffix_terms, combined_term);
         }
@@ -13332,71 +13294,71 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_unary_not_result(g: model::Graph, id: TransitionId, out: TransitionId)
-        requires forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_lang(g, sym, theta, out, event, word) == !transition_lang(g, sym, theta, id, event, word),
+        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_lang(g, theta, out, event, word) == !transition_lang(g, theta, id, event, word),
         ensures transition_result(g, ActionShape::Not(id@), out),
     {
         let expected = transition_initial_value(g, ActionShape::Not(id@)).unwrap();
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            && (expected.guard)(TransitionContext { symbols: sym, bindings: theta }, event)
-            implies guarded_language(transition_context_sem(), TransitionContext { symbols: sym, bindings: theta }, event, expected, word)
-                == transition_lang(g, sym, theta, out, event, word) by {
-            transition_lemma_context_sem(TransitionContext { symbols: sym, bindings: theta });
-            language::lemma_interp_not(model::gsem(sym, theta), event, model::lift_transition(g, id@));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            && (expected.guard)(TransitionContext { bindings: theta }, event)
+            implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
+                == transition_lang(g, theta, out, event, word) by {
+            transition_lemma_context_sem(TransitionContext { bindings: theta });
+            language::lemma_interp_not(model::gsem(theta), event, model::lift_transition(g, id@));
         }
     }
 
     pub open spec fn machine_unary_append_language(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, id: TransitionId, suffix: RegexId,
-        event: Data, word: Seq<Data>,
+        g: model::Graph, theta: Subst, id: TransitionId, suffix: RegexId,
+        event: EventView, word: Seq<EventView>,
     ) -> bool {
-        language::lang(model::gsem(sym, theta), language::Regex::Concat(seq![
-            language::interp_transition(model::gsem(sym, theta), event, model::lift_transition(g, id@)),
+        language::lang(model::gsem(theta), language::Regex::Concat(seq![
+            language::interp_transition(model::gsem(theta), event, model::lift_transition(g, id@)),
             model::lift_regex(g, suffix@),
         ]), word)
     }
 
     pub proof fn machine_unary_append_result(g: model::Graph, id: TransitionId, suffix: RegexId, out: TransitionId)
-        requires forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            ==> transition_lang(g, sym, theta, out, event, word)
-                == machine_unary_append_language(g, sym, theta, id, suffix, event, word),
+        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> transition_lang(g, theta, out, event, word)
+                == machine_unary_append_language(g, theta, id, suffix, event, word),
         ensures transition_result(g, ActionShape::Append(id@, suffix@), out),
     {
         let expected = transition_initial_value(g, ActionShape::Append(id@, suffix@)).unwrap();
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            && (expected.guard)(TransitionContext { symbols: sym, bindings: theta }, event)
-            implies guarded_language(transition_context_sem(), TransitionContext { symbols: sym, bindings: theta }, event, expected, word)
-                == transition_lang(g, sym, theta, out, event, word) by {
-            transition_lemma_context_sem(TransitionContext { symbols: sym, bindings: theta });
-            language::lemma_interp_append(model::gsem(sym, theta), event, model::lift_transition(g, id@), seq![model::lift_regex(g, suffix@)]);
-            assert(seq![language::interp_transition(model::gsem(sym, theta), event, model::lift_transition(g, id@))]
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            && (expected.guard)(TransitionContext { bindings: theta }, event)
+            implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
+                == transition_lang(g, theta, out, event, word) by {
+            transition_lemma_context_sem(TransitionContext { bindings: theta });
+            language::lemma_interp_append(model::gsem(theta), event, model::lift_transition(g, id@), seq![model::lift_regex(g, suffix@)]);
+            assert(seq![language::interp_transition(model::gsem(theta), event, model::lift_transition(g, id@))]
                 + seq![model::lift_regex(g, suffix@)] =~= seq![
-                    language::interp_transition(model::gsem(sym, theta), event, model::lift_transition(g, id@)), model::lift_regex(g, suffix@)]);
+                    language::interp_transition(model::gsem(theta), event, model::lift_transition(g, id@)), model::lift_regex(g, suffix@)]);
         }
     }
 
-    pub proof fn machine_unary_append_identity<L>(sem: spec_fn(L, Data) -> bool, head: language::Regex<L>, word: Seq<Data>)
+    pub proof fn machine_unary_append_identity<L>(sem: spec_fn(L, EventView) -> bool, head: language::Regex<L>, word: Seq<EventView>)
         ensures language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Epsilon]), word) == language::lang(sem, head, word),
             !language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Empty]), word),
     {
         language::lemma_concat_pair(sem, head, language::Regex::Epsilon, word);
         language::lemma_concat_pair(sem, head, language::Regex::Empty, word);
         if language::lang(sem, head, word) {
-            let empty = Seq::<Data>::empty();
+            let empty = Seq::<EventView>::empty();
             assert(word == word + empty);
             assert(language::lang(sem, language::Regex::Epsilon, empty));
         }
     }
 
     pub proof fn machine_unary_append_reassociate<L>(
-        sem: spec_fn(L, Data) -> bool, head: language::Regex<L>, suffix: Seq<language::Regex<L>>, last: language::Regex<L>,
+        sem: spec_fn(L, EventView) -> bool, head: language::Regex<L>, suffix: Seq<language::Regex<L>>, last: language::Regex<L>,
     )
-        ensures forall|word: Seq<Data>| language::lang(sem,
+        ensures forall|word: Seq<EventView>| language::lang(sem,
             language::Regex::Concat(seq![language::Regex::Concat(seq![head] + suffix), last]), word)
             == language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(suffix.push(last))]), word),
     {
         let flat = seq![head] + suffix;
-        assert forall|word: Seq<Data>| language::lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)]), word)
+        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)]), word)
             == language::lang(sem, language::Regex::Concat(flat), word) by {
             language::lemma_concat_singleton(sem, language::Regex::Concat(flat), word);
         }
@@ -13406,7 +13368,7 @@ pub(crate) mod verify {
         assert(flat + seq![last] =~= seq![head] + tail);
         assert(seq![language::Regex::Concat(flat)] + seq![last] =~= seq![language::Regex::Concat(flat), last]);
         assert(seq![head].push(language::Regex::Concat(tail)) =~= seq![head, language::Regex::Concat(tail)]);
-        assert forall|word: Seq<Data>| language::lang(sem,
+        assert forall|word: Seq<EventView>| language::lang(sem,
             language::Regex::Concat(seq![language::Regex::Concat(flat), last]), word)
             == language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail)]), word) by {
             assert(language::lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)] + seq![last]), word)
@@ -13417,7 +13379,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_unary_demorgan<L>(
-        sem: spec_fn(L, Data) -> bool, event: Data, terms: Seq<language::Transition<L>>, intersect: bool, word: Seq<Data>,
+        sem: spec_fn(L, EventView) -> bool, event: EventView, terms: Seq<language::Transition<L>>, intersect: bool, word: Seq<EventView>,
     )
         ensures language::lang(sem, language::interp_transition(sem, event, language::Transition::Not(Box::new(
             if intersect { language::Transition::Intersect(terms) } else { language::Transition::Union(terms) }))), word)
@@ -13450,7 +13412,7 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_unary_append_union<L>(
-        sem: spec_fn(L, Data) -> bool, event: Data, terms: Seq<language::Transition<L>>, suffix: language::Regex<L>, word: Seq<Data>,
+        sem: spec_fn(L, EventView) -> bool, event: EventView, terms: Seq<language::Transition<L>>, suffix: language::Regex<L>, word: Seq<EventView>,
     )
         ensures language::lang(sem, language::interp_transition(sem, event,
             language::Transition::Append(Box::new(language::Transition::Union(terms)), seq![suffix])), word)
@@ -13465,7 +13427,7 @@ pub(crate) mod verify {
         language::lemma_interp_union(sem, event, appended, word);
         assert forall|i: int| 0 <= i < terms.len() implies
             language::lang(sem, language::interp_transition(sem, event, appended[i]), word)
-                == (exists|u: Seq<Data>, v: Seq<Data>| word == u + v
+                == (exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                     && language::lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::lang(sem, suffix, v)) by {
             language::lemma_interp_append(sem, event, terms[i], seq![suffix]);
             let r = language::interp_transition(sem, event, terms[i]);
@@ -13473,14 +13435,14 @@ pub(crate) mod verify {
             language::lemma_concat_pair(sem, r, suffix, word);
         }
         if language::lang(sem, language::Regex::Concat(seq![head, suffix]), word) {
-            let (u, v) = choose|u: Seq<Data>, v: Seq<Data>| word == u + v && language::lang(sem, head, u) && language::lang(sem, suffix, v);
+            let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v && language::lang(sem, head, u) && language::lang(sem, suffix, v);
             language::lemma_interp_union(sem, event, terms, u);
             let i = choose|i: int| 0 <= i < terms.len() && language::lang(sem, language::interp_transition(sem, event, terms[i]), u);
             assert(language::lang(sem, language::interp_transition(sem, event, appended[i]), word));
         }
         if language::lang(sem, language::interp_transition(sem, event, language::Transition::Union(appended)), word) {
             let i = choose|i: int| 0 <= i < appended.len() && language::lang(sem, language::interp_transition(sem, event, appended[i]), word);
-            let (u, v) = choose|u: Seq<Data>, v: Seq<Data>| word == u + v
+            let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
                 && language::lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::lang(sem, suffix, v);
             language::lemma_interp_union(sem, event, terms, u);
             assert(language::lang(sem, head, u));
@@ -13532,8 +13494,8 @@ pub(crate) mod verify {
         let result = guarded_set(mapped, intersect);
         assert(result.term == if intersect { language::Transition::Intersect(mapped.map(|i: int, value: TransitionMeaning| value.term)) }
             else { language::Transition::Union(mapped.map(|i: int, value: TransitionMeaning| value.term)) });
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
             assert forall|i: int| 0 <= i < mapped.len() implies (mapped[i].guard)(ctx, event) by {
                 match suffix { Some(r) => {}, None => {} }
@@ -13543,7 +13505,7 @@ pub(crate) mod verify {
                 Some(r) => {
                     assert(mapped.map(|i: int, value: TransitionMeaning| value.term) =~= terms.map(|i: int, term: language::Transition<model::Test>|
                         language::Transition::Append(Box::new(term), seq![model::lift_regex(g, r@)])));
-                    assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+                    assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                         == guarded_language(sem, ctx, event, result, word) by {
                         machine_unary_append_union(context_sem, event, terms, model::lift_regex(g, r@), word);
                     }
@@ -13551,7 +13513,7 @@ pub(crate) mod verify {
                 None => {
                     assert(mapped.map(|i: int, value: TransitionMeaning| value.term) =~= terms.map(|i: int, term: language::Transition<model::Test>|
                         language::Transition::Not(Box::new(term))));
-                    assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+                    assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                         == guarded_language(sem, ctx, event, result, word) by {
                         machine_unary_demorgan(context_sem, event, terms, !intersect, word);
                     }
@@ -13597,14 +13559,14 @@ pub(crate) mod verify {
         requires model::graph_wf(g), transition_action_pushes(task), transition_result(g, task, out),
         ensures transition_effect(g, task, base, prior, base.push(ActionShape::Clean(out@, g.constants.test_true)), prior),
     {
-        transition_lemma_constants(g);
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_lemma_result_refines(g, task, out);
         let sem = transition_context_sem();
         let valid = transition_context_valid();
         let clean = transition_initial_value(g, ActionShape::Clean(out@, g.constants.test_true)).unwrap();
         let known = transition_known(g, out);
         assert(model::lift_test(g, g.constants.test_true) == model::Test::True);
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (known.guard)(ctx, event)
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (known.guard)(ctx, event)
             implies (clean.guard)(ctx, event) by {}
         guarded_lemma_same_term(sem, valid, known, clean);
         guarded_lemma_refines_transitive(sem, valid, transition_initial_value(g, task).unwrap(), known, clean);
@@ -13629,7 +13591,8 @@ pub(crate) mod verify {
             base, prior, machine_unary_if_tasks(g, test, yes, no, suffix, base), prior),
     {
         transition_unfold(g, id@);
-        transition_lemma_constants(g);
+        // Expose only constants; full table facts unfold irrelevant recursive semantics.
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         let sem = transition_context_sem();
         let valid = transition_context_valid();
         let task = match suffix { Some(r) => ActionShape::Append(id@, r@), None => ActionShape::Not(id@) };
@@ -13640,8 +13603,8 @@ pub(crate) mod verify {
         let expected = transition_initial_value(g, task).unwrap();
         let result = guarded_clean_if(sem, model::lift_test(g, test@), model::lift_test(g, g.constants.test_true), av, bv);
         assert(model::lift_test(g, g.constants.test_true) == model::Test::True);
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
             let context_sem = guarded_semantics(sem, ctx);
             let test_term = model::lift_test(g, test@);
@@ -13679,20 +13642,20 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::Const(head@),
             negated@ < before.regexes.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(before, sym, theta, negated@, word) == !model::regex_lang(before, sym, theta, head@, word),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == model::regex_lang(after, sym, theta, negated@, word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(before, theta, negated@, word) == !model::regex_lang(before, theta, head@, word),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, negated@, word),
         ensures transition_result(after, ActionShape::Not(id@), out),
     {
         model::lemma_graph_wf_elim(before);
         model::lemma_graph_transition_wf(before, id@);
         model::lemma_lift_stable_under_extends(before, after);
         transition_unfold(after, id@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(after, sym, theta, out, event, word) == !transition_lang(after, sym, theta, id, event, word) by {
-            language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(after, head@));
-            assert(model::regex_lang(before, sym, theta, negated@, word) == !model::regex_lang(before, sym, theta, head@, word));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(after, theta, out, event, word) == !transition_lang(after, theta, id, event, word) by {
+            language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(after, head@));
+            assert(model::regex_lang(before, theta, negated@, word) == !model::regex_lang(before, theta, head@, word));
         }
         machine_unary_not_result(after, id, out);
     }
@@ -13702,9 +13665,9 @@ pub(crate) mod verify {
         ensures transition_result(g, ActionShape::Not(id@), inner),
     {
         transition_unfold(g, id@);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(g, sym, theta, inner, event, word) == !transition_lang(g, sym, theta, id, event, word) by {
-            language::lemma_interp_not(model::gsem(sym, theta), event, model::lift_transition(g, inner@));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(g, theta, inner, event, word) == !transition_lang(g, theta, id, event, word) by {
+            language::lemma_interp_not(model::gsem(theta), event, model::lift_transition(g, inner@));
         }
         machine_unary_not_result(g, id, inner);
     }
@@ -13715,16 +13678,16 @@ pub(crate) mod verify {
                 || (suffix@ == g.constants.empty && out@ == g.constants.transition_empty),
         ensures transition_result(g, ActionShape::Append(id@, suffix@), out),
     {
-        transition_lemma_constants(g);
+        assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_unfold(g, g.constants.transition_empty);
         regex_unfold(g, g.constants.empty);
         regex_unfold(g, g.constants.epsilon);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(g, sym, theta, out, event, word)
-                == machine_unary_append_language(g, sym, theta, id, suffix, event, word) by {
-            machine_unary_append_identity(model::gsem(sym, theta),
-                language::interp_transition(model::gsem(sym, theta), event, model::lift_transition(g, id@)), word);
-            language::lemma_interp_const(model::gsem(sym, theta), event, language::Regex::Empty);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(g, theta, out, event, word)
+                == machine_unary_append_language(g, theta, id, suffix, event, word) by {
+            machine_unary_append_identity(model::gsem(theta),
+                language::interp_transition(model::gsem(theta), event, model::lift_transition(g, id@)), word);
+            language::lemma_interp_const(model::gsem(theta), event, language::Regex::Empty);
         }
         machine_unary_append_result(g, id, suffix, out);
     }
@@ -13736,15 +13699,15 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::Const(head@),
             suffix@ < before.regexes.len(), combined@ < before.regexes.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(before, sym, theta, combined@, word) == concat_combo(before, sym, theta, seq![head, suffix], word),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == model::regex_lang(after, sym, theta, combined@, word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, seq![head, suffix], word),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, combined@, word),
         ensures transition_result(after, ActionShape::Append(id@, suffix@), out),
     {
         hide(model::test_holds);
         hide(language::lang);
-        hide(model::symbols_wf);
+        hide(language::event_wf);
         hide(model::lift_regex);
         hide(model::lift_transition);
         hide(language::interp_transition);
@@ -13757,11 +13720,11 @@ pub(crate) mod verify {
         transition_unfold(after, id@);
         assert(model::lift_regexes(before, model::regex_ids(seq![head, suffix]))
             =~= seq![model::lift_regex(before, head@), model::lift_regex(before, suffix@)]);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(after, sym, theta, out, event, word)
-                == machine_unary_append_language(after, sym, theta, id, suffix, event, word) by {
-            language::lemma_interp_const(model::gsem(sym, theta), event, model::lift_regex(after, head@));
-            assert(model::regex_lang(before, sym, theta, combined@, word) == concat_combo(before, sym, theta, seq![head, suffix], word));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(after, theta, out, event, word)
+                == machine_unary_append_language(after, theta, id, suffix, event, word) by {
+            language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(after, head@));
+            assert(model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, seq![head, suffix], word));
         }
         machine_unary_append_result(after, id, suffix, out);
     }
@@ -13773,30 +13736,30 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::If(test@, yes@, no@),
             yes@ == before.constants.transition_all, no@ == before.constants.transition_empty, negated@ < before.tests.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data| model::symbols_wf(sym)
-                ==> model::test_holds(sym, theta, model::lift_test(before, negated@), event)
-                    == !model::test_holds(sym, theta, model::lift_test(before, test@), event),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == transition_if_combo(after, sym, theta, negated, yes, no, event, word),
+            forall|theta: Subst, event: EventView| language::event_wf(theta)
+                ==> model::test_holds(theta, model::lift_test(before, negated@), event)
+                    == !model::test_holds(theta, model::lift_test(before, test@), event),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, negated, yes, no, event, word),
         ensures transition_result(after, ActionShape::Not(id@), out),
     {
         model::lemma_graph_wf_elim(before);
         model::lemma_graph_transition_wf(before, id@);
         model::lemma_lift_stable_under_extends(before, after);
-        transition_lemma_constants(after);
+        assert(model::constants_wf(after)) by { model::lemma_graph_wf_elim(after); }
         transition_unfold(after, id@);
         transition_unfold(after, yes@);
         transition_unfold(after, no@);
         regex_unfold(after, after.constants.empty);
         regex_unfold(after, after.constants.all);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(after, sym, theta, out, event, word) == !transition_lang(after, sym, theta, id, event, word) by {
-            let sem = model::gsem(sym, theta);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(after, theta, out, event, word) == !transition_lang(after, theta, id, event, word) by {
+            let sem = model::gsem(theta);
             language::lemma_interp_if(sem, event, model::lift_test(after, test@), model::lift_transition(after, yes@), model::lift_transition(after, no@));
             language::lemma_interp_const(sem, event, language::Regex::Empty);
             language::lemma_interp_const(sem, event, language::Regex::All);
-            assert(model::test_holds(sym, theta, model::lift_test(before, negated@), event)
-                == !model::test_holds(sym, theta, model::lift_test(before, test@), event));
+            assert(model::test_holds(theta, model::lift_test(before, negated@), event)
+                == !model::test_holds(theta, model::lift_test(before, test@), event));
         }
         machine_unary_not_result(after, id, out);
     }
@@ -13807,8 +13770,8 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(children)),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(g, sym, theta, combined@, word) == concat_combo(g, sym, theta, children.push(suffix), word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(g, theta, combined@, word) == concat_combo(g, theta, children.push(suffix), word),
         ensures transition_effect(g, ActionShape::Append(id@, suffix@), base, prior,
             base.push(ActionShape::Append(inner@, combined@)), prior),
     {
@@ -13821,11 +13784,11 @@ pub(crate) mod verify {
         let result = transition_initial_value(g, next).unwrap();
         let tail = model::lift_regexes(g, model::regex_ids(children));
         assert(model::lift_regexes(g, model::regex_ids(children.push(suffix))) =~= tail.push(model::lift_regex(g, suffix@)));
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
             transition_lemma_context_sem(ctx);
-            let context_sem = model::gsem(ctx.symbols, ctx.bindings);
+            let context_sem = model::gsem(ctx.bindings);
             let head = language::interp_transition(context_sem, event, model::lift_transition(g, inner@));
             let last = model::lift_regex(g, suffix@);
             let combined_term = model::lift_regex(g, combined@);
@@ -13833,10 +13796,10 @@ pub(crate) mod verify {
             language::lemma_interp_append(context_sem, event, model::lift_transition(g, id@), seq![last]);
             language::lemma_interp_append(context_sem, event, model::lift_transition(g, inner@), seq![combined_term]);
             machine_unary_append_reassociate(context_sem, head, tail, last);
-            assert forall|word: Seq<Data>| language::lang(context_sem, language::Regex::Concat(tail.push(last)), word)
+            assert forall|word: Seq<EventView>| language::lang(context_sem, language::Regex::Concat(tail.push(last)), word)
                 == language::lang(context_sem, combined_term, word) by {
-                assert(model::regex_lang(g, ctx.symbols, ctx.bindings, combined@, word)
-                    == concat_combo(g, ctx.symbols, ctx.bindings, children.push(suffix), word));
+                assert(model::regex_lang(g, ctx.bindings, combined@, word)
+                    == concat_combo(g, ctx.bindings, children.push(suffix), word));
             }
             regex_concat_replace(context_sem, seq![head], tail.push(last), combined_term);
             regex_concat_replace(context_sem, seq![head], tail.push(last), language::Regex::Concat(tail.push(last)));
@@ -13845,7 +13808,7 @@ pub(crate) mod verify {
             assert(seq![head].push(combined_term) =~= seq![head, combined_term]);
             assert(seq![language::Regex::Concat(seq![head] + tail)] + seq![last] =~= seq![language::Regex::Concat(seq![head] + tail), last]);
             assert(seq![head] + seq![combined_term] =~= seq![head, combined_term]);
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
                 assert(language::lang(context_sem, language::Regex::Concat(seq![language::Regex::Concat(seq![head] + tail), last]), word)
                     == language::lang(context_sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail.push(last))]), word));
@@ -13861,14 +13824,14 @@ pub(crate) mod verify {
     pub proof fn machine_unary_suffix_language(g: model::Graph, suffix: RegexId, children: Seq<RegexId>)
         requires model::graph_wf(g), suffix@ < g.regexes.len(),
             children == seq![suffix] || g.regexes[suffix@ as int].kind == model::RegexKindNode::Concat(model::regex_ids(children)),
-        ensures forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-            model::regex_lang(g, sym, theta, suffix@, word) == concat_combo(g, sym, theta, children, word),
+        ensures forall|theta: Subst, word: Seq<EventView>|
+            model::regex_lang(g, theta, suffix@, word) == concat_combo(g, theta, children, word),
     {
         if children == seq![suffix] {
             assert(model::lift_regexes(g, model::regex_ids(children)) =~= seq![model::lift_regex(g, suffix@)]);
-            assert forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-                model::regex_lang(g, sym, theta, suffix@, word) == concat_combo(g, sym, theta, children, word) by {
-                language::lemma_concat_singleton(model::gsem(sym, theta), model::lift_regex(g, suffix@), word);
+            assert forall|theta: Subst, word: Seq<EventView>|
+                model::regex_lang(g, theta, suffix@, word) == concat_combo(g, theta, children, word) by {
+                language::lemma_concat_singleton(model::gsem(theta), model::lift_regex(g, suffix@), word);
             }
         } else { regex_unfold(g, suffix@); }
     }
@@ -13879,8 +13842,8 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), suffix@ < before.regexes.len(), regex_ids_valid(before, children),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>|
-                model::regex_lang(before, sym, theta, suffix@, word) == concat_combo(before, sym, theta, children, word),
+            forall|theta: Subst, word: Seq<EventView>|
+                model::regex_lang(before, theta, suffix@, word) == concat_combo(before, theta, children, word),
             model::lift_transition(after, out@) == transition_unbounded_node(after,
                 model::TransitionNode::Append(id@, model::regex_ids(children))),
         ensures transition_result(after, ActionShape::Append(id@, suffix@), out),
@@ -13888,16 +13851,16 @@ pub(crate) mod verify {
         model::lemma_graph_wf_elim(before);
         model::lemma_lift_stable_under_extends(before, after);
         assert(model::lift_regexes(before, model::regex_ids(children)) =~= model::lift_regexes(after, model::regex_ids(children)));
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(after, sym, theta, out, event, word)
-                == machine_unary_append_language(after, sym, theta, id, suffix, event, word) by {
-            let sem = model::gsem(sym, theta);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(after, theta, out, event, word)
+                == machine_unary_append_language(after, theta, id, suffix, event, word) by {
+            let sem = model::gsem(theta);
             let head = language::interp_transition(sem, event, model::lift_transition(after, id@));
             let tail = model::lift_regexes(after, model::regex_ids(children));
             let last = model::lift_regex(after, suffix@);
             language::lemma_interp_append(sem, event, model::lift_transition(after, id@), tail);
-            assert forall|w: Seq<Data>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, last, w) by {
-                assert(model::regex_lang(before, sym, theta, suffix@, w) == concat_combo(before, sym, theta, children, w));
+            assert forall|w: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, last, w) by {
+                assert(model::regex_lang(before, theta, suffix@, w) == concat_combo(before, theta, children, w));
             }
             regex_concat_replace(sem, seq![head], tail, last);
             assert(seq![head].push(last) =~= seq![head, last]);
@@ -13915,30 +13878,30 @@ pub(crate) mod verify {
             x@ < before.regexes.len(), y@ < before.regexes.len(), regex@ < before.regexes.len(),
             after.transitions[a@ as int] == model::TransitionNode::Const(x@),
             after.transitions[b@ as int] == model::TransitionNode::Const(y@),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(before, sym, theta, regex@, word) == regex_combo(before, sym, theta, seq![x, y], word, true),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == model::regex_lang(after, sym, theta, regex@, word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(before, theta, regex@, word) == regex_combo(before, theta, seq![x, y], word, true),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, regex@, word),
         ensures transition_result(after, ActionShape::Pair(a@, b@), out),
     {
         regex_combo_extends(before, after, seq![regex], true);
         regex_combo_extends(before, after, seq![x, y], true);
         transition_lemma_constant(after, a, x);
         transition_lemma_constant(after, b, y);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_lang(after, sym, theta, out, event, word)
-                == transition_combo(after, sym, theta, seq![a, b], event, word, true) by {
-            assert(model::regex_lang(before, sym, theta, regex@, word)
-                == regex_combo(before, sym, theta, seq![x, y], word, true));
-            regex_combo_push(before, Seq::empty(), regex, sym, theta, word, true);
-            regex_combo_push(after, Seq::empty(), regex, sym, theta, word, true);
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_lang(after, theta, out, event, word)
+                == transition_combo(after, theta, seq![a, b], event, word, true) by {
+            assert(model::regex_lang(before, theta, regex@, word)
+                == regex_combo(before, theta, seq![x, y], word, true));
+            regex_combo_push(before, Seq::empty(), regex, theta, word, true);
+            regex_combo_push(after, Seq::empty(), regex, theta, word, true);
             assert(Seq::<RegexId>::empty().push(regex) =~= seq![regex]);
-            assert(regex_combo(before, sym, theta, seq![regex], word, true)
-                == model::regex_lang(before, sym, theta, regex@, word));
-            assert(regex_combo(after, sym, theta, seq![regex], word, true)
-                == model::regex_lang(after, sym, theta, regex@, word));
-            assert(transition_lang(after, sym, theta, out, event, word)
-                == model::regex_lang(after, sym, theta, regex@, word));
+            assert(regex_combo(before, theta, seq![regex], word, true)
+                == model::regex_lang(before, theta, regex@, word));
+            assert(regex_combo(after, theta, seq![regex], word, true)
+                == model::regex_lang(after, theta, regex@, word));
+            assert(transition_lang(after, theta, out, event, word)
+                == model::regex_lang(after, theta, regex@, word));
         }
         machine_pair_set_result(after, seq![a, b], ActionShape::Pair(a@, b@), out);
     }
@@ -13949,19 +13912,19 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), flat@ < g.transitions.len(), children.len() > 0,
             g.transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(children)),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(g, sym, theta, flat, event, word) == transition_combo(g, sym, theta, ids, event, word, true),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(g, theta, flat, event, word) == transition_combo(g, theta, ids, event, word, true),
         ensures transition_effect(g, ActionShape::Fold(model::transition_ids(ids), 0), pending, prior,
             pending.push(ActionShape::Fold(model::transition_ids(children), 1)), prior.push(children[0])),
     {
         transition_lemma_children_language(g, flat, children, true);
-        assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-            implies transition_combo(g, sym, theta, ids, event, word, true)
-                == transition_combo(g, sym, theta, children, event, word, true) by {
-            assert(transition_lang(g, sym, theta, flat, event, word)
-                == transition_combo(g, sym, theta, ids, event, word, true));
-            assert(transition_lang(g, sym, theta, flat, event, word)
-                == transition_combo(g, sym, theta, children, event, word, true));
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies transition_combo(g, theta, ids, event, word, true)
+                == transition_combo(g, theta, children, event, word, true) by {
+            assert(transition_lang(g, theta, flat, event, word)
+                == transition_combo(g, theta, ids, event, word, true));
+            assert(transition_lang(g, theta, flat, event, word)
+                == transition_combo(g, theta, children, event, word, true));
         }
         machine_pair_fold_first_effect(g, ids, children, pending, prior);
     }
@@ -13970,9 +13933,9 @@ pub(crate) mod verify {
         g: model::Graph, count: nat, pending: Seq<ActionShape>, prior: Seq<TransitionId>, out: TransitionId,
     )
         requires count <= prior.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(g, sym, theta, out, event, word)
-                    == transition_combo(g, sym, theta, prior.subrange(prior.len() as int - count as int, prior.len() as int), event, word, false),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(g, theta, out, event, word)
+                    == transition_combo(g, theta, prior.subrange(prior.len() as int - count as int, prior.len() as int), event, word, false),
         ensures transition_effect(g, ActionShape::Union(count), pending, prior, pending,
             prior.take(prior.len() as int - count as int).push(out)),
     {
@@ -13985,30 +13948,30 @@ pub(crate) mod verify {
         assert(transition_known_values(g, prior) =~= prefix + children);
         let expected = guarded_set(children, false);
         let result = transition_known(g, out);
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, expected, word) == guarded_language(sem, ctx, event, result, word) by {
             transition_lemma_context_sem(ctx);
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
                 let terms = children.map(|i: int, value: TransitionMeaning| value.term);
-                language::lemma_interp_union(model::gsem(ctx.symbols, ctx.bindings), event, terms, word);
-                assert forall|i: int| 0 <= i < ids.len() implies language::lang(model::gsem(ctx.symbols, ctx.bindings),
-                    language::interp_transition(model::gsem(ctx.symbols, ctx.bindings), event, terms[i]), word)
-                        == transition_lang(g, ctx.symbols, ctx.bindings, ids[i], event, word) by {}
+                language::lemma_interp_union(model::gsem(ctx.bindings), event, terms, word);
+                assert forall|i: int| 0 <= i < ids.len() implies language::lang(model::gsem(ctx.bindings),
+                    language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word)
+                        == transition_lang(g, ctx.bindings, ids[i], event, word) by {}
                 if guarded_language(sem, ctx, event, expected, word) {
-                    let i = choose|i: int| 0 <= i < terms.len() && language::lang(model::gsem(ctx.symbols, ctx.bindings),
-                        language::interp_transition(model::gsem(ctx.symbols, ctx.bindings), event, terms[i]), word);
-                    assert(transition_combo(g, ctx.symbols, ctx.bindings, ids, event, word, false));
+                    let i = choose|i: int| 0 <= i < terms.len() && language::lang(model::gsem(ctx.bindings),
+                        language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word);
+                    assert(transition_combo(g, ctx.bindings, ids, event, word, false));
                 }
-                if transition_combo(g, ctx.symbols, ctx.bindings, ids, event, word, false) {
-                    let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, ctx.symbols, ctx.bindings, ids[i], event, word);
-                    assert(language::lang(model::gsem(ctx.symbols, ctx.bindings),
-                        language::interp_transition(model::gsem(ctx.symbols, ctx.bindings), event, terms[i]), word));
+                if transition_combo(g, ctx.bindings, ids, event, word, false) {
+                    let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, ctx.bindings, ids[i], event, word);
+                    assert(language::lang(model::gsem(ctx.bindings),
+                        language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word));
                 }
                 transition_lemma_known_language(g, out, ctx, event, word);
-                assert(transition_lang(g, ctx.symbols, ctx.bindings, out, event, word)
-                    == transition_combo(g, ctx.symbols, ctx.bindings, ids, event, word, false));
+                assert(transition_lang(g, ctx.bindings, out, event, word)
+                    == transition_combo(g, ctx.bindings, ids, event, word, false));
             }
         }
         guarded_lemma_apply_set_suffix(sem, prefix, children, false);
@@ -14053,9 +14016,9 @@ pub(crate) mod verify {
         g: model::Graph, test: TestId, path: Option<TestId>, pending: Seq<ActionShape>, prior: Seq<TransitionId>, out: TransitionId,
     )
         requires prior.len() >= 2,
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(g, sym, theta, out, event, word)
-                    == transition_if_combo(g, sym, theta, test, prior[prior.len() as int - 2], prior.last(), event, word),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(g, theta, out, event, word)
+                    == transition_if_combo(g, theta, test, prior[prior.len() as int - 2], prior.last(), event, word),
         ensures match path {
             None => transition_effect(g, ActionShape::If(test@), pending, prior, pending,
                 prior.take(prior.len() as int - 2).push(out)),
@@ -14081,15 +14044,15 @@ pub(crate) mod verify {
             None => transition_known(g, out),
             Some(path) => guarded_clean(sem, model::lift_test(g, path@), model::lift_transition(g, out@)),
         };
-        assert forall|ctx: TransitionContext, event: Data| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
-            implies (result.guard)(ctx, event) && forall|word: Seq<Data>|
+        assert forall|ctx: TransitionContext, event: EventView| valid(ctx) && #[trigger] (expected.guard)(ctx, event)
+            implies (result.guard)(ctx, event) && forall|word: Seq<EventView>|
                 guarded_language(sem, ctx, event, expected, word) == guarded_language(sem, ctx, event, result, word) by {
             transition_lemma_context_sem(ctx);
-            language::lemma_interp_if(model::gsem(ctx.symbols, ctx.bindings), event, model::lift_test(g, test@), yes.term, no.term);
-            assert forall|word: Seq<Data>| guarded_language(sem, ctx, event, expected, word)
+            language::lemma_interp_if(model::gsem(ctx.bindings), event, model::lift_test(g, test@), yes.term, no.term);
+            assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
-                assert(transition_lang(g, ctx.symbols, ctx.bindings, out, event, word)
-                    == transition_if_combo(g, ctx.symbols, ctx.bindings, test, a, b, event, word));
+                assert(transition_lang(g, ctx.bindings, out, event, word)
+                    == transition_if_combo(g, ctx.bindings, test, a, b, event, word));
             }
         }
         guarded_lemma_stack_refl(sem, valid, prefix);
@@ -14171,9 +14134,9 @@ pub(crate) mod verify {
 
 
     pub open spec fn transition_append_combo(
-        g: model::Graph, sym: model::Symbols, theta: Seq<Data>, root: TransitionId, suffix: Seq<RegexId>, event: Data, word: Seq<Data>,
+        g: model::Graph, theta: Subst, root: TransitionId, suffix: Seq<RegexId>, event: EventView, word: Seq<EventView>,
     ) -> bool {
-        let sem = model::gsem(sym, theta);
+        let sem = model::gsem(theta);
         language::lang(sem, language::Regex::Concat(seq![language::interp_transition(sem, event, model::lift_transition(g, root@))]
             + model::lift_regexes(g, model::regex_ids(suffix))), word)
     }
@@ -14192,33 +14155,33 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(before), test@ < before.tests.len(),
             yes@ < before.transitions.len(), no@ < before.transitions.len(), local@ < before.transitions.len(),
-            forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(before, sym, theta, local, event, word) == transition_if_combo(before, sym, theta, test, yes, no, event, word),
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(before, theta, local, event, word) == transition_if_combo(before, theta, test, yes, no, event, word),
         ensures forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Clean(local@, before.constants.test_true), out)
-            ==> forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == transition_if_combo(after, sym, theta, test, yes, no, event, word),
+            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word),
     {
         model::lemma_graph_wf_elim(before);
         assert forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Clean(local@, before.constants.test_true), out)
-            implies forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == transition_if_combo(after, sym, theta, test, yes, no, event, word) by {
+            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word) by {
             model::lemma_lift_test_stable(before, after, test@);
             model::lemma_lift_transition_stable(before, after, yes@);
             model::lemma_lift_transition_stable(before, after, no@);
             model::lemma_lift_transition_stable(before, after, local@);
             transition_lemma_test_constants(after);
             let expected = transition_initial_value(after, ActionShape::Clean(local@, before.constants.test_true)).unwrap();
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                implies transition_lang(after, sym, theta, out, event, word) == transition_if_combo(after, sym, theta, test, yes, no, event, word) by {
-                let ctx = TransitionContext { symbols: sym, bindings: theta };
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                implies transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word) by {
+                let ctx = TransitionContext { bindings: theta };
                 transition_lemma_context_sem(ctx);
                 assert((expected.guard)(ctx, event));
                 assert(guarded_language(transition_context_sem(), ctx, event, expected, word)
-                    == transition_lang(after, sym, theta, out, event, word));
-                assert(transition_lang(before, sym, theta, local, event, word)
-                    == transition_if_combo(before, sym, theta, test, yes, no, event, word));
+                    == transition_lang(after, theta, out, event, word));
+                assert(transition_lang(before, theta, local, event, word)
+                    == transition_if_combo(before, theta, test, yes, no, event, word));
             }
         }
     }
@@ -14227,38 +14190,38 @@ pub(crate) mod verify {
         before: model::Graph, root: TransitionId, suffix: Seq<RegexId>, combined: RegexId,
     )
         requires model::graph_wf(before), combined@ < before.regexes.len(), regex_ids_valid(before, suffix),
-            forall|sym: model::Symbols, theta: Seq<Data>, word: Seq<Data>| model::symbols_wf(sym)
-                ==> model::regex_lang(before, sym, theta, combined@, word) == concat_combo(before, sym, theta, suffix, word),
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                ==> model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, suffix, word),
         ensures forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Append(root@, combined@), out)
-            ==> forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == transition_append_combo(after, sym, theta, root, suffix, event, word),
+            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word),
     {
         model::lemma_graph_wf_elim(before);
         assert forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Append(root@, combined@), out)
-            implies forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                ==> transition_lang(after, sym, theta, out, event, word) == transition_append_combo(after, sym, theta, root, suffix, event, word) by {
+            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                ==> transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word) by {
             model::lemma_lift_regex_stable(before, after, combined@);
             regex_concat_extends(before, after, suffix);
             let expected = transition_initial_value(after, ActionShape::Append(root@, combined@)).unwrap();
-            assert forall|sym: model::Symbols, theta: Seq<Data>, event: Data, word: Seq<Data>| model::symbols_wf(sym)
-                implies transition_lang(after, sym, theta, out, event, word) == transition_append_combo(after, sym, theta, root, suffix, event, word) by {
-                let ctx = TransitionContext { symbols: sym, bindings: theta };
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                implies transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word) by {
+                let ctx = TransitionContext { bindings: theta };
                 transition_lemma_context_sem(ctx);
-                let sem = model::gsem(sym, theta);
+                let sem = model::gsem(theta);
                 let head = language::interp_transition(sem, event, model::lift_transition(after, root@));
                 let tail = model::lift_regexes(after, model::regex_ids(suffix));
                 let combined_term = model::lift_regex(after, combined@);
                 language::lemma_interp_append(sem, event, model::lift_transition(after, root@), seq![combined_term]);
-                assert forall|w: Seq<Data>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, combined_term, w) by {
-                    assert(model::regex_lang(before, sym, theta, combined@, w) == concat_combo(before, sym, theta, suffix, w));
-                    assert(concat_combo(before, sym, theta, suffix, w) == concat_combo(after, sym, theta, suffix, w));
+                assert forall|w: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, combined_term, w) by {
+                    assert(model::regex_lang(before, theta, combined@, w) == concat_combo(before, theta, suffix, w));
+                    assert(concat_combo(before, theta, suffix, w) == concat_combo(after, theta, suffix, w));
                 }
                 regex_concat_replace(sem, seq![head], tail, combined_term);
                 assert((expected.guard)(ctx, event));
                 assert(guarded_language(transition_context_sem(), ctx, event, expected, word)
-                    == transition_lang(after, sym, theta, out, event, word));
+                    == transition_lang(after, theta, out, event, word));
                 assert(seq![head] + seq![combined_term] =~= seq![head].push(combined_term));
             }
         }

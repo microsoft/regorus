@@ -911,15 +911,15 @@ fn format_instruction_readable(
             let base = format!("{}}} CompEnd", indent);
             align_comment(&base, "End comprehension block", config.comment_column)
         }
-        Instruction::HistoryDecide { params_index } => instruction_data
-            .history_decide_params
+        Instruction::HistoryStep { params_index } => instruction_data
+            .history_step_params
             .get(usize::from(params_index))
             .map_or_else(
-                || format!("{}HistoryDecide P({}) <invalid>", indent, params_index),
+                || format!("{}HistoryStep P({}) <invalid>", indent, params_index),
                 |p| {
                     format!(
-                        "{}HistoryDecide r{} = table[{}].decide(history=r{}, request=r{})",
-                        indent, p.dest, p.table, p.history, p.request
+                        "{}HistoryStep table[{}].rule[{}] batch_size={}",
+                        indent, p.table, p.rule, p.batch_size
                     )
                 },
             ),
@@ -1066,7 +1066,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::ComprehensionBegin { .. } => "COMP_BEGIN",
         Instruction::ComprehensionYield { .. } => "COMP_YIELD",
         Instruction::ComprehensionEnd {} => "COMP_END",
-        Instruction::HistoryDecide { .. } => "HISTORY_DECIDE",
+        Instruction::HistoryStep { .. } => "HISTORY_STEP",
         // Azure Policy instructions
         Instruction::PolicyCondition { op, .. } => op.compact_name(),
         // AllOf / AnyOf

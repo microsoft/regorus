@@ -146,24 +146,41 @@ ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).
 
 ## History table instructions
 
-| Mnemonic        | Operands / Params | Behaviour |
-| :-------------- | :---------------- | :-------- |
-| `HistoryDecide` | `params_index=pN` | Judges the request against `Program::history_tables[table]`; writes the index of the first violated rule, `null` when none, `undefined` for an undefined request. Requires feature `history` (else `HistoryDecideUnavailable`). |
+| Mnemonic | Operands / Params | Behaviour |
+| :------- | :---------------- | :-------- |
+| `HistoryStep` | `params_index=pN` | Advances one rule by at most `batch_size` events; repeats at the same PC while unfinished. Requires feature `history`, otherwise execution reports `HistoryFeatureDisabled`. |
 
-`HistoryDecideParams` captures `dest`, `table`, `history` (register holding a
-VM history handle from `RegoVM::history_new`) and `request`. Each table rule is a
-mode (`Forbid`: violated when the history is in the rule's language; `Require`:
-violated when it is not) plus a literal `{"request", "history"}` pair in the
-`history.match` grammar. A rule whose request pattern does not match is skipped.
+`HistoryStepParams` contains `table: u16`, `rule: u16`, and `batch_size: u32`.
+Zero batch size and invalid table/rule/source references are rejected. There are
+no request/history Value registers or destination register. A nonmatching head
+continues; a violated rule returns its zero-based index. A completed successful
+rule continues to the next instruction. The compiler emits one step per rule,
+then `LoadNull; Return`, with entry point `decide`.
 
-The VM compiles a table's pairs on first use and keeps, per rule, up to 16
-cursors keyed by `(handle, bindings)`; a decision folds only the events appended
-since the cursor through the verified kernel `fold`. Hosts own histories through
-`history_new`, `history_append`, `history_truncate` (shrinking invalidates the
-handle's cursors) and `history_len`; histories survive `load_program`, compiled
-tables do not. `regorus::languages::history_table::compile` builds a one-opcode
-program (entry point `decide`, `input = {"history": <handle>, "request": <event>}`)
-from `{"rules": [{"mode": "forbid"|"require", "request": …, "history": …}]}`.
+The sole production trace engine lives under `rvm::vm::history_tables`:
+dispatch calls `execute_history_step`, then the cursor-last `BatchCursor::advance`
+transaction and its compiled-pair engine. Normalization belongs to `TestId`,
+`RegexId`, `TransitionId`, `Action` and `ChildAction`; symbolic work belongs to the
+IDs, `DerivativeFactors` and `AtomSet`. Graph and cache consumers use their stores
+directly, without forwarding accessors or redundant task-pop wrappers. There is
+no builtin history module or interpreter trace evaluator. Portable source
+validation remains available when history execution is disabled.
+
+Use `languages::history_table::compile(&table, batch_size)`, load the program,
+attach an application-owned `Arc<HistoryStore>`, and stage a `HistoryHandle` and
+typed `Event` with `set_history_input`. The owner manages identity interning,
+history append/truncate, shared compiled runtimes, and retained-prefix caches.
+Each decision captures a fixed history prefix. Append does not change it;
+truncation invalidates its revision and produces typed `HistoryChanged` before
+a result can be published, including empty-table and terminal-return paths.
+Suspension retains private progress and pins the graph; no lock guard is stored
+in the VM. Changing attachment/input while active is rejected. Program replacement
+cancels execution and clears attachment/input, not the application's histories.
+
+Cold JSON policies use only principal/action/resource string constants and
+same-domain bindings; see [typed history tables](../builtins.md#typed-history-tables-native-rust-rvm-only).
+Programs serialize portable source tables rather than store IDs. Version 8
+bytecode is required; older artifacts must be recompiled.
 
 ---
 

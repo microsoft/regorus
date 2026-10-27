@@ -5,8 +5,11 @@ use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use anyhow::Result as AnyResult;
+#[cfg(feature = "std")]
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+#[cfg(not(feature = "std"))]
+type IndexMap<K, V> = indexmap::IndexMap<K, V, hashbrown::DefaultHashBuilder>;
 
 use super::metadata::ProgramMetadata;
 use super::types::{BuiltinInfo, HistoryTable, RuleInfo, SourceFile, SpanInfo};
@@ -32,7 +35,7 @@ pub struct Program {
     pub builtin_info_table: Vec<BuiltinInfo>,
 
     /// Entry points mapping with preserved insertion order (skipped in serde, serialized separately as JSON)
-    #[serde(skip, default = "IndexMap::new")]
+    #[serde(skip, default = "IndexMap::default")]
     pub entry_points: IndexMap<String, usize>,
 
     /// Source files table with content (skipped in serde, serialized separately as JSON)
@@ -88,14 +91,14 @@ pub struct Program {
     #[serde(skip, default)]
     pub rego_v0: bool,
 
-    /// History tables judged by `HistoryDecide` instructions
+    /// History tables judged by ordered `HistoryStep` instructions.
     #[serde(default)]
     pub history_tables: Vec<HistoryTable>,
 }
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 7;
+    pub const SERIALIZATION_VERSION: u32 = 8;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
@@ -120,7 +123,7 @@ impl Program {
             literals: Vec::new(),
             instruction_data: InstructionData::new(),
             builtin_info_table: Vec::new(),
-            entry_points: IndexMap::new(),
+            entry_points: IndexMap::default(),
             sources: Vec::new(),
             rule_infos: Vec::new(),
             instruction_spans: Vec::new(),
@@ -226,11 +229,45 @@ impl Program {
             return Err("Too many history tables".to_string());
         }
         for (t, table) in self.history_tables.iter().enumerate() {
+            if table.rules.len() > usize::from(u16::MAX) {
+                return Err(format!("History table {t} has too many rules"));
+            }
             for (i, rule) in table.rules.iter().enumerate() {
-                if usize::from(rule.pair_literal) >= self.literals.len() {
+                rule.source.validate().map_err(|error| {
+                    format!("History table {t} rule {i} has invalid source: {error}")
+                })?;
+            }
+        }
+        if self.instruction_data.history_step_params.len() > usize::from(u16::MAX) {
+            return Err("Too many history step parameters".to_string());
+        }
+        for (index, params) in self.instruction_data.history_step_params.iter().enumerate() {
+            if params.batch_size == 0 {
+                return Err(format!(
+                    "History step parameter {index} has zero batch_size"
+                ));
+            }
+            let table = self
+                .history_tables
+                .get(usize::from(params.table))
+                .ok_or_else(|| {
+                    format!(
+                        "History step parameter {index} references table {} out of range",
+                        params.table
+                    )
+                })?;
+            if usize::from(params.rule) >= table.rules.len() {
+                return Err(format!(
+                    "History step parameter {index} references rule {} out of range",
+                    params.rule
+                ));
+            }
+        }
+        for (pc, instruction) in self.instructions.iter().enumerate() {
+            if let Instruction::HistoryStep { params_index } = *instruction {
+                if usize::from(params_index) >= self.instruction_data.history_step_params.len() {
                     return Err(format!(
-                        "History table {t} rule {i} references literal {} out of range",
-                        rule.pair_literal
+                        "History step at {pc} references parameter {params_index} out of range"
                     ));
                 }
             }
@@ -276,12 +313,12 @@ impl Program {
         self.instruction_data.add_function_call_params(params)
     }
 
-    /// Add history decide parameters and return the index
-    pub fn add_history_decide_params(
+    /// Add bounded history step parameters and return the index.
+    pub fn add_history_step_params(
         &mut self,
-        params: crate::rvm::instructions::HistoryDecideParams,
+        params: crate::rvm::instructions::HistoryStepParams,
     ) -> u16 {
-        self.instruction_data.add_history_decide_params(params)
+        self.instruction_data.add_history_step_params(params)
     }
 
     /// Add a history table and return its index

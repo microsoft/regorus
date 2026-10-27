@@ -198,15 +198,14 @@ pub enum HistoryRuleMode {
     Forbid,
 }
 
-/// One rule of a history table: a mode plus a `history.match` pair literal
-/// (`{"request": …, "history": …}`).
+/// One ordered history rule and its portable, store-independent source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryTableRule {
     pub mode: HistoryRuleMode,
-    pub pair_literal: u16,
+    pub source: super::history::HistoryPairSource,
 }
 
-/// Ordered rules judged by `HistoryDecide`; the first violated rule wins.
+/// Ordered rules judged by `HistoryStep`; the first violated rule wins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryTable {
     pub rules: Vec<HistoryTableRule>,

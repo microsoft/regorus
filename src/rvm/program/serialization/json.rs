@@ -11,11 +11,15 @@ use super::Program;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
 use crate::value::Value;
+#[cfg(feature = "std")]
 use indexmap::IndexMap;
+#[cfg(not(feature = "std"))]
+type IndexMap<K, V> = indexmap::IndexMap<K, V, hashbrown::DefaultHashBuilder>;
 
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        self.validate_limits()?;
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -45,7 +49,7 @@ impl Program {
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
                 "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
-                "history_decide_params": self.instruction_data.history_decide_params
+                "history_step_params": self.instruction_data.history_step_params
             },
             "literals": self.literals,
             "builtin_info_table": self.builtin_info_table,
@@ -244,6 +248,7 @@ impl Program {
         if !program.builtin_info_table.is_empty() {
             let _ = program.initialize_resolved_builtins();
         }
+        program.validate_limits()?;
 
         Ok(program)
     }

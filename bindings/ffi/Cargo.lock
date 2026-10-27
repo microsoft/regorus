@@ -496,15 +496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashconsius"
-version = "0.1.0"
-source = "git+https://github.com/elefthei/hashconsius?rev=58ab05c67c34201fa25f27c443cb5b45bc3a6c00#58ab05c67c34201fa25f27c443cb5b45bc3a6c00"
-dependencies = [
- "verus-bumpalo",
- "vstd",
-]
-
-[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -808,9 +799,6 @@ name = "lru"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
-dependencies = [
- "hashbrown 0.17.1",
-]
 
 [[package]]
 name = "memchr"
@@ -841,17 +829,6 @@ checksum = "a07e5704d9a91580f47259f03d641b1b1608a1dc9814ad1055867f181ff24cab"
 dependencies = [
  "cc",
  "ohno",
-]
-
-[[package]]
-name = "namespacius"
-version = "0.1.0"
-dependencies = [
- "foldhash",
- "hashbrown 0.17.1",
- "lru",
- "verus-bumpalo",
- "vstd",
 ]
 
 [[package]]
@@ -1199,7 +1176,6 @@ dependencies = [
  "data-encoding",
  "globset",
  "hashbrown 0.17.1",
- "hashconsius",
  "icu_casemap",
  "indexmap",
  "ipnet",
@@ -1207,7 +1183,6 @@ dependencies = [
  "lazy_static",
  "lru",
  "msvc_spectre_libs",
- "namespacius",
  "num-bigint 0.5.1",
  "num-traits",
  "parking_lot",
@@ -1218,12 +1193,10 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "smallvec",
  "spin",
  "thiserror",
  "url",
  "uuid",
- "verus-bumpalo",
  "vstd",
  "yaml_serde",
 ]
@@ -1599,14 +1572,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "verus-bumpalo"
-version = "0.1.0"
-source = "git+https://github.com/elefthei/bumpus?rev=36c8e8723d767934a502fc1d9cea0ba49cff54ab#36c8e8723d767934a502fc1d9cea0ba49cff54ab"
-dependencies = [
- "vstd",
-]
 
 [[package]]
 name = "verus_builtin"

@@ -7,7 +7,7 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, HistoryDecideParams, InstructionData, LoopStartParams, ObjectCreateParams,
+    FunctionCallParams, HistoryStepParams, InstructionData, LoopStartParams, ObjectCreateParams,
     SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
@@ -358,9 +358,9 @@ pub enum Instruction {
     /// End a comprehension block
     ComprehensionEnd {},
 
-    /// Decide a request against a history table (feature `history`): first violated rule index or Null.
-    HistoryDecide {
-        /// Index into program's instruction_data.history_decide_params table
+    /// Advance one ordered history rule by at most its configured batch size.
+    HistoryStep {
+        /// Index into `instruction_data.history_step_params`.
         params_index: u16,
     },
 

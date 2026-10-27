@@ -274,18 +274,16 @@ pub struct ComprehensionBeginParams {
     pub comprehension_end: u16,
 }
 
-/// Parameters for HistoryDecide instructions
+/// Parameters for one bounded history rule step.
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryDecideParams {
-    /// Destination register: first violated rule index, or Null
-    pub dest: u8,
-    /// Index into `Program::history_tables`
+pub struct HistoryStepParams {
+    /// Index into `Program::history_tables`.
     pub table: u16,
-    /// Register holding the history handle
-    pub history: u8,
-    /// Register holding the candidate request
-    pub request: u8,
+    /// Ordered rule index within the table.
+    pub rule: u16,
+    /// Maximum number of history events consumed by this dispatch.
+    pub batch_size: u32,
 }
 
 /// Instruction data container for complex instruction parameters
@@ -309,9 +307,8 @@ pub struct InstructionData {
     pub chained_index_params: Vec<ChainedIndexParams>,
     /// Comprehension parameter table for ComprehensionBegin instructions
     pub comprehension_begin_params: Vec<ComprehensionBeginParams>,
-    /// History table decision parameter table for HistoryDecide instructions
-    #[serde(default)]
-    pub history_decide_params: Vec<HistoryDecideParams>,
+    /// Bounded history rule step parameters.
+    pub history_step_params: Vec<HistoryStepParams>,
 }
 
 impl InstructionData {
@@ -332,7 +329,7 @@ impl InstructionData {
             virtual_data_document_lookup_params: Vec::new(),
             chained_index_params: Vec::new(),
             comprehension_begin_params: Vec::new(),
-            history_decide_params: Vec::new(),
+            history_step_params: Vec::new(),
         }
     }
 
@@ -343,10 +340,10 @@ impl InstructionData {
         index
     }
 
-    /// Add history decide parameters and return the index
-    pub fn add_history_decide_params(&mut self, params: HistoryDecideParams) -> u16 {
-        let index = Self::ensure_u16_index(self.history_decide_params.len());
-        self.history_decide_params.push(params);
+    /// Add bounded history step parameters and return the index.
+    pub fn add_history_step_params(&mut self, params: HistoryStepParams) -> u16 {
+        let index = Self::ensure_u16_index(self.history_step_params.len());
+        self.history_step_params.push(params);
         index
     }
 

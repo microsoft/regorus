@@ -5,9 +5,9 @@
 //! similarity preserves language, symbolic derivative correctness, matcher correctness.
 
 use super::history_specs as language;
-use super::history_specs::{Head, Regex, SrcTest, Subst, Term, Transition};
-use super::value_specs::Data;
-use crate::builtins::history::kernel::verify as model;
+use super::history_specs::{EventView, Head, Regex, SrcTest, Subst, Term, Transition};
+use crate::rvm::program::HistoryField;
+use crate::rvm::vm::history_tables::kernel::verify as model;
 use alloc::boxed::Box;
 use vstd::prelude::*;
 
@@ -15,8 +15,8 @@ verus! {
 
 broadcast use {vstd::string::group_string_axioms, vstd::seq::group_seq_lemmas};
 
-pub open spec fn src_sem(theta: Subst) -> spec_fn(SrcTest, Data) -> bool {
-    |test: SrcTest, event: Data| language::src_test_holds(theta, test, event)
+pub open spec fn src_sem(theta: Subst) -> spec_fn(SrcTest, EventView) -> bool {
+    |test: SrcTest, event: EventView| language::src_test_holds(theta, test, event)
 }
 
 /// The paper's δ, without runtime normalization or graph representation.
@@ -46,7 +46,7 @@ pub open spec fn symbolic_derivative_concat<L>(bound: Regex<L>, cs: Seq<Regex<L>
     }
 }
 
-pub proof fn lemma_symbolic_derivative_concat_interp<L>(sem: spec_fn(L, Data) -> bool, e: Data, bound: Regex<L>, cs: Seq<Regex<L>>)
+pub proof fn lemma_symbolic_derivative_concat_interp<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, bound: Regex<L>, cs: Seq<Regex<L>>)
     requires
         forall|i: int| 0 <= i < cs.len() ==> is_smaller_than(cs[i], bound),
         forall|i: int| 0 <= i < cs.len() ==> #[trigger] language::interp_transition(sem, e, symbolic_derivative(cs[i])) == language::derivative(sem, e, cs[i]),
@@ -87,7 +87,7 @@ pub proof fn lemma_symbolic_derivative_concat_interp<L>(sem: spec_fn(L, Data) ->
     }
 }
 
-pub proof fn lemma_symbolic_derivative_interp<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>)
+pub proof fn lemma_symbolic_derivative_interp<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, r: Regex<L>)
     ensures language::interp_transition(sem, e, symbolic_derivative(r)) == language::derivative(sem, e, r),
     decreases r,
 {
@@ -132,7 +132,7 @@ pub proof fn lemma_symbolic_derivative_interp<L>(sem: spec_fn(L, Data) -> bool, 
 }
 
 /// Paper, Theorem (Symbolic derivative correctness), modulo language rather than Norm.
-pub proof fn theorem_symbolic_derivative_correct<L>(sem: spec_fn(L, Data) -> bool, e: Data, r: Regex<L>, w: Seq<Data>)
+pub proof fn theorem_symbolic_derivative_correct<L>(sem: spec_fn(L, EventView) -> bool, e: EventView, r: Regex<L>, w: Seq<EventView>)
     ensures language::lang(sem, language::interp_transition(sem, e, symbolic_derivative(r)), w) == language::lang(sem, r, seq![e] + w),
 {
     lemma_symbolic_derivative_interp(sem, e, r);
@@ -140,14 +140,14 @@ pub proof fn theorem_symbolic_derivative_correct<L>(sem: spec_fn(L, Data) -> boo
 }
 
 /// The paper's state sequence q, consuming events oldest first.
-pub open spec fn symbolic_run<L>(sem: spec_fn(L, Data) -> bool, u: Seq<Data>, r: Regex<L>) -> Regex<L>
+pub open spec fn symbolic_run<L>(sem: spec_fn(L, EventView) -> bool, u: Seq<EventView>, r: Regex<L>) -> Regex<L>
     decreases u.len(),
 {
     if u.len() == 0 { r }
     else { symbolic_run(sem, u.drop_first(), language::interp_transition(sem, u[0], symbolic_derivative(r))) }
 }
 
-pub proof fn lemma_symbolic_run_is_derive_word<L>(sem: spec_fn(L, Data) -> bool, u: Seq<Data>, r: Regex<L>)
+pub proof fn lemma_symbolic_run_is_derive_word<L>(sem: spec_fn(L, EventView) -> bool, u: Seq<EventView>, r: Regex<L>)
     ensures symbolic_run(sem, u, r) == language::derive_word(sem, u, r),
     decreases u.len(),
 {
@@ -158,7 +158,7 @@ pub proof fn lemma_symbolic_run_is_derive_word<L>(sem: spec_fn(L, Data) -> bool,
 }
 
 /// Paper, Theorem (Matcher correctness), steps 2–3.
-pub proof fn theorem_matcher_correct<L>(sem: spec_fn(L, Data) -> bool, u: Seq<Data>, r: Regex<L>)
+pub proof fn theorem_matcher_correct<L>(sem: spec_fn(L, EventView) -> bool, u: Seq<EventView>, r: Regex<L>)
     ensures language::nullable(symbolic_run(sem, u, r)) == language::lang(sem, r, u),
 {
     lemma_symbolic_run_is_derive_word(sem, u, r);
@@ -166,8 +166,8 @@ pub proof fn theorem_matcher_correct<L>(sem: spec_fn(L, Data) -> bool, u: Seq<Da
 }
 
 /// A fired rule uses its unique complete head substitution.
-pub proof fn theorem_rule_decision(head: Head, tail: Regex<SrcTest>, request: Data, history: Seq<Data>, theta: Subst)
-    requires language::head_match(head, request, theta), theta.dom() == language::head_vars(head),
+pub proof fn theorem_rule_decision(head: Head, tail: Regex<SrcTest>, request: EventView, history: Seq<EventView>, theta: Subst)
+    requires language::head_match(head, request, theta),
     ensures language::pair_lang(head, tail, request, history) == language::nullable(symbolic_run(src_sem(theta), history, tail)),
 {
     language::lemma_pair_lang_substitutions(head, tail, request, history, theta);
@@ -175,8 +175,8 @@ pub proof fn theorem_rule_decision(head: Head, tail: Regex<SrcTest>, request: Da
 }
 
 /// Paper, step 1: without a complete matching substitution the rule is not fired.
-pub proof fn theorem_not_fired(head: Head, tail: Regex<SrcTest>, request: Data, history: Seq<Data>)
-    requires forall|theta: Subst| !(language::head_match(head, request, theta) && theta.dom() == language::head_vars(head)),
+pub proof fn theorem_not_fired(head: Head, tail: Regex<SrcTest>, request: EventView, history: Seq<EventView>)
+    requires forall|theta: Subst| !(language::head_match(head, request, theta)),
     ensures !language::pair_lang(head, tail, request, history),
 { }
 
@@ -469,13 +469,16 @@ pub proof fn lemma_test_quantifiers_splice<A>(p: spec_fn(A) -> bool, cs: Seq<A>,
     lemma_test_quantifiers_concat(p, cs.take(i) + ds, cs.skip(i + 1));
 }
 
-pub proof fn lemma_test_connectives(theta: Subst, cs: Seq<SrcTest>, e: Data)
+pub proof fn lemma_test_connectives(theta: Subst, cs: Seq<SrcTest>, e: EventView)
     ensures
         language::src_test_holds(theta, SrcTest::And(cs), e)
             == (forall|k: int| 0 <= k < cs.len() ==> language::src_test_holds(theta, cs[k], e)),
         language::src_test_holds(theta, SrcTest::Or(cs), e)
             == (exists|k: int| 0 <= k < cs.len() && language::src_test_holds(theta, cs[k], e)),
 {
+    reveal_with_fuel(language::src_test_holds, 2);
+    assert((SrcTest::And(cs))->And_0 == cs);
+    assert((SrcTest::Or(cs))->Or_0 == cs);
     if language::src_test_holds(theta, SrcTest::And(cs), e) {
         assert forall|k: int| 0 <= k < cs.len()
             implies language::src_test_holds(theta, cs[k], e) by {
@@ -492,7 +495,7 @@ pub proof fn lemma_test_connectives(theta: Subst, cs: Seq<SrcTest>, e: Data)
     }
 }
 
-pub proof fn lemma_test_binary(theta: Subst, a: SrcTest, b: SrcTest, e: Data)
+pub proof fn lemma_test_binary(theta: Subst, a: SrcTest, b: SrcTest, e: EventView)
     ensures
         language::src_test_holds(theta, SrcTest::And(seq![a, b]), e)
             == (language::src_test_holds(theta, a, e) && language::src_test_holds(theta, b, e)),
@@ -525,7 +528,7 @@ pub proof fn lemma_test_binary(theta: Subst, a: SrcTest, b: SrcTest, e: Data)
     }
 }
 
-pub proof fn lemma_test_rule_sound(theta: Subst, rule: TestRule, e: Data)
+pub proof fn lemma_test_rule_sound(theta: Subst, rule: TestRule, e: EventView)
     requires test_rule_valid(rule),
     ensures language::src_test_holds(theta, test_rule_lhs(rule), e)
         == language::src_test_holds(theta, test_rule_rhs(rule), e),
@@ -659,13 +662,8 @@ pub proof fn lemma_test_rule_sound(theta: Subst, rule: TestRule, e: Data)
                 let path = cs[i]->Eq_0;
                 let term = cs[i]->Eq_1;
                 assert(cs[j] == SrcTest::Neq(path, term));
-                match language::select(e, path) {
-                    Some(value) => {
-                        assert(value == language::term_value(theta, term));
-                        assert(value != language::term_value(theta, term));
-                    },
-                    None => { assert(!language::src_test_holds(theta, cs[i], e)); },
-                }
+                assert(language::field_value(e, path) == language::term_value(theta, term));
+                assert(language::field_value(e, path) != language::term_value(theta, term));
             }
         },
         TestRule::AndDistinctConstants(cs, i, j) => {
@@ -679,13 +677,8 @@ pub proof fn lemma_test_rule_sound(theta: Subst, rule: TestRule, e: Data)
                 assert(c != d);
                 assert(cs[i] == SrcTest::Eq(path, Term::Constant(c)));
                 assert(cs[j] == SrcTest::Eq(path, Term::Constant(d)));
-                match language::select(e, path) {
-                    Some(value) => {
-                        assert(value == c);
-                        assert(value == d);
-                    },
-                    None => { assert(!language::src_test_holds(theta, cs[i], e)); },
-                }
+                assert(language::field_value(e, path) == c);
+                assert(language::field_value(e, path) == d);
             }
         },
     }
@@ -774,7 +767,7 @@ pub open spec fn regex_rule_valid(rule: RegexRule) -> bool {
     }
 }
 
-pub proof fn lemma_lang_union_set<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, ds: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_lang_union_set<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, ds: Seq<Regex<L>>, w: Seq<EventView>)
     requires cs.to_set() == ds.to_set(),
     ensures language::lang(sem, Regex::Union(cs), w) == language::lang(sem, Regex::Union(ds), w),
 {
@@ -782,7 +775,7 @@ pub proof fn lemma_lang_union_set<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Rege
     language::lemma_lang_union(sem, cs, w); language::lemma_lang_union(sem, ds, w);
 }
 
-pub proof fn lemma_lang_intersect_set<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, ds: Seq<Regex<L>>, w: Seq<Data>)
+pub proof fn lemma_lang_intersect_set<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, ds: Seq<Regex<L>>, w: Seq<EventView>)
     requires cs.to_set() == ds.to_set(),
     ensures language::lang(sem, Regex::Intersect(cs), w) == language::lang(sem, Regex::Intersect(ds), w),
 {
@@ -791,7 +784,7 @@ pub proof fn lemma_lang_intersect_set<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<
 }
 
 
-pub proof fn lemma_lang_union_splice<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<Data>)
+pub proof fn lemma_lang_union_splice<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<EventView>)
     requires 0 <= i < cs.len(), cs[i] is Union,
     ensures language::lang(sem, Regex::Union(cs), w) == language::lang(sem, Regex::Union(cs.take(i) + cs[i]->Union_0 + cs.skip(i + 1)), w),
 {
@@ -802,7 +795,7 @@ pub proof fn lemma_lang_union_splice<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<R
     language::lemma_lang_union(sem, cs.take(i) + cs[i]->Union_0 + cs.skip(i + 1), w);
 }
 
-pub proof fn lemma_lang_intersect_splice<L>(sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<Data>)
+pub proof fn lemma_lang_intersect_splice<L>(sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<EventView>)
     requires 0 <= i < cs.len(), cs[i] is Intersect,
     ensures language::lang(sem, Regex::Intersect(cs), w) == language::lang(sem, Regex::Intersect(cs.take(i) + cs[i]->Intersect_0 + cs.skip(i + 1)), w),
 {
@@ -814,19 +807,19 @@ pub proof fn lemma_lang_intersect_splice<L>(sem: spec_fn(L, Data) -> bool, cs: S
 }
 
 pub proof fn lemma_concat_split<L>(
-    sem: spec_fn(L, Data) -> bool,
+    sem: spec_fn(L, EventView) -> bool,
     cs: Seq<Regex<L>>,
     ds: Seq<Regex<L>>,
-    w: Seq<Data>,
+    w: Seq<EventView>,
 )
     ensures language::lang(sem, Regex::Concat(cs + ds), w) <==>
-        exists|a: Seq<Data>, b: Seq<Data>| w == a + b
+        exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, Regex::Concat(cs), a)
             && language::lang(sem, Regex::Concat(ds), b),
     decreases cs.len(),
 {
     if language::lang(sem, Regex::Concat(cs + ds), w) {
-        let parts = choose|p: Seq<Seq<Data>>| p.len() == (cs + ds).len()
+        let parts = choose|p: Seq<Seq<EventView>>| p.len() == (cs + ds).len()
             && w == p.flatten()
             && forall|k: int| 0 <= k < (cs + ds).len() ==>
                 language::lang(sem, (cs + ds)[k], p[k]);
@@ -848,16 +841,16 @@ pub proof fn lemma_concat_split<L>(
         assert(language::lang(sem, Regex::Concat(cs), ap.flatten()));
         assert(language::lang(sem, Regex::Concat(ds), bp.flatten()));
     }
-    if exists|a: Seq<Data>, b: Seq<Data>| w == a + b
+    if exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b
         && language::lang(sem, Regex::Concat(cs), a)
         && language::lang(sem, Regex::Concat(ds), b) {
-        let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b
+        let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, Regex::Concat(cs), a)
             && language::lang(sem, Regex::Concat(ds), b);
-        let ap = choose|p: Seq<Seq<Data>>| p.len() == cs.len()
+        let ap = choose|p: Seq<Seq<EventView>>| p.len() == cs.len()
             && a == p.flatten()
             && forall|k: int| 0 <= k < cs.len() ==> language::lang(sem, cs[k], p[k]);
-        let bp = choose|p: Seq<Seq<Data>>| p.len() == ds.len()
+        let bp = choose|p: Seq<Seq<EventView>>| p.len() == ds.len()
             && b == p.flatten()
             && forall|k: int| 0 <= k < ds.len() ==> language::lang(sem, ds[k], p[k]);
         let parts = ap + bp;
@@ -877,16 +870,16 @@ pub proof fn lemma_concat_split<L>(
     }
 }
 
-pub proof fn lemma_parts_star_nil<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>)
+pub proof fn lemma_parts_star_nil<L>(sem: spec_fn(L, EventView) -> bool, c: Regex<L>)
     ensures language::lang(sem, Regex::Star(Box::new(c)), Seq::empty()),
 {
-    let parts = Seq::<Seq<Data>>::empty();
-    assert(parts.flatten() == Seq::<Data>::empty());
+    let parts = Seq::<Seq<EventView>>::empty();
+    assert(parts.flatten() == Seq::<EventView>::empty());
     assert(forall|k: int| 0 <= k < parts.len() ==> language::lang(sem, c, parts[k]));
 }
 
 pub proof fn lemma_parts_star_single<L>(
-    sem: spec_fn(L, Data) -> bool, c: Regex<L>, w: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, c: Regex<L>, w: Seq<EventView>,
 )
     requires language::lang(sem, c, w),
     ensures language::lang(sem, Regex::Star(Box::new(c)), w),
@@ -899,15 +892,15 @@ pub proof fn lemma_parts_star_single<L>(
 }
 
 pub proof fn lemma_parts_star_join<L>(
-    sem: spec_fn(L, Data) -> bool, c: Regex<L>, a: Seq<Data>, b: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, c: Regex<L>, a: Seq<EventView>, b: Seq<EventView>,
 )
     requires language::lang(sem, Regex::Star(Box::new(c)), a),
         language::lang(sem, Regex::Star(Box::new(c)), b),
     ensures language::lang(sem, Regex::Star(Box::new(c)), a + b),
 {
-    let ap = choose|p: Seq<Seq<Data>>| a == p.flatten()
+    let ap = choose|p: Seq<Seq<EventView>>| a == p.flatten()
         && forall|k: int| 0 <= k < p.len() ==> language::lang(sem, c, p[k]);
-    let bp = choose|p: Seq<Seq<Data>>| b == p.flatten()
+    let bp = choose|p: Seq<Seq<EventView>>| b == p.flatten()
         && forall|k: int| 0 <= k < p.len() ==> language::lang(sem, c, p[k]);
     let parts = ap + bp;
     vstd::seq_lib::lemma_flatten_concat(ap, bp);
@@ -923,7 +916,7 @@ pub proof fn lemma_parts_star_join<L>(
 
 /// Concatenating finitely many words in c* remains in c*, including empty parts.
 pub proof fn lemma_parts_star_flatten<L>(
-    sem: spec_fn(L, Data) -> bool, c: Regex<L>, parts: Seq<Seq<Data>>,
+    sem: spec_fn(L, EventView) -> bool, c: Regex<L>, parts: Seq<Seq<EventView>>,
 )
     requires forall|k: int| 0 <= k < parts.len() ==>
         language::lang(sem, Regex::Star(Box::new(c)), parts[k]),
@@ -942,12 +935,12 @@ pub proof fn lemma_parts_star_flatten<L>(
     }
 }
 
-pub proof fn lemma_star_star<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, w: Seq<Data>)
+pub proof fn lemma_star_star<L>(sem: spec_fn(L, EventView) -> bool, c: Regex<L>, w: Seq<EventView>)
     ensures language::lang(sem, Regex::Star(Box::new(Regex::Star(Box::new(c)))), w)
         == language::lang(sem, Regex::Star(Box::new(c)), w),
 {
     if language::lang(sem, Regex::Star(Box::new(Regex::Star(Box::new(c)))), w) {
-        let parts = choose|p: Seq<Seq<Data>>| w == p.flatten()
+        let parts = choose|p: Seq<Seq<EventView>>| w == p.flatten()
             && forall|k: int| 0 <= k < p.len() ==>
                 language::lang(sem, Regex::Star(Box::new(c)), p[k]);
         lemma_parts_star_flatten(sem, c, parts);
@@ -958,13 +951,13 @@ pub proof fn lemma_star_star<L>(sem: spec_fn(L, Data) -> bool, c: Regex<L>, w: S
 }
 
 pub proof fn lemma_star_of_nullary<L>(
-    sem: spec_fn(L, Data) -> bool, c: Regex<L>, w: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, c: Regex<L>, w: Seq<EventView>,
 )
-    requires forall|v: Seq<Data>| language::lang(sem, c, v) ==> v.len() == 0,
+    requires forall|v: Seq<EventView>| language::lang(sem, c, v) ==> v.len() == 0,
     ensures language::lang(sem, Regex::Star(Box::new(c)), w) == (w.len() == 0),
 {
     if language::lang(sem, Regex::Star(Box::new(c)), w) {
-        let parts = choose|p: Seq<Seq<Data>>| w == p.flatten()
+        let parts = choose|p: Seq<Seq<EventView>>| w == p.flatten()
             && forall|k: int| 0 <= k < p.len() ==> language::lang(sem, c, p[k]);
         assert forall|k: int| 0 <= k < parts.len() implies parts[k].len() == 0 by {
             assert(language::lang(sem, c, parts[k]));
@@ -972,17 +965,17 @@ pub proof fn lemma_star_of_nullary<L>(
         language::lemma_flatten_empty(parts);
     }
     if w.len() == 0 {
-        assert(w =~= Seq::<Data>::empty());
+        assert(w =~= Seq::<EventView>::empty());
         lemma_parts_star_nil(sem, c);
     }
 }
 
-pub proof fn lemma_singletons_flatten(w: Seq<Data>)
+pub proof fn lemma_singletons_flatten(w: Seq<EventView>)
     ensures Seq::new(w.len(), |k: int| seq![w[k]]).flatten() == w,
     decreases w.len(),
 {
     if w.len() == 0 {
-        assert(Seq::new(w.len(), |k: int| seq![w[k]]) =~= Seq::<Seq<Data>>::empty());
+        assert(Seq::new(w.len(), |k: int| seq![w[k]]) =~= Seq::<Seq<EventView>>::empty());
     } else {
         let prefix = w.drop_last();
         let parts = Seq::new(prefix.len(), |k: int| seq![prefix[k]]);
@@ -995,13 +988,13 @@ pub proof fn lemma_singletons_flatten(w: Seq<Data>)
 
 /// Equal tail languages can be substituted after the same first expression.
 pub proof fn lemma_parts_concat_tail_congruent<L>(
-    sem: spec_fn(L, Data) -> bool,
+    sem: spec_fn(L, EventView) -> bool,
     c: Regex<L>,
     left: Seq<Regex<L>>,
     right: Seq<Regex<L>>,
-    w: Seq<Data>,
+    w: Seq<EventView>,
 )
-    requires forall|v: Seq<Data>| language::lang(sem, Regex::Concat(left), v)
+    requires forall|v: Seq<EventView>| language::lang(sem, Regex::Concat(left), v)
         == language::lang(sem, Regex::Concat(right), v),
     ensures language::lang(sem, Regex::Concat(seq![c] + left), w)
         == language::lang(sem, Regex::Concat(seq![c] + right), w),
@@ -1009,27 +1002,27 @@ pub proof fn lemma_parts_concat_tail_congruent<L>(
     language::lemma_concat_prepend(sem, c, left, w);
     language::lemma_concat_prepend(sem, c, right, w);
     if language::lang(sem, Regex::Concat(seq![c] + left), w) {
-        let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b
+        let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, c, a)
             && language::lang(sem, Regex::Concat(left), b);
         assert(language::lang(sem, Regex::Concat(right), b));
-        assert(exists|a: Seq<Data>, b: Seq<Data>| w == a + b
+        assert(exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, c, a)
             && language::lang(sem, Regex::Concat(right), b));
     }
     if language::lang(sem, Regex::Concat(seq![c] + right), w) {
-        let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b
+        let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, c, a)
             && language::lang(sem, Regex::Concat(right), b);
         assert(language::lang(sem, Regex::Concat(left), b));
-        assert(exists|a: Seq<Data>, b: Seq<Data>| w == a + b
+        assert(exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b
             && language::lang(sem, c, a)
             && language::lang(sem, Regex::Concat(left), b));
     }
 }
 
 pub proof fn lemma_lang_concat_splice<L>(
-    sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<EventView>,
 )
     requires 0 <= i < cs.len(), cs[i] is Concat,
     ensures language::lang(sem, Regex::Concat(cs), w)
@@ -1049,7 +1042,7 @@ pub proof fn lemma_lang_concat_splice<L>(
         let flat_tail = tail.take(i - 1) + inner + tail.skip(i);
         assert(cs =~= seq![cs[0]] + tail);
         assert(ds =~= seq![cs[0]] + flat_tail);
-        assert forall|v: Seq<Data>| language::lang(sem, Regex::Concat(tail), v)
+        assert forall|v: Seq<EventView>| language::lang(sem, Regex::Concat(tail), v)
             == language::lang(sem, Regex::Concat(flat_tail), v) by {
             lemma_lang_concat_splice(sem, tail, i - 1, v);
         }
@@ -1057,17 +1050,17 @@ pub proof fn lemma_lang_concat_splice<L>(
     }
 }
 
-pub proof fn lemma_parts_concat_nil<L>(sem: spec_fn(L, Data) -> bool, w: Seq<Data>)
+pub proof fn lemma_parts_concat_nil<L>(sem: spec_fn(L, EventView) -> bool, w: Seq<EventView>)
     ensures language::lang(sem, Regex::Concat(Seq::<Regex<L>>::empty()), w) == (w.len() == 0),
 {
     if language::lang(sem, Regex::Concat(Seq::<Regex<L>>::empty()), w) {
-        let parts = choose|p: Seq<Seq<Data>>| p.len() == 0 && w == p.flatten()
+        let parts = choose|p: Seq<Seq<EventView>>| p.len() == 0 && w == p.flatten()
             && forall|k: int| 0 <= k < 0 ==>
                 language::lang(sem, Seq::<Regex<L>>::empty()[k], p[k]);
-        assert(parts =~= Seq::<Seq<Data>>::empty());
+        assert(parts =~= Seq::<Seq<EventView>>::empty());
     }
     if w.len() == 0 {
-        let parts = Seq::<Seq<Data>>::empty();
+        let parts = Seq::<Seq<EventView>>::empty();
         assert(w =~= parts.flatten());
         assert(forall|k: int| 0 <= k < 0 ==>
             language::lang(sem, Seq::<Regex<L>>::empty()[k], parts[k]));
@@ -1075,7 +1068,7 @@ pub proof fn lemma_parts_concat_nil<L>(sem: spec_fn(L, Data) -> bool, w: Seq<Dat
 }
 
 pub proof fn lemma_lang_concat_epsilon<L>(
-    sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<EventView>,
 )
     requires 0 <= i < cs.len(), cs[i] == Regex::Epsilon,
     ensures language::lang(sem, Regex::Concat(cs), w)
@@ -1087,17 +1080,17 @@ pub proof fn lemma_lang_concat_epsilon<L>(
         assert(cs.remove(i) =~= tail);
         language::lemma_concat_uncons(sem, cs, w);
         if language::lang(sem, Regex::Concat(cs), w) {
-            let (a, b) = choose|a: Seq<Data>, b: Seq<Data>| w == a + b
+            let (a, b) = choose|a: Seq<EventView>, b: Seq<EventView>| w == a + b
                 && language::lang(sem, cs[0], a)
                 && language::lang(sem, Regex::Concat(tail), b);
-            assert(a =~= Seq::<Data>::empty());
+            assert(a =~= Seq::<EventView>::empty());
             assert(b =~= w);
         }
         if language::lang(sem, Regex::Concat(tail), w) {
-            let a = Seq::<Data>::empty();
+            let a = Seq::<EventView>::empty();
             assert(w == a + w);
             assert(language::lang(sem, cs[0], a));
-            assert(exists|a: Seq<Data>, b: Seq<Data>| w == a + b
+            assert(exists|a: Seq<EventView>, b: Seq<EventView>| w == a + b
                 && language::lang(sem, cs[0], a)
                 && language::lang(sem, Regex::Concat(tail), b));
         }
@@ -1106,7 +1099,7 @@ pub proof fn lemma_lang_concat_epsilon<L>(
         let shorter = tail.remove(i - 1);
         assert(cs =~= seq![cs[0]] + tail);
         assert(cs.remove(i) =~= seq![cs[0]] + shorter);
-        assert forall|v: Seq<Data>| language::lang(sem, Regex::Concat(tail), v)
+        assert forall|v: Seq<EventView>| language::lang(sem, Regex::Concat(tail), v)
             == language::lang(sem, Regex::Concat(shorter), v) by {
             lemma_lang_concat_epsilon(sem, tail, i - 1, v);
         }
@@ -1115,19 +1108,19 @@ pub proof fn lemma_lang_concat_epsilon<L>(
 }
 
 pub proof fn lemma_lang_concat_empty<L>(
-    sem: spec_fn(L, Data) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<Data>,
+    sem: spec_fn(L, EventView) -> bool, cs: Seq<Regex<L>>, i: int, w: Seq<EventView>,
 )
     requires 0 <= i < cs.len(), cs[i] == Regex::Empty,
     ensures !language::lang(sem, Regex::Concat(cs), w),
 {
     if language::lang(sem, Regex::Concat(cs), w) {
-        let parts = choose|p: Seq<Seq<Data>>| p.len() == cs.len() && w == p.flatten()
+        let parts = choose|p: Seq<Seq<EventView>>| p.len() == cs.len() && w == p.flatten()
             && forall|k: int| 0 <= k < cs.len() ==> language::lang(sem, cs[k], p[k]);
         assert(language::lang(sem, cs[i], parts[i]));
     }
 }
 
-pub proof fn lemma_regex_rule_sound(theta: Subst, rule: RegexRule, w: Seq<Data>)
+pub proof fn lemma_regex_rule_sound(theta: Subst, rule: RegexRule, w: Seq<EventView>)
     requires regex_rule_valid(rule),
     ensures language::lang(src_sem(theta), regex_rule_lhs(rule), w) == language::lang(src_sem(theta), regex_rule_rhs(rule), w),
 {
@@ -1174,11 +1167,11 @@ pub proof fn lemma_regex_rule_sound(theta: Subst, rule: RegexRule, w: Seq<Data>)
         RegexRule::ConcatNil => lemma_parts_concat_nil(sem, w),
         RegexRule::StarStar(c) => lemma_star_star(sem, c, w),
         RegexRule::StarEpsilon => {
-            assert forall|v: Seq<Data>| language::lang(sem, Regex::Epsilon, v) implies v.len() == 0 by { }
+            assert forall|v: Seq<EventView>| language::lang(sem, Regex::Epsilon, v) implies v.len() == 0 by { }
             lemma_star_of_nullary(sem, Regex::Epsilon, w);
         },
         RegexRule::StarEmpty => {
-            assert forall|v: Seq<Data>| language::lang(sem, Regex::Empty, v) implies v.len() == 0 by { }
+            assert forall|v: Seq<EventView>| language::lang(sem, Regex::Empty, v) implies v.len() == 0 by { }
             lemma_star_of_nullary(sem, Regex::Empty, w);
         },
         RegexRule::StarAll | RegexRule::StarTrue => {
@@ -1353,7 +1346,7 @@ pub proof fn lemma_sim_valid_children(ds: Seq<Sim>)
     assert((Sim::Concat(ds))->Concat_0 =~= ds);
 }
 
-pub proof fn lemma_test_similar_preserves(theta: Subst, d: TestSim, e: Data)
+pub proof fn lemma_test_similar_preserves(theta: Subst, d: TestSim, e: EventView)
     requires test_sim_valid(d),
     ensures language::src_test_holds(theta, test_sim_lhs(d), e) == language::src_test_holds(theta, test_sim_rhs(d), e),
     decreases d,
@@ -1400,7 +1393,7 @@ pub proof fn lemma_test_similar_preserves(theta: Subst, d: TestSim, e: Data)
     }
 }
 
-pub proof fn lemma_similar_preserves_lang(theta: Subst, d: Sim, w: Seq<Data>)
+pub proof fn lemma_similar_preserves_lang(theta: Subst, d: Sim, w: Seq<EventView>)
     requires sim_valid(d),
     ensures language::lang(src_sem(theta), sim_lhs(d), w) == language::lang(src_sem(theta), sim_rhs(d), w),
     decreases d,
@@ -1420,17 +1413,17 @@ pub proof fn lemma_similar_preserves_lang(theta: Subst, d: Sim, w: Seq<Data>)
         },
         Sim::Not(c) => lemma_similar_preserves_lang(theta, *c, w),
         Sim::Star(c) => {
-            assert forall|v: Seq<Data>| language::lang(sem, sim_lhs(*c), v) == language::lang(sem, sim_rhs(*c), v) by {
+            assert forall|v: Seq<EventView>| language::lang(sem, sim_lhs(*c), v) == language::lang(sem, sim_rhs(*c), v) by {
                 lemma_similar_preserves_lang(theta, *c, v);
             }
             if language::lang(sem, sim_lhs(d), w) {
-                let parts = choose|parts: Seq<Seq<Data>>| w == parts.flatten()
+                let parts = choose|parts: Seq<Seq<EventView>>| w == parts.flatten()
                     && forall|k: int| 0 <= k < parts.len() ==> language::lang(sem, sim_lhs(*c), parts[k]);
                 assert forall|k: int| 0 <= k < parts.len() implies language::lang(sem, sim_rhs(*c), parts[k]) by { }
                 assert(language::lang(sem, sim_rhs(d), w));
             }
             if language::lang(sem, sim_rhs(d), w) {
-                let parts = choose|parts: Seq<Seq<Data>>| w == parts.flatten()
+                let parts = choose|parts: Seq<Seq<EventView>>| w == parts.flatten()
                     && forall|k: int| 0 <= k < parts.len() ==> language::lang(sem, sim_rhs(*c), parts[k]);
                 assert forall|k: int| 0 <= k < parts.len() implies language::lang(sem, sim_lhs(*c), parts[k]) by { }
                 assert(language::lang(sem, sim_lhs(d), w));
@@ -1471,18 +1464,18 @@ pub proof fn lemma_similar_preserves_lang(theta: Subst, d: Sim, w: Seq<Data>)
             let cs = sim_lhs(d)->Concat_0;
             let es = sim_rhs(d)->Concat_0;
             assert(cs.len() == ds.len() && es.len() == ds.len());
-            assert forall|k: int, v: Seq<Data>| 0 <= k < ds.len() implies language::lang(sem, cs[k], v) == language::lang(sem, es[k], v) by {
+            assert forall|k: int, v: Seq<EventView>| 0 <= k < ds.len() implies language::lang(sem, cs[k], v) == language::lang(sem, es[k], v) by {
                 assert(sim_valid(d));
                 lemma_similar_preserves_lang(theta, ds[k], v);
             }
             if language::lang(sem, Regex::Concat(cs), w) {
-                let parts = choose|parts: Seq<Seq<Data>>| parts.len() == cs.len() && w == parts.flatten()
+                let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == cs.len() && w == parts.flatten()
                     && forall|k: int| 0 <= k < cs.len() ==> language::lang(sem, cs[k], parts[k]);
                 assert forall|k: int| 0 <= k < es.len() implies language::lang(sem, es[k], parts[k]) by { }
                 assert(language::lang(sem, Regex::Concat(es), w));
             }
             if language::lang(sem, Regex::Concat(es), w) {
-                let parts = choose|parts: Seq<Seq<Data>>| parts.len() == es.len() && w == parts.flatten()
+                let parts = choose|parts: Seq<Seq<EventView>>| parts.len() == es.len() && w == parts.flatten()
                     && forall|k: int| 0 <= k < es.len() ==> language::lang(sem, es[k], parts[k]);
                 assert forall|k: int| 0 <= k < cs.len() implies language::lang(sem, cs[k], parts[k]) by { }
                 assert(language::lang(sem, Regex::Concat(cs), w));
@@ -1492,7 +1485,7 @@ pub proof fn lemma_similar_preserves_lang(theta: Subst, d: Sim, w: Seq<Data>)
 }
 
 /// Paper, Lemma (Similarity preserves language).
-pub proof fn theorem_similarity_preserves_language(r: Regex<SrcTest>, s: Regex<SrcTest>, theta: Subst, w: Seq<Data>)
+pub proof fn theorem_similarity_preserves_language(r: Regex<SrcTest>, s: Regex<SrcTest>, theta: Subst, w: Seq<EventView>)
     requires similar(r, s),
     ensures language::lang(src_sem(theta), r, w) == language::lang(src_sem(theta), s, w),
 {
@@ -1501,50 +1494,33 @@ pub proof fn theorem_similarity_preserves_language(r: Regex<SrcTest>, s: Regex<S
 }
 
 /// Similar tails give identical policy-visible decisions under every head.
-pub proof fn theorem_similar_tails_same_decision(head: Head, r: Regex<SrcTest>, s: Regex<SrcTest>, request: Data, history: Seq<Data>)
+pub proof fn theorem_similar_tails_same_decision(head: Head, r: Regex<SrcTest>, s: Regex<SrcTest>, request: EventView, history: Seq<EventView>)
     requires similar(r, s),
     ensures language::pair_lang(head, r, request, history) == language::pair_lang(head, s, request, history),
 {
     if language::pair_lang(head, r, request, history) {
-        let theta = choose|theta: Subst| language::head_match(head, request, theta) && theta.dom() == language::head_vars(head)
+        let theta = choose|theta: Subst| language::head_match(head, request, theta)
             && language::lang(src_sem(theta), r, history);
         theorem_similarity_preserves_language(r, s, theta, history);
         assert(language::pair_lang(head, s, request, history));
     }
     if language::pair_lang(head, s, request, history) {
-        let theta = choose|theta: Subst| language::head_match(head, request, theta) && theta.dom() == language::head_vars(head)
+        let theta = choose|theta: Subst| language::head_match(head, request, theta)
             && language::lang(src_sem(theta), s, history);
         theorem_similarity_preserves_language(r, s, theta, history);
         assert(language::pair_lang(head, r, request, history));
     }
 }
 
-/// Regorus deviation: missing paths make both Eq and Neq false, not complements.
-pub proof fn theorem_eq_or_neq_not_similar_to_true()
-    ensures !test_similar(
-        SrcTest::Or(seq![SrcTest::Eq(seq![Data::String(seq!['k'])], Term::Constant(Data::Null)),
-                         SrcTest::Neq(seq![Data::String(seq!['k'])], Term::Constant(Data::Null))]),
-        SrcTest::Bool(true)),
+/// Mandatory coordinates make Eq and Neq exact complements.
+pub proof fn theorem_eq_or_neq_is_true(theta: Subst, field: HistoryField, term: Term, event: EventView)
+    ensures language::src_test_holds(theta,
+        SrcTest::Or(seq![SrcTest::Eq(field, term), SrcTest::Neq(field, term)]), event),
 {
-    let path = seq![Data::String(seq!['k'])];
-    let cs = seq![SrcTest::Eq(path, Term::Constant(Data::Null)), SrcTest::Neq(path, Term::Constant(Data::Null))];
-    let lhs = SrcTest::Or(cs);
-    let rhs = SrcTest::Bool(true);
-    let theta = Map::empty();
-    let event = Data::Object(Map::empty());
-    reveal_with_fuel(language::select, 2);
-    assert(language::select(event, path) is None);
-    lemma_test_connectives(theta, cs, event);
-    assert forall|k: int| 0 <= k < cs.len() implies !language::src_test_holds(theta, cs[k], event) by {
-        assert(k == 0 || k == 1);
-    }
-    if test_similar(lhs, rhs) {
-        let d = choose|d: TestSim| test_sim_valid(d) && test_sim_lhs(d) == lhs && test_sim_rhs(d) == rhs;
-        lemma_test_similar_preserves(theta, d, event);
-    }
+    lemma_test_binary(theta, SrcTest::Eq(field, term), SrcTest::Neq(field, term), event);
 }
 
-/// Only signed kernel primitives have complements; source Eq/Neq do not.
+/// Test polarity complements the same fixed typed primitive.
 pub open spec fn test_complement(t: model::Test) -> model::Test
     decreases t,
 {
@@ -1557,8 +1533,8 @@ pub open spec fn test_complement(t: model::Test) -> model::Test
     }
 }
 
-pub proof fn lemma_test_complement_holds(s: model::Symbols, theta: Seq<Data>, t: model::Test, e: Data)
-    ensures model::test_holds(s, theta, test_complement(t), e) == !model::test_holds(s, theta, t, e),
+pub proof fn lemma_test_complement_holds(theta: Subst, t: model::Test, e: EventView)
+    ensures model::test_holds(theta, test_complement(t), e) == !model::test_holds(theta, t, e),
     decreases t,
 {
     match t {
@@ -1567,16 +1543,16 @@ pub proof fn lemma_test_complement_holds(s: model::Symbols, theta: Seq<Data>, t:
             assert(ds.len() == cs.len());
             assert((model::Test::And(cs))->And_0 =~= cs);
             assert((model::Test::Or(ds))->Or_0 =~= ds);
-            assert forall|k: int| 0 <= k < cs.len() implies model::test_holds(s, theta, ds[k], e) == !model::test_holds(s, theta, cs[k], e) by {
-                lemma_test_complement_holds(s, theta, cs[k], e);
+            assert forall|k: int| 0 <= k < cs.len() implies model::test_holds(theta, ds[k], e) == !model::test_holds(theta, cs[k], e) by {
+                lemma_test_complement_holds(theta, cs[k], e);
             }
-            if !model::test_holds(s, theta, t, e) {
-                let k = choose|k: int| 0 <= k < cs.len() && !model::test_holds(s, theta, cs[k], e);
-                assert(model::test_holds(s, theta, ds[k], e));
+            if !model::test_holds(theta, t, e) {
+                let k = choose|k: int| 0 <= k < cs.len() && !model::test_holds(theta, cs[k], e);
+                assert(model::test_holds(theta, ds[k], e));
             }
-            if model::test_holds(s, theta, test_complement(t), e) {
-                let k = choose|k: int| 0 <= k < ds.len() && model::test_holds(s, theta, ds[k], e);
-                assert(!model::test_holds(s, theta, cs[k], e));
+            if model::test_holds(theta, test_complement(t), e) {
+                let k = choose|k: int| 0 <= k < ds.len() && model::test_holds(theta, ds[k], e);
+                assert(!model::test_holds(theta, cs[k], e));
             }
         },
         model::Test::Or(cs) => {
@@ -1584,8 +1560,8 @@ pub proof fn lemma_test_complement_holds(s: model::Symbols, theta: Seq<Data>, t:
             assert(ds.len() == cs.len());
             assert((model::Test::Or(cs))->Or_0 =~= cs);
             assert((model::Test::And(ds))->And_0 =~= ds);
-            assert forall|k: int| 0 <= k < cs.len() implies model::test_holds(s, theta, ds[k], e) == !model::test_holds(s, theta, cs[k], e) by {
-                lemma_test_complement_holds(s, theta, cs[k], e);
+            assert forall|k: int| 0 <= k < cs.len() implies model::test_holds(theta, ds[k], e) == !model::test_holds(theta, cs[k], e) by {
+                lemma_test_complement_holds(theta, cs[k], e);
             }
         },
         _ => {},
@@ -1612,6 +1588,51 @@ pub proof fn lemma_test_complement_involutive(t: model::Test)
         },
         _ => {},
     }
+}
+
+/// Extend the pinned graph; graph replacement requires a fresh root association.
+pub proof fn theorem_batch_extends_pinned_prefix(
+    before: model::Graph, after: model::Graph, theta: Subst,
+    root: nat, start: nat, out: nat, history: Seq<EventView>, consumed: nat, end: nat,
+)
+    requires
+        model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
+        root < before.regexes.len(), start < before.regexes.len(), out < after.regexes.len(),
+        consumed <= end <= history.len(),
+        forall|word: Seq<EventView>| model::regex_lang(before, theta, start, word)
+            == model::regex_lang(before, theta, root, history.take(consumed as int) + word),
+        forall|word: Seq<EventView>| model::regex_lang(after, theta, out, word)
+            == model::regex_lang(after, theta, start,
+                history.subrange(consumed as int, end as int) + word),
+    ensures
+        forall|word: Seq<EventView>| model::regex_lang(after, theta, out, word)
+            == model::regex_lang(before, theta, root, history.take(end as int) + word),
+        language::nullable(model::lift_regex(after, out))
+            == model::regex_lang(before, theta, root, history.take(end as int)),
+{
+    hide(language::lang);
+    hide(model::lift_regex);
+    hide(model::test_holds);
+    model::lemma_graph_wf_elim(before);
+    model::lemma_lift_regex_stable(before, after, start);
+    assert(history.take(consumed as int) + history.subrange(consumed as int, end as int)
+        =~= history.take(end as int));
+    assert forall|word: Seq<EventView>| model::regex_lang(after, theta, out, word)
+        == model::regex_lang(before, theta, root, history.take(end as int) + word) by {
+        let suffix = history.subrange(consumed as int, end as int) + word;
+        assert(model::regex_lang(after, theta, out, word)
+            == model::regex_lang(after, theta, start, suffix));
+        assert(model::regex_lang(after, theta, start, suffix)
+            == model::regex_lang(before, theta, start, suffix));
+        assert(model::regex_lang(before, theta, start, suffix)
+            == model::regex_lang(before, theta, root, history.take(consumed as int) + suffix));
+        assert(history.take(consumed as int) + suffix =~= history.take(end as int) + word);
+    }
+    assert(model::regex_lang(after, theta, out, Seq::<EventView>::empty())
+        == model::regex_lang(before, theta, root,
+            history.take(end as int) + Seq::<EventView>::empty()));
+    language::lemma_nullable_iff_nil(model::gsem(theta), model::lift_regex(after, out));
+    assert(history.take(end as int) + Seq::<EventView>::empty() =~= history.take(end as int));
 }
 
 }

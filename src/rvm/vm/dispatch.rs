@@ -12,11 +12,16 @@ use super::execution_model::{ExecutionMode, SuspendReason};
 use super::loops::LoopParams;
 use super::machine::RegoVM;
 
+#[derive(Debug)]
 pub(super) enum InstructionOutcome {
     Continue,
+    #[cfg(feature = "history")]
+    Repeat,
     Return(Value),
     Break,
-    Suspend { reason: SuspendReason },
+    Suspend {
+        reason: SuspendReason,
+    },
 }
 
 impl RegoVM {
@@ -1169,16 +1174,15 @@ impl RegoVM {
                 self.execute_comprehension_end()?;
                 Ok(InstructionOutcome::Continue)
             }
-            HistoryDecide { params_index } => {
+            HistoryStep { params_index } => {
                 #[cfg(feature = "history")]
                 {
-                    self.execute_history_decide(params_index)?;
-                    Ok(InstructionOutcome::Continue)
+                    self.execute_history_step(params_index)
                 }
                 #[cfg(not(feature = "history"))]
                 {
                     let _ = params_index;
-                    Err(VmError::HistoryDecideUnavailable { pc: self.pc })
+                    Err(VmError::HistoryFeatureDisabled { pc: self.pc })
                 }
             }
             unexpected => Err(VmError::UnhandledInstruction {
