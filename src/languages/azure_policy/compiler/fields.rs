@@ -5,7 +5,7 @@
 //! Field-kind and resource-path compilation.
 
 use alloc::format;
-use alloc::string::{String, ToString as _};
+use alloc::string::ToString as _;
 use alloc::vec::Vec;
 
 use anyhow::{anyhow, bail, Result};
@@ -15,7 +15,7 @@ use crate::rvm::instructions::{LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 
 use super::core::Compiler;
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards};
+use super::utils::{split_count_wildcard_path, split_path_without_wildcards, PathSegment};
 
 impl Compiler {
     pub(super) fn compile_field_kind(
@@ -184,20 +184,16 @@ impl Compiler {
 
         if let Some(override_reg) = self.resource_override_reg {
             let parts = split_path_without_wildcards(&lowered)?;
-            let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-            return self.emit_chained_index_literal_path(override_reg, &refs, span);
+            return self.emit_chained_index_segments(override_reg, &parts, span);
         }
 
         let input_reg = self.load_input(span)?;
 
         let mut path = Vec::new();
-        path.push("resource".to_string());
-        for part in split_path_without_wildcards(&lowered)? {
-            path.push(part);
-        }
+        path.push(PathSegment::Key("resource".to_string()));
+        path.extend(split_path_without_wildcards(&lowered)?);
 
-        let refs = path.iter().map(String::as_str).collect::<Vec<_>>();
-        self.emit_chained_index_literal_path(input_reg, &refs, span)
+        self.emit_chained_index_segments(input_reg, &path, span)
     }
 
     pub(super) fn compile_resource_root(&mut self, span: &crate::lexer::Span) -> Result<u8> {
@@ -236,8 +232,7 @@ impl Compiler {
             Some(base) if prefix_lower.is_empty() => base,
             Some(base) => {
                 let parts = split_path_without_wildcards(&prefix_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None if prefix_lower.is_empty() => self.compile_resource_root(span)?,
             None => self.compile_resource_path_value(&prefix_lower, span)?,
@@ -269,8 +264,7 @@ impl Compiler {
             Some(ref s) => {
                 let s_lower = s.to_ascii_lowercase();
                 let parts = split_path_without_wildcards(&s_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                let val_reg = self.emit_chained_index_literal_path(current_reg, &refs, span)?;
+                let val_reg = self.emit_chained_index_segments(current_reg, &parts, span)?;
                 self.emit(
                     Instruction::ArrayPushDefined {
                         arr: result_reg,

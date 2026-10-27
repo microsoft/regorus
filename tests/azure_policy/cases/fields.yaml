@@ -134,6 +134,81 @@ cases:
         environment: "production"
     want_effect: "audit"
 
+  - note: field_tags_numeric_key_bracket
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['123']",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "123": "production"
+    want_effect: "audit"
+
+  - note: field_tags_numeric_key_bracket_value_differs
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['123']",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "123": "development"
+    want_undefined: true
+
+  - note: field_array_numeric_index_still_indexes
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipRules[1].value",
+          "equals": "10.0.0.2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        ipRules:
+          - value: "10.0.0.1"
+          - value: "10.0.0.2"
+    want_effect: "audit"
+
+  - note: field_quoted_numeric_key_on_nested_object
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config['123']",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "123": "enabled"
+    want_effect: "audit"
+
+  - note: field_quoted_key_preserves_literal_inner_apostrophes
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config[\"'123'\"]",
+          "equals": "development"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "123": "production"
+          "'123'": "development"
+    want_effect: "audit"
+
   - note: field_tags_bracket_notation
     policy_rule: |
       {
@@ -320,4 +395,115 @@ cases:
       properties:
         ipConfigurations:
           - name: "primary"
+    want_undefined: true
+
+  # Quoted digits are object keys on every compiler path that splits field paths.
+
+  - note: field_quoted_digit_subscript_on_array_is_not_an_index
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.ipRules['1'].value",
+          "equals": "10.0.0.2"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        ipRules:
+          - value: "10.0.0.1"
+          - value: "10.0.0.2"
+    want_undefined: true
+
+  - note: field_dotted_numeric_segment_is_a_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config.123",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "123": "enabled"
+    want_effect: "audit"
+
+  - note: field_function_quoted_numeric_key
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('properties.config[''123'']')]",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "123": "enabled"
+    want_effect: "audit"
+
+  - note: field_function_quoted_numeric_tag_key
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('tags[''123'']')]",
+          "equals": "production"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      tags:
+        "123": "production"
+    want_effect: "audit"
+
+  - note: field_wildcard_prefix_quoted_numeric_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.groups['123'][*].name",
+          "equals": "web"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        groups:
+          "123":
+            - name: "web"
+            - name: "web"
+    want_effect: "audit"
+
+  - note: field_wildcard_suffix_quoted_numeric_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.items[*]['123']",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        items:
+          - "123": "enabled"
+          - "123": "enabled"
+    want_effect: "audit"
+
+  - note: field_wildcard_suffix_quoted_numeric_key_one_element_differs
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.items[*]['123']",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        items:
+          - "123": "enabled"
+          - "123": "disabled"
     want_undefined: true

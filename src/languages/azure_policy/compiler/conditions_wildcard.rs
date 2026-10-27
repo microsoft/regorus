@@ -6,7 +6,6 @@
 
 use alloc::format;
 use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
 
 use anyhow::{anyhow, Result};
 
@@ -110,8 +109,7 @@ impl Compiler {
             Some(base) if prefix.is_empty() => base,
             Some(base) => {
                 let parts = split_path_without_wildcards(&prefix)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None if prefix.is_empty() => self.compile_resource_root(span)?,
             None => self.compile_resource_path_value(&prefix, span)?,
@@ -152,8 +150,7 @@ impl Compiler {
                 let element_reg = match &suffix {
                     Some(s) => {
                         let parts = split_path_without_wildcards(s)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                        self.emit_chained_index_literal_path(current_reg, &refs, span)?
+                        self.emit_chained_index_segments(current_reg, &parts, span)?
                     }
                     None => current_reg,
                 };

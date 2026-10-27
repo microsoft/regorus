@@ -53,13 +53,36 @@ pub(super) fn split_count_wildcard_path(path: &str) -> Result<(String, Option<St
     Ok((prefix.to_string(), suffix))
 }
 
+/// One segment of a field path.
+///
+/// The distinction is decided while parsing because it exists only in the
+/// source syntax: `tags['123']` names an object key and `ipRules[0]`
+/// subscripts an array, yet both reduce to digits once quoting is stripped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PathSegment {
+    Key(String),
+    Index(u64),
+}
+
+fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
+    s.strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .or_else(|| {
+            s.strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+        })
+}
+
 /// Split a dotted path (without `[*]` wildcards) into its component segments.
 ///
 /// Handles bracket notation:
-///   - `tags['key']` → `["tags", "key"]`
-///   - `properties['network-acls']` → `["properties", "network-acls"]`
-///   - `properties.ipRules[0].value` → `["properties", "ipRules", "0", "value"]`
-pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
+///   - `tags['key']` -> `[Key("tags"), Key("key")]`
+///   - `tags['123']` -> `[Key("tags"), Key("123")]`
+///   - `properties.ipRules[0].value` -> `[Key("properties"), Key("ipRules"), Index(0), Key("value")]`
+///
+/// Only a bare, unquoted, all-digit subscript is an index. Dotted segments are
+/// always keys because Azure Policy spells array access with brackets.
+pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<PathSegment>> {
     if path.trim().is_empty() {
         bail!("empty path");
     }
@@ -87,7 +110,7 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
                     bail!("empty segment in path: {}", path);
                 }
                 if !t.is_empty() {
-                    parts.push(t.to_string());
+                    parts.push(PathSegment::Key(t.to_string()));
                 }
                 token.clear();
                 after_bracket = false;
@@ -100,7 +123,7 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
                 after_bracket = false;
                 let t = token.trim();
                 if !t.is_empty() {
-                    parts.push(t.to_string());
+                    parts.push(PathSegment::Key(t.to_string()));
                 }
                 token.clear();
             }
@@ -110,15 +133,20 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
                 }
                 in_bracket = false;
                 after_bracket = true;
-                let cleaned = bracket
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string();
-                if cleaned.is_empty() {
+                let raw = bracket.trim();
+                if raw.is_empty() {
                     bail!("empty bracket in path: {}", path);
                 }
-                parts.push(cleaned);
+                let segment = if let Some(key) = strip_matching_outer_quotes(raw) {
+                    if key.is_empty() {
+                        bail!("empty quoted key in path: {}", path);
+                    }
+                    PathSegment::Key(key.to_string())
+                } else {
+                    raw.parse::<u64>()
+                        .map_or_else(|_| PathSegment::Key(raw.to_string()), PathSegment::Index)
+                };
+                parts.push(segment);
                 bracket.clear();
             }
             _ => {
@@ -140,7 +168,7 @@ pub(super) fn split_path_without_wildcards(path: &str) -> Result<Vec<String>> {
 
     let t = token.trim();
     if !t.is_empty() {
-        parts.push(t.to_string());
+        parts.push(PathSegment::Key(t.to_string()));
     }
 
     Ok(parts)
@@ -357,11 +385,15 @@ mod tests {
     // split_path_without_wildcards
     // -----------------------------------------------------------------------
 
+    fn key(name: &str) -> PathSegment {
+        PathSegment::Key(name.to_string())
+    }
+
     #[test]
     fn path_simple_dotted() {
         assert_eq!(
             split_path_without_wildcards("a.b.c").unwrap(),
-            vec!["a", "b", "c"]
+            vec![key("a"), key("b"), key("c")]
         );
     }
 
@@ -369,7 +401,7 @@ mod tests {
     fn path_bracket_quoted() {
         assert_eq!(
             split_path_without_wildcards("tags['key']").unwrap(),
-            vec!["tags", "key"]
+            vec![key("tags"), key("key")]
         );
     }
 
@@ -377,13 +409,70 @@ mod tests {
     fn path_bracket_numeric() {
         assert_eq!(
             split_path_without_wildcards("a[0].b").unwrap(),
-            vec!["a", "0", "b"]
+            vec![key("a"), PathSegment::Index(0), key("b")]
+        );
+    }
+
+    #[test]
+    fn path_bracket_quoted_digits_is_a_key() {
+        assert_eq!(
+            split_path_without_wildcards("tags['123']").unwrap(),
+            vec![key("tags"), key("123")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("tags[\"123\"]").unwrap(),
+            vec![key("tags"), key("123")]
+        );
+    }
+
+    #[test]
+    fn path_empty_quoted_key_is_an_error() {
+        for path in ["a['']", "a[\"\"]", "a[ '' ]"] {
+            let err = split_path_without_wildcards(path).unwrap_err().to_string();
+            assert!(err.contains("empty quoted key in path"), "{path}: {err}");
+        }
+        let err = split_path_without_wildcards("a[]").unwrap_err().to_string();
+        assert!(err.contains("empty bracket in path"), "{err}");
+    }
+
+    #[test]
+    fn path_bracket_preserves_quotes_inside_delimiters() {
+        assert_eq!(
+            split_path_without_wildcards("properties.config[\"'123'\"]").unwrap(),
+            vec![key("properties"), key("config"), key("'123'")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("properties.config['\"123\"']").unwrap(),
+            vec![key("properties"), key("config"), key("\"123\"")]
+        );
+    }
+
+    #[test]
+    fn path_bracket_preserves_mismatched_quotes() {
+        assert_eq!(
+            split_path_without_wildcards("properties.config[\"123']").unwrap(),
+            vec![key("properties"), key("config"), key("\"123'")]
+        );
+        assert_eq!(
+            split_path_without_wildcards("properties.config['123\"]").unwrap(),
+            vec![key("properties"), key("config"), key("'123\"")]
+        );
+    }
+
+    #[test]
+    fn path_dotted_digits_is_a_key() {
+        assert_eq!(
+            split_path_without_wildcards("tags.123").unwrap(),
+            vec![key("tags"), key("123")]
         );
     }
 
     #[test]
     fn path_single_segment() {
-        assert_eq!(split_path_without_wildcards("name").unwrap(), vec!["name"]);
+        assert_eq!(
+            split_path_without_wildcards("name").unwrap(),
+            vec![key("name")]
+        );
     }
 
     #[test]
