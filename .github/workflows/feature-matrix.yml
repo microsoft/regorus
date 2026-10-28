@@ -52,6 +52,10 @@ jobs:
           - name: observability
             features: std,arc,rvm,coverage,cache
 
+          # Default-off explanations (implies rvm) without full-opa.
+          - name: explanations
+            features: std,arc,explanations
+
           # Azure Policy adds jsonschema + dashmap; test it compiles
           # and runs on top of full-opa.
           - name: azure-policy
