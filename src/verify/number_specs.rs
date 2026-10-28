@@ -206,51 +206,20 @@ impl NumberView {
     // Special values are ordered by rank. Values in the finite rank use exact scaled integers.
     pub open spec fn cmp_values(self: Self, other: Self) -> Ordering
     {
-        match (self, other) {
-            (Self::Integer(lhs), Self::Integer(rhs)) =>
-                if lhs < rhs {
-                    Ordering::Less
-                } else if lhs > rhs {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                },
-            (Self::Float(lhs), Self::Float(rhs)) =>
-                if self.cmp_rank() != other.cmp_rank() {
-                    if self.cmp_rank() < other.cmp_rank() {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
-                else if self.cmp_rank() != 0 {
-                    Ordering::Equal
-                }
-                else if lhs.ieee_lt(rhs) {
-                    Ordering::Less
-                }
-                else if lhs.ieee_gt(rhs) {
-                    Ordering::Greater
-                }
-                else {
-                    Ordering::Equal
-                },
-            _ =>
-                if self.cmp_rank() != other.cmp_rank() {
-                    if self.cmp_rank() < other.cmp_rank() {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
-                else if self.cmp_rank() != 0 {
-                    Ordering::Equal
-                }
-                else {
-                    cmp_scaled_values(
-                        self.finite_sign(), self.finite_magnitude(), self.finite_exponent(),
-                        other.finite_sign(), other.finite_magnitude(), other.finite_exponent())
-                },
+        if self.cmp_rank() != other.cmp_rank() {
+            if self.cmp_rank() < other.cmp_rank() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+        else if self.cmp_rank() != 0 {
+            Ordering::Equal
+        }
+        else {
+            cmp_scaled_values(
+                self.finite_sign(), self.finite_magnitude(), self.finite_exponent(),
+                other.finite_sign(), other.finite_magnitude(), other.finite_exponent())
         }
     }
 
@@ -258,25 +227,14 @@ impl NumberView {
     // while finite values are equal exactly when their scaled integers are equal.
     pub open spec fn eq_values(self: Self, other: Self) -> bool
     {
-        match (self, other) {
-            (Self::Integer(lhs), Self::Integer(rhs)) => lhs == rhs,
-            (Self::Float(lhs), Self::Float(rhs)) =>
-                if self.cmp_rank() != 0 || other.cmp_rank() != 0 {
-                    self.cmp_rank() == other.cmp_rank()
-                }
-                else {
-                    !lhs.ieee_lt(rhs) && !lhs.ieee_gt(rhs)
-                },
-            _ =>
-                if self.cmp_rank() != 0 || other.cmp_rank() != 0 {
-                    self.cmp_rank() == other.cmp_rank()
-                }
-                else {
-                    cmp_scaled_values(
-                        self.finite_sign(), self.finite_magnitude(), self.finite_exponent(),
-                        other.finite_sign(), other.finite_magnitude(), other.finite_exponent())
-                        == Ordering::Equal
-                },
+        if self.cmp_rank() != 0 || other.cmp_rank() != 0 {
+            self.cmp_rank() == other.cmp_rank()
+        }
+        else {
+            cmp_scaled_values(
+                self.finite_sign(), self.finite_magnitude(), self.finite_exponent(),
+                other.finite_sign(), other.finite_magnitude(), other.finite_exponent())
+                == Ordering::Equal
         }
     }
 

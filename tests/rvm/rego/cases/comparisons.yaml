@@ -126,3 +126,50 @@ cases:
         }
     query: data.test.main
     want_result: [true, true, true, true, true]
+
+  - note: exact_float_bigint_comparisons
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 18446744073709551616 + 1) / 2)
+          result := [
+            a == 18446744073709551616,
+            a == 18446744073709551617,
+            a < 18446744073709551617,
+            18446744073709551617 > a,
+            a > 18446744073709551615,
+            18446744073709551615 < a,
+          ]
+        }
+    query: data.test.main
+    want_result: [true, false, true, true, true, true]
+
+  - note: exact_float_bigint_set_members
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 18446744073709551616 + 1) / 2)
+          result := count({a, 18446744073709551616, 18446744073709551617})
+        }
+    query: data.test.main
+    want_result: 2
+
+  - note: exact_float_bigint_object_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          a := ((2 * 18446744073709551616 + 1) / 2)
+          x := {a: 1, 18446744073709551617: 2}
+          result := [count(x), x[18446744073709551616], x[18446744073709551617]]
+        }
+    query: data.test.main
+    want_result: [2, 1, 2]

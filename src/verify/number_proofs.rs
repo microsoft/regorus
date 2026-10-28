@@ -9,7 +9,6 @@ use core::cmp::Ordering;
 use crate::number::Number;
 use num_bigint::BigInt;
 use super::bigint_assumptions::*;
-use super::num_assumptions::*;
 use super::number_specs::NumberView;
 use vstd::arithmetic::power2::pow2;
 use vstd::arithmetic::div_mod::{
@@ -175,13 +174,16 @@ pub proof fn lemma_integer_cmp_values(lhs: int, rhs: int)
                 Ordering::Equal
             },
 {
-    if lhs < rhs {
-        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Less);
-    } else if lhs > rhs {
-        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Greater);
-    } else {
-        assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) == Ordering::Equal);
-    }
+    vstd::arithmetic::power::lemma_pow0(2);
+    assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) ==
+        if lhs < rhs {
+            Ordering::Less
+        } else if lhs > rhs {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }) by (nonlinear_arith)
+        requires pow2(0) == 1;
 }
 
 pub proof fn lemma_integer_cmp_values_reverse(lhs: int, rhs: int)

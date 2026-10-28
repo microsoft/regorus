@@ -36,8 +36,6 @@ use crate::verify::bigint_proofs::*;
 #[cfg(verus_keep_ghost)]
 use crate::verify::f64_assumptions::*;
 #[cfg(verus_keep_ghost)]
-use crate::verify::num_assumptions::*;
-#[cfg(verus_keep_ghost)]
 use crate::verify::number_proofs::*;
 #[cfg(verus_keep_ghost)]
 use crate::verify::number_specs::*;
@@ -456,7 +454,6 @@ impl Number {
     #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
-            result == cmp_float_uint_result(f, n),
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
     // Pinned Verus cannot prove the exact bridge from primitive f64 casts/comparisons to the
@@ -481,8 +478,9 @@ impl Number {
         }
 
         // The guards make the cast finite, nonnegative, and strictly below 2^64, so Rust
-        // truncates toward zero without saturation. If the integer parts match, the fractional
-        // remainder decides the order.
+        // truncates toward zero without saturation. The back-cast is exact: below 2^52 the
+        // integer part is representable, and above it every binary64 value is already integral.
+        // If the integer parts match, the fractional remainder decides the order.
         let integer_part = f as u64;
         match integer_part.cmp(&n) {
             Ordering::Equal if f > integer_part as f64 => Ordering::Greater,
@@ -493,7 +491,6 @@ impl Number {
     #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
-            result == cmp_float_sint_result(f, n),
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
     // Pinned Verus cannot prove the exact bridge from primitive f64 casts/comparisons to the
@@ -518,6 +515,8 @@ impl Number {
         }
 
         // The guards keep the cast in range, so it truncates toward zero without saturation.
+        // The back-cast is exact: below magnitude 2^52 the integer part is representable,
+        // and above it every binary64 value is already integral.
         let integer_part = f as i64;
         match integer_part.cmp(&n) {
             Ordering::Equal if f < integer_part as f64 => Ordering::Less,
@@ -619,7 +618,6 @@ impl Number {
     #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
-            result == cmp_float_int_result(f, n@),
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n@), result),
     )]
     // Pinned Verus cannot connect `integer_decode`, primitive f64 casts/comparisons, and
@@ -640,6 +638,8 @@ impl Number {
         let (mantissa, exp, _) = f.integer_decode();
 
         if exp < 0 {
+            // The mantissa is less than 2^53, so a negative exponent gives |f| < 2^52.
+            // Its integer part fits in i64 and converts back to f64 exactly.
             let integer_part = f as i64;
             match Self::cmp_bigint_sint(n, integer_part).reverse() {
                 Ordering::Equal if f < integer_part as f64 => Ordering::Less,
@@ -665,7 +665,6 @@ impl Number {
             !a.is_nan_spec(),
             !b.is_nan_spec(),
         ensures
-            result == cmp_non_nan_float_result(a, b),
             NumberView::Float(a).cmp_ensures(NumberView::Float(b), result),
     )]
     // Pinned Verus has no proved bridge from primitive f64 ordering to the bit-level float
@@ -2028,6 +2027,9 @@ mod tests {
             Number::UInt(u64::MAX),
             Number::Int(-1),
             Number::Int(i64::MIN),
+            Number::BigInt(Rc::new(BigInt::from(-1))),
+            Number::BigInt(Rc::new(BigInt::from(0))),
+            Number::BigInt(Rc::new(BigInt::from(1))),
             Number::Float(0.0),
             Number::Float(-0.0),
             Number::Float(1.0),
@@ -2036,6 +2038,8 @@ mod tests {
             Number::Float(9_007_199_254_740_992.0), // 2^53
             Number::Float(-9_007_199_254_740_992.0),
             Number::Float(1e-300),
+            Number::Float(f64::from_bits(1)),
+            Number::Float(-f64::from_bits(1)),
             Number::Float(f64::MIN),
             Number::Float(f64::MAX),
             Number::from(BigInt::from(9_007_199_254_740_993i64)), // 2^53 + 1
@@ -2173,6 +2177,19 @@ mod tests {
             Number::Float(i64::MIN as f64).cmp(&Number::Int(i64::MIN)),
             Ordering::Equal
         );
+        assert_eq!(
+            Number::Float(f64::from_bits(two_pow_63.to_bits() - 1)).cmp(&Number::Int(i64::MAX)),
+            Ordering::Less
+        );
+        let min_as_float = i64::MIN as f64;
+        assert_eq!(
+            Number::Float(f64::from_bits(min_as_float.to_bits() - 1)).cmp(&Number::Int(i64::MIN)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            Number::Float(f64::from_bits(min_as_float.to_bits() + 1)).cmp(&Number::Int(i64::MIN)),
+            Ordering::Less
+        );
 
         assert_eq!(Number::Float(-0.0).cmp(&Number::UInt(0)), Ordering::Equal);
         assert_eq!(Number::Float(0.5).cmp(&Number::UInt(0)), Ordering::Greater);
@@ -2181,6 +2198,71 @@ mod tests {
             Number::Float(9_007_199_254_740_992.0).cmp(&Number::UInt(9_007_199_254_740_993)),
             Ordering::Less
         );
+    }
+
+    #[test]
+    fn small_bigints_equal_other_integer_representations() {
+        for value in [-1i64, 0, 1] {
+            let mut representations = vec![
+                Number::BigInt(Rc::new(BigInt::from(value))),
+                Number::Int(value),
+                Number::Float(value as f64),
+            ];
+            if value >= 0 {
+                representations.push(Number::UInt(value as u64));
+            }
+            for lhs in &representations {
+                for rhs in &representations {
+                    assert_eq!(lhs, rhs);
+                    assert_eq!(lhs.cmp(rhs), Ordering::Equal);
+                    assert_eq!(lhs.partial_cmp(rhs), Some(Ordering::Equal));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_floats_compare_exactly_with_small_bigints() {
+        use Ordering::{Greater, Less};
+
+        for (value, expected) in [
+            (-1.5, [Less, Less, Less]),
+            (-0.5, [Greater, Less, Less]),
+            (0.5, [Greater, Greater, Less]),
+            (1.5, [Greater, Greater, Greater]),
+        ] {
+            let float = Number::Float(value);
+            for (integer, ordering) in [-1i64, 0, 1].into_iter().zip(expected) {
+                let bigint = Number::BigInt(Rc::new(BigInt::from(integer)));
+                assert_eq!(float.cmp(&bigint), ordering, "{value} vs {integer}");
+                assert_eq!(bigint.cmp(&float), ordering.reverse());
+                assert_ne!(float, bigint);
+            }
+        }
+    }
+
+    #[test]
+    fn smallest_subnormals_order_around_all_zero_representations() {
+        let smallest = f64::from_bits(1);
+        let values = [
+            (-2, Number::Int(-1)),
+            (-1, Number::Float(-smallest)),
+            (0, Number::Float(-0.0)),
+            (0, Number::Float(0.0)),
+            (0, Number::Int(0)),
+            (0, Number::UInt(0)),
+            (0, Number::BigInt(Rc::new(BigInt::from(0)))),
+            (1, Number::Float(smallest)),
+            (2, Number::UInt(1)),
+        ];
+        for (lhs_rank, lhs) in &values {
+            for (rhs_rank, rhs) in &values {
+                let expected = lhs_rank.cmp(rhs_rank);
+                assert_eq!(lhs.cmp(rhs), expected, "{lhs:?} vs {rhs:?}");
+                assert_eq!(lhs.partial_cmp(rhs), Some(expected));
+                assert_eq!(lhs == rhs, lhs_rank == rhs_rank);
+            }
+        }
     }
 
     #[test]
