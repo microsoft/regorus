@@ -321,6 +321,1074 @@ cases:
         "dept[*]": "production"
     want_effect: "audit"
 
+  # Whitespace around a bracket tag name is trimmed (str::trim); whitespace
+  # inside quotes is part of the tag name.
+  - note: field_tags_bracket_padded_unquoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ env ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_unquoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ env ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "development"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_single_quoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[  'env' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_single_quoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[  'env' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "development"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_double_quoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ \"env\" ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_double_quoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ \"env\" ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "development"
+    want_undefined: true
+
+  - note: field_tags_bracket_tab_newline_padding
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\tenv\n]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_tab_newline_padding_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\tenv\n]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "development"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_unquoted_inner_space
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ my tag ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "my tag": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_unquoted_inner_space_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ my tag ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "mytag": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_quoted_keeps_inner_whitespace
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ ' env ' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        " env ": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_quoted_keeps_inner_whitespace_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ ' env ' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_quoted_keeps_inner_whitespace
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[' env ']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        " env ": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_quoted_keeps_inner_whitespace_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[' env ']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_double_quoted_keeps_inner_whitespace
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\" a b \"]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        " a b ": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_double_quoted_keeps_inner_whitespace_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\" a b \"]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "a b": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_quoted_inner_space
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['my tag']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "my tag": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_quoted_inner_space_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags['my tag']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "mytag": "production"
+    want_undefined: true
+
+  # The field('tags[ env ]') term passed before the parser trimmed padding
+  # (field() paths already trimmed); see field_and_field_fn_* for coverage.
+  - note: field_tags_dot_and_bracket_spellings_agree
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "tags.env",
+              "equals": "production"
+            },
+            {
+              "field": "tags['env']",
+              "equals": "production"
+            },
+            {
+              "field": "tags[ env ]",
+              "equals": "production"
+            },
+            {
+              "field": "tags[ 'env' ]",
+              "equals": "production"
+            },
+            {
+              "value": "[field('tags[ env ]')]",
+              "equals": "production"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        env: "production"
+    want_effect: "deny"
+
+  - note: field_tags_dot_and_bracket_spellings_agree_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "tags.env",
+              "equals": "production"
+            },
+            {
+              "field": "tags['env']",
+              "equals": "production"
+            },
+            {
+              "field": "tags[ env ]",
+              "equals": "production"
+            },
+            {
+              "field": "tags[ 'env' ]",
+              "equals": "production"
+            },
+            {
+              "value": "[field('tags[ env ]')]",
+              "equals": "production"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        env: "development"
+    want_undefined: true
+
+  - note: field_tags_bracket_whitespace_only_rejected
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[   ]",
+          "exists": false
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    want_parse_error_contains: "empty tag name"
+
+  - note: field_tags_bracket_tab_only_rejected
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\t]",
+          "exists": false
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    want_parse_error_contains: "empty tag name"
+
+  - note: field_tags_bracket_padded_empty_single_quotes_rejected
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ '' ]",
+          "exists": false
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    want_parse_error_contains: "empty tag name"
+
+  - note: field_tags_bracket_padded_empty_double_quotes_rejected
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ \"\" ]",
+          "exists": false
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    want_parse_error_contains: "empty tag name"
+
+  - note: field_tags_bracket_quoted_space_is_a_tag_name
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[' ']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        " ": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_quoted_space_is_a_tag_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[' ']",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      tags:
+        "env": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_unquoted_twin_padded_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ env ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_single_quoted_twin_padded_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[  'env' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_double_quoted_twin_padded_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ \"env\" ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_tab_newline_padding_twin_padded_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\tenv\n]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_uppercase_prefix_and_name
+    policy_rule: |
+      {
+        "if": {
+          "field": "TAGS[ Env ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "Env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_uppercase_prefix_and_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "TAGS[ Env ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " Env ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_unicode_whitespace_padding
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\u00a0env\u2003]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_unicode_whitespace_padding_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[\u00a0env\u2003]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "\u00a0env\u2003": "production"
+    want_undefined: true
+
+  # Only one matching pair of outer quotes is stripped; mixed quotes stay.
+  - note: field_tags_bracket_padded_mixed_quotes_are_literal
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ 'env\" ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "'env\"": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_mixed_quotes_are_literal_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ 'env\" ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_lone_quote_is_literal
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ ' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "'": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_lone_quote_is_literal_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ ' ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " ' ": "production"
+    want_undefined: true
+
+  - note: field_tags_bracket_padded_in_count_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "a"
+            ],
+            "name": "x",
+            "where": {
+              "field": "tags[ env ]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_in_count_where_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "a"
+            ],
+            "name": "x",
+            "where": {
+              "field": "tags[ env ]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: existence_condition_padded_tag_bracket_matches
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "tags[ env ]",
+              "equals": "production"
+            }
+          }
+        }
+      }
+    resource:
+      "type": "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response:
+          "tags":
+            "env": "production"
+    want_undefined: true
+
+  - note: existence_condition_padded_tag_bracket_twin_padded_key
+    policy_rule: |
+      {
+        "if": {
+          "field": "type",
+          "equals": "Microsoft.Compute/virtualMachines"
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "existenceCondition": {
+              "field": "tags[ env ]",
+              "equals": "production"
+            }
+          }
+        }
+      }
+    resource:
+      "type": "Microsoft.Compute/virtualMachines"
+    host_await:
+      - response:
+          "tags":
+            " env ": "production"
+    want_effect: "auditIfNotExists"
+
+  # `tags[ * ]` names the tag `*`; only the exact text `[*]` is a wildcard,
+  # as in field() paths (split_path_without_wildcards).
+  - note: field_tags_bracket_padded_star_is_literal_tag
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ * ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "*": "production"
+    want_effect: "deny"
+
+  - note: field_tags_bracket_padded_star_is_literal_tag_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "tags[ * ]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  - note: field_fn_tags_bracket_padded_star_is_literal_tag
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('tags[ * ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "*": "production"
+    want_effect: "deny"
+
+  - note: field_fn_tags_bracket_padded_star_is_literal_tag_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "value": "[field('tags[ * ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  # field() already trimmed bracket padding before this fix; requiring both
+  # spellings to match checks that the static condition now reads the same tag.
+  - note: field_and_field_fn_padded_double_quoted_inner_whitespace_agree
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "tags[ \" env \" ]",
+              "equals": "production"
+            },
+            {
+              "value": "[field('tags[ \" env \" ]')]",
+              "equals": "production"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_effect: "deny"
+
+  - note: field_and_field_fn_padded_double_quoted_inner_whitespace_agree_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            {
+              "field": "tags[ \" env \" ]",
+              "equals": "production"
+            },
+            {
+              "value": "[field('tags[ \" env \" ]')]",
+              "equals": "production"
+            }
+          ]
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  # Dynamic concat('tags[...]') paths follow the same bracket rule.
+  - note: dynamic_concat_tags_bracket_padded_unquoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ', 'env', ' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_bracket_padded_unquoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ', 'env', ' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_bracket_padded_single_quoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ''', 'env', ''' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_bracket_padded_single_quoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ''', 'env', ''' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_bracket_padded_double_quoted
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ \"', 'env', '\" ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_bracket_padded_double_quoted_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ \"', 'env', '\" ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_bracket_padded_quoted_keeps_inner_whitespace
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ''', ' env ', ''' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        " env ": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_bracket_padded_quoted_keeps_inner_whitespace_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[ ''', ' env ', ''' ]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_bracket_mixed_quotes_are_literal
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[''', 'env', '\"]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "'env\"": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_bracket_mixed_quotes_are_literal_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "field": "[concat('tags[''', 'env', '\"]')]",
+          "equals": "production"
+        },
+        "then": {
+          "effect": "deny"
+        }
+      }
+    resource:
+      "tags":
+        "env": "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_empty_padding_is_undefined
+    policy_rule: |
+      {"if":{"field":"[concat('tags[', '   ', ']')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        env: "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_unclosed_bracket_is_undefined
+    policy_rule: |
+      {"if":{"field":"[concat('tags[', '   ')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        env: "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_empty_single_quotes_is_undefined
+    policy_rule: |
+      {"if":{"field":"[concat('tags[ ', '''''', ' ]')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        env: "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_empty_double_quotes_is_undefined
+    policy_rule: |
+      {"if":{"field":"[concat('tags[ ', '\"\"', ' ]')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        env: "production"
+    want_undefined: true
+
+  - note: dynamic_concat_tags_quoted_space_exists
+    policy_rule: |
+      {"if":{"field":"[concat('tags[ ', ''' ''', ' ]')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        " ": "production"
+    want_effect: "deny"
+
+  - note: dynamic_concat_tags_quoted_space_exists_twin_no_match
+    policy_rule: |
+      {"if":{"field":"[concat('tags[ ', ''' ''', ' ]')]","exists":true},"then":{"effect":"deny"}}
+    resource:
+      tags:
+        env: "production"
+    want_undefined: true
+
   - note: field_tags_dot_hyphen
     policy_rule: |
       {

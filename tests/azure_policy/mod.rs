@@ -79,6 +79,11 @@ struct TestCase {
     #[serde(default)]
     pub want_parse_error: Option<bool>,
 
+    /// Substring the parse error message must contain. Implies
+    /// `want_parse_error: true`.
+    #[serde(default)]
+    pub want_parse_error_contains: Option<String>,
+
     /// Substring the evaluation-time error message must contain.
     #[serde(default)]
     pub want_eval_error_contains: Option<String>,
@@ -209,6 +214,96 @@ fn compile_error_message_excludes_rendered_source() {
     assert!(!compile_error_message(rendered).contains("expected text"));
 }
 
+fn check_parse_error_contains(case: &TestCase, message: &str) -> Result<()> {
+    let Some(expected) = &case.want_parse_error_contains else {
+        return Ok(());
+    };
+    if expected.is_empty() {
+        bail!(
+            "case '{}': want_parse_error_contains must not be empty",
+            case.note
+        );
+    }
+    // Match only the diagnostic text, not the source label or rendered source.
+    let message = compile_error_message(message);
+    if !message.contains(expected.as_str()) {
+        bail!(
+            "case '{}': parse error did not contain {:?}; got: {}",
+            case.note,
+            expected,
+            message
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn parse_error_expectation_excludes_source_and_label() -> Result<()> {
+    for (note, rule) in [
+        ("empty tag name", r#"{"if":{"field":"type","exists":true}}"#),
+        (
+            "source_contains_expected_text",
+            r#"{"if":{"field":42,"equals":"empty tag name"},"then":{"effect":"deny"}}"#,
+        ),
+    ] {
+        for definition in [false, true] {
+            let text = if definition {
+                format!(r#"{{"properties":{{"policyRule":{rule}}}}}"#)
+            } else {
+                rule.to_string()
+            };
+            let source = Source::from_contents(format!("test:{note}"), text)?;
+            let error = if definition {
+                parser::parse_policy_definition(&source).err()
+            } else {
+                parser::parse_policy_rule(&source).err()
+            }
+            .expect("invalid policy must fail parsing");
+            let case: TestCase = serde_json::from_value(serde_json::json!({
+                "note": note,
+                "want_parse_error_contains": "empty tag name"
+            }))?;
+            assert!(
+                check_parse_error_contains(&case, &error.to_string()).is_err(),
+                "context-only match accepted (definition={definition}): {error}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn parse_error_expectation_matches_diagnostic_and_expression_details() -> Result<()> {
+    let rule = r#"{"if":{"field":"tags[ ]","exists":true},"then":{"effect":"deny"}}"#;
+    let case: TestCase = serde_json::from_value(serde_json::json!({
+        "note": "diagnostic_match",
+        "want_parse_error_contains": "empty tag name"
+    }))?;
+    for definition in [false, true] {
+        let text = if definition {
+            format!(r#"{{"properties":{{"policyRule":{rule}}}}}"#)
+        } else {
+            rule.to_string()
+        };
+        let source = Source::from_contents("test:diagnostic_match".to_string(), text)?;
+        let error = if definition {
+            parser::parse_policy_definition(&source).err()
+        } else {
+            parser::parse_policy_rule(&source).err()
+        }
+        .expect("empty tag must fail parsing");
+        check_parse_error_contains(&case, &error.to_string())?;
+    }
+    let case: TestCase = serde_json::from_value(serde_json::json!({
+        "note": "expression_details",
+        "want_parse_error_contains": "missing closing parenthesis"
+    }))?;
+    check_parse_error_contains(
+        &case,
+        "\n--> test:expression:1:1\nerror: in template expression\n  expression parse error: missing closing parenthesis",
+    )
+}
+
 /// Run all test cases from a YAML file.
 fn yaml_test_impl(file: &str) -> Result<()> {
     let yaml_str = fs::read_to_string(file)?;
@@ -263,7 +358,14 @@ fn yaml_test_impl(file: &str) -> Result<()> {
 
         executed_count += 1;
 
-        let expects_parse_error = case.want_parse_error == Some(true);
+        let expects_parse_error =
+            case.want_parse_error == Some(true) || case.want_parse_error_contains.is_some();
+        if case.want_parse_error == Some(false) && case.want_parse_error_contains.is_some() {
+            bail!(
+                "case '{}': want_parse_error: false contradicts want_parse_error_contains",
+                case.note
+            );
+        }
 
         // Determine source and parse mode.
         // Case-level policy_definition/policy_rule takes precedence over
@@ -309,6 +411,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 }
                 Err(e) => {
                     if expects_parse_error {
+                        check_parse_error_contains(case, &e.to_string())?;
                         println!("passed (expected parse error: {})", e);
                         continue;
                     }
@@ -332,6 +435,7 @@ fn yaml_test_impl(file: &str) -> Result<()> {
                 }
                 Err(e) => {
                     if expects_parse_error {
+                        check_parse_error_contains(case, &e.to_string())?;
                         println!("passed (expected parse error: {})", e);
                         continue;
                     }

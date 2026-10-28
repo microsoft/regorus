@@ -311,7 +311,11 @@ pub fn match_question_hash_pattern(input: &str, pattern: &str) -> bool {
 // ── Path resolution ───────────────────────────────────────────────────
 
 pub fn resolve_path(root: &Value, path: &str) -> Value {
-    let segments = tokenize_path(path);
+    // An empty or unclosed bracket (e.g. `tags[ ]`, `tags[env`) names no
+    // property; it must not collapse onto the parent object.
+    let Some(segments) = tokenize_path(path) else {
+        return Value::Undefined;
+    };
     let mut current = root.clone();
 
     for segment in segments {
@@ -351,7 +355,24 @@ pub fn resolve_path(root: &Value, path: &str) -> Value {
     current
 }
 
-fn tokenize_path(path: &str) -> Vec<String> {
+/// The key named by the contents of a `[...]` path segment, using the same
+/// rule as the Azure Policy parser: trim surrounding whitespace (as
+/// `str::trim` does), then strip one matching pair of outer `'` or `"`
+/// quotes. Whitespace inside the quotes is kept.
+fn bracket_key(contents: &str) -> &str {
+    let trimmed = contents.trim();
+    trimmed
+        .strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+        })
+        .unwrap_or(trimmed)
+}
+
+fn tokenize_path(path: &str) -> Option<Vec<String>> {
     let mut segments = Vec::new();
     let mut token = String::new();
     let mut bracket = String::new();
@@ -374,10 +395,11 @@ fn tokenize_path(path: &str) -> Vec<String> {
             }
             ']' => {
                 in_bracket = false;
-                let cleaned = bracket.trim_matches('"').trim_matches('\'').to_string();
-                if !cleaned.is_empty() {
-                    segments.push(cleaned);
+                let cleaned = bracket_key(&bracket);
+                if cleaned.is_empty() {
+                    return None;
                 }
+                segments.push(cleaned.to_string());
                 bracket.clear();
             }
             _ => {
@@ -390,9 +412,81 @@ fn tokenize_path(path: &str) -> Vec<String> {
         }
     }
 
+    if in_bracket {
+        return None;
+    }
     if !token.is_empty() {
         segments.push(token);
     }
 
-    segments
+    Some(segments)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)] // test fixtures are static JSON
+
+    use super::{resolve_path, tokenize_path};
+    use crate::Value;
+    use alloc::string::ToString as _;
+    use alloc::vec;
+
+    #[test]
+    fn tokenize_path_tag_brackets_follow_parser_rule() {
+        for (path, expected) in [
+            ("tags[env]", "env"),
+            ("tags[ env ]", "env"),
+            ("tags[ 'env' ]", "env"),
+            ("tags[ \"env\" ]", "env"),
+            ("tags[\tenv\n]", "env"),
+            ("tags[ ' env ' ]", " env "),
+            ("tags[\" a b \"]", " a b "),
+            ("tags['env\"]", "'env\""),
+            ("tags[ ' ]", "'"),
+        ] {
+            assert_eq!(
+                tokenize_path(path),
+                Some(vec!["tags".to_string(), expected.to_string()]),
+                "path {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_path_empty_normalized_brackets_are_undefined() {
+        let resource = Value::from_json_str(r#"{"tags":{"env":"production","":"empty"}}"#)
+            .expect("valid resource");
+        for path in [
+            "tags[]",
+            "tags[ ]",
+            "tags[\t\n]",
+            "tags[\u{3000}]",
+            "tags[ '' ]",
+            "tags[ \"\" ]",
+            "tags[ ].env",
+            "tags[   ",
+            "tags[env",
+        ] {
+            assert_eq!(resolve_path(&resource, path), Value::Undefined, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_path_preserves_quoted_whitespace_and_one_quote_pair() {
+        let resource =
+            Value::from_json_str(r#"{"tags":{" ":"space","'env'":"quoted","env":"plain"}}"#)
+                .expect("valid resource");
+        for (path, expected) in [
+            ("tags[ ' ' ]", "space"),
+            ("tags[ \" \" ]", "space"),
+            ("tags[ ''env'' ]", "quoted"),
+            ("tags[ env ]", "plain"),
+        ] {
+            assert_eq!(
+                resolve_path(&resource, path),
+                Value::from(expected),
+                "{path:?}"
+            );
+        }
+    }
 }

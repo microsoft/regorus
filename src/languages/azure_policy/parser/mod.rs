@@ -174,6 +174,13 @@ fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
 }
 
 /// Classify a field string into a [`FieldKind`].
+///
+/// In bracket tag notation (`tags[...]`), whitespace surrounding the tag
+/// name is trimmed, using the same definition of whitespace as
+/// [`str::trim`] (characters with the Unicode `White_Space` property).
+/// Whitespace inside quotes is preserved, so `tags[ env ]` and
+/// `tags[ 'env' ]` name `env` while `tags[' env ']` names ` env `.
+/// Brackets that are empty or contain only whitespace are rejected.
 pub(super) fn classify_field(
     text: &str,
     span: &crate::lexer::Span,
@@ -196,13 +203,14 @@ pub(super) fn classify_field(
         // Tags[tagName] — bracket notation without quotes.
         // Tag name is everything between the first '[' and the LAST ']'.
         // e.g. Tags[Dept.Name]] → tag name "Dept.Name]"
+        // Surrounding whitespace is trimmed; see the doc comment above.
         _ if lower.starts_with("tags[") && text.ends_with(']') => {
-            let tag = unwrap(text, "tags[".len(), "]".len());
+            let tag = unwrap(text, "tags[".len(), "]".len()).trim();
             let quoted = strip_matching_outer_quotes(tag);
             if quoted.unwrap_or(tag).is_empty() {
                 return Err(ParseError::Custom {
                     span: span.clone(),
-                    message: format!("empty tag name in field: {text}"),
+                    message: format!("empty tag name in field: {text:?}"),
                 });
             }
             let kind = quoted.map_or_else(
@@ -350,6 +358,103 @@ mod tests {
                 Ok(FieldKind::Alias(actual)) => assert_eq!(actual, field),
                 other => panic!("expected Alias for unquoted tag wildcard, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_tag_bracket_trims_outer_whitespace() {
+        let span = dummy_span();
+
+        for (field, expected) in [
+            ("tags[ env ]", "env"),
+            ("tags[  'env' ]", "env"),
+            ("tags[ \"env\" ]", "env"),
+            ("tags[\tenv\n]", "env"),
+            ("tags[\u{3000}env\u{a0}]", "env"),
+            ("tags[ my tag ]", "my tag"),
+            ("tags[ ' env ' ]", " env "),
+            ("tags[ \" a b \" ]", " a b "),
+        ] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected, "field {field:?}"),
+                other => panic!("expected Tag for {field:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_tag_bracket_preserves_quoted_whitespace() {
+        let span = dummy_span();
+
+        for (field, expected) in [
+            ("tags['my tag']", "my tag"),
+            ("tags[' env ']", " env "),
+            ("tags[\" a b \"]", " a b "),
+            ("tags[' ']", " "),
+            ("tags[\"\t\"]", "\t"),
+        ] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected, "field {field:?}"),
+                other => panic!("expected Tag for {field:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_classify_field_whitespace_only_bracket_tag_name_is_rejected() {
+        let span = dummy_span();
+
+        for field in [
+            "tags[ ]",
+            "tags[   ]",
+            "tags[\t\n]",
+            "tags[\u{3000}]",
+            "tags[ '' ]",
+            "tags[ \"\" ]",
+        ] {
+            assert!(
+                matches!(classify_field(field, &span), Err(ParseError::Custom { .. })),
+                "expected error for {field:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_field_tag_bracket_padded_literals() {
+        let span = dummy_span();
+
+        // Only the exact text `[*]` is a wildcard; a padded star is a tag name.
+        for (field, expected) in [
+            ("tags[ * ]", "*"),
+            ("tags[ ' ]", "'"),
+            ("tags[ 'env\" ]", "'env\""),
+            ("TAGS[ Env ]", "Env"),
+        ] {
+            match classify_field(field, &span) {
+                Ok(FieldKind::Tag(actual)) => assert_eq!(actual, expected, "field {field:?}"),
+                other => panic!("expected Tag for {field:?}, got {other:?}"),
+            }
+        }
+        assert!(matches!(
+            classify_field("tags[*]", &span),
+            Ok(FieldKind::Alias(_))
+        ));
+    }
+
+    #[test]
+    fn test_classify_field_empty_tag_name_error_escapes_text() {
+        let span = dummy_span();
+
+        match classify_field("tags[\t\n]", &span) {
+            Err(ParseError::Custom { message, .. }) => {
+                assert!(message.contains("empty tag name"), "{message}");
+                assert!(message.contains("\"tags[\\t\\n]\""), "{message}");
+                assert!(
+                    !message.contains('\t') && !message.contains('\n'),
+                    "{message}"
+                );
+            }
+            other => panic!("expected empty tag name error, got {other:?}"),
         }
     }
 
