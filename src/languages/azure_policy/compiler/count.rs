@@ -783,13 +783,13 @@ impl Compiler {
         Ok(result_reg)
     }
 
-    /// Find the innermost active count binding for the current resource that
-    /// covers `field_path`.
+    /// Find the innermost active field-count binding for the current resource
+    /// that covers `field_path`.
     ///
-    /// Matching rules (all case-insensitive):
-    /// 1. **Named binding** — `field_path` equals the binding's `name`.
-    /// 2. **Wildcard prefix** — `field_path` matches the binding's prefix,
-    ///    its `prefix[*]` form, or starts with `prefix.` / `prefix[*].`.
+    /// A binding matches (case-insensitively) when `field_path` equals its
+    /// wildcard prefix or `prefix[*]`, or starts with `prefix.` /
+    /// `prefix[*].`. A value count's `name` never matches: it is reachable
+    /// only through `current()`, while field paths always read the resource.
     ///
     /// Bindings are searched innermost-first (reverse stack order) so a
     /// nested count's binding shadows an outer one for the same prefix.
@@ -799,12 +799,6 @@ impl Compiler {
             if binding.resource_override_reg != self.resource_override_reg {
                 continue;
             }
-            if let Some(name) = &binding.name {
-                if fp.eq_ignore_ascii_case(name) {
-                    return Ok(Some(binding.clone()));
-                }
-            }
-
             if let Some(prefix) = &binding.field_wildcard_prefix {
                 let lc_prefix = prefix.to_ascii_lowercase();
                 let wildcard_prefix = format!("{}[*]", lc_prefix);
@@ -823,9 +817,9 @@ impl Compiler {
         Ok(None)
     }
 
-    /// Compile a field reference relative to an active count binding.
+    /// Compile a field reference relative to an active field-count binding.
     ///
-    /// If `field_path` matches the binding exactly (name or prefix),
+    /// If `field_path` matches the binding's prefix exactly,
     /// emits a `Move` from the binding's current-element register.
     /// If `field_path` extends past the binding (e.g. `prefix.sub.key`),
     /// navigates the suffix via chained index lookups.  All comparisons
@@ -837,20 +831,6 @@ impl Compiler {
         span: &crate::lexer::Span,
     ) -> Result<u8> {
         let fp = field_path.to_ascii_lowercase();
-
-        if let Some(name) = &binding.name {
-            if fp.eq_ignore_ascii_case(name) {
-                let dest = self.alloc_register()?;
-                self.emit(
-                    Instruction::Move {
-                        dest,
-                        src: binding.current_reg,
-                    },
-                    span,
-                );
-                return Ok(dest);
-            }
-        }
 
         if let Some(prefix) = &binding.field_wildcard_prefix {
             let lc_prefix = prefix.to_ascii_lowercase();
@@ -910,13 +890,6 @@ impl Compiler {
     /// of `binding` (no `[*]` beyond the bound prefix).
     pub(super) fn binding_selects_single_value(binding: &CountBinding, field_path: &str) -> bool {
         let fp = field_path.to_ascii_lowercase();
-        if binding
-            .name
-            .as_ref()
-            .is_some_and(|name| fp.eq_ignore_ascii_case(name))
-        {
-            return true;
-        }
         let Some(prefix) = &binding.field_wildcard_prefix else {
             return true;
         };
@@ -1096,33 +1069,38 @@ mod tests {
     }
 
     #[test]
-    fn resolve_binding_by_name() {
+    fn resolve_binding_ignores_value_count_name() {
+        // A value count's name is reachable only through current(); field
+        // paths always read the resource.
         let mut c = Compiler::new();
         c.count_bindings.push(CountBinding {
-            name: Some("myCollection".to_string()),
+            name: Some("location".to_string()),
             field_wildcard_prefix: None,
             current_reg: 3,
             resource_override_reg: None,
         });
-        let binding = c.resolve_count_binding("myCollection").unwrap().unwrap();
-        assert_eq!(binding.current_reg, 3);
+        assert!(c.resolve_count_binding("location").unwrap().is_none());
+        assert!(c.resolve_count_binding("LOCATION").unwrap().is_none());
+        assert!(c.resolve_count_binding("location.sub").unwrap().is_none());
     }
 
     #[test]
-    fn resolve_binding_case_insensitive() {
+    fn resolve_binding_value_count_name_does_not_shadow_field_prefix() {
         let mut c = Compiler::new();
         c.count_bindings.push(CountBinding {
-            name: Some("MyCollection".to_string()),
-            field_wildcard_prefix: None,
-            current_reg: 4,
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 5,
             resource_override_reg: None,
         });
-        // Lookup with different casing should still match.
-        let binding = c.resolve_count_binding("mycollection").unwrap().unwrap();
-        assert_eq!(binding.current_reg, 4);
-
-        let binding_upper = c.resolve_count_binding("MYCOLLECTION").unwrap().unwrap();
-        assert_eq!(binding_upper.current_reg, 4);
+        c.count_bindings.push(CountBinding {
+            name: Some("a[*].b".to_string()),
+            field_wildcard_prefix: None,
+            current_reg: 6,
+            resource_override_reg: None,
+        });
+        let binding = c.resolve_count_binding("a[*].b").unwrap().unwrap();
+        assert_eq!(binding.current_reg, 5);
     }
 
     #[test]
