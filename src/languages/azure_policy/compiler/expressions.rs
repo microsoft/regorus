@@ -291,16 +291,17 @@ impl Compiler {
                 // The field() template function always reads from the primary
                 // resource, even inside existenceCondition.
                 let saved_override = self.resource_override_reg.take();
-                let reg = self.compile_field_path_expression(&resolved, span)?;
+                let reg = self.compile_field_path_expression(&resolved, span);
+                let binding = self.resolve_count_binding(&resolved);
                 self.resource_override_reg = saved_override;
+                let reg = reg?;
 
                 // A wildcard path that selects only the bound element (or a
                 // property of it) still yields a one-member array; paths with
                 // further `[*]` levels are already collected into an array.
+                // Use the binding resolved in primary-resource scope above.
                 let wrap_single = resolved.contains("[*]")
-                    && self
-                        .resolve_count_binding(&resolved)?
-                        .is_some_and(|b| Self::binding_selects_single_value(&b, &resolved));
+                    && binding?.is_some_and(|b| Self::binding_selects_single_value(&b, &resolved));
                 let reg = if wrap_single {
                     let arr = self.alloc_register()?;
                     self.emit(Instruction::ArrayNew { dest: arr }, span);

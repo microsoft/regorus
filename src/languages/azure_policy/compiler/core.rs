@@ -30,6 +30,7 @@ pub(super) struct CountBinding {
     pub(super) name: Option<String>,
     pub(super) field_wildcard_prefix: Option<String>,
     pub(super) current_reg: u8,
+    pub(super) resource_override_reg: Option<u8>,
 }
 
 #[derive(Debug, Default)]
