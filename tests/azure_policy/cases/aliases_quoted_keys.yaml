@@ -1,0 +1,266 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Aliases with quoted keys
+# Alias names whose quoted subscripts contain `[*]` or `]`.  A quoted `[*]`
+# is part of a literal key, so it neither iterates an array nor stops alias
+# resolution from deriving an array path from its `[*]` alias.  Each match
+# case has a non-match twin.
+
+aliases: quoted_keys_aliases.json
+
+cases:
+  - note: alias_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/labels['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a[*]": "x" } }
+    want_effect: "deny"
+
+  - note: alias_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/labels['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a[*]": "y" } }
+    want_undefined: true
+
+  - note: alias_quoted_wildcard_key_literal_array_no_match
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/labels['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a": ["x"] } }
+    want_undefined: true
+
+  - note: alias_close_bracket_inside_quotes
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/labels['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a]b": "x" } }
+    want_effect: "deny"
+
+  - note: alias_close_bracket_inside_quotes_no_match
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/labels['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a]b": "y" } }
+    want_undefined: true
+
+  - note: alias_quoted_wildcard_after_real_wildcard
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/items[*]['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [{ "a[*]": "x" }, { "a[*]": "x" }] }
+    want_effect: "deny"
+
+  - note: alias_quoted_wildcard_after_real_wildcard_no_match
+    policy_rule: |
+      {
+        "if": { "field": "Microsoft.Test/quotedKeys/items[*]['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [{ "a[*]": "x" }, { "a[*]": "y" }] }
+    want_undefined: true
+
+  - note: alias_field_fn_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": { "value": "[field('Microsoft.Test/quotedKeys/labels[''a[*]'']')]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a[*]": "x" } }
+    want_effect: "deny"
+
+  - note: alias_field_fn_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": { "value": "[field('Microsoft.Test/quotedKeys/labels[''a[*]'']')]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a[*]": "y" } }
+    want_undefined: true
+
+  - note: alias_count_where_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/quotedKeys/items[*]",
+            "where": { "field": "Microsoft.Test/quotedKeys/items[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [{ "m": { "k[*]": "x" } }, { "m": { "k[*]": "y" } }] }
+    want_effect: "deny"
+
+  - note: alias_count_where_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "Microsoft.Test/quotedKeys/items[*]",
+            "where": { "field": "Microsoft.Test/quotedKeys/items[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [{ "m": { "k[*]": "y" } }, { "m": { "k": ["x"] } }] }
+    want_undefined: true
+
+  # `groups['g[*]']` has no alias of its own; it resolves through the
+  # `groups['g[*]'][*]` alias because its only `[*]` is quoted.
+  - note: alias_array_path_derived_past_quoted_wildcard
+    policy_rule: |
+      {
+        "if": { "value": "[length(field('Microsoft.Test/quotedKeys/groups[''g[*]'']'))]", "equals": 2 },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "groups": { "g[*]": ["x", "y"] } }
+    want_effect: "deny"
+
+  - note: alias_array_path_derived_past_quoted_wildcard_no_match
+    policy_rule: |
+      {
+        "if": { "value": "[length(field('Microsoft.Test/quotedKeys/groups[''g[*]'']'))]", "equals": 2 },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "groups": { "g[*]": ["x"] } }
+    want_undefined: true
+
+  # A `/` inside a quoted key belongs to the property path, not to the
+  # resource-type prefix (R1-10).
+
+  - note: alias_slash_inside_quoted_key
+    policy_rule: |
+      { "if": { "field": "Microsoft.Test/quotedKeys/labels['a/b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a/b": "x" } }
+    want_effect: "deny"
+
+  - note: alias_slash_inside_quoted_key_no_match
+    policy_rule: |
+      { "if": { "field": "Microsoft.Test/quotedKeys/labels['a/b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "a/b": "y" } }
+    want_undefined: true
+
+  # Alias names and quoted keys match case-insensitively (R1-11).
+
+  - note: alias_uppercase_quoted_wildcard_key
+    policy_rule: |
+      { "if": { "field": "MICROSOFT.TEST/QUOTEDKEYS/LABELS['A[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "A[*]": "x" } }
+    want_effect: "deny"
+
+  - note: alias_uppercase_quoted_wildcard_key_no_match
+    policy_rule: |
+      { "if": { "field": "MICROSOFT.TEST/QUOTEDKEYS/LABELS['A[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "labels": { "A[*]": "y" } }
+    want_undefined: true
+
+  # `/` inside a quoted key at the other strip_fq_prefix call sites (R2-2 G3):
+  # the `[*]`-alias fallback and an exact `[*]` alias with a later quoted key.
+
+  - note: alias_slash_inside_quoted_key_array_fallback
+    policy_rule: |
+      { "if": { "value": "[length(field('Microsoft.Test/quotedKeys/grp[''a/b'']'))]", "equals": 2 }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "grp": { "a/b": ["x", "y"] } }
+    want_effect: "deny"
+
+  - note: alias_slash_inside_quoted_key_array_fallback_no_match
+    policy_rule: |
+      { "if": { "value": "[length(field('Microsoft.Test/quotedKeys/grp[''a/b'']'))]", "equals": 2 }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "grp": { "a/b": ["x"] } }
+    want_undefined: true
+
+  - note: alias_slash_inside_quoted_key_after_wildcard
+    policy_rule: |
+      { "if": { "field": "Microsoft.Test/quotedKeys/items[*]['a/b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [ { "a/b": "x" }, { "a/b": "x" } ] }
+    want_effect: "deny"
+
+  - note: alias_slash_inside_quoted_key_after_wildcard_no_match
+    policy_rule: |
+      { "if": { "field": "Microsoft.Test/quotedKeys/items[*]['a/b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [ { "a/b": "x" }, { "a/b": "y" } ] }
+    want_undefined: true
+
+  # Count-field rules apply to the resolved alias path (R2-2 G4).
+
+  - note: alias_count_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "Microsoft.Test/quotedKeys/items[*]['a[*]']" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "items": [ { "a[*]": [ 1 ] } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: alias_count_quoted_key_then_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "Microsoft.Test/quotedKeys/groups['g[*]'][*]" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "groups": { "g[*]": ["x", "y"] } }
+    want_effect: "deny"
+
+  - note: alias_count_quoted_key_then_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "Microsoft.Test/quotedKeys/groups['g[*]'][*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource:
+      type: "Microsoft.Test/quotedKeys"
+      properties: { "groups": { "g[*]": ["x", "y"] } }
+    want_undefined: true
