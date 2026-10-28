@@ -34,6 +34,10 @@ azure-rbac = ["regex", "time", "net"]
 base64 = ["dep:data-encoding"]
 base64url = ["dep:data-encoding"]
 coverage = []
+# Explanations of evaluation results (causality reports, partial evaluation).
+# Produced by the RVM only, so this implies `rvm` (which currently also needs
+# `std` and `arc`).
+explanations = ["rvm"]
 hex = ["dep:data-encoding"]
 http = []
 glob = ["dep:globset"]

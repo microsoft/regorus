@@ -136,6 +136,9 @@ mod compile;
 mod compiled_policy;
 mod compiler;
 mod engine;
+#[cfg(feature = "explanations")]
+#[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
+pub mod explain;
 mod indexchecker;
 mod interpreter;
 #[cfg(any(verus_keep_ghost, test))]

@@ -394,6 +394,8 @@ fn check_feature_combinations(workspace: &Path, release: bool, frozen: bool) -> 
         // Cherry-picked builtins: popular features without full-opa to
         // ensure individual feature gates compose correctly.
         "std,arc,rvm,coverage,cache,regex,time",
+        // Default-off explanations (implies rvm) without full-opa.
+        "std,arc,explanations",
     ];
 
     for features in combos {
