@@ -46,9 +46,9 @@ use super::dispatch::InstructionOutcome;
 use super::errors::{Result, VmError};
 use super::execution_model::ExecutionState;
 use super::machine::RegoVM;
-use crate::languages::history_table::store::{
-    HistoryCursor, HistoryTableRuntime, RuleRuntime, StoredHistory,
-};
+#[cfg(test)]
+use crate::languages::history_table::store::HistoryCursor;
+use crate::languages::history_table::store::{HistoryTableRuntime, RuleRuntime, StoredHistory};
 use crate::languages::history_table::{Event, HistoryHandle, HistoryStore};
 use crate::rvm::program::{HistoryRuleMode, Program};
 use crate::utils::limits::{ExecutionTimer, LimitError};
@@ -110,7 +110,9 @@ impl BatchCursor {
     #[verus_spec(result =>
         requires
             crate::rvm::vm::history_tables::progress::verify::pair_wf(*old(pair)),
-            old(self).residual@ < (*old(pair)).store.graph().regexes.len(),
+            crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
+                *old(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
+                old(self).consumed as nat, old(self).residual),
         ensures
             crate::rvm::vm::history_tables::progress::verify::pair_wf(*final(pair)),
             crate::rvm::vm::history_tables::progress::verify::pair_frame(*old(pair), *final(pair)),
@@ -128,18 +130,12 @@ impl BatchCursor {
             result matches Ok(Some(answer)) ==> answer == crate::rvm::vm::history_tables::kernel::verify::regex_lang(
                 (*final(pair)).store.graph(), bindings@,
                 old(self).residual@, crate::rvm::vm::history_tables::kernel::verify::events_view(events@).subrange(old(self).consumed as int, target_len as int)),
-            result is Ok && crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
-                *old(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
-                old(self).consumed as nat, old(self).residual)
-                ==> crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
-                    *final(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
-                    final(self).consumed as nat, final(self).residual),
-            result matches Ok(Some(answer)) ==> (crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
-                *old(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
-                old(self).consumed as nat, old(self).residual)
-                ==> answer == crate::rvm::vm::history_tables::kernel::verify::regex_lang(
-                    (*old(pair)).store.graph(), bindings@,
-                    old(pair).root@, crate::rvm::vm::history_tables::kernel::verify::events_view(events@).take(target_len as int))),
+            result is Ok ==> crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
+                *final(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
+                final(self).consumed as nat, final(self).residual),
+            result matches Ok(Some(answer)) ==> answer == crate::rvm::vm::history_tables::kernel::verify::regex_lang(
+                (*old(pair)).store.graph(), bindings@,
+                old(pair).root@, crate::rvm::vm::history_tables::kernel::verify::events_view(events@).take(target_len as int)),
     )]
     pub(crate) fn advance(
         &mut self,
@@ -192,15 +188,13 @@ impl BatchCursor {
         };
         world.publication_checkpoint(timer)?;
         proof! {
-            if progress::verify::residual_after_prefix(entry, model::events_view(events@), bindings@, entry_cursor.consumed as nat, entry_cursor.residual) {
-                model::lemma_graph_wf_elim(entry.store.graph());
-                model::lemma_lift_regex_stable(entry.store.graph(), (*pair).store.graph(), entry.root@);
-                history_algebra::theorem_batch_extends_pinned_prefix(
-                    entry.store.graph(), (*pair).store.graph(), bindings@,
-                    entry.root@, entry_cursor.residual@, residual@, model::events_view(events@),
-                    entry_cursor.consumed as nat, end as nat,
-                );
-            }
+            model::lemma_graph_wf_elim(entry.store.graph());
+            model::lemma_lift_regex_stable(entry.store.graph(), (*pair).store.graph(), entry.root@);
+            history_algebra::theorem_batch_extends_pinned_prefix(
+                entry.store.graph(), (*pair).store.graph(), bindings@,
+                entry.root@, entry_cursor.residual@, residual@, model::events_view(events@),
+                entry_cursor.consumed as nat, end as nat,
+            );
         }
         // Commit the cursor last so every fallible operation leaves it unchanged.
         self.consumed = end;
@@ -437,7 +431,7 @@ impl RegoVM {
         if self.history_active_rule.is_none() {
             let instance = Arc::clone(&slot.current.lock());
             // Lock graph before history consistently; retain both guards through validation.
-            let graph = instance.lock();
+            let mut graph = instance.lock();
             let stored = decision.record.read();
             decision
                 .check(&stored, &mut self.execution_timer, &mut world)
@@ -445,25 +439,10 @@ impl RegoVM {
             let Some(bindings) = slot.template.bindings(&decision.request) else {
                 return Ok(InstructionOutcome::Continue);
             };
-            let cursor = graph
-                .cursors
-                .iter()
-                .find(|cursor| {
-                    cursor.history == decision.history
-                        && cursor.bindings == bindings
-                        && cursor.revision == decision.revision
-                        && cursor.consumed <= decision.target_len
-                })
-                .map_or(
-                    BatchCursor {
-                        consumed: 0,
-                        residual: graph.pair.root,
-                    },
-                    |cursor| BatchCursor {
-                        consumed: cursor.consumed,
-                        residual: cursor.residual,
-                    },
-                );
+            // Native provenance: this locked record belongs to decision.history;
+            // same-revision observations extend its previously recorded word.
+            let cursor =
+                graph.resume_cursor(decision.history, &bindings, &stored, decision.target_len);
             drop(stored);
             drop(graph);
             self.history_active_rule = Some(ActiveHistoryRule {
@@ -484,10 +463,11 @@ impl RegoVM {
         decision
             .check(&stored, &mut self.execution_timer, &mut world)
             .map_err(|error| VmError::from_history(error, pc))?;
-        let outcome = active.cursor.advance(
-            &mut graph.pair,
-            &stored.events,
+        let outcome = graph.advance_cursor(
+            &mut active.cursor,
+            decision.history,
             &active.bindings,
+            &stored,
             decision.target_len,
             batch_size,
             &mut self.execution_timer,
@@ -495,13 +475,6 @@ impl RegoVM {
         );
         match outcome {
             Ok(answer) => {
-                graph.publish(HistoryCursor {
-                    history: decision.history,
-                    bindings: active.bindings,
-                    revision: decision.revision,
-                    consumed: active.cursor.consumed,
-                    residual: active.cursor.residual,
-                });
                 drop(stored);
                 drop(graph);
                 match answer {

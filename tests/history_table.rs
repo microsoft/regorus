@@ -142,6 +142,61 @@ fn prior_edit_requires_same_principal_and_resource_without_appending_candidate()
     }
 }
 
+#[test]
+fn cached_prefixes_preserve_history_revision_and_binding_semantics() {
+    let program = table(vec![prior_edit_rule()], 1);
+    for mode in MODES {
+        let store = Arc::new(HistoryStore::new());
+        let mut a = Fixture::with_store(&program, mode, store.clone());
+        let mut b = Fixture::with_store(&program, mode, store.clone());
+        let alice_edit = event(&store, "alice", "edit", "doc");
+        let bob_edit = event(&store, "bob", "edit", "doc");
+        let alice_release = event(&store, "alice", "release", "doc");
+        let bob_release = event(&store, "bob", "release", "doc");
+        store.append(&a.history, &[alice_edit]).unwrap();
+        store.append(&b.history, &[bob_edit]).unwrap();
+
+        let assert_verdict = |f: &mut Fixture, request: Event, granted: bool| {
+            let len = f.store.len(&f.history).unwrap();
+            assert_eq!(
+                f.decide(request).unwrap(),
+                expected((!granted).then_some(0))
+            );
+            assert_eq!(f.store.len(&f.history).unwrap(), len);
+        };
+
+        for _ in 0..2 {
+            assert_verdict(&mut a, alice_release, true);
+            assert_verdict(&mut a, bob_release, false);
+            assert_verdict(&mut b, alice_release, false);
+            assert_verdict(&mut b, bob_release, true);
+        }
+
+        store.append(&b.history, &[alice_edit]).unwrap();
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+
+        a.replace(&[bob_edit]);
+        assert_eq!(store.len(&a.history).unwrap(), 1);
+        assert_verdict(&mut a, alice_release, false);
+        assert_verdict(&mut a, bob_release, true);
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+
+        for _ in 0..17 {
+            let mut other = Fixture::with_store(&program, mode, store.clone());
+            store.append(&other.history, &[alice_edit]).unwrap();
+            assert_verdict(&mut other, alice_release, true);
+            assert_verdict(&mut other, bob_release, false);
+        }
+
+        assert_verdict(&mut a, alice_release, false);
+        assert_verdict(&mut a, bob_release, true);
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+    }
+}
+
 fn approval_rule() -> Json {
     let same_resource = comparison("eq", "resource", json!({"var": "resource"}));
     let no_edit = json!({"star": {"test": {"or": [
@@ -831,6 +886,8 @@ fn newer_shared_cache_prefix_cannot_seed_an_older_decision_target() {
         Value::from(1usize)
     );
     assert_eq!(finish(&mut old.vm).unwrap(), Value::Null);
+    old.vm.set_step_mode(false);
+    assert_eq!(old.decide(read).unwrap(), Value::from(1usize));
 }
 
 #[test]

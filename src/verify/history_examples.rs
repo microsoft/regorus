@@ -1,18 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Typed policy examples and a direct connection to the production fold/answer bodies.
+//! Typed policy examples connected to the production fold, answer, and cache transaction bodies.
 
 use super::history_algebra::{self as algebra, src_sem};
 use super::history_specs::{
     self as language, EventView, Head, HeadField, Regex, SrcTest, Subst, Term,
 };
+use crate::languages::history_table::store::verify::{self as cache, HistorySnapshots};
+use crate::languages::history_table::store::{HistoryCursor, RuleRuntime, StoredHistory};
 use crate::languages::history_table::Event;
 use crate::rvm::program::HistoryField;
 use crate::rvm::vm::history_tables::graph::ObservationWorld;
 use crate::rvm::vm::history_tables::kernel::verify as model;
 use crate::rvm::vm::history_tables::kernel::{Bindings, KernelResult, RegexId};
 use crate::rvm::vm::history_tables::progress::{verify as progress, CompiledPair};
+use crate::rvm::vm::history_tables::source::{verify as source, NumericPair};
 use crate::utils::limits::ExecutionTimer;
 use alloc::boxed::Box;
 use vstd::prelude::*;
@@ -172,6 +175,115 @@ pub(crate) fn fold_decision(
         assert(progress::pair_frame(entry, *pair));
     }
     Ok(answer)
+}
+
+pub(crate) proof fn cache_rejects_wrong_residual(
+    pair: CompiledPair, cursor: HistoryCursor, snapshots: HistorySnapshots,
+)
+    requires progress::pair_wf(pair),
+        pair.root@ == pair.store.graph().constants.empty,
+        cursor.residual@ == pair.store.graph().constants.all,
+        snapshots.contains_key((cursor.history, cursor.revision)),
+        cursor.consumed <= snapshots[(cursor.history, cursor.revision)].len(),
+        language::event_wf(cursor.bindings@),
+    ensures !cache::cursor_matches_snapshot(pair, cursor, snapshots),
+        !cache::cursor_cache_wf(pair, seq![cursor], snapshots),
+{
+    let graph = pair.store.graph();
+    let empty = Seq::<EventView>::empty();
+    let prefix = snapshots[(cursor.history, cursor.revision)].take(cursor.consumed as int);
+    model::lemma_graph_wf_elim(graph);
+    assert(model::lift_regex(graph, pair.root@) == Regex::Empty);
+    assert(model::lift_regex(graph, cursor.residual@) == Regex::All);
+    assert(model::regex_lang(graph, cursor.bindings@, cursor.residual@, empty));
+    assert(!model::regex_lang(graph, cursor.bindings@, pair.root@, prefix + empty));
+    if cache::cursor_matches_snapshot(pair, cursor, snapshots) {
+        assert(model::regex_lang(graph, cursor.bindings@, cursor.residual@, empty)
+            == model::regex_lang(graph, cursor.bindings@, pair.root@, prefix + empty));
+    }
+    if cache::cursor_cache_wf(pair, seq![cursor], snapshots) {
+        assert(seq![cursor][0] == cursor);
+        assert(cache::cursor_matches_snapshot(pair, seq![cursor][0], snapshots));
+    }
+}
+
+/// Cache selection and every batch use the production transaction bodies.
+pub(crate) fn cached_decision(
+    runtime: &mut RuleRuntime, history: usize, bindings: &Bindings, stored: &StoredHistory,
+    target_len: usize, batch_size: usize, timer: &mut ExecutionTimer, world: &mut ObservationWorld,
+) -> (result: KernelResult<bool>)
+    requires cache::cursor_cache_wf(old(runtime).pair, old(runtime).cursors@, old(runtime).snapshots@),
+        cache::snapshot_compatible(old(runtime).snapshots@, history, stored.revision,
+            model::events_view(stored.events@)),
+        language::event_wf(bindings@), batch_size > 0, target_len <= stored.events@.len(),
+    ensures cache::cursor_cache_wf(final(runtime).pair, final(runtime).cursors@, final(runtime).snapshots@),
+        progress::pair_frame(old(runtime).pair, final(runtime).pair),
+        result matches Ok(answer) ==> answer == model::regex_lang(
+            old(runtime).pair.store.graph(), bindings@, old(runtime).pair.root@,
+            model::events_view(stored.events@).take(target_len as int)),
+{
+    hide(language::lang);
+    hide(model::lift_regex);
+    hide(model::test_holds);
+    let ghost entry = runtime.pair;
+    let mut cursor = runtime.resume_cursor(history, bindings, stored, target_len);
+    loop
+        invariant entry == old(runtime).pair,
+            progress::pair_wf(entry),
+            cache::cursor_cache_wf(runtime.pair, runtime.cursors@, runtime.snapshots@),
+            progress::pair_frame(entry, runtime.pair),
+            runtime.snapshots@.contains_key((history, stored.revision)),
+            runtime.snapshots@[(history, stored.revision)] == model::events_view(stored.events@),
+            cache::batch_matches_snapshot(runtime.pair, cursor, history, stored.revision,
+                *bindings, runtime.snapshots@),
+            cursor.consumed <= target_len, target_len <= stored.events@.len(),
+            language::event_wf(bindings@), batch_size > 0,
+        decreases target_len - cursor.consumed,
+    {
+        let ghost batch_entry = runtime.pair;
+        let ghost consumed = cursor.consumed;
+        let result = runtime.advance_cursor(&mut cursor, history, bindings, stored,
+            target_len, batch_size, timer, world);
+        proof {
+            let first = entry.store.graph();
+            let last = runtime.pair.store.graph();
+            assert(first.tests.is_prefix_of(last.tests));
+            assert(first.regexes.is_prefix_of(last.regexes));
+            assert(first.transitions.is_prefix_of(last.transitions));
+            assert(progress::pair_frame(entry, runtime.pair));
+            model::lemma_graph_wf_elim(first);
+            model::lemma_lift_regex_stable(first, batch_entry.store.graph(), entry.root@);
+        }
+        match result {
+            Err(error) => return Err(error),
+            Ok(Some(answer)) => return Ok(answer),
+            Ok(None) => {
+                proof {
+                    language::lemma_selected_end(consumed as nat, target_len as nat, batch_size as nat);
+                    assert(consumed < target_len);
+                    assert(consumed < cursor.consumed);
+                }
+            },
+        }
+    }
+}
+
+/// Construction and cache-backed decisions preserve the supplied numeric template's language.
+pub(crate) fn template_cached_decision(
+    template: &NumericPair, precompile: bool, history: usize, bindings: &Bindings,
+    stored: &StoredHistory, target_len: usize, batch_size: usize,
+    timer: &mut ExecutionTimer, world: &mut ObservationWorld,
+) -> (result: KernelResult<bool>)
+    requires language::event_wf(bindings@), batch_size > 0, target_len <= stored.events@.len(),
+    ensures result matches Ok(answer) ==> answer == source::source_regex(
+        *template, template.root as nat, bindings@,
+        model::events_view(stored.events@).take(target_len as int)),
+{
+    hide(language::lang);
+    hide(model::lift_regex);
+    hide(model::test_holds);
+    let mut runtime = RuleRuntime::new(template, precompile, timer, world)?;
+    cached_decision(&mut runtime, history, bindings, stored, target_len, batch_size, timer, world)
 }
 
 }

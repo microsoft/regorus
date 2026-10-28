@@ -8,7 +8,15 @@
 
 use super::HistoryError;
 use crate::rvm::vm::history_tables::graph::allocation;
-use crate::utils::limits::enforce_memory_limit;
+#[cfg(verus_keep_ghost)]
+use crate::rvm::vm::history_tables::kernel::verify as model;
+use crate::rvm::vm::history_tables::kernel::Bindings;
+#[cfg(verus_keep_ghost)]
+use crate::rvm::vm::history_tables::progress::{verify as progress, CompiledPair};
+use crate::rvm::vm::history_tables::{BatchCursor, ObservationWorld};
+use crate::utils::limits::{enforce_memory_limit, ExecutionTimer};
+#[cfg(verus_keep_ghost)]
+use crate::verify::history_specs as language;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -333,6 +341,15 @@ pub(crate) mod verify {
     use super::*;
     use crate::verify::history_specs as language;
 
+    pub(crate) type HistorySnapshots = Map<(usize, u64), Seq<language::EventView>>;
+
+    pub(crate) open spec fn snapshot_compatible(
+        snapshots: HistorySnapshots, history: usize, revision: u64, events: Seq<language::EventView>,
+    ) -> bool {
+        !snapshots.contains_key((history, revision))
+            || snapshots[(history, revision)].is_prefix_of(events)
+    }
+
     // Default's trait contract is public; its model is visible but predicate bodies stay local.
     pub struct DomainView {
         pub paths: Map<Seq<u8>, nat>,
@@ -370,19 +387,32 @@ pub(crate) mod verify {
         left.history == right.history && left.bindings@ == right.bindings@
     }
 
-    pub(crate) open spec fn cursor_in_graph(
-        pair: crate::rvm::vm::history_tables::progress::CompiledPair, cursor: HistoryCursor,
+    pub(crate) open spec fn cursor_matches_snapshot(
+        pair: CompiledPair, cursor: HistoryCursor, snapshots: HistorySnapshots,
     ) -> bool {
-        cursor.residual@ < pair.store.graph().regexes.len()
-            && language::event_wf(cursor.bindings@)
+        language::event_wf(cursor.bindings@)
+            && snapshots.contains_key((cursor.history, cursor.revision))
+            && progress::residual_after_prefix(pair, snapshots[(cursor.history, cursor.revision)],
+                cursor.bindings@, cursor.consumed as nat, cursor.residual)
+    }
+
+    pub(crate) open spec fn batch_matches_snapshot(
+        pair: CompiledPair, cursor: BatchCursor, history: usize, revision: u64,
+        bindings: Bindings, snapshots: HistorySnapshots,
+    ) -> bool {
+        language::event_wf(bindings@)
+            && ((cursor.consumed == 0 && cursor.residual == pair.root)
+                || (snapshots.contains_key((history, revision))
+                    && progress::residual_after_prefix(pair, snapshots[(history, revision)],
+                        bindings@, cursor.consumed as nat, cursor.residual)))
     }
 
     pub(crate) open spec fn cursor_cache_wf(
-        pair: crate::rvm::vm::history_tables::progress::CompiledPair, cursors: Seq<HistoryCursor>,
+        pair: CompiledPair, cursors: Seq<HistoryCursor>, snapshots: HistorySnapshots,
     ) -> bool {
         crate::rvm::vm::history_tables::progress::verify::pair_wf(pair)
             && cursors.len() <= HISTORY_CACHE_CAPACITY
-            && (forall|i: int| 0 <= i < cursors.len() ==> cursor_in_graph(pair, cursors[i]))
+            && (forall|i: int| 0 <= i < cursors.len() ==> cursor_matches_snapshot(pair, cursors[i], snapshots))
             && (forall|i: int, j: int| 0 <= i < j < cursors.len()
                 ==> !cursor_key_eq(cursors[i], cursors[j]))
     }
@@ -394,11 +424,11 @@ pub(crate) mod verify {
 
     pub(super) proof fn lemma_cursor_remove(
         pair: crate::rvm::vm::history_tables::progress::CompiledPair,
-        cursors: Seq<HistoryCursor>, index: int, cursor: HistoryCursor,
+        cursors: Seq<HistoryCursor>, index: int, cursor: HistoryCursor, snapshots: HistorySnapshots,
     )
-        requires cursor_cache_wf(pair, cursors), 0 <= index < cursors.len(),
+        requires cursor_cache_wf(pair, cursors, snapshots), 0 <= index < cursors.len(),
             cursor_key_eq(cursors[index], cursor),
-        ensures cursor_cache_wf(pair, cursors.remove(index)),
+        ensures cursor_cache_wf(pair, cursors.remove(index), snapshots),
             cursors.remove(index).len() < HISTORY_CACHE_CAPACITY,
             forall|i: int| 0 <= i < cursors.remove(index).len()
                 ==> !cursor_key_eq(cursors.remove(index)[i], cursor)
@@ -406,13 +436,13 @@ pub(crate) mod verify {
     {
         cursors.remove_ensures(index);
         let kept = cursors.remove(index);
-        assert forall|i: int| 0 <= i < kept.len() implies cursor_in_graph(pair, kept[i])
+        assert forall|i: int| 0 <= i < kept.len() implies cursor_matches_snapshot(pair, kept[i], snapshots)
             && !cursor_key_eq(kept[i], cursor) && cursors.contains(kept[i]) by {
             let original = if i < index { i } else { i + 1 };
             assert(0 <= original < cursors.len());
             assert(kept[i] == cursors[original]);
             assert(original != index);
-            assert(cursor_in_graph(pair, cursors[original]));
+            assert(cursor_matches_snapshot(pair, cursors[original], snapshots));
             if original < index {
                 assert(!cursor_key_eq(cursors[original], cursors[index]));
             } else {
@@ -433,10 +463,10 @@ pub(crate) mod verify {
     }
 
     pub(super) proof fn lemma_cursor_drop_last(
-        pair: crate::rvm::vm::history_tables::progress::CompiledPair, cursors: Seq<HistoryCursor>,
+        pair: CompiledPair, cursors: Seq<HistoryCursor>, snapshots: HistorySnapshots,
     )
-        requires cursor_cache_wf(pair, cursors), cursors.len() > 0,
-        ensures cursor_cache_wf(pair, cursors.drop_last()),
+        requires cursor_cache_wf(pair, cursors, snapshots), cursors.len() > 0,
+        ensures cursor_cache_wf(pair, cursors.drop_last(), snapshots),
             forall|i: int| 0 <= i < cursors.drop_last().len()
                 ==> cursors.drop_last()[i] == cursors[i] && cursors.contains(cursors.drop_last()[i]),
     {
@@ -450,15 +480,15 @@ pub(crate) mod verify {
     }
 
     pub(super) proof fn lemma_cursor_prepend(
-        pair: crate::rvm::vm::history_tables::progress::CompiledPair, cursors: Seq<HistoryCursor>, cursor: HistoryCursor,
+        pair: CompiledPair, cursors: Seq<HistoryCursor>, cursor: HistoryCursor, snapshots: HistorySnapshots,
     )
-        requires cursor_cache_wf(pair, cursors), cursors.len() < HISTORY_CACHE_CAPACITY,
-            cursor_in_graph(pair, cursor),
+        requires cursor_cache_wf(pair, cursors, snapshots), cursors.len() < HISTORY_CACHE_CAPACITY,
+            cursor_matches_snapshot(pair, cursor, snapshots),
             forall|i: int| 0 <= i < cursors.len() ==> !cursor_key_eq(cursors[i], cursor),
-        ensures cursor_cache_wf(pair, seq![cursor] + cursors),
+        ensures cursor_cache_wf(pair, seq![cursor] + cursors, snapshots),
     {
         let after = seq![cursor] + cursors;
-        assert forall|i: int| 0 <= i < after.len() implies cursor_in_graph(pair, after[i]) by {
+        assert forall|i: int| 0 <= i < after.len() implies cursor_matches_snapshot(pair, after[i], snapshots) by {
             if i == 0 { assert(after[i] == cursor); }
             else { assert(after[i] == cursors[i - 1]); }
         }
@@ -467,6 +497,42 @@ pub(crate) mod verify {
             assert(after[j] == cursors[j - 1]);
             if i == 0 { assert(after[i] == cursor); }
             else { assert(after[i] == cursors[i - 1]); }
+        }
+    }
+
+    pub(crate) proof fn lemma_cursor_cache_frame(
+        before: CompiledPair, after: CompiledPair, cursors: Seq<HistoryCursor>, snapshots: HistorySnapshots,
+    )
+        requires cursor_cache_wf(before, cursors, snapshots), progress::pair_wf(after),
+            progress::pair_frame(before, after),
+        ensures cursor_cache_wf(after, cursors, snapshots),
+    {
+        assert forall|i: int| 0 <= i < cursors.len()
+            implies cursor_matches_snapshot(after, cursors[i], snapshots) by {
+            let cursor = cursors[i];
+            progress::lemma_residual_after_prefix_frame(before, after,
+                snapshots[(cursor.history, cursor.revision)], cursor.bindings@,
+                cursor.consumed as nat, cursor.residual);
+        }
+    }
+
+    pub(crate) proof fn lemma_cursor_cache_observe(
+        pair: CompiledPair, cursors: Seq<HistoryCursor>, snapshots: HistorySnapshots,
+        history: usize, revision: u64, events: Seq<language::EventView>,
+    )
+        requires cursor_cache_wf(pair, cursors, snapshots),
+            snapshot_compatible(snapshots, history, revision, events),
+        ensures cursor_cache_wf(pair, cursors, snapshots.insert((history, revision), events)),
+    {
+        let updated = snapshots.insert((history, revision), events);
+        assert forall|i: int| 0 <= i < cursors.len()
+            implies cursor_matches_snapshot(pair, cursors[i], updated) by {
+            let cursor = cursors[i];
+            if (cursor.history, cursor.revision) == (history, revision) {
+                progress::lemma_residual_after_prefix_history_extends(pair,
+                    snapshots[(history, revision)], events, cursor.bindings@,
+                    cursor.consumed as nat, cursor.residual);
+            }
         }
     }
 }
@@ -580,11 +646,20 @@ pub(crate) struct HistoryRuleSlot {
 }
 
 #[verus_verify]
-#[verus_verify(external_derive)]
-#[derive(Debug)]
 pub(crate) struct RuleRuntime {
     pub(crate) pair: crate::rvm::vm::history_tables::progress::CompiledPair,
     pub(crate) cursors: Vec<HistoryCursor>,
+    #[cfg(verus_keep_ghost)]
+    pub(crate) snapshots: Ghost<verify::HistorySnapshots>,
+}
+
+impl core::fmt::Debug for RuleRuntime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RuleRuntime")
+            .field("pair", &self.pair)
+            .field("cursors", &self.cursors)
+            .finish()
+    }
 }
 
 #[verus_verify]
@@ -617,7 +692,15 @@ impl HistoryCursor {
     }
 }
 
+#[verus_verify]
 impl RuleRuntime {
+    #[verus_spec(result => ensures result matches Ok(runtime) ==>
+        cursor_cache_wf(runtime.pair, runtime.cursors@, runtime.snapshots@)
+            && runtime.cursors@ == Seq::<HistoryCursor>::empty()
+            && runtime.snapshots@ == HistorySnapshots::empty()
+            && crate::rvm::vm::history_tables::source::verify::regex_correct(
+                runtime.pair.store.graph(), *template, template.root as nat, runtime.pair.root),
+    )]
     pub(crate) fn new(
         template: &crate::rvm::vm::history_tables::source::NumericPair,
         precompile: bool,
@@ -628,6 +711,7 @@ impl RuleRuntime {
         let mut pair = template.compile(timer, world)?;
         #[cfg(feature = "cache")]
         if precompile {
+            proof_decl! { let ghost compiled = pair; }
             if let Err(error) = pair.precompile(timer, world) {
                 if !matches!(error, HistoryError::GraphLimit { .. }) {
                     return Err(error);
@@ -635,22 +719,191 @@ impl RuleRuntime {
                 drop(pair);
                 pair = template.compile(timer, world)?;
             }
+            proof! {
+                if progress::pair_frame(compiled, pair) {
+                    model::lemma_graph_wf_elim(compiled.store.graph());
+                    model::lemma_lift_regex_stable(compiled.store.graph(), pair.store.graph(), compiled.root@);
+                }
+            }
         }
         #[cfg(not(feature = "cache"))]
         let _ = precompile;
         let mut cursors = Vec::new();
-        allocation(cursors.try_reserve_exact(HISTORY_CACHE_CAPACITY))?;
+        allocation(world.try_reserve_vec_exact(&mut cursors, HISTORY_CACHE_CAPACITY))?;
         enforce_memory_limit()?;
-        Ok(Self { pair, cursors })
+        // The expression macro also supplies the ghost field during Verus's erased Rust check.
+        let runtime = Self {
+            pair,
+            cursors,
+            #[cfg(verus_keep_ghost)]
+            snapshots: verus_exec_expr! { Ghost(Map::empty()) },
+        };
+        Ok(runtime)
+    }
+
+    #[verus_spec(result =>
+        requires cursor_cache_wf(old(self).pair, old(self).cursors@, old(self).snapshots@),
+            snapshot_compatible(old(self).snapshots@, history, stored.revision, model::events_view(stored.events@)),
+            language::event_wf(bindings@), target_len <= stored.events@.len(),
+        ensures final(self).pair == old(self).pair, final(self).cursors@ == old(self).cursors@,
+            final(self).snapshots@ == old(self).snapshots@.insert((history, stored.revision), model::events_view(stored.events@)),
+            cursor_cache_wf(final(self).pair, final(self).cursors@, final(self).snapshots@),
+            result.consumed <= target_len,
+            progress::residual_after_prefix(final(self).pair, model::events_view(stored.events@),
+                bindings@, result.consumed as nat, result.residual),
+            batch_matches_snapshot(final(self).pair, result, history, stored.revision, *bindings, final(self).snapshots@),
+    )]
+    pub(crate) fn resume_cursor(
+        &mut self,
+        history: usize,
+        bindings: &Bindings,
+        stored: &StoredHistory,
+        target_len: usize,
+    ) -> BatchCursor {
+        proof_decl! { let ghost entry = *self; }
+        proof! {
+            lemma_cursor_cache_observe(self.pair, self.cursors@, self.snapshots@,
+                history, stored.revision, model::events_view(stored.events@));
+            *self.snapshots = self.snapshots@.insert((history, stored.revision), model::events_view(stored.events@));
+        }
+        let mut index = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant index <= self.cursors@.len(),
+                entry == *old(self),
+                self.pair == entry.pair, self.cursors@ == entry.cursors@,
+                self.snapshots@ == entry.snapshots@.insert((history, stored.revision), model::events_view(stored.events@)),
+                cursor_cache_wf(self.pair, self.cursors@, self.snapshots@),
+                self.snapshots@.contains_key((history, stored.revision)),
+                self.snapshots@[(history, stored.revision)] == model::events_view(stored.events@),
+            decreases self.cursors@.len() - index,
+        ))]
+        while index < self.cursors.len() {
+            if let Some(cursor) = self.cursors.get(index) {
+                if cursor.history == history
+                    && cursor.bindings.0 == bindings.0
+                    && cursor.revision == stored.revision
+                    && cursor.consumed <= target_len
+                {
+                    proof! {
+                        assert(cursor_matches_snapshot(self.pair, *cursor, self.snapshots@));
+                        assert(cursor.bindings@ == bindings@);
+                        assert(progress::residual_after_prefix(self.pair, model::events_view(stored.events@),
+                            bindings@, cursor.consumed as nat, cursor.residual));
+                    }
+                    return BatchCursor {
+                        consumed: cursor.consumed,
+                        residual: cursor.residual,
+                    };
+                }
+            }
+            index = index.saturating_add(1);
+        }
+        proof! {
+            assert(model::events_view(stored.events@).take(0) =~= Seq::<language::EventView>::empty());
+            assert forall|word: Seq<language::EventView>| model::regex_lang(self.pair.store.graph(), bindings@, self.pair.root@, word)
+                == model::regex_lang(self.pair.store.graph(), bindings@, self.pair.root@,
+                    model::events_view(stored.events@).take(0) + word) by {
+                assert(Seq::<language::EventView>::empty() + word =~= word);
+            }
+        }
+        BatchCursor {
+            consumed: 0,
+            residual: self.pair.root,
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the locked history transaction inputs explicit."
+    )]
+    #[verus_spec(result =>
+        requires cursor_cache_wf(old(self).pair, old(self).cursors@, old(self).snapshots@),
+            snapshot_compatible(old(self).snapshots@, history, stored.revision, model::events_view(stored.events@)),
+            batch_matches_snapshot(old(self).pair, *old(cursor), history, stored.revision, *bindings, old(self).snapshots@),
+        ensures cursor_cache_wf(final(self).pair, final(self).cursors@, final(self).snapshots@),
+            progress::pair_frame(old(self).pair, final(self).pair),
+            final(self).snapshots@ == old(self).snapshots@.insert((history, stored.revision), model::events_view(stored.events@)),
+            batch_matches_snapshot(final(self).pair, *final(cursor), history, stored.revision, *bindings, final(self).snapshots@),
+            progress::residual_after_prefix(final(self).pair, model::events_view(stored.events@), bindings@,
+                final(cursor).consumed as nat, final(cursor).residual),
+            result is Err ==> final(cursor).consumed == old(cursor).consumed
+                && final(cursor).residual == old(cursor).residual && final(self).cursors@ == old(self).cursors@,
+            result is Ok ==> old(cursor).consumed <= final(cursor).consumed <= target_len
+                && final(cursor).consumed == language::selected_end(old(cursor).consumed as nat, target_len as nat, batch_size as nat),
+            result matches Ok(None) ==> final(cursor).consumed < target_len,
+            result matches Ok(Some(answer)) ==> final(cursor).consumed == target_len
+                && answer == model::regex_lang(old(self).pair.store.graph(), bindings@, old(self).pair.root@,
+                    model::events_view(stored.events@).take(target_len as int)),
+    )]
+    pub(crate) fn advance_cursor(
+        &mut self,
+        cursor: &mut BatchCursor,
+        history: usize,
+        bindings: &Bindings,
+        stored: &StoredHistory,
+        target_len: usize,
+        batch_size: usize,
+        timer: &mut ExecutionTimer,
+        world: &mut ObservationWorld,
+    ) -> Result<Option<bool>, HistoryError> {
+        proof_decl! { let ghost entry = self.pair; let ghost entry_cursors = self.cursors@; let ghost start = *cursor; }
+        proof! {
+            let events = model::events_view(stored.events@);
+            if cursor.consumed == 0 && cursor.residual == self.pair.root {
+                assert(events.take(0) =~= Seq::<language::EventView>::empty());
+                assert forall|word: Seq<language::EventView>| model::regex_lang(self.pair.store.graph(), bindings@, cursor.residual@, word)
+                    == model::regex_lang(self.pair.store.graph(), bindings@, self.pair.root@, events.take(0) + word) by {
+                    assert(events.take(0) + word =~= word);
+                }
+            } else {
+                progress::lemma_residual_after_prefix_history_extends(self.pair,
+                    self.snapshots@[(history, stored.revision)], events, bindings@, cursor.consumed as nat, cursor.residual);
+            }
+            lemma_cursor_cache_observe(self.pair, self.cursors@, self.snapshots@, history, stored.revision, events);
+            *self.snapshots = self.snapshots@.insert((history, stored.revision), events);
+        }
+        let result = cursor.advance(
+            &mut self.pair,
+            &stored.events,
+            bindings,
+            target_len,
+            batch_size,
+            timer,
+            world,
+        );
+        proof! {
+            lemma_cursor_cache_frame(entry, self.pair, entry_cursors, self.snapshots@);
+            if result is Err {
+                progress::lemma_residual_after_prefix_frame(entry, self.pair, model::events_view(stored.events@),
+                    bindings@, start.consumed as nat, start.residual);
+            }
+        }
+        match result {
+            Err(error) => Err(error),
+            Ok(answer) => {
+                let published = HistoryCursor {
+                    history,
+                    bindings: *bindings,
+                    revision: stored.revision,
+                    consumed: cursor.consumed,
+                    residual: cursor.residual,
+                };
+                proof! { assert(cursor_matches_snapshot(self.pair, published, self.snapshots@)); }
+                self.publish(published);
+                Ok(answer)
+            }
+        }
     }
 
     /// Called only after all fallible batch work, while its history is read-locked.
     #[verus_verify]
     #[verus_spec(
-        requires cursor_cache_wf(old(self).pair, old(self).cursors@), cursor_in_graph(old(self).pair, cursor),
+        requires cursor_cache_wf(old(self).pair, old(self).cursors@, old(self).snapshots@),
+            cursor_matches_snapshot(old(self).pair, cursor, old(self).snapshots@),
         ensures
         final(self).pair == old(self).pair,
-        cursor_cache_wf(final(self).pair, final(self).cursors@),
+        final(self).snapshots@ == old(self).snapshots@,
+        cursor_cache_wf(final(self).pair, final(self).cursors@, final(self).snapshots@),
         longer_cached_prefix(old(self).cursors@, cursor) ==> final(self).cursors@ == old(self).cursors@,
         !longer_cached_prefix(old(self).cursors@, cursor) ==> final(self).cursors@.len() > 0
             && final(self).cursors@[0] == cursor,
@@ -675,12 +928,12 @@ impl RuleRuntime {
             }
             proof! { assert(!longer_cached_prefix(entry, cursor)); }
             self.cursors.remove(position);
-            proof! { lemma_cursor_remove(self.pair, entry, position as int, cursor); }
+            proof! { lemma_cursor_remove(self.pair, entry, position as int, cursor, self.snapshots@); }
         } else {
             proof! { assert(!longer_cached_prefix(entry, cursor)); }
             if self.cursors.len() >= HISTORY_CACHE_CAPACITY {
                 self.cursors.pop();
-                proof! { lemma_cursor_drop_last(self.pair, entry); }
+                proof! { lemma_cursor_drop_last(self.pair, entry, self.snapshots@); }
             }
         }
         proof_decl! { let ghost kept = self.cursors@; }
@@ -688,7 +941,7 @@ impl RuleRuntime {
             assert(kept.len() < HISTORY_CACHE_CAPACITY);
             assert forall|i: int| 0 <= i < kept.len()
                 implies !cursor_key_eq(kept[i], cursor) && entry.contains(kept[i]) by {}
-            lemma_cursor_prepend(self.pair, kept, cursor);
+            lemma_cursor_prepend(self.pair, kept, cursor, self.snapshots@);
         }
         // Capacity was reserved at construction; publication cannot allocate or fail.
         self.cursors.insert(0, cursor);

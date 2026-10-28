@@ -1948,6 +1948,39 @@ pub(crate) mod verify {
                     history.take(count as int) + word)
     }
 
+    pub(crate) proof fn lemma_residual_after_prefix_frame(
+        before: CompiledPair, after: CompiledPair, history: Seq<EventView>,
+        bindings: Subst, count: nat, residual: RegexId,
+    )
+        requires pair_wf(before), pair_wf(after), pair_frame(before, after),
+            residual_after_prefix(before, history, bindings, count, residual),
+        ensures residual_after_prefix(after, history, bindings, count, residual),
+    {
+        hide(language::lang); hide(model::lift_regex); hide(model::lift_transition); hide(model::test_holds);
+        model::lemma_graph_wf_elim(before.store.graph());
+        model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), before.root@);
+        model::lemma_lift_regex_stable(before.store.graph(), after.store.graph(), residual@);
+        assert forall|word: Seq<EventView>| model::regex_lang(after.store.graph(), bindings, residual@, word)
+            == model::regex_lang(after.store.graph(), bindings, after.root@,
+                history.take(count as int) + word) by {
+            assert(model::regex_lang(before.store.graph(), bindings, residual@, word)
+                == model::regex_lang(before.store.graph(), bindings, before.root@,
+                    history.take(count as int) + word));
+        }
+    }
+
+    pub(crate) proof fn lemma_residual_after_prefix_history_extends(
+        pair: CompiledPair, before: Seq<EventView>, after: Seq<EventView>,
+        bindings: Subst, count: nat, residual: RegexId,
+    )
+        requires before.is_prefix_of(after),
+            residual_after_prefix(pair, before, bindings, count, residual),
+        ensures residual_after_prefix(pair, after, bindings, count, residual),
+    {
+        hide(language::lang); hide(model::lift_regex); hide(model::lift_transition); hide(model::test_holds);
+        assert(before.take(count as int) =~= after.take(count as int));
+    }
+
 
 
 

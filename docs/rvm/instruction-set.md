@@ -158,8 +158,9 @@ rule continues to the next instruction. The compiler emits one step per rule,
 then `LoadNull; Return`, with entry point `decide`.
 
 The sole production trace engine lives under `rvm::vm::history_tables`:
-dispatch calls `execute_history_step`, then the cursor-last `BatchCursor::advance`
-transaction and its compiled-pair engine. Normalization belongs to `TestId`,
+dispatch calls `execute_history_step`, then `RuleRuntime::resume_cursor` and
+`RuleRuntime::advance_cursor`, which owns the cursor-last `BatchCursor::advance`
+transaction and publication. Normalization belongs to `TestId`,
 `RegexId`, `TransitionId`, `Action` and `ChildAction`; symbolic work belongs to the
 IDs, `DerivativeFactors` and `AtomSet`. Graph and cache consumers use their stores
 directly, without forwarding accessors or redundant task-pop wrappers. There is
@@ -176,6 +177,22 @@ a result can be published, including empty-table and terminal-return paths.
 Suspension retains private progress and pins the graph; no lock guard is stored
 in the VM. Changing attachment/input while active is rejected. Program replacement
 cancels execution and clears attachment/input, not the application's histories.
+
+Starting from a supplied numeric `NumericPair`, `RuleRuntime::new` exports compiled-root
+language equivalence through optional precompilation and GraphLimit recompilation.
+The verified `template_cached_decision` client calls the real constructor and
+cache-backed decision bodies: a successful answer equals the numeric template's
+`source_regex` acceptance on the selected history prefix, without an extra semantic
+assumption. Portable/JSON-source lowering to `NumericPair` remains outside this
+proved boundary.
+
+Verification associates each residual with its history/revision prefix and fixed
+bindings through a ghost-only snapshot catalog owned by the graph generation.
+Cache reuse discharges the batch semantic precondition; publication and graph
+extensions preserve retained associations, including after failed batches.
+The catalog has no native storage. Lock linearization, the history-index/record
+association, and same-revision observation extension remain explicit native
+provenance obligations, not a proof of synchronization.
 
 Cold JSON policies use only principal/action/resource string constants and
 same-domain bindings; see [typed history tables](../builtins.md#typed-history-tables-native-rust-rvm-only).
