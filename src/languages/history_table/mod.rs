@@ -6,22 +6,23 @@
 //! identities; execution accepts only a staged typed event and shared history.
 //! Each decision returns `null` (grant) or the first violated rule's index.
 
+pub(crate) mod limits;
+mod source;
 pub(crate) mod store;
 
-pub use crate::rvm::vm::history_tables::error::HistoryError;
+pub use junco_core::HistoryError;
 pub use store::{Action, Event, HistoryHandle, HistoryStore, Principal, Resource};
 
 use crate::rvm::instructions::HistoryStepParams;
-use crate::rvm::program::{
-    HistoryPairSource, HistoryRuleMode, HistoryTable, HistoryTableRule, Program,
-};
-use crate::rvm::vm::history_tables::ObservationWorld;
+use crate::rvm::program::{HistoryTable, HistoryTableRule, Program};
 use crate::rvm::Instruction;
 use crate::utils::limits::ExecutionTimer;
 use crate::value::Value;
 use alloc::string::{String, ToString as _};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use history_syntax::RuleMode;
+use junco_core::observation::ObservationWorld;
 
 /// History table compilation failures.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -89,8 +90,8 @@ pub fn compile(table: &Value, batch_size: u32) -> Result<Arc<Program>, HistoryTa
                 })
         };
         let mode = match member("mode")?.as_string().map(|s| s.as_ref()) {
-            Ok("forbid") => HistoryRuleMode::Forbid,
-            Ok("require") => HistoryRuleMode::Require,
+            Ok("forbid") => RuleMode::Forbid,
+            Ok("require") => RuleMode::Require,
             _ => {
                 return Err(HistoryTableError::BadMode {
                     index,
@@ -102,11 +103,16 @@ pub fn compile(table: &Value, batch_size: u32) -> Result<Arc<Program>, HistoryTa
         let history = member("history")?;
         let mut timer = ExecutionTimer::new(None);
         // Borrow the members instead of copying both policy trees into a wrapper.
-        let source = HistoryPairSource::parse(request, history, &mut timer, &mut ObservationWorld)
-            .map_err(|e| HistoryTableError::InvalidPair {
-                index,
-                message: alloc::format!("{e}"),
-            })?;
+        let source = source::parse_pair(
+            request,
+            history,
+            &mut limits::RegorusLimits { timer: &mut timer },
+            &mut ObservationWorld,
+        )
+        .map_err(|e| HistoryTableError::InvalidPair {
+            index,
+            message: alloc::format!("{e}"),
+        })?;
         table_rules.push(HistoryTableRule { mode, source });
     }
 

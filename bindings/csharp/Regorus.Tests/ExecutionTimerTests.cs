@@ -63,13 +63,14 @@ triplet_count := count([1 |
         Engine.SetFallbackExecutionTimerConfig(fallback);
         try
         {
-            using var engine = CreateEngine(ValueCount);
+            const int valueCount = 32;
+            using var engine = CreateEngine(valueCount);
             var relaxed = new ExecutionTimerConfig(TimeSpan.FromSeconds(12), checkInterval: 1);
             engine.SetExecutionTimerConfig(relaxed);
 
             var resultJson = engine.EvalRule(Query);
             var result = JsonSerializer.Deserialize<int>(resultJson!);
-            Assert.IsTrue(result > 0, "Expected a positive triplet count when limit is relaxed.");
+            Assert.AreEqual(valueCount * valueCount * valueCount, result);
 
             engine.ClearExecutionTimerConfig();
             var ex = Assert.ThrowsException<InvalidOperationException>(() => engine.EvalRule(Query));

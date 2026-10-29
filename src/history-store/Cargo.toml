@@ -1,0 +1,34 @@
+[package]
+name = "history-store"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.verus]
+verify = true
+
+[features]
+default = []
+runtime = ["junco-core/runtime", "dep:verus-bumpalo", "dep:hashconsius", "dep:smallvec", "dep:lru", "dep:hashbrown", "dep:spin"]
+std = ["dep:parking_lot", "junco-core/std", "history-syntax/std", "vstd/std"]
+test-util = ["runtime", "junco-core/test-util"]
+
+[dependencies]
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
+junco-core = { path = "../junco-core", default-features = false }
+history-syntax = { path = "../history-syntax", default-features = false }
+parking_lot = { version = "0.12", optional = true }
+smallvec = { version = "=1.16.2", default-features = false, optional = true }
+verus-bumpalo = { git = "https://github.com/elefthei/bumpus", rev = "888a6983370524cf1686d82e5814dd17a2dd14e5", optional = true }
+hashconsius = { git = "https://github.com/elefthei/hashconsius", rev = "d7c17483a46b42a9e179cbfa0fdae9b7e8043dbf", default-features = false, optional = true }
+lru = { version = "0.18.2", default-features = false, features = ["hashbrown"], optional = true }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"], optional = true }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"], optional = true }
+
+[dev-dependencies]
+junco-core = { path = "../junco-core", default-features = false, features = ["test-util"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }

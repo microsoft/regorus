@@ -7,13 +7,7 @@ pub(crate) mod f64_assumptions;
 #[cfg(test)]
 mod f64_tests;
 #[cfg(all(verus_keep_ghost, feature = "history"))]
-pub(crate) mod history_algebra;
-#[cfg(all(verus_keep_ghost, feature = "history"))]
-pub(crate) mod history_assumptions;
-#[cfg(all(verus_keep_ghost, feature = "history"))]
-pub(crate) mod history_examples;
-#[cfg(all(verus_keep_ghost, feature = "history"))]
-pub(crate) mod history_specs;
+pub(crate) mod history_host;
 #[cfg(verus_keep_ghost)]
 pub(crate) mod num_assumptions;
 #[cfg(verus_keep_ghost)]

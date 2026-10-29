@@ -2,13 +2,16 @@
 // Licensed under the MIT License.
 #![cfg(all(feature = "rvm", feature = "history"))]
 
+use history_semantics::CompiledRule;
+use history_store::{History, Store};
+use history_syntax::{
+    AtomPattern, Comparison, Component, ComponentPattern, Head, RegexExpr, Rule, RuleMode, TestExpr,
+};
+use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
 use regorus::languages::history_table::{
     compile, Event, HistoryError, HistoryHandle, HistoryStore, HistoryTableError,
 };
-use regorus::rvm::program::{
-    DeserializationResult, HistoryField, HistoryRegexSource, HistoryTermSource, HistoryTestSource,
-    Program,
-};
+use regorus::rvm::program::{DeserializationResult, Program};
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
 use regorus::rvm::Instruction;
 use regorus::{Engine, Value};
@@ -462,7 +465,60 @@ type WordEvent = [usize; 3];
 const FIELDS: [&str; 3] = ["principal", "action", "resource"];
 const VARIABLES: [&str; 3] = ["p", "a", "r"];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TypedWord(WordEvent);
+
+impl history_syntax::Event for TypedWord {
+    type Principal = usize;
+    type Action = usize;
+    type Resource = usize;
+
+    fn principal(self) -> usize {
+        self.0[0]
+    }
+    fn action(self) -> usize {
+        self.0[1]
+    }
+    fn resource(self) -> usize {
+        self.0[2]
+    }
+}
+
 impl Test {
+    fn owned(&self) -> TestExpr<TypedWord> {
+        match self {
+            Self::Bool(true) => TestExpr::True,
+            Self::Bool(false) => TestExpr::False,
+            Self::Compare {
+                field,
+                unequal,
+                variable,
+                literal,
+            } => {
+                let component = if *variable {
+                    ComponentPattern::variable(VARIABLES[*field])
+                } else {
+                    ComponentPattern::constant(*literal)
+                };
+                TestExpr::Atom {
+                    comparison: if *unequal {
+                        Comparison::Neq
+                    } else {
+                        Comparison::Eq
+                    },
+                    pattern: match field {
+                        0 => AtomPattern::Principal(component),
+                        1 => AtomPattern::Action(component),
+                        2 => AtomPattern::Resource(component),
+                        _ => unreachable!("oracle has three coordinates"),
+                    },
+                }
+            }
+            Self::And(children) => TestExpr::And(children.iter().map(Self::owned).collect()),
+            Self::Or(children) => TestExpr::Or(children.iter().map(Self::owned).collect()),
+        }
+    }
+
     fn matches(&self, event: &WordEvent, binding: &WordEvent) -> bool {
         match self {
             Test::Bool(value) => *value,
@@ -505,6 +561,20 @@ impl Test {
 }
 
 impl Regex {
+    fn owned(&self) -> RegexExpr<TypedWord> {
+        match self {
+            Self::Empty => RegexExpr::Empty,
+            Self::All => RegexExpr::All,
+            Self::Epsilon => RegexExpr::Epsilon,
+            Self::Test(test) => RegexExpr::Test(test.owned()),
+            Self::Union(children) => RegexExpr::union(children.iter().map(Self::owned)),
+            Self::Concat(children) => RegexExpr::concat(children.iter().map(Self::owned)),
+            Self::Intersect(children) => RegexExpr::intersect(children.iter().map(Self::owned)),
+            Self::Star(inner) => RegexExpr::star(inner.owned()),
+            Self::Not(inner) => RegexExpr::complement(inner.owned()),
+        }
+    }
+
     // Bounded recursive oracle enumerates word splits; it shares no production
     // normalization, nullable, derivative, graph or cache implementation.
     fn accepts(&self, history: &[WordEvent], binding: &WordEvent) -> bool {
@@ -643,8 +713,7 @@ impl Generator {
     }
 }
 
-#[test]
-fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
+fn oracle_corpus_and_words() -> (Vec<Regex>, [WordEvent; 3], Vec<Vec<WordEvent>>) {
     let leaf = Regex::Test(Test::Compare {
         field: 0,
         unequal: false,
@@ -691,6 +760,12 @@ fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
             .collect();
         words.extend(layer.iter().cloned());
     }
+    (corpus, alphabet, words)
+}
+
+#[test]
+fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
+    let (corpus, alphabet, words) = oracle_corpus_and_words();
     for regex in corpus {
         for batch_size in BATCHES {
             let program = table(
@@ -739,6 +814,384 @@ fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
                 }
             }
         }
+    }
+}
+
+fn assert_shared_decision(
+    regex: &Regex,
+    mode: RuleMode,
+    fixture: &mut Fixture,
+    compiled: &mut CompiledRule<TypedWord>,
+    history: &History<TypedWord>,
+    word: &[WordEvent],
+    binding: WordEvent,
+) {
+    let inside = regex.accepts(word, &binding);
+    let violation = match mode {
+        RuleMode::Require => !inside,
+        RuleMode::Forbid => inside,
+    };
+    let request = event(
+        &fixture.store,
+        &format!("id{}", binding[0]),
+        &format!("id{}", binding[1]),
+        &format!("id{}", binding[2]),
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            compiled
+                .accepts_history(history, &TypedWord(binding))
+                .unwrap(),
+            Some(inside),
+            "owned DSL: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(
+            fixture.decide(request).unwrap(),
+            expected(violation.then_some(0)),
+            "JSON frontend: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(fixture.store.len(&fixture.history).unwrap(), word.len());
+        assert_eq!(history.len(), word.len());
+    }
+}
+
+#[test]
+fn junco_dsl_and_history_table_frontends_agree() {
+    let (corpus, alphabet, words) = oracle_corpus_and_words();
+    for regex in corpus {
+        for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+            for batch_size in BATCHES {
+                let program = table(
+                    vec![rule(
+                        match rule_mode {
+                            RuleMode::Require => "require",
+                            RuleMode::Forbid => "forbid",
+                        },
+                        json!({"object": {
+                            "principal": {"var": "p"}, "action": {"var": "a"}, "resource": {"var": "r"}
+                        }}),
+                        regex.source(),
+                    )],
+                    batch_size,
+                );
+                for execution_mode in MODES {
+                    let mut fixture = Fixture::new(&program, execution_mode);
+                    let store = Arc::new(Store::new().unwrap());
+                    let mut compiled = CompiledRule::new(
+                        store.clone(),
+                        Rule::new(
+                            rule_mode,
+                            Head::new(
+                                ComponentPattern::variable("p"),
+                                ComponentPattern::variable("a"),
+                                ComponentPattern::variable("r"),
+                            ),
+                            regex.owned(),
+                        ),
+                    )
+                    .unwrap();
+                    let mut history = History::new(store).unwrap();
+                    let ids: Vec<_> = alphabet
+                        .iter()
+                        .map(|e| {
+                            event(
+                                &fixture.store,
+                                &format!("id{}", e[0]),
+                                &format!("id{}", e[1]),
+                                &format!("id{}", e[2]),
+                            )
+                        })
+                        .collect();
+                    for binding in [[1, 1, 1], [2, 2, 2]] {
+                        for word in &words {
+                            history.truncate(0).unwrap();
+                            fixture.replace(&[]);
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                &[],
+                                binding,
+                            );
+                            for e in word {
+                                history.push(TypedWord(*e)).unwrap();
+                                fixture
+                                    .store
+                                    .append(
+                                        &fixture.history,
+                                        &[ids[alphabet.iter().position(|a| a == e).unwrap()]],
+                                    )
+                                    .unwrap();
+                            }
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                word,
+                                binding,
+                            );
+                            if let Some((last, prefix)) = word.split_last() {
+                                history.truncate(prefix.len()).unwrap();
+                                fixture
+                                    .store
+                                    .truncate(&fixture.history, prefix.len())
+                                    .unwrap();
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    prefix,
+                                    binding,
+                                );
+                                let replacement = alphabet.iter().position(|e| e != last).unwrap();
+                                history.push(TypedWord(alphabet[replacement])).unwrap();
+                                fixture
+                                    .store
+                                    .append(&fixture.history, &[ids[replacement]])
+                                    .unwrap();
+                                let mut replaced = prefix.to_vec();
+                                replaced.push(alphabet[replacement]);
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    &replaced,
+                                    binding,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A constant action head does not fire, independently of the tail's answer or mode.
+    let regex = Regex::Test(Test::Compare {
+        field: 0,
+        unequal: false,
+        variable: true,
+        literal: 1,
+    });
+    for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+        for batch_size in BATCHES {
+            let program = table(
+                vec![rule(
+                    match rule_mode {
+                        RuleMode::Require => "require",
+                        RuleMode::Forbid => "forbid",
+                    },
+                    json!({"object": {"principal": {"var": "p"}, "action": {"value": "id1"},
+                    "resource": {"var": "r"}}}),
+                    regex.source(),
+                )],
+                batch_size,
+            );
+            for execution_mode in MODES {
+                let mut fixture = Fixture::new(&program, execution_mode);
+                let store = Arc::new(Store::new().unwrap());
+                let mut compiled = CompiledRule::new(
+                    store.clone(),
+                    Rule::new(
+                        rule_mode,
+                        Head::new(
+                            ComponentPattern::variable("p"),
+                            ComponentPattern::constant(1usize),
+                            ComponentPattern::variable("r"),
+                        ),
+                        regex.owned(),
+                    ),
+                )
+                .unwrap();
+                let mut history = History::new(store).unwrap();
+                for word in [vec![], vec![[1, 1, 1]]] {
+                    fixture.replace(&[]);
+                    history.truncate(0).unwrap();
+                    for e in word {
+                        history.push(TypedWord(e)).unwrap();
+                        let recorded = event(&fixture.store, "id1", "id1", "id1");
+                        fixture.store.append(&fixture.history, &[recorded]).unwrap();
+                    }
+                    let mismatch = event(&fixture.store, "id1", "id2", "id1");
+                    for _ in 0..2 {
+                        assert_eq!(
+                            compiled
+                                .accepts_history(&history, &TypedWord([1, 2, 1]))
+                                .unwrap(),
+                            None
+                        );
+                        assert_eq!(fixture.decide(mismatch).unwrap(), Value::Null);
+                        assert_eq!(fixture.store.len(&fixture.history).unwrap(), history.len());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_flat_epsilon_language(source: FlatPair<String>, nodes: usize, edges: usize) {
+    source.validate().unwrap();
+    let assert_shape = |program: &Program| {
+        let stored = &program.history_tables[0].rules[0].source;
+        assert_eq!(stored, &source);
+        assert_eq!(stored.regexes.len(), nodes);
+        assert_eq!(
+            stored
+                .regexes
+                .iter()
+                .map(|node| match node {
+                    FlatRegex::Concat(children)
+                    | FlatRegex::Union(children)
+                    | FlatRegex::Intersect(children) => children.len(),
+                    FlatRegex::Star(_) | FlatRegex::Complement(_) => 1,
+                    _ => 0,
+                })
+                .sum::<usize>(),
+            edges
+        );
+    };
+    for batch_size in BATCHES {
+        let mut program = (*table(
+            vec![rule(
+                "require",
+                json!({"any": true}),
+                json!({"epsilon": true}),
+            )],
+            batch_size,
+        ))
+        .clone();
+        program.history_tables[0].rules[0].source = source.clone();
+        assert_shape(&program);
+        let json_program = Program::deserialize_json(&program.serialize_json().unwrap()).unwrap();
+        let DeserializationResult::Complete(binary_program) =
+            Program::deserialize_binary(&program.serialize_binary().unwrap()).unwrap()
+        else {
+            panic!("current version must deserialize completely");
+        };
+        for restored in [program, json_program, binary_program] {
+            assert_shape(&restored);
+            let restored = Arc::new(restored);
+            for mode in MODES {
+                let mut fixture = Fixture::new(&restored, mode);
+                let probe = event(&fixture.store, "alice", "read", "doc");
+                for _ in 0..2 {
+                    assert_eq!(fixture.decide(probe).unwrap(), Value::Null);
+                }
+                fixture.store.append(&fixture.history, &[probe]).unwrap();
+                for _ in 0..2 {
+                    assert_eq!(fixture.decide(probe).unwrap(), Value::from(0usize));
+                    assert_eq!(fixture.store.len(&fixture.history).unwrap(), 1);
+                }
+                assert_shape(&restored);
+            }
+        }
+    }
+}
+
+#[test]
+fn flat_shared_dag_roundtrips_and_executes_without_unfolding() {
+    let mut regexes = vec![FlatRegex::Epsilon];
+    for index in 1..4096 {
+        regexes.push(FlatRegex::Concat(vec![index - 1, index - 1]));
+    }
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![],
+            regexes,
+            root: 4095,
+        },
+        4096,
+        8190,
+    );
+}
+
+#[test]
+fn flat_deep_unary_and_non_last_root_preserve_topology() {
+    let mut regexes = vec![FlatRegex::Epsilon];
+    for index in 1..4096 {
+        regexes.push(FlatRegex::Star(index - 1));
+    }
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![],
+            regexes,
+            root: 4095,
+        },
+        4096,
+        4095,
+    );
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![FlatTest::Bool(false)],
+            regexes: vec![
+                FlatRegex::Epsilon,
+                FlatRegex::All,
+                FlatRegex::Test(0),
+                FlatRegex::Star(1),
+            ],
+            root: 0,
+        },
+        4,
+        1,
+    );
+}
+
+#[test]
+fn native_value_parser_handles_deep_policy_without_recursive_fixture_drop() {
+    fn object(fields: Vec<(&str, Value)>) -> Value {
+        fields
+            .into_iter()
+            .map(|(key, value)| (Value::from(key), value))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into()
+    }
+
+    let mut history = object(vec![("epsilon", Value::from(true))]);
+    // Keep every level alive until its parents have dropped, so fixture teardown is iterative.
+    let mut keepalive = vec![history.clone()];
+    for _ in 1..4096 {
+        history = object(vec![("star", history)]);
+        keepalive.push(history.clone());
+    }
+    let document = object(vec![(
+        "rules",
+        Value::from(vec![object(vec![
+            ("mode", Value::from("require")),
+            ("request", object(vec![("any", Value::from(true))])),
+            ("history", history),
+        ])]),
+    )]);
+    for batch_size in BATCHES {
+        let program = compile(&document, batch_size).unwrap();
+        let source = &program.history_tables[0].rules[0].source;
+        assert_eq!(source.regexes.len(), 4096);
+        assert_eq!(source.regexes[0], FlatRegex::Epsilon);
+        for (index, node) in source.regexes.iter().enumerate().skip(1) {
+            assert_eq!(node, &FlatRegex::Star(u32::try_from(index - 1).unwrap()));
+        }
+        assert_eq!(source.root, 4095);
+        for mode in MODES {
+            let mut fixture = Fixture::new(&program, mode);
+            let probe = event(&fixture.store, "alice", "read", "doc");
+            assert_eq!(fixture.decide(probe).unwrap(), Value::Null);
+            fixture.store.append(&fixture.history, &[probe]).unwrap();
+            assert_eq!(fixture.decide(probe).unwrap(), Value::from(0usize));
+        }
+    }
+    drop(document);
+    while let Some(level) = keepalive.pop() {
+        drop(level);
     }
 }
 
@@ -1167,30 +1620,30 @@ fn malformed_source_nodes_variables_and_indexes_are_rejected() {
     let base = (*table(vec![prior_edit_rule()], 256)).clone();
     let mut invalid = Vec::new();
     let mut p = base.clone();
-    p.history_tables[0].rules[0].source.regexes = vec![HistoryRegexSource::Star(0)];
+    p.history_tables[0].rules[0].source.regexes = vec![FlatRegex::Star(0)];
     p.history_tables[0].rules[0].source.root = 0;
     invalid.push(p);
     let mut p = base.clone();
-    p.history_tables[0].rules[0].source.regexes = vec![HistoryRegexSource::Test(u32::MAX)];
+    p.history_tables[0].rules[0].source.regexes = vec![FlatRegex::Test(u32::MAX)];
     p.history_tables[0].rules[0].source.root = 0;
     invalid.push(p);
     let mut p = base.clone();
     p.history_tables[0].rules[0].source.root = u32::MAX;
     invalid.push(p);
     let mut p = base.clone();
-    p.history_tables[0].rules[0].source.tests = vec![HistoryTestSource::And(vec![0])];
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::And(vec![0])];
     invalid.push(p);
     let mut p = base.clone();
-    p.history_tables[0].rules[0].source.tests = vec![HistoryTestSource::Atom {
-        field: HistoryField::Principal,
-        term: HistoryTermSource::Variable(HistoryField::Resource),
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
+        field: Component::Principal,
+        term: FlatTerm::Variable(Component::Resource),
         positive: true,
     }];
     invalid.push(p);
     let mut p = base.clone();
-    p.history_tables[0].rules[0].source.tests = vec![HistoryTestSource::Atom {
-        field: HistoryField::Action,
-        term: HistoryTermSource::Variable(HistoryField::Action),
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
+        field: Component::Action,
+        term: FlatTerm::Variable(Component::Action),
         positive: true,
     }];
     invalid.push(p); // Action is Constant in the head, not Bind.

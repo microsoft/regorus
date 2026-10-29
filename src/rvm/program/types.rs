@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 use alloc::string::String;
 use alloc::vec::Vec;
+use history_syntax::RuleMode;
+use junco_core::flat::FlatPair;
 use serde::{Deserialize, Serialize};
 
 /// Builtin function information stored in program's builtin info table
@@ -188,21 +190,11 @@ impl SourceFile {
     }
 }
 
-/// How a history table rule judges its regex.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HistoryRuleMode {
-    /// Violated when the history is not in the rule's language.
-    Require,
-    /// Violated when the history is in the rule's language.
-    Forbid,
-}
-
 /// One ordered history rule and its portable, store-independent source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryTableRule {
-    pub mode: HistoryRuleMode,
-    pub source: super::history::HistoryPairSource,
+    pub mode: RuleMode,
+    pub source: FlatPair<String>,
 }
 
 /// Ordered rules judged by `HistoryStep`; the first violated rule wins.

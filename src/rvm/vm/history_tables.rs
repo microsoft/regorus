@@ -4,64 +4,29 @@
 //! Bounded typed history steps. A decision pins one revision/prefix and each active
 //! rule pins its graph generation; no synchronization guard survives a dispatch.
 
-// Verus contracts require crate visibility and reference-pattern matches.
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod error;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod graph;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod kernel;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod normalize;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod progress;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod source;
-#[allow(clippy::redundant_pub_crate, clippy::pattern_type_mismatch)]
-pub(crate) mod symbolic;
-
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "Shared history work queues stay crate-visible."
-)]
-pub(crate) type WorkVec<T> = smallvec::SmallVec<[T; 4]>;
-
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "The public language API re-exports this error."
-)]
-pub(crate) use error::HistoryError;
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "Native observation capability stays crate-visible."
-)]
-pub(crate) use graph::ObservationWorld;
-
-use self::graph::allocation;
-#[cfg(verus_keep_ghost)]
-use self::kernel::verify as model;
-use self::kernel::{Bindings, KernelResult, RegexId};
-use self::progress::CompiledPair;
 use super::dispatch::InstructionOutcome;
 use super::errors::{Result, VmError};
 use super::execution_model::ExecutionState;
 use super::machine::RegoVM;
-#[cfg(test)]
-use crate::languages::history_table::store::HistoryCursor;
-use crate::languages::history_table::store::{HistoryTableRuntime, RuleRuntime, StoredHistory};
-use crate::languages::history_table::{Event, HistoryHandle, HistoryStore};
-use crate::rvm::program::{HistoryRuleMode, Program};
-use crate::utils::limits::{ExecutionTimer, LimitError};
+use crate::languages::history_table::limits::RegorusLimits;
+use crate::languages::history_table::store::HistoryTableRuntime;
+use crate::languages::history_table::{Event, HistoryError, HistoryHandle, HistoryStore};
+use crate::rvm::program::Program;
+use crate::utils::limits::LimitError;
 use crate::value::Value;
-#[cfg(verus_keep_ghost)]
-use crate::verify::{history_algebra, history_specs as language};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use history_semantics::runtime::{BatchCursor, RuleRuntime};
+use history_store::history::StoredHistory;
+use history_store::store::HistoryRecord;
+use history_syntax::RuleMode;
+use junco_core::kernel::Bindings;
+use junco_core::limits::Limits as _;
+use junco_core::observation::ObservationWorld;
 #[cfg(feature = "std")]
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 #[cfg(not(feature = "std"))]
-use spin::{Mutex, RwLock};
-use vstd::prelude::*;
+use spin::Mutex;
 
 #[derive(Debug)]
 pub(super) struct HistoryAttachment {
@@ -72,7 +37,7 @@ pub(super) struct HistoryAttachment {
 #[derive(Debug)]
 pub(super) struct HistoryDecision {
     history: usize,
-    record: Arc<RwLock<StoredHistory>>,
+    record: HistoryRecord,
     revision: u64,
     target_len: usize,
     request: Event,
@@ -87,126 +52,15 @@ pub(super) struct ActiveHistoryRule {
     retried: bool,
 }
 
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "Verus contracts require crate-visible transaction state."
-)]
-#[verus_verify]
-#[verus_verify(external_derive)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct BatchCursor {
-    pub(crate) consumed: usize,
-    pub(crate) residual: RegexId,
-}
-
-impl BatchCursor {
-    /// The same executable transaction is used under the runtime/history locks.
-    /// No cursor changes until fold, final answer, and publication checks all succeed.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Keep explicit transaction inputs aligned with its verified contract."
-    )]
-    #[verus_verify]
-    #[verus_spec(result =>
-        requires
-            crate::rvm::vm::history_tables::progress::verify::pair_wf(*old(pair)),
-            crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
-                *old(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
-                old(self).consumed as nat, old(self).residual),
-        ensures
-            crate::rvm::vm::history_tables::progress::verify::pair_wf(*final(pair)),
-            crate::rvm::vm::history_tables::progress::verify::pair_frame(*old(pair), *final(pair)),
-            result is Err ==> final(self).consumed == old(self).consumed
-                && final(self).residual == old(self).residual,
-            result is Ok ==> old(self).consumed <= final(self).consumed
-                && final(self).consumed <= target_len
-                && final(self).consumed == crate::verify::history_specs::selected_end(old(self).consumed as nat, target_len as nat, batch_size as nat),
-            result matches Ok(Some(_)) ==> final(self).consumed == target_len,
-            result matches Ok(None) ==> final(self).consumed < target_len,
-            result is Ok ==> crate::rvm::vm::history_tables::progress::verify::residual_folds(
-                *final(pair), bindings@, old(self).residual,
-                crate::rvm::vm::history_tables::kernel::verify::events_view(events@).subrange(old(self).consumed as int, final(self).consumed as int),
-                final(self).residual),
-            result matches Ok(Some(answer)) ==> answer == crate::rvm::vm::history_tables::kernel::verify::regex_lang(
-                (*final(pair)).store.graph(), bindings@,
-                old(self).residual@, crate::rvm::vm::history_tables::kernel::verify::events_view(events@).subrange(old(self).consumed as int, target_len as int)),
-            result is Ok ==> crate::rvm::vm::history_tables::progress::verify::residual_after_prefix(
-                *final(pair), crate::rvm::vm::history_tables::kernel::verify::events_view(events@), bindings@,
-                final(self).consumed as nat, final(self).residual),
-            result matches Ok(Some(answer)) ==> answer == crate::rvm::vm::history_tables::kernel::verify::regex_lang(
-                (*old(pair)).store.graph(), bindings@,
-                old(pair).root@, crate::rvm::vm::history_tables::kernel::verify::events_view(events@).take(target_len as int)),
-    )]
-    pub(crate) fn advance(
-        &mut self,
-        pair: &mut CompiledPair,
-        events: &[Event],
-        bindings: &Bindings,
-        target_len: usize,
-        batch_size: usize,
-        timer: &mut ExecutionTimer,
-        world: &mut ObservationWorld,
-    ) -> KernelResult<Option<bool>> {
-        proof_decl! { let ghost entry = *pair; let ghost entry_cursor = *self; }
-        if batch_size == 0 || self.consumed > target_len || target_len > events.len() {
-            return Err(HistoryError::invariant("invalid history batch bounds"));
-        }
-        let remaining = target_len
-            .checked_sub(self.consumed)
-            .ok_or(HistoryError::invariant("invalid history remaining length"))?;
-        let count = if batch_size < remaining {
-            batch_size
-        } else {
-            remaining
-        };
-        let end = self
-            .consumed
-            .checked_add(count)
-            .ok_or(HistoryError::invariant("invalid history batch end"))?;
-        proof! {
-            language::lemma_selected_end(self.consumed as nat, target_len as nat, batch_size as nat);
-            assert(end == language::selected_end(self.consumed as nat, target_len as nat, batch_size as nat));
-        }
-        let suffix = events
-            .get(self.consumed..end)
-            .ok_or(HistoryError::invariant("invalid history batch slice"))?;
-        proof! {
-            assert(model::events_view(suffix@) =~= model::events_view(events@).subrange(self.consumed as int, end as int));
-        }
-        let residual = pair.fold(self.residual, suffix, bindings, timer, world)?;
-        let answer = if end == target_len {
-            let answer = pair.answer(residual, timer, world)?;
-            proof! {
-                language::lemma_nullable_iff_nil(model::gsem(bindings@), model::lift_regex((*pair).store.graph(), residual@));
-                assert(model::events_view(suffix@) + Seq::<language::EventView>::empty() =~= model::events_view(suffix@));
-                assert(model::regex_lang((*pair).store.graph(), bindings@, residual@, Seq::empty())
-                    == model::regex_lang((*pair).store.graph(), bindings@, entry_cursor.residual@, model::events_view(suffix@)));
-            }
-            Some(answer)
-        } else {
-            None
-        };
-        world.publication_checkpoint(timer)?;
-        proof! {
-            model::lemma_graph_wf_elim(entry.store.graph());
-            model::lemma_lift_regex_stable(entry.store.graph(), (*pair).store.graph(), entry.root@);
-            history_algebra::theorem_batch_extends_pinned_prefix(
-                entry.store.graph(), (*pair).store.graph(), bindings@,
-                entry.root@, entry_cursor.residual@, residual@, model::events_view(events@),
-                entry_cursor.consumed as nat, end as nat,
-            );
-        }
-        // Commit the cursor last so every fallible operation leaves it unchanged.
-        self.consumed = end;
-        self.residual = residual;
-        Ok(answer)
-    }
-}
-
 impl HistoryAttachment {
-    fn new(store: Arc<HistoryStore>, program: &Arc<Program>) -> KernelResult<Self> {
+    fn new(
+        store: Arc<HistoryStore>,
+        program: &Arc<Program>,
+    ) -> core::result::Result<Self, HistoryError> {
         let mut tables = Vec::new();
-        allocation(tables.try_reserve_exact(program.history_tables.len()))?;
+        tables
+            .try_reserve_exact(program.history_tables.len())
+            .map_err(|_| HistoryError::AllocationFailed)?;
         for table in 0..program.history_tables.len() {
             tables.push(store.table_runtime(program, table)?);
         }
@@ -218,14 +72,13 @@ impl HistoryDecision {
     fn check(
         &self,
         stored: &StoredHistory,
-        timer: &mut ExecutionTimer,
-        world: &mut ObservationWorld,
-    ) -> KernelResult<()> {
-        world.publication_checkpoint(timer)?;
-        if stored.revision != self.revision || stored.events.len() < self.target_len {
+        limits: &mut RegorusLimits<'_>,
+    ) -> core::result::Result<(), HistoryError> {
+        limits.publication_checkpoint()?;
+        if stored.revision() != self.revision || stored.len() < self.target_len {
             return Err(HistoryError::HistoryChanged {
                 expected: self.revision,
-                actual: stored.revision,
+                actual: stored.revision(),
             });
         }
         Ok(())
@@ -322,14 +175,16 @@ impl RegoVM {
             .history_record(&staged.0)
             .map_err(|error| VmError::from_history(error, self.pc))?;
         let stored = record.read();
-        ObservationWorld
-            .publication_checkpoint(&mut self.execution_timer)
-            .map_err(|error| VmError::from_history(error, self.pc))?;
-        let revision = stored.revision;
-        let target_len = stored.events.len();
+        RegorusLimits {
+            timer: &mut self.execution_timer,
+        }
+        .publication_checkpoint()
+        .map_err(|error| VmError::from_history(error.into(), self.pc))?;
+        let revision = stored.revision();
+        let target_len = stored.len();
         drop(stored);
         self.history_decision = Some(HistoryDecision {
-            history: staged.0.index,
+            history: staged.0.index(),
             record,
             revision,
             target_len,
@@ -343,7 +198,12 @@ impl RegoVM {
             let stored = decision.record.read();
             // Revalidate even terminal decisions: truncation may invalidate a pinned prefix.
             decision
-                .check(&stored, &mut self.execution_timer, &mut ObservationWorld)
+                .check(
+                    &stored,
+                    &mut RegorusLimits {
+                        timer: &mut self.execution_timer,
+                    },
+                )
                 .map_err(|error| VmError::from_history(error, self.pc))
         } else {
             Ok(())
@@ -388,7 +248,9 @@ impl RegoVM {
         }
         let batch_size = usize::try_from(params.batch_size).map_err(|_| {
             VmError::from_history(
-                HistoryError::invariant("history batch_size does not fit usize"),
+                HistoryError::Invariant {
+                    message: "history batch_size does not fit usize",
+                },
                 pc,
             )
         })?;
@@ -423,20 +285,27 @@ impl RegoVM {
             .is_some_and(|active| active.pc != pc)
         {
             return Err(VmError::from_history(
-                HistoryError::invariant("history continuation belongs to another instruction"),
+                HistoryError::Invariant {
+                    message: "history continuation belongs to another instruction",
+                },
                 pc,
             ));
         }
         let mut world = ObservationWorld;
+        let mut limits = RegorusLimits {
+            timer: &mut self.execution_timer,
+        };
         if self.history_active_rule.is_none() {
             let instance = Arc::clone(&slot.current.lock());
             // Lock graph before history consistently; retain both guards through validation.
             let mut graph = instance.lock();
             let stored = decision.record.read();
             decision
-                .check(&stored, &mut self.execution_timer, &mut world)
+                .check(&stored, &mut limits)
                 .map_err(|error| VmError::from_history(error, pc))?;
-            let Some(bindings) = slot.template.bindings(&decision.request) else {
+            let Some(bindings) =
+                history_semantics::compile::bindings(&slot.template, &decision.request)
+            else {
                 return Ok(InstructionOutcome::Continue);
             };
             // Native provenance: this locked record belongs to decision.history;
@@ -461,7 +330,7 @@ impl RegoVM {
         let mut graph = active.instance.lock();
         let stored = decision.record.read();
         decision
-            .check(&stored, &mut self.execution_timer, &mut world)
+            .check(&stored, &mut limits)
             .map_err(|error| VmError::from_history(error, pc))?;
         let outcome = graph.advance_cursor(
             &mut active.cursor,
@@ -470,7 +339,7 @@ impl RegoVM {
             &stored,
             decision.target_len,
             batch_size,
-            &mut self.execution_timer,
+            &mut limits,
             &mut world,
         );
         match outcome {
@@ -482,8 +351,8 @@ impl RegoVM {
                     Some(answer) => {
                         self.history_active_rule = None;
                         let violated = match slot.mode {
-                            HistoryRuleMode::Require => !answer,
-                            HistoryRuleMode::Forbid => answer,
+                            RuleMode::Require => !answer,
+                            RuleMode::Forbid => answer,
                         };
                         if violated {
                             Ok(InstructionOutcome::Return(Value::from(usize::from(
@@ -499,16 +368,12 @@ impl RegoVM {
                 let exhausted = Arc::clone(&active.instance);
                 drop(stored);
                 drop(graph);
-                let replacement =
-                    RuleRuntime::new(&slot.template, false, &mut self.execution_timer, &mut world)
-                        .map_err(|error| VmError::from_history(error, pc))?;
+                let replacement = RuleRuntime::new(&slot.template, false, &mut limits, &mut world)
+                    .map_err(|error| VmError::from_history(error, pc))?;
                 let replacement = slot.replace(&exhausted, Arc::new(Mutex::new(replacement)));
-                let root = replacement.lock().pair.root;
+                let cursor = replacement.lock().root_cursor();
                 active.instance = replacement;
-                active.cursor = BatchCursor {
-                    consumed: 0,
-                    residual: root,
-                };
+                active.cursor = cursor;
                 active.retried = true;
                 Ok(InstructionOutcome::Repeat)
             }
@@ -525,18 +390,13 @@ mod tests {
         clippy::arithmetic_side_effects
     )]
 
-    use super::graph::Storage as _;
-    use super::kernel::{Primitive, TestView};
-    #[cfg(feature = "cache")]
-    use super::progress::WorkCounters;
     use super::*;
     use crate::languages::history_table::compile;
     use crate::rvm::program::Program;
-    use crate::rvm::vm::history_tables::graph::ArenaLifetimeCounts;
-    use crate::rvm::vm::history_tables::kernel::MAX_GRAPH_BYTES;
     use crate::rvm::vm::ExecutionMode;
+    use crate::utils::limits::ExecutionTimer;
     use alloc::string::ToString as _;
-    use lru::LruCache;
+    use junco_core::limits::MAX_GRAPH_BYTES;
     use serde_json::{json, Value as Json};
 
     fn program(request: &str, tail: &str, batch: u32) -> Arc<Program> {
@@ -570,7 +430,9 @@ mod tests {
             RuleRuntime::new(
                 &slot.template,
                 false,
-                &mut ExecutionTimer::new(None),
+                &mut RegorusLimits {
+                    timer: &mut ExecutionTimer::new(None),
+                },
                 &mut ObservationWorld,
             )
             .unwrap(),
@@ -606,7 +468,7 @@ mod tests {
         let mut vm = vm(&store, &history, &program);
         vm.set_execution_mode(ExecutionMode::RunToCompletion);
         let instance = lazy_instance(&vm);
-        instance.lock().pair.work.skip_guards = true;
+        instance.lock().set_skip_guards(true);
         let alice = event(&store, "alice", "read");
         let bob = event(&store, "bob", "read");
         assert_eq!(
@@ -615,18 +477,17 @@ mod tests {
         );
         {
             let runtime = instance.lock();
-            assert_eq!(runtime.pair.work.successor_misses, 1);
-            assert_eq!(runtime.pair.work.successor_hits, 1);
+            assert_eq!(runtime.work_counters().successor_misses, 1);
+            assert_eq!(runtime.work_counters().successor_hits, 1);
         }
         assert_eq!(decide(&mut vm, &store, &history, &[bob], bob), Value::Null);
-        assert_eq!(instance.lock().pair.work.successor_hits, 2);
+        assert_eq!(instance.lock().work_counters().successor_hits, 2);
         assert_eq!(
             decide(&mut vm, &store, &history, &[bob], alice),
             Value::from(0_usize)
         );
         let runtime = instance.lock();
-        assert_eq!(runtime.pair.work.successor_misses, 2);
-        assert_eq!(runtime.pair.successors.as_ref().map(LruCache::len), Some(2));
+        assert_eq!(runtime.work_counters().successor_misses, 2);
     }
 
     #[test]
@@ -650,28 +511,11 @@ mod tests {
             decide(&mut vm, &store, &history, &[bob], alice),
             Value::Null
         );
-        {
-            let runtime = instance.lock();
-            let atoms = runtime.pair.atoms.iter().flatten().next().unwrap();
-            assert_eq!(atoms.ids().len(), 1);
-            for id in atoms.ids() {
-                assert!(matches!(
-                    runtime.pair.store.storage.test(*id).unwrap(),
-                    TestView::Atom {
-                        primitive: Primitive::Eq { .. },
-                        positive: true
-                    }
-                ));
-            }
-        }
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice], alice),
             Value::from(0_usize)
         );
-        assert_eq!(
-            instance.lock().pair.successors.as_ref().map(LruCache::len),
-            Some(2)
-        );
+        assert_eq!(instance.lock().work_counters().successor_misses, 2);
     }
 
     #[test]
@@ -693,9 +537,9 @@ mod tests {
                 expected
             );
             let runtime = instance.lock();
-            assert_eq!(runtime.pair.work.events, visits);
-            assert!(runtime.pair.successors.is_none());
-            assert!(runtime.pair.atoms.is_empty());
+            assert_eq!(runtime.work_counters().events, visits);
+            assert_eq!(runtime.work_counters().successor_misses, 0);
+            assert_eq!(runtime.work_counters().event_classes, 0);
         }
     }
 
@@ -723,11 +567,7 @@ mod tests {
         );
         let before = {
             let runtime = instance.lock();
-            (
-                runtime.pair.store.bytes,
-                runtime.pair.derivatives.len(),
-                runtime.pair.atoms.len(),
-            )
+            runtime.work_counters().derivative_misses
         };
         for _ in 0..64 {
             assert_eq!(
@@ -737,14 +577,7 @@ mod tests {
         }
         {
             let runtime = instance.lock();
-            assert_eq!(
-                (
-                    runtime.pair.store.bytes,
-                    runtime.pair.derivatives.len(),
-                    runtime.pair.atoms.len()
-                ),
-                before
-            );
+            assert_eq!(runtime.work_counters().derivative_misses, before);
         }
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice], alice),
@@ -773,7 +606,7 @@ mod tests {
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(ExecutionMode::RunToCompletion);
             let instance = lazy_instance(&vm);
-            instance.lock().pair.work.skip_guards = skip_guards;
+            instance.lock().set_skip_guards(skip_guards);
             let alice = event(&store, "alice", "read");
             let bob = event(&store, "bob", "read");
             assert_eq!(
@@ -781,8 +614,8 @@ mod tests {
                 Value::Null
             );
             let runtime = instance.lock();
-            assert_eq!(runtime.pair.work.guard_hits, hits);
-            assert_eq!(runtime.pair.work.event_classes, classes);
+            assert_eq!(runtime.work_counters().guard_hits, hits);
+            assert_eq!(runtime.work_counters().event_classes, classes);
         }
     }
 
@@ -840,6 +673,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn retained_residuals_avoid_replay_without_changing_answers() {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let store = Arc::new(HistoryStore::new());
+            let history = store.new_history().unwrap();
+            let matching = event(&store, "alice", "edit");
+            let rejecting = event(&store, "alice", "read");
+            store.append(&history, &[matching; 256]).unwrap();
+            let program = program(
+                r#"{"any":true}"#,
+                r#"{"star":{"test":{"eq":{"path":["action"],"term":{"value":"edit"}}}}}"#,
+                64,
+            );
+            let mut vm = vm(&store, &history, &program);
+            vm.set_execution_mode(mode);
+            let instance = lazy_instance(&vm);
+            assert_eq!(
+                vm.execute_entry_point_by_name("decide").unwrap(),
+                Value::Null
+            );
+
+            let mut compare = |length, reused_events, expected: Value| {
+                for retain in [true, false] {
+                    {
+                        let mut runtime = instance.lock();
+                        if !retain {
+                            runtime.clear_cursors();
+                        }
+                        runtime.reset_work_events();
+                    }
+                    assert_eq!(vm.execute_entry_point_by_name("decide").unwrap(), expected);
+                    assert_eq!(
+                        instance.lock().work_counters().events,
+                        if retain { reused_events } else { length },
+                    );
+                }
+            };
+            compare(256, 0, Value::Null);
+            store.append(&history, &[matching]).unwrap();
+            compare(257, 1, Value::Null);
+            store.append(&history, &[rejecting]).unwrap();
+            compare(258, 1, Value::from(0_usize));
+        }
+    }
+
     #[cfg(feature = "cache")]
     #[test]
     fn precompile_keeps_the_typed_lazy_language() {
@@ -859,7 +737,7 @@ mod tests {
                 .lock(),
         );
         let _lazy_instance = lazy_instance(&lazy);
-        eager_instance.lock().pair.work = WorkCounters::default();
+        eager_instance.lock().reset_work_counters();
         let alice = event(&store, "alice", "read");
         let bob = event(&store, "bob", "read");
         for (events, expected) in [
@@ -875,8 +753,8 @@ mod tests {
             assert_eq!(decide(&mut lazy, &store, &history, events, alice), expected);
         }
         let runtime = eager_instance.lock();
-        assert_eq!(runtime.pair.work.derivative_misses, 0);
-        assert_eq!(runtime.pair.work.successor_misses, 0);
+        assert_eq!(runtime.work_counters().derivative_misses, 0);
+        assert_eq!(runtime.work_counters().successor_misses, 0);
     }
 
     #[test]
@@ -913,11 +791,7 @@ mod tests {
         }
         {
             let runtime = instance.lock();
-            assert_eq!(runtime.pair.work.successor_misses, 289);
-            assert_eq!(
-                runtime.pair.successors.as_ref().map(LruCache::len),
-                Some(256)
-            );
+            assert_eq!(runtime.work_counters().successor_misses, 289);
         }
         let first = first.unwrap();
         assert_eq!(
@@ -925,17 +799,13 @@ mod tests {
             Value::Null
         );
         let runtime = instance.lock();
-        assert_eq!(runtime.pair.work.successor_misses, 290);
-        assert_eq!(
-            runtime.pair.successors.as_ref().map(LruCache::len),
-            Some(256)
-        );
+        assert_eq!(runtime.work_counters().successor_misses, 290);
     }
 
     #[cfg(feature = "cache")]
     #[test]
     fn precompile_leaves_wide_typed_transitions_lazy() {
-        for (count, entries) in [(9, None), (8, Some(256))] {
+        for count in [9, 8] {
             let tests: Vec<_> = (0..count)
                 .map(|id| {
                     json!({"eq": {
@@ -953,10 +823,7 @@ mod tests {
                     .current
                     .lock(),
             );
-            assert_eq!(
-                instance.lock().pair.successors.as_ref().map(LruCache::len),
-                entries
-            );
+            instance.lock().reset_work_counters();
             let matching = event(&store, "identity-0", "read");
             let nonmatching = event(&store, "outside", "read");
             assert_eq!(
@@ -967,13 +834,17 @@ mod tests {
                 decide(&mut vm, &store, &history, &[nonmatching], nonmatching),
                 Value::from(0_usize)
             );
+            assert_eq!(
+                instance.lock().work_counters().successor_misses == 0,
+                count == 8
+            );
         }
     }
 
     #[test]
-    fn compiled_pair_uses_send_dependencies() {
+    fn compiled_runtime_uses_send_dependencies() {
         fn assert_send<T: Send>() {}
-        assert_send::<CompiledPair>();
+        assert_send::<RuleRuntime>();
     }
 
     #[test]
@@ -982,77 +853,100 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 7]).unwrap();
-        let mut vm = vm(
-            &store,
-            &history,
-            &program(r#"{"any":true}"#, r#"{"all":true}"#, 3),
-        );
-        let instance = lazy_instance(&vm);
-        for expected in [3, 6] {
-            assert!(matches!(
-                vm.execute_history_step(0).unwrap(),
-                InstructionOutcome::Repeat
-            ));
-            assert_eq!(
-                vm.history_active_rule.as_ref().unwrap().cursor.consumed,
-                expected
-            );
-            assert_eq!(instance.lock().cursors[0].consumed, expected);
-        }
+        let program = program(r#"{"any":true}"#, r#"{"all":true}"#, 3);
+        let mut first = vm(&store, &history, &program);
+        let instance = lazy_instance(&first);
         assert!(matches!(
-            vm.execute_history_step(0).unwrap(),
+            first.execute_history_step(0).unwrap(),
+            InstructionOutcome::Repeat
+        ));
+        assert_eq!(
+            first
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
+            3
+        );
+        assert_eq!(instance.lock().cursor_positions()[0].3, 3);
+        let mut second = vm(&store, &history, &program);
+        assert!(matches!(
+            second.execute_history_step(0).unwrap(),
+            InstructionOutcome::Repeat
+        ));
+        assert_eq!(
+            second
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
+            6
+        );
+        assert!(matches!(
+            second.execute_history_step(0).unwrap(),
             InstructionOutcome::Continue
         ));
-        assert!(vm.history_active_rule.is_none());
-        let mut graph = instance.lock();
-        let latest = graph.cursors[0];
-        assert_eq!(latest.consumed, 7);
-        let root = graph.pair.root;
-        graph.publish(HistoryCursor {
-            consumed: 1,
-            residual: root,
-            ..latest
-        });
-        assert_eq!(graph.cursors[0].consumed, 7);
-        assert_eq!(graph.cursors[0].residual, latest.residual);
+        assert_eq!(instance.lock().cursor_positions()[0].3, 7);
+        // A slower decision cannot replace the shared longer committed prefix.
+        assert!(matches!(
+            first.execute_history_step(0).unwrap(),
+            InstructionOutcome::Repeat
+        ));
+        assert_eq!(
+            first
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
+            6
+        );
+        assert_eq!(instance.lock().cursor_positions()[0].3, 7);
+        assert!(matches!(
+            first.execute_history_step(0).unwrap(),
+            InstructionOutcome::Continue
+        ));
+        assert!(first.history_active_rule.is_none());
+        assert_eq!(instance.lock().cursor_positions()[0].3, 7);
     }
 
     #[test]
     fn failed_batch_and_final_answer_never_publish() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let vm = vm(
+        let mut empty_vm = vm(
             &store,
             &history,
             &program(r#"{"any":true}"#, r#"{"epsilon":true}"#, 3),
         );
-        let instance = lazy_instance(&vm);
-        let mut runtime = instance.lock();
-        let mut cursor = BatchCursor {
-            consumed: 0,
-            residual: runtime.pair.root,
-        };
-        let before = cursor;
-        let error = cursor
-            .advance(
-                &mut runtime.pair,
-                &[],
-                &Bindings([0; 3]),
-                1,
-                3,
-                &mut ExecutionTimer::new(None),
-                &mut ObservationWorld,
-            )
-            .unwrap_err();
-        assert!(matches!(error, HistoryError::Invariant { .. }));
-        assert_eq!(cursor.consumed, before.consumed);
-        assert_eq!(cursor.residual, before.residual);
-        assert!(runtime.cursors.is_empty());
+        let empty_instance = lazy_instance(&empty_vm);
+        empty_instance.lock().set_answer_checkpoint_failure(true);
+        let pc = empty_vm.pc;
+        assert!(
+            matches!(empty_vm.execute_history_step(0).unwrap_err(), VmError::TimeLimitExceeded { pc: actual, .. } if actual == pc)
+        );
+        assert_eq!(
+            empty_vm
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
+            0
+        );
+        assert!(empty_instance.lock().cursor_positions().is_empty());
+        empty_instance.lock().set_answer_checkpoint_failure(false);
+        assert!(matches!(
+            empty_vm.execute_history_step(0).unwrap(),
+            InstructionOutcome::Continue
+        ));
+        assert_eq!(empty_instance.lock().cursor_positions()[0].3, 0);
 
-        drop(runtime);
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 2]).unwrap();
-        let mut final_vm = super::tests::vm(
+        let mut final_vm = vm(
             &store,
             &history,
             &program(r#"{"any":true}"#, r#"{"all":true}"#, 1),
@@ -1063,21 +957,21 @@ mod tests {
             InstructionOutcome::Repeat
         ));
         let entry = final_vm.history_active_rule.as_ref().unwrap().cursor;
-        let retained = final_instance.lock().cursors[0];
-        final_instance.lock().pair.work.fail_answer_checkpoint = true;
-        let final_error = final_vm.execute_history_step(0).unwrap_err();
-        assert!(matches!(final_error, VmError::TimeLimitExceeded { .. }));
+        let retained = final_instance.lock().cursor_positions();
+        final_instance.lock().set_answer_checkpoint_failure(true);
+        let final_pc = final_vm.pc;
+        assert!(
+            matches!(final_vm.execute_history_step(0).unwrap_err(), VmError::TimeLimitExceeded { pc: actual, .. } if actual == final_pc)
+        );
         let final_cursor = final_vm.history_active_rule.as_ref().unwrap().cursor;
-        assert_eq!(final_cursor.consumed, entry.consumed);
-        assert_eq!(final_cursor.residual, entry.residual);
-        assert_eq!(final_instance.lock().cursors[0].consumed, retained.consumed);
-        assert_eq!(final_instance.lock().cursors[0].residual, retained.residual);
-        final_instance.lock().pair.work.fail_answer_checkpoint = false;
+        assert_eq!(final_cursor.consumed(), entry.consumed());
+        assert_eq!(final_instance.lock().cursor_positions(), retained);
+        final_instance.lock().set_answer_checkpoint_failure(false);
         assert!(matches!(
             final_vm.execute_history_step(0).unwrap(),
             InstructionOutcome::Continue
         ));
-        assert_eq!(final_instance.lock().cursors[0].consumed, 2);
+        assert_eq!(final_instance.lock().cursor_positions()[0].3, 2);
     }
 
     const THREE_ACTIONS: &str = r#"{"concat":[
@@ -1104,13 +998,7 @@ mod tests {
         let mut first = vm(&store, &history, &program);
         let old = lazy_instance(&first);
         let mut second = vm(&store, &history, &program);
-        let counts = Arc::new(ArenaLifetimeCounts::default());
-        old.lock()
-            .pair
-            .store
-            .storage
-            .track_lifetime(Arc::clone(&counts))
-            .unwrap();
+        let old_weak = Arc::downgrade(&old);
         assert!(matches!(
             first.execute_history_step(0).unwrap(),
             InstructionOutcome::Repeat
@@ -1120,11 +1008,21 @@ mod tests {
             InstructionOutcome::Repeat
         ));
         assert_eq!(
-            first.history_active_rule.as_ref().unwrap().cursor.consumed,
+            first
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
             1
         );
         assert_eq!(
-            second.history_active_rule.as_ref().unwrap().cursor.consumed,
+            second
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
             2
         );
         assert!(Arc::ptr_eq(
@@ -1135,8 +1033,7 @@ mod tests {
             &second.history_active_rule.as_ref().unwrap().instance,
             &old
         ));
-        let previous_bytes = old.lock().pair.store.bytes;
-        old.lock().pair.store.bytes = MAX_GRAPH_BYTES;
+        let previous_bytes = old.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
         assert!(matches!(
             second.execute_history_step(0).unwrap(),
             InstructionOutcome::Repeat
@@ -1144,13 +1041,18 @@ mod tests {
         let replacement = Arc::clone(&second.history_active_rule.as_ref().unwrap().instance);
         assert!(!Arc::ptr_eq(&replacement, &old));
         assert_eq!(
-            second.history_active_rule.as_ref().unwrap().cursor.consumed,
+            second
+                .history_active_rule
+                .as_ref()
+                .unwrap()
+                .cursor
+                .consumed(),
             0
         );
         assert!(second.history_active_rule.as_ref().unwrap().retried);
-        assert_eq!(counts.snapshot(), (6, 0));
+        assert!(old_weak.upgrade().is_some());
 
-        old.lock().pair.store.bytes = previous_bytes;
+        old.lock().replace_graph_byte_pressure(previous_bytes);
         assert!(matches!(
             first.execute_history_step(0).unwrap(),
             InstructionOutcome::Repeat
@@ -1159,16 +1061,21 @@ mod tests {
             first.execute_history_step(0).unwrap(),
             InstructionOutcome::Continue
         ));
-        assert_eq!(counts.snapshot(), (6, 0));
+        assert!(old_weak.upgrade().is_some());
         drop(old);
-        assert_eq!(counts.snapshot(), (6, 6));
+        assert!(old_weak.upgrade().is_none());
         for expected in [1, 2] {
             assert!(matches!(
                 second.execute_history_step(0).unwrap(),
                 InstructionOutcome::Repeat
             ));
             assert_eq!(
-                second.history_active_rule.as_ref().unwrap().cursor.consumed,
+                second
+                    .history_active_rule
+                    .as_ref()
+                    .unwrap()
+                    .cursor
+                    .consumed(),
                 expected
             );
         }
@@ -1176,7 +1083,7 @@ mod tests {
             second.execute_history_step(0).unwrap(),
             InstructionOutcome::Continue
         ));
-        assert_eq!(replacement.lock().cursors[0].consumed, 3);
+        assert_eq!(replacement.lock().cursor_positions()[0].3, 3);
     }
 
     #[test]
@@ -1196,7 +1103,7 @@ mod tests {
         let program = program(r#"{"any":true}"#, THREE_ACTIONS, 1);
         let mut vm = vm(&store, &history, &program);
         let old = lazy_instance(&vm);
-        old.lock().pair.store.bytes = MAX_GRAPH_BYTES;
+        old.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
         assert!(matches!(
             vm.execute_history_step(0).unwrap(),
             InstructionOutcome::Repeat
@@ -1204,24 +1111,21 @@ mod tests {
         let winner = Arc::clone(&vm.history_active_rule.as_ref().unwrap().instance);
         let table = Arc::clone(&vm.history_attachment.as_ref().unwrap().tables[0]);
         let slot = &table.rules[0];
-        let mut losing = RuleRuntime::new(
+        let losing = RuleRuntime::new(
             &slot.template,
             false,
-            &mut ExecutionTimer::new(None),
+            &mut RegorusLimits {
+                timer: &mut ExecutionTimer::new(None),
+            },
             &mut ObservationWorld,
         )
         .unwrap();
-        let counts = Arc::new(ArenaLifetimeCounts::default());
-        losing
-            .pair
-            .store
-            .storage
-            .track_lifetime(Arc::clone(&counts))
-            .unwrap();
-        let selected = slot.replace(&old, Arc::new(Mutex::new(losing)));
+        let losing = Arc::new(Mutex::new(losing));
+        let losing_weak = Arc::downgrade(&losing);
+        let selected = slot.replace(&old, losing);
         assert!(Arc::ptr_eq(&selected, &winner));
-        assert_eq!(counts.snapshot(), (6, 6));
-        winner.lock().pair.store.bytes = MAX_GRAPH_BYTES;
+        assert!(losing_weak.upgrade().is_none());
+        winner.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
         let error = vm.execute_history_step(0).unwrap_err();
         assert!(matches!(
             error,
@@ -1230,8 +1134,11 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(vm.history_active_rule.as_ref().unwrap().cursor.consumed, 0);
-        assert!(winner.lock().cursors.is_empty());
+        assert_eq!(
+            vm.history_active_rule.as_ref().unwrap().cursor.consumed(),
+            0
+        );
+        assert!(winner.lock().cursor_positions().is_empty());
     }
 
     #[test]
@@ -1244,14 +1151,7 @@ mod tests {
             .unwrap();
         let weak = Arc::downgrade(&first);
         let pinned = Arc::clone(&first.rules[0].current.lock());
-        let counts = Arc::new(ArenaLifetimeCounts::default());
-        pinned
-            .lock()
-            .pair
-            .store
-            .storage
-            .track_lifetime(Arc::clone(&counts))
-            .unwrap();
+        let pinned_weak = Arc::downgrade(&pinned);
         drop(first);
         for _ in 0..17 {
             store
@@ -1259,12 +1159,12 @@ mod tests {
                 .unwrap();
         }
         assert!(weak.upgrade().is_none());
-        assert_eq!(counts.snapshot(), (6, 0));
+        assert!(pinned_weak.upgrade().is_some());
         store.append(&history, &[event]).unwrap();
         assert_eq!(store.len(&history).unwrap(), 1);
         assert_eq!(store.intern_action("edit").unwrap(), event.action);
         drop(pinned);
-        assert_eq!(counts.snapshot(), (6, 6));
+        assert!(pinned_weak.upgrade().is_none());
     }
 
     #[test]
@@ -1287,7 +1187,7 @@ mod tests {
             vm.execute_history_step(0).unwrap(),
             InstructionOutcome::Continue
         ));
-        assert_eq!(instance.lock().cursors[0].consumed, 2);
+        assert_eq!(instance.lock().cursor_positions()[0].3, 2);
         store.truncate(&history, 0).unwrap();
         let error = vm.finish_history_execution().unwrap_err();
         assert!(matches!(
@@ -1302,8 +1202,8 @@ mod tests {
         ));
         assert!(vm.history_decision.is_none());
         assert!(vm.history_active_rule.is_none());
-        assert_eq!(instance.lock().cursors[0].consumed, 2);
-        assert_eq!(instance.lock().cursors[0].revision, 0);
+        assert_eq!(instance.lock().cursor_positions()[0].3, 2);
+        assert_eq!(instance.lock().cursor_positions()[0].2, 0);
     }
 
     #[test]
@@ -1322,13 +1222,17 @@ mod tests {
             ));
         }
         let runtime = instance.lock();
-        assert_eq!(runtime.cursors.len(), 16);
-        assert_eq!(runtime.cursors[0].history, 17);
-        assert_eq!(runtime.cursors[15].history, 2);
-        assert!(runtime
-            .cursors
+        let positions = runtime.cursor_positions();
+        assert_eq!(positions.len(), 16);
+        assert_eq!(positions[0].0, 17);
+        assert_eq!(positions[15].0, 2);
+        let bindings = program.history_tables[0].rules[0]
+            .source
+            .head
             .iter()
-            .all(|cursor| cursor.bindings == Bindings([0; 3])));
+            .all(|head| matches!(head, junco_core::flat::FlatHead::Any));
+        assert!(bindings);
+        assert!(positions.iter().all(|cursor| cursor.1 == positions[0].1));
     }
 
     #[cfg(feature = "std")]

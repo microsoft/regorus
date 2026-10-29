@@ -248,6 +248,19 @@ features or `full-opa`. The former generic history builtin is removed; calls to
 it fail function resolution. Language bindings do not forward a `history` feature
 or expose the native owner/identity API.
 
+The canonical owned DSL and Event trait belong to in-tree `src/history-syntax`;
+`junco-core` owns flat source validation/lowering and shared contracts,
+`history-store` owns interning and history transactions, and `history-semantics`
+owns numeric compilation/evaluation and generic policies. Regorus retains the
+native `Value` parser, VM dispatch/limit adapter, and shared Program-keyed table
+cache. Its public `HistoryStore::{new, intern_principal, intern_action,
+intern_resource, new_history, append, truncate, len}` APIs are unchanged. Store's
+generic typed `Store<E>`/`History<E>` APIs are separate, not replacement Regorus
+entrypoints. Native no_std + alloc remains supported. `std` and Semantics' `cache`
+do not imply `runtime`; Regorus `history` enables Store and Semantics runtime,
+while source validation depends only on core and Syntax. `test-util` supplies
+dev-only integration probes.
+
 ### Native boundary
 
 Create an application-owned `Arc<HistoryStore>` from
@@ -322,21 +335,44 @@ replayed through bounded dispatches. Native errors remain typed in
 `VmError::History`; resource limits retain the VM's existing limit variants.
 
 Programs contain portable postorder source tables, not live IDs or store identity.
-Attachment interns constants in the supplied store outside decision execution.
-Serialization version 8 rejects older bytecode; recompile rather than translate.
+`HistoryTableRule` retains its mode/source envelope, now using core `RuleMode`
+and `FlatPair<String>` with `Component`, `FlatHead`, `FlatTerm`, `FlatTest`, and
+`FlatRegex`. The v8 field/variant order and serialized names are unchanged.
+`Program::validate_limits` validates these sources even without `history`;
+repeated edges, unused nodes, and valid non-last roots remain supported without
+unfolding the DAG. Attachment interns constants in the supplied store outside
+decision execution. Serialization version 8 rejects older bytecode; recompile
+rather than translate.
 
 ### Proof and measurement boundaries
 
-The typed language specifications and algebra are in
-[`history_specs.rs`](../src/verify/history_specs.rs) and
-[`history_algebra.rs`](../src/verify/history_algebra.rs). Kernel modules retain
-normalization, derivative, graph-extension, and nullable contracts. Synchronization,
-allocation, clocks, and arena destruction have explicit trust boundaries; this
-documentation does not assert a completed end-to-end verification run or counts.
+The shared specifications live in core's `src/verify/history_specs.rs`; semantic
+algebra lives in `history-semantics/src/verify/history_algebra.rs`. Body proofs cover
+owned DSL lowering, constant encoding under later map extensions, the numeric
+compiler/evaluator, raw/numeric typed-history correspondence, and cached lifecycle
+and publication receipts. Native Eq/Hash coherence and stable user projections
+are conditional obligations; separating these crates is not a universal proof of
+external Event implementations, including root Junco's native `LockEvent` adapter.
+Narrow map/container leaves, synchronization, allocation, clocks, arena destruction,
+Regorus `Value` parsing, and native facade/diagnostic callbacks remain explicit
+trust boundaries. Regorus's byte encoder is a native adapter that delegates UTF-8
+interning to `history-store`, not a universally verified external component encoder.
+
+The matched proof configuration uses Rust `1.98.1`, Verus
+`0.2026.10.04.426d8b0`, Z3 `4.16.0`, and `vstd = 0.0.0-2026-10-04-0306`.
+These boundaries describe the implementation and contracts, not a claim that
+every configuration or external consumer has passed verification.
 
 `cargo bench --features history --bench history_table` measures native decisions
-with batch size 256 and 16/256/4096 events: unchanged-prefix warm calls and
-revision-invalidated replay with graph/successor caches warm. Compilation,
-interning, attachment, staging, truncation, and append occur outside timing.
-These are decision measurements, not ingestion or generic-builtin benchmarks.
+with batch size 256 and 16/256/4096 events for both early-accepting `contains edit`
+and full-scan `edit*` policies. Cases cover unchanged-prefix reuse, one appended
+event after priming the retained prefix, and revision-invalidated root replay
+with graph/successor caches warm. Compilation, interning, attachment, staging,
+truncation, append, and the priming decision occur outside timing. The replay
+control bypasses retained-prefix reuse without disabling symbolic graph caches;
+the `cache` Cargo feature is not a retained-prefix-cache switch.
+`retained_residuals_avoid_replay_without_changing_answers` also checks identical
+accept/reject answers and exact event work with retained cursors versus clearing
+only those cursors, in both execution modes. These are decision measurements,
+not ingestion or generic-builtin benchmarks.
 
