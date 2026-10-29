@@ -95,8 +95,8 @@ impl Compiler {
         }
     }
 
-    /// Resolve the collection register and wildcard prefix for a field-based
-    /// count node, handling nested count bindings.
+    /// Resolve the collection register and wildcard prefix for a
+    /// single-wildcard field-based count node.
     fn resolve_count_field_collection(
         &mut self,
         field: &crate::languages::azure_policy::ast::FieldNode,
@@ -106,23 +106,9 @@ impl Compiler {
         let (collection_prefix, suffix) =
             split_count_wildcard_path(&field_path).map_err(|e| span.error(&e.to_string()))?;
 
-        // Check if this field path is relative to an outer count binding.
-        if let Some(nested) = self.resolve_path_below_bound_element(&field_path)? {
-            if nested.rest_has_wildcard {
-                let (inner_collection, _) = split_count_wildcard_path(&nested.rest)
-                    .map_err(|e| span.error(&e.to_string()))?;
-                let inner_collection = inner_collection.to_ascii_lowercase();
-                let parts = split_bound_path(&inner_collection)?;
-                let collection_reg =
-                    self.emit_chained_index_segments(nested.binding.current_reg, &parts, span)?;
-                let inner_prefix =
-                    join_count_prefix(&nested.outer_prefix.to_ascii_lowercase(), &inner_collection);
-                return Ok((collection_reg, inner_prefix));
-            }
-        }
-
-        // Multi-level wildcard: now handled by compile_count_nested in compile_count.
-        // (Single-wildcard paths fall through to here.)
+        // Multi-level wildcard paths, including those that continue below an
+        // outer count binding's element, are handled by compile_count_nested
+        // in compile_count.  Only single-wildcard paths reach here.
         if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
             bail!(span.error(&format!(
                 "multi-wildcard path should have been handled before resolve_count_field_collection: {}",
@@ -1312,6 +1298,20 @@ mod tests {
             .resolve_count_binding("m['a.b'][*].x")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn resolve_binding_legacy_and_unbound_index_forms() {
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 5);
+        // Consecutive wildcards and a fixed index straight after the prefix
+        // stay unbound; the legacy dotted index binds.
+        for path in ["items[*][*]", "items[*][*].x", "items[0]", "items[0][0]"] {
+            assert!(c.resolve_count_binding(path).unwrap().is_none(), "{path}");
+        }
+        for path in ["items.[0]", "ITEMS.[0].x", "Items.State"] {
+            assert!(c.resolve_count_binding(path).unwrap().is_some(), "{path}");
+        }
     }
 
     #[test]

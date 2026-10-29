@@ -685,23 +685,23 @@ cases:
     want_undefined: true
 
   # An index right after the counted prefix (no `[*]`) names a fixed array
-  # member, not the current element: it stays a resource-level read.
+  # member, not the current element: it stays a resource-level read.  The
+  # elements are arrays, so reading `[0][0]` of the current element instead
+  # changes the count.
   - note: fixed_index_after_prefix_stays_unbound
     policy_rule: |
       {
         "if": {
           "count": {
             "field": "items[*]",
-            "where": { "field": "items[0]['state']", "equals": "on" }
+            "where": { "field": "items[0][0]", "equals": "on" }
           },
-          "equals": 2
+          "equals": 3
         },
         "then": { "effect": "deny" }
       }
     resource:
-      items:
-        - state: "on"
-        - state: "off"
+      items: [["on"], ["off"], ["off"]]
     want_effect: "deny"
 
   - note: fixed_index_after_prefix_stays_unbound_no_match
@@ -710,17 +710,14 @@ cases:
         "if": {
           "count": {
             "field": "items[*]",
-            "where": { "field": "items[0]['state']", "equals": "on" }
+            "where": { "field": "items[0][0]", "equals": "on" }
           },
           "equals": 2
         },
         "then": { "effect": "deny" }
       }
     resource:
-      items:
-        - state: "off"
-        - state: "on"
-        - state: "on"
+      items: [["off"], [["on"]], [["on"]]]
     want_undefined: true
 
   # A sibling array whose name extends the counted one is unrelated.

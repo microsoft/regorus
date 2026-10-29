@@ -72,9 +72,10 @@ pub(super) enum CountPrefixMatch<'a> {
 /// Bare prefixes and no-wildcard suffixes retain their legacy raw spelling.
 ///
 /// An index straight after the prefix (`prefix[0]`) names a fixed member of
-/// the array, not the current element, and is left unbound.  So is a second
-/// consecutive wildcard (`prefix[*][*]`), which the downstream collectors
-/// cannot yet navigate from an element.
+/// the array, not the current element, and is left unbound; the legacy dotted
+/// spelling `prefix.[0]` does bind and indexes the current element.  A second
+/// consecutive wildcard (`prefix[*][*]`) is also left unbound, because the
+/// downstream collectors cannot yet navigate it from an element.
 pub(super) fn match_count_prefix<'a>(
     prefix: &str,
     field_path: &'a str,
@@ -109,10 +110,8 @@ pub(super) fn match_count_prefix<'a>(
         None => return Some(CountPrefixMatch::CurrentElement),
         Some(first) => first,
     };
-    match first.segment {
-        Segment::Wildcard => return None,
-        Segment::Index(_) if !via_wildcard => return None,
-        Segment::Key(_) | Segment::Index(_) => {}
+    if first.segment == Segment::Wildcard {
+        return None;
     }
 
     Some(CountPrefixMatch::BelowElement {
@@ -124,14 +123,47 @@ pub(super) fn match_count_prefix<'a>(
 
 /// Whether `field_path` is `prefix` itself or `prefix.<…>`, compared as raw
 /// text (ASCII case-insensitively).  Bindings without the counted `[*]` keep
-/// exactly this legacy spelling; segment equivalence does not widen them.
+/// this legacy spelling; segment equivalence does not widen them.
+///
+/// The one spelling difference ignored is a `.` (and any blanks after it)
+/// before a `[`: nested count prefixes are built without it (`a[*]['b']`),
+/// while the legacy form spelled them with it (`a[*].['b']`).
 fn has_legacy_raw_prefix(prefix: &str, field_path: &str) -> bool {
-    field_path
-        .get(..prefix.len())
-        .is_some_and(|raw| raw.eq_ignore_ascii_case(prefix))
-        && field_path
-            .get(prefix.len()..)
-            .is_some_and(|tail| tail.is_empty() || tail.starts_with('.'))
+    let p = prefix.as_bytes();
+    let f = field_path.as_bytes();
+    let (mut i, mut j) = (0_usize, 0_usize);
+    loop {
+        i = skip_dot_before_bracket(p, i);
+        let Some(pc) = p.get(i) else {
+            break;
+        };
+        j = skip_dot_before_bracket(f, j);
+        match f.get(j) {
+            Some(fc) if fc.eq_ignore_ascii_case(pc) => {}
+            _ => return false,
+        }
+        i = i.saturating_add(1);
+        j = j.saturating_add(1);
+    }
+    f.get(j..)
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with(b"."))
+}
+
+/// If `bytes[pos..]` is `.`, optional blanks, then `[`, return the offset of
+/// that `[`; otherwise `pos`.
+fn skip_dot_before_bracket(bytes: &[u8], pos: usize) -> usize {
+    if bytes.get(pos) != Some(&b'.') {
+        return pos;
+    }
+    let mut next = pos.saturating_add(1);
+    while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
+        next = next.saturating_add(1);
+    }
+    if bytes.get(next) == Some(&b'[') {
+        next
+    } else {
+        pos
+    }
 }
 
 /// Join an outer count prefix and an inner collection path (relative to the
@@ -166,22 +198,30 @@ pub(super) fn split_bound_path(path: &str) -> Result<Vec<PathSegment>> {
 /// subscript with no such closing quote is read up to the next `]` as an
 /// unquoted literal, mirroring `split_path_without_wildcards`.  Unquoted
 /// `*` is a wildcard and unquoted ASCII digits are an index; anything else
-/// is a key.  Returns `None` for malformed paths.
+/// is a key.  A blank dotted segment before a bracket (`a. ['b']`) is
+/// skipped, as `split_path_without_wildcards` does.  Returns `None` for
+/// malformed paths.
 fn parse_binding_path(path: &str) -> Option<Vec<ParsedSegment>> {
     let bytes = path.as_bytes();
     let mut segments = Vec::new();
     let mut pos = 0_usize;
+    let mut quotes = ClosingQuotes::default();
 
     loop {
         let start = pos;
         let (segment, next) = if bytes.get(pos) == Some(&b'[') {
-            parse_bracket(path, pos)?
+            parse_bracket(path, pos, &mut quotes)?
         } else {
             let end = path
                 .get(pos..)?
                 .find(['.', '['])
                 .map_or(path.len(), |i| pos.saturating_add(i));
-            let token = path.get(pos..end)?.trim();
+            let raw = path.get(pos..end)?;
+            let token = raw.trim();
+            if token.is_empty() && !raw.is_empty() && bytes.get(end) == Some(&b'[') {
+                pos = end;
+                continue;
+            }
             if token.is_empty() || token.contains(']') {
                 return None;
             }
@@ -204,9 +244,56 @@ fn parse_binding_path(path: &str) -> Option<Vec<ParsedSegment>> {
     }
 }
 
+/// Memoized closing-quote searches for one path, so that a run of subscripts
+/// with unclosed quotes (`a['x]['x]…`) is parsed in linear time.
+///
+/// For each quote character it records the last search: where it started
+/// and the closing quote it found (or that there was none).  The first
+/// closing quote at or after a position only moves forward as the position
+/// does, so a later search starting inside the recorded range has the same
+/// answer.
+#[derive(Default)]
+struct ClosingQuotes {
+    single: Option<(usize, Option<usize>)>,
+    double: Option<(usize, Option<usize>)>,
+}
+
+impl ClosingQuotes {
+    /// The first `quote` at or after `from` that is followed (after optional
+    /// whitespace) by `]`.
+    fn find(&mut self, path: &str, quote: u8, from: usize) -> Option<usize> {
+        let slot = if quote == b'"' {
+            &mut self.double
+        } else {
+            &mut self.single
+        };
+        if let Some((searched_from, found)) = *slot {
+            if searched_from <= from && found.is_none_or(|close| close >= from) {
+                return found;
+            }
+        }
+        let found = find_closing_quote(path, quote, from);
+        *slot = Some((from, found));
+        found
+    }
+}
+
+fn find_closing_quote(path: &str, quote: u8, from: usize) -> Option<usize> {
+    let mut search = from;
+    while let Some(rel) = path.get(search..)?.find(char::from(quote)) {
+        let close = search.saturating_add(rel);
+        let after = path.get(close.saturating_add(1)..)?;
+        if after.trim_start().starts_with(']') {
+            return Some(close);
+        }
+        search = close.saturating_add(1);
+    }
+    None
+}
+
 /// Parse a bracket subscript starting at `open` (which holds `[`).  Returns
 /// the segment and the byte offset just past the closing `]`.
-fn parse_bracket(path: &str, open: usize) -> Option<(Segment, usize)> {
+fn parse_bracket(path: &str, open: usize, quotes: &mut ClosingQuotes) -> Option<(Segment, usize)> {
     let body_start = open.saturating_add(1);
     let body = path.get(body_start..)?;
     let lead = body.len().saturating_sub(body.trim_start().len());
@@ -219,23 +306,18 @@ fn parse_bracket(path: &str, open: usize) -> Option<(Segment, usize)> {
         .filter(|b| *b == b'\'' || *b == b'"')
     {
         let content_start = quote_at.saturating_add(1);
-        let mut search = content_start;
-        while let Some(rel) = path.get(search..)?.find(char::from(quote)) {
-            let close = search.saturating_add(rel);
-            let after = path.get(close.saturating_add(1)..)?;
-            let trimmed = after.trim_start();
-            if trimmed.starts_with(']') {
-                let key = path.get(content_start..close)?;
-                if key.is_empty() {
-                    return None;
-                }
-                let bracket_end = close
-                    .saturating_add(1)
-                    .saturating_add(after.len().saturating_sub(trimmed.len()))
-                    .saturating_add(1);
-                return Some((Segment::Key(key.to_ascii_lowercase()), bracket_end));
+        if let Some(close) = quotes.find(path, quote, content_start) {
+            let key = path.get(content_start..close)?;
+            if key.is_empty() {
+                return None;
             }
-            search = close.saturating_add(1);
+            let after = path.get(close.saturating_add(1)..)?;
+            let blanks = after.len().saturating_sub(after.trim_start().len());
+            let bracket_end = close
+                .saturating_add(1)
+                .saturating_add(blanks)
+                .saturating_add(1);
+            return Some((Segment::Key(key.to_ascii_lowercase()), bracket_end));
         }
     }
 
@@ -516,6 +598,102 @@ mod tests {
     }
 
     #[test]
+    fn legacy_dotted_index_binds_current_element() {
+        assert_eq!(
+            match_count_prefix("items", "items.[0]"),
+            Some(below("[0]", false, false))
+        );
+        assert_eq!(
+            match_count_prefix("ITEMS", "items.[0].state"),
+            Some(below("[0].state", false, false))
+        );
+        assert_eq!(match_count_prefix("items", "items[0]"), None);
+    }
+
+    #[test]
+    fn legacy_prefix_ignores_dot_before_bracket() {
+        assert_eq!(
+            match_count_prefix("a[*]['b']", "a[*].['b'].c"),
+            Some(below("c", false, false))
+        );
+        assert_eq!(
+            match_count_prefix("a[*].['b']", "a[*]['b'].c"),
+            Some(below("c", false, false))
+        );
+        assert_eq!(
+            match_count_prefix("a[*]['b']", "A[*].['B']"),
+            Some(CountPrefixMatch::CurrentElement)
+        );
+        assert_eq!(match_count_prefix("a[*]['b']", "a[*].['b']['c']"), None);
+        assert_eq!(match_count_prefix("a.b", "a.['b'].c"), None);
+    }
+
+    #[test]
+    fn blank_segment_before_bracket_is_skipped() {
+        assert_eq!(
+            segments("a. ['b']"),
+            vec![Segment::key("a"), Segment::key("b")]
+        );
+        assert_eq!(segments(" ['b']"), vec![Segment::key("b")]);
+        assert_eq!(
+            split_bound_path(" ['b']").unwrap(),
+            vec![PathSegment::Key("b".to_string())]
+        );
+        assert_eq!(
+            match_count_prefix("items", "items[*]. ['b']"),
+            Some(below("['b']", false, true))
+        );
+        assert_eq!(
+            match_count_prefix("a. ['b']", "a. ['b'][*].c"),
+            Some(below("c", false, true))
+        );
+        assert_eq!(
+            match_count_prefix("a. ['b']", "a['b'][*].c"),
+            Some(below("c", false, true))
+        );
+        for path in ["a. ", "a. .b", "a. b. ", "a['b'] ['c']"] {
+            assert!(parse_binding_path(path).is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn quoted_key_continues_past_quote_not_before_bracket() {
+        assert_eq!(
+            segments("m['it's']"),
+            vec![Segment::key("m"), Segment::key("it's")]
+        );
+        assert_eq!(
+            segments("m['a'b' ][*]"),
+            vec![Segment::key("m"), Segment::key("a'b"), Segment::Wildcard]
+        );
+    }
+
+    #[test]
+    fn unclosed_quotes_parse_in_linear_time() {
+        let single = "a".to_string() + &"['x]".repeat(50_000);
+        let single_parsed = segments(&single);
+        assert_eq!(single_parsed.len(), 50_001);
+        assert!(single_parsed[1..].iter().all(|s| *s == Segment::key("'x")));
+
+        let double = "a".to_string() + &"[\"x]".repeat(50_000) + "['y']";
+        let double_parsed = segments(&double);
+        assert_eq!(double_parsed.len(), 50_002);
+        assert_eq!(double_parsed[50_001], Segment::key("y"));
+    }
+
+    #[test]
+    fn overflowing_index_saturates() {
+        assert_eq!(
+            segments("a[99999999999999999999]"),
+            vec![Segment::key("a"), Segment::Index(u64::MAX)]
+        );
+        assert_eq!(
+            match_count_prefix("items", "items[*][99999999999999999999]"),
+            Some(below("[99999999999999999999]", false, true))
+        );
+    }
+
+    #[test]
     fn bound_navigation_agrees_with_plain_splitter() {
         use super::super::utils::split_path_without_wildcards;
         for path in [
@@ -535,6 +713,10 @@ mod tests {
             "a['b.c'].d",
             "a.['b']",
             "a[ * ].b",
+            " ['b']",
+            "a. ['b']",
+            "a. ['b'].c",
+            "a[99999999999999999999]",
         ] {
             assert_eq!(
                 split_bound_path(path).unwrap(),
