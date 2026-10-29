@@ -14,7 +14,7 @@ crate-type = ["cdylib", "staticlib"]
 anyhow = "1.0"
 regorus = { path  = "../..", default-features = false }
 serde_json = "1.0.150"
-parking_lot = { version = "0.12", optional = true }
+parking_lot = { version = "0.13", optional = true }
 
 [profile.release]
 # Enable full debug info for optimized builds.
