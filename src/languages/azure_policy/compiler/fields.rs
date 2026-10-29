@@ -15,7 +15,9 @@ use crate::rvm::instructions::{LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 
 use super::core::Compiler;
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards, PathSegment};
+use super::utils::{
+    has_unquoted_wildcard, split_count_wildcard_path, split_path_without_wildcards, PathSegment,
+};
 
 impl Compiler {
     pub(super) fn compile_field_kind(
@@ -169,7 +171,7 @@ impl Compiler {
         if let Some(binding) = self.resolve_count_binding(field_path)? {
             return self.compile_from_binding(&binding, field_path, span);
         }
-        if field_path.contains("[*]") {
+        if has_unquoted_wildcard(field_path) {
             return self.compile_field_wildcard_collect(None, field_path, span);
         }
         self.compile_resource_path_value(field_path, span)
@@ -261,7 +263,7 @@ impl Compiler {
             .map_err(|_| anyhow!("instruction index overflow"))?;
 
         match suffix {
-            Some(ref s) if s.contains("[*]") => {
+            Some(ref s) if has_unquoted_wildcard(s) => {
                 self.compile_wildcard_collect_inner(Some(current_reg), s, result_reg, span)?;
             }
             Some(ref s) => {

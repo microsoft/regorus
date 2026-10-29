@@ -21,6 +21,8 @@ use crate::{Rc, Value};
 use crate::languages::azure_policy::aliases::AliasRegistry;
 use crate::languages::azure_policy::ast::PolicyRule;
 
+use super::utils::has_unquoted_wildcard;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -369,7 +371,7 @@ impl Compiler {
         }
 
         // Fallback: derive array path from a corresponding `[*]` alias.
-        if !lc.contains("[*]") {
+        if !has_unquoted_wildcard(&lc) {
             let wildcard_key = alloc::format!("{}[*]", lc);
             if let Some(short) = alias_map.get(&wildcard_key) {
                 let resolved = Self::strip_fq_prefix(short).to_ascii_lowercase();
@@ -396,11 +398,59 @@ impl Compiler {
 
     /// Strip any resource-type prefix segments from a resolved alias short
     /// name, keeping only the trailing property path.
+    ///
+    /// Resource-type segments never contain `[`, so only a `/` before the
+    /// first `[` can end the prefix; one inside a subscript (`labels['a/b']`)
+    /// belongs to the property path.
     pub(super) fn strip_fq_prefix(resolved: &str) -> String {
-        resolved
-            .rfind('/')
+        let head = resolved
+            .find('[')
+            .map_or(resolved, |idx| resolved.get(..idx).unwrap_or(resolved));
+        head.rfind('/')
             .and_then(|idx| resolved.get(idx.saturating_add(1)..))
             .unwrap_or(resolved)
             .to_string()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use crate::Rc;
+
+    use super::Compiler;
+    use crate::languages::azure_policy::aliases::AliasRegistry;
+    use crate::lexer::{Source, Span};
+
+    #[test]
+    fn raw_fallback_keeps_slash_inside_quoted_key() {
+        let mut registry = AliasRegistry::new();
+        registry
+            .load_from_json(
+                r#"[{"namespace":"Microsoft.Test","resourceTypes":[{"resourceType":"t",
+                "aliases":[{"name":"Microsoft.Test/t/x","defaultPath":"properties.x","paths":[]}]}]}]"#,
+            )
+            .unwrap();
+        let mut c = Compiler::new();
+        c.alias_registry = Some(Rc::new(registry));
+        c.alias_fallback_to_raw = true;
+        let source = Source::from_contents("test".into(), " ".into()).unwrap();
+        let span = Span {
+            source,
+            line: 1,
+            col: 1,
+            start: 0,
+            end: 0,
+        };
+        assert_eq!(
+            c.resolve_alias_path("Microsoft.Other/u/labels['a/b']", &span)
+                .unwrap(),
+            "labels['a/b']"
+        );
+        assert_eq!(
+            c.resolve_alias_path("Microsoft.Other/u/labels.c", &span)
+                .unwrap(),
+            "labels.c"
+        );
     }
 }

@@ -14,7 +14,7 @@ use crate::rvm::Instruction;
 use crate::Value;
 
 use super::core::Compiler;
-use super::utils::{extract_string_literal, json_value_to_runtime};
+use super::utils::{extract_string_literal, has_unquoted_wildcard, json_value_to_runtime};
 
 /// Maximum nesting depth for recursive JSON value compilation.
 const MAX_JSON_DEPTH: usize = 32;
@@ -300,7 +300,7 @@ impl Compiler {
                 // property of it) still yields a one-member array; paths with
                 // further `[*]` levels are already collected into an array.
                 // Use the binding resolved in primary-resource scope above.
-                let wrap_single = resolved.contains("[*]")
+                let wrap_single = has_unquoted_wildcard(&resolved)
                     && binding?.is_some_and(|b| Self::binding_selects_single_value(&b, &resolved));
                 let reg = if wrap_single {
                     let arr = self.alloc_register()?;

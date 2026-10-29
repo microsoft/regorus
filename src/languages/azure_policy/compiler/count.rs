@@ -17,7 +17,10 @@ use crate::rvm::Instruction;
 use crate::Value;
 
 use super::core::{Compiler, CountBinding};
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards};
+use super::utils::{
+    ensure_count_field_path, has_unquoted_wildcard, split_count_wildcard_path,
+    split_path_without_wildcards,
+};
 
 impl Compiler {
     pub(super) fn compile_count(&mut self, count_node: &CountNode) -> Result<u8> {
@@ -50,7 +53,7 @@ impl Compiler {
                 // Multi-level wildcard (e.g. `A[*].B[*]`) → emit nested loops.
                 // If an outer count binding covers part of the path, start
                 // from the bound element instead of the resource root.
-                if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
+                if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
                     if let Some(binding) = self.resolve_count_binding(&field_path)? {
                         if let Some(outer_prefix) = &binding.field_wildcard_prefix {
                             let lc_prefix = outer_prefix.to_ascii_lowercase();
@@ -105,7 +108,7 @@ impl Compiler {
                     field_path.to_ascii_lowercase().strip_prefix(&wildcard_dot)
                 {
                     let inner_path = inner_path.to_string();
-                    if inner_path.contains("[*]") {
+                    if has_unquoted_wildcard(&inner_path) {
                         let (inner_collection, _) = split_count_wildcard_path(&inner_path)
                             .map_err(|e| span.error(&e.to_string()))?;
                         let inner_collection = inner_collection.to_ascii_lowercase();
@@ -121,7 +124,7 @@ impl Compiler {
 
         // Multi-level wildcard: now handled by compile_count_nested in compile_count.
         // (Single-wildcard paths fall through to here.)
-        if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
+        if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
             bail!(span.error(&format!(
                 "multi-wildcard path should have been handled before resolve_count_field_collection: {}",
                 field_path
@@ -155,7 +158,7 @@ impl Compiler {
     ) -> Result<u8> {
         let (collection_part, suffix) =
             split_count_wildcard_path(remaining_path).map_err(|e| span.error(&e.to_string()))?;
-        let has_more_wildcards = suffix.as_ref().is_some_and(|s| s.contains("[*]"));
+        let has_more_wildcards = suffix.as_deref().is_some_and(has_unquoted_wildcard);
 
         // Build the binding prefix for this level.
         let binding_prefix = if accumulated_prefix.is_empty() {
@@ -311,7 +314,7 @@ impl Compiler {
     ) -> Result<Option<u8>> {
         let (collection_part, suffix) =
             split_count_wildcard_path(remaining_path).map_err(|e| span.error(&e.to_string()))?;
-        let has_more_wildcards = suffix.as_ref().is_some_and(|s| s.contains("[*]"));
+        let has_more_wildcards = suffix.as_deref().is_some_and(has_unquoted_wildcard);
 
         let binding_prefix = if accumulated_prefix.is_empty() {
             collection_part.clone()
@@ -459,7 +462,22 @@ impl Compiler {
     /// resolution.  Built-in field kinds (`type`, `id`, …) are returned
     /// as-is; aliases go through [`resolve_alias_path`] which normalises
     /// and lowercases when the alias catalog is loaded.
+    ///
+    /// The path must end with an unquoted `[*]`, optionally followed by
+    /// whitespace (see [`ensure_count_field_path`]).  So any suffix that
+    /// [`split_count_wildcard_path`] returns for it is either whitespace-only
+    /// (`items[*] `) or contains another unquoted `[*]`.
     fn extract_field_count_path(
+        &self,
+        field: &crate::languages::azure_policy::ast::FieldNode,
+        span: &crate::lexer::Span,
+    ) -> Result<String> {
+        let path = self.field_count_path(field, span)?;
+        ensure_count_field_path(&path).map_err(|e| span.error(&e.to_string()))?;
+        Ok(path)
+    }
+
+    fn field_count_path(
         &self,
         field: &crate::languages::azure_policy::ast::FieldNode,
         span: &crate::lexer::Span,
@@ -477,7 +495,12 @@ impl Compiler {
             }
             FieldKind::ApiVersion => Ok("apiVersion".to_string()),
             FieldKind::Tags => Ok("tags".to_string()),
-            FieldKind::Tag(tag) => Ok(format!("tags.{}", tag)),
+            // A tag value is a string, never an array.  `tags.{tag}` would
+            // also turn a tag named `a[*]` into a real wildcard.
+            FieldKind::Tag(tag) => bail!(span.error(&format!(
+                "count over a tag field is not supported (tag values are not arrays): tags['{}']",
+                tag
+            ))),
             FieldKind::Alias(path) => self.resolve_alias_path(path, span),
             FieldKind::Expr(_) => {
                 bail!(span.error("count over expression field is not supported in core subset",))
@@ -622,7 +645,7 @@ impl Compiler {
                 let field_path = self.extract_field_count_path(field, span)?;
                 let (_, suffix) = split_count_wildcard_path(&field_path)
                     .map_err(|e| span.error(&e.to_string()))?;
-                if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
+                if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
                     // Skip the nested Any optimization when there is no where
                     // clause.  The non-optimized path in `compile_count_nested`
                     // uses `Instruction::Count` for the innermost level, which
@@ -877,7 +900,7 @@ impl Compiler {
         suffix: &str,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
-        if suffix.contains("[*]") {
+        if has_unquoted_wildcard(suffix) {
             return self.compile_field_wildcard_collect(Some(base_reg), suffix, span);
         }
         // Lowercase to match normalizer-lowercased keys.
@@ -898,7 +921,7 @@ impl Compiler {
             .strip_prefix(&format!("{}[*]", lc_prefix))
             .or_else(|| fp.strip_prefix(&lc_prefix))
             .unwrap_or(&fp);
-        !suffix.contains("[*]")
+        !has_unquoted_wildcard(suffix)
     }
 
     /// Compile a `current('key')` reference inside a count's where clause.

@@ -14,7 +14,9 @@ use crate::rvm::instructions::{GuardMode, LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 
 use super::core::{Compiler, CountBinding};
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards};
+use super::utils::{
+    has_unquoted_wildcard, split_count_wildcard_path, split_path_without_wildcards,
+};
 
 impl Compiler {
     /// Check whether a condition's LHS is a field with an unbound `[*]`
@@ -30,7 +32,7 @@ impl Compiler {
             _ => return Ok(None),
         };
 
-        if !path.contains("[*]") {
+        if !has_unquoted_wildcard(&path) {
             return Ok(None);
         }
 
@@ -57,7 +59,7 @@ impl Compiler {
             _ => return Ok(None),
         };
 
-        if !path.contains("[*]") {
+        if !has_unquoted_wildcard(&path) {
             return Ok(None);
         }
 
@@ -71,7 +73,7 @@ impl Compiler {
             let bound_prefix = format!("{}[*].", lc_prefix);
             if let Some(remainder) = path.to_ascii_lowercase().strip_prefix(&bound_prefix) {
                 let remainder = remainder.to_string();
-                if remainder.contains("[*]") {
+                if has_unquoted_wildcard(&remainder) {
                     return Ok(Some((binding, remainder)));
                 }
             }
@@ -135,7 +137,7 @@ impl Compiler {
             .map_err(|_| anyhow!("instruction index overflow"))?;
 
         match suffix {
-            Some(ref s) if s.contains("[*]") => {
+            Some(ref s) if has_unquoted_wildcard(s) => {
                 let inner_result =
                     self.compile_allof_loop_inner(Some(current_reg), s, rhs_reg, condition)?;
                 self.emit(

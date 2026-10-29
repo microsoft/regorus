@@ -1,0 +1,1073 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Quoted `[*]` Test Suite
+# Inside a quoted subscript (`['...']` or `["..."]`) the text `[*]` is part
+# of a literal object key, not a wildcard.  A quoted subscript runs from the
+# opening quote to the first matching quote that is followed by `]`, so
+# `p['a][*].x[b']` is the single key `a][*].x[b`.  Each match case has a
+# non-match twin; the `literal_*` cases check that a quoted `[*]` never
+# selects array members and an unquoted `[*]` never selects a literal key.
+
+cases:
+  # =========================================================================
+  # Field conditions
+  # =========================================================================
+
+  - note: field_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": { "field": "m['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "x" }
+    want_effect: "deny"
+
+  - note: field_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": { "field": "m['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "y" }
+    want_undefined: true
+
+  - note: field_double_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": { "field": "m[\"a[*]\"]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "x" }
+    want_effect: "deny"
+
+  - note: field_double_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": { "field": "m[\"a[*]\"]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "y" }
+    want_undefined: true
+
+  # A quoted `[*]` names a key, so it never iterates an array `a`.
+  - note: literal_quoted_wildcard_key_does_not_iterate_array
+    policy_rule: |
+      {
+        "if": { "field": "m['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a": ["x"] }
+    want_undefined: true
+
+  # An unquoted `[*]` iterates the array `a` ...
+  - note: literal_unquoted_wildcard_iterates_array
+    policy_rule: |
+      {
+        "if": { "field": "m.a[*]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a": ["x"] }
+    want_effect: "deny"
+
+  # ... and never reads a key literally named `a[*]`.
+  - note: literal_unquoted_wildcard_ignores_literal_key
+    policy_rule: |
+      {
+        "if": { "field": "m.a[*]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "x" }
+    want_undefined: true
+
+  - note: field_quoted_wildcard_after_real_wildcard
+    policy_rule: |
+      {
+        "if": { "field": "items[*]['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": "x" }
+        - { "a[*]": "x" }
+    want_effect: "deny"
+
+  - note: field_quoted_wildcard_after_real_wildcard_no_match
+    policy_rule: |
+      {
+        "if": { "field": "items[*]['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": "x" }
+        - { "a[*]": "y" }
+    want_undefined: true
+
+  - note: literal_quoted_wildcard_after_real_wildcard_does_not_iterate
+    policy_rule: |
+      {
+        "if": { "field": "items[*]['a[*]']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a": ["x"] }
+    want_undefined: true
+
+  - note: field_quoted_key_before_real_wildcard
+    policy_rule: |
+      {
+        "if": { "field": "m['a[*]'][*]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": ["x", "x"] }
+    want_effect: "deny"
+
+  - note: field_quoted_key_before_real_wildcard_no_match
+    policy_rule: |
+      {
+        "if": { "field": "m['a[*]'][*]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": ["x", "y"] }
+    want_undefined: true
+
+  # =========================================================================
+  # Close bracket inside quotes
+  # =========================================================================
+
+  - note: field_close_bracket_inside_quotes
+    policy_rule: |
+      {
+        "if": { "field": "m['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a]b": "x" }
+    want_effect: "deny"
+
+  - note: field_close_bracket_inside_quotes_no_match
+    policy_rule: |
+      {
+        "if": { "field": "m['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a]b": "y" }
+    want_undefined: true
+
+  - note: field_close_bracket_inside_quotes_after_wildcard
+    policy_rule: |
+      {
+        "if": { "field": "items[*]['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a]b": "x" }
+    want_effect: "deny"
+
+  - note: field_close_bracket_inside_quotes_after_wildcard_no_match
+    policy_rule: |
+      {
+        "if": { "field": "items[*]['a]b']", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a]b": "y" }
+    want_undefined: true
+
+  # Pinned rule: the quote opened after `[` runs to the matching quote that
+  # is followed by `]`, so this is ONE key and contains no wildcard.
+  - note: field_quoted_key_spanning_brackets_is_one_key
+    policy_rule: |
+      {
+        "if": { "field": "p['a][*].x[b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      p: { "a][*].x[b": "v" }
+    want_effect: "deny"
+
+  - note: field_quoted_key_spanning_brackets_is_one_key_no_match
+    policy_rule: |
+      {
+        "if": { "field": "p['a][*].x[b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    # Read with `[*]` as a wildcard, `p['a]` + `x[b']` would be an allOf over
+    # the empty array at key `'a`, which is vacuously true.
+    resource:
+      p: { "a][*].x[b": "w", "'a": [] }
+    want_undefined: true
+
+  # =========================================================================
+  # field() template function
+  # =========================================================================
+
+  - note: field_fn_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": { "value": "[field('m[''a[*]'']')]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "x" }
+    want_effect: "deny"
+
+  - note: field_fn_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": { "value": "[field('m[''a[*]'']')]", "equals": "x" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m: { "a[*]": "y" }
+    want_undefined: true
+
+  - note: field_fn_quoted_wildcard_after_real_wildcard_collects
+    policy_rule: |
+      {
+        "if": { "value": "[field('items[*][''a[*]'']')]", "equals": ["x", "y"] },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": "x" }
+        - { "a[*]": "y" }
+    want_effect: "deny"
+
+  - note: field_fn_quoted_wildcard_after_real_wildcard_collects_no_match
+    policy_rule: |
+      {
+        "if": { "value": "[field('items[*][''a[*]'']')]", "equals": ["x", "y"] },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": "x" }
+        - { "a": ["y"] }
+    want_undefined: true
+
+  # Under a count binding the quoted `[*]` does not add a wildcard level, so
+  # field() selects one value from the bound element (a one-member array).
+  - note: field_fn_quoted_wildcard_under_count_binding
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*].m[''k[*]'']')]",
+              "equals": ["x"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "x" } }
+        - { "m": { "k[*]": "y" } }
+    want_effect: "deny"
+
+  - note: field_fn_quoted_wildcard_under_count_binding_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*].m[''k[*]'']')]",
+              "equals": ["x"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "y" } }
+        - { "m": { "k": ["x"] } }
+    want_undefined: true
+
+  # The legacy `prefix.` spelling binds without any unquoted `[*]`, so
+  # field() returns the bound value itself, not a one-member array.
+  - note: field_fn_quoted_wildcard_legacy_prefix_under_count_binding
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items.m[''k[*]'']')]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "x" } }
+        - { "m": { "k[*]": "y" } }
+    want_effect: "deny"
+
+  - note: field_fn_quoted_wildcard_legacy_prefix_under_count_binding_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items.m[''k[*]'']')]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "y" } }
+        - { "m": { "k": ["x"] } }
+    want_undefined: true
+
+  # Nested-wildcard collector below the bound element: the quoted `[*]`
+  # after `subs[*]` is a key, so one value is collected per sub.
+  - note: field_fn_nested_wildcard_then_quoted_key_under_count_binding
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*].subs[*][''k[*]'']')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "k[*]": "x" }, { "k[*]": "y" }] }
+        - { "subs": [{ "k[*]": "z" }] }
+    want_effect: "deny"
+
+  - note: field_fn_nested_wildcard_then_quoted_key_under_count_binding_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*].subs[*][''k[*]'']')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "k[*]": "x" }, { "k": ["y"] }] }
+    want_undefined: true
+
+  - note: current_quoted_wildcard_under_count_binding
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[current('items[*].m[''k[*]'']')]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "x" } }
+        - { "m": { "k[*]": "y" } }
+    want_effect: "deny"
+
+  - note: current_quoted_wildcard_under_count_binding_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[current('items[*].m[''k[*]'']')]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "y" } }
+        - { "m": { "k": ["x"] } }
+    want_undefined: true
+
+  # =========================================================================
+  # Count where-clause field conditions
+  # =========================================================================
+
+  - note: count_where_field_quoted_wildcard_key
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "x" } }
+        - { "m": { "k[*]": "y" } }
+    want_effect: "deny"
+
+  - note: count_where_field_quoted_wildcard_key_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": "y" } }
+        - { "m": { "k": ["x"] } }
+    want_undefined: true
+
+  # =========================================================================
+  # Nested counts
+  # =========================================================================
+
+  - note: nested_count_quoted_key_collection
+    policy_rule: |
+      {
+        "if": { "count": { "field": "items[*]['a[*]'][*]" }, "equals": 3 },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": [1, 2] }
+        - { "a[*]": [3] }
+    want_effect: "deny"
+
+  - note: nested_count_quoted_key_collection_no_match
+    policy_rule: |
+      {
+        "if": { "count": { "field": "items[*]['a[*]'][*]" }, "equals": 3 },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": [1] }
+        - { "a": [2, 3] }
+    want_undefined: true
+
+  - note: nested_count_quoted_key_collection_where_greater_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]['a[*]'][*]",
+            "where": { "value": true, "equals": true }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": [] }
+        - { "a[*]": [1] }
+    want_effect: "deny"
+
+  - note: nested_count_quoted_key_collection_where_greater_zero_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]['a[*]'][*]",
+            "where": { "value": true, "equals": true }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "a[*]": [] }
+        - { "a": [1] }
+    want_undefined: true
+
+  - note: inner_count_quoted_key_collection_greater_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": { "field": "items[*].m['k[*]'][*]" },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": [1] } }
+        - { "m": { "k[*]": [] } }
+    want_effect: "deny"
+
+  - note: inner_count_quoted_key_collection_greater_zero_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": { "field": "items[*].m['k[*]'][*]" },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": [] } }
+        - { "m": { "k": [1] } }
+    want_undefined: true
+
+  - note: inner_count_where_quoted_key_collection_greater_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*].m['k[*]'][*]",
+                "where": { "value": true, "equals": true }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": [1] } }
+        - { "m": { "k[*]": [] } }
+    want_effect: "deny"
+
+  - note: inner_count_where_quoted_key_collection_greater_zero_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*].m['k[*]'][*]",
+                "where": { "value": true, "equals": true }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "m": { "k[*]": [] } }
+        - { "m": { "k": [1] } }
+    want_undefined: true
+
+  - note: nested_count_where_field_quoted_wildcard_greater_zero
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*].subs[*]",
+            "where": { "field": "items[*].subs[*].m['k[*]']", "equals": "x" }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "m": { "k[*]": "y" } }, { "m": { "k[*]": "x" } }] }
+    want_effect: "deny"
+
+  - note: nested_count_where_field_quoted_wildcard_greater_zero_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*].subs[*]",
+            "where": { "field": "items[*].subs[*].m['k[*]']", "equals": "x" }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "m": { "k[*]": "y" } }, { "m": { "k": ["x"] } }] }
+    want_undefined: true
+
+  - note: nested_count_where_field_quoted_wildcard_equals
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*].subs[*]",
+            "where": { "field": "items[*].subs[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "m": { "k[*]": "x" } }] }
+        - { "subs": [{ "m": { "k[*]": "x" } }, { "m": { "k[*]": "y" } }] }
+    want_effect: "deny"
+
+  - note: nested_count_where_field_quoted_wildcard_equals_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*].subs[*]",
+            "where": { "field": "items[*].subs[*].m['k[*]']", "equals": "x" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { "subs": [{ "m": { "k[*]": "x" } }] }
+        - { "subs": [{ "m": { "k": ["x"] } }, { "m": { "k[*]": "y" } }] }
+    want_undefined: true
+
+  # =========================================================================
+  # Count fields must end with an unquoted [*] (review round 1, R1-3)
+  # =========================================================================
+  # A suffix after the last unquoted [*] used to be ignored, so the count
+  # silently counted the array before it.  Each rejection has a twin that ends
+  # with [*] and counts correctly.
+
+  - note: count_field_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]']" }, "lessOrEquals": 1 }, "then": { "effect": "deny" } }
+    resource: {}
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: count_field_quoted_key_then_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]'][*]" }, "equals": 3 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "a[*]": [1, 2] }, { "a[*]": [3] } ] }
+    want_effect: "deny"
+
+  - note: count_field_quoted_key_then_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]'][*]" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "a[*]": [1, 2] }, { "a[*]": [3] } ] }
+    want_undefined: true
+
+  - note: count_any_field_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]']", "where": { "value": true, "equals": true } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: {}
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: count_field_dotted_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*].x" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "x": 1 }, { "x": 2 } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: count_field_dotted_suffix_twin_counts_array
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "x": 1 }, { "x": 2 } ] }
+    want_effect: "deny"
+
+  - note: nested_count_field_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*].subs[*]['a[*]']" }, "equals": 3 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "subs": [ {}, {} ] }, { "subs": [ {} ] } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: nested_count_field_twin_counts_inner_elements
+    policy_rule: |
+      { "if": { "count": { "field": "items[*].subs[*]" }, "equals": 3 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "subs": [ {}, {} ] }, { "subs": [ {} ] } ] }
+    want_effect: "deny"
+
+  - note: nested_count_field_twin_counts_inner_elements_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*].subs[*]" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "subs": [ {}, {} ] }, { "subs": [ {} ] } ] }
+    want_undefined: true
+
+  - note: nested_count_any_field_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*].subs[*]['a[*]']", "where": { "value": true, "equals": true } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "subs": [ {}, {} ] }, { "subs": [ {} ] } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: inner_count_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]']" }, "lessOrEquals": 5 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: inner_count_quoted_key_then_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]'][*]" }, "greater": 0 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_effect: "deny"
+
+  - note: inner_count_quoted_key_then_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]'][*]" }, "greater": 1 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_undefined: true
+
+  - note: inner_count_any_quoted_only_suffix_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]']", "where": { "value": true, "equals": true } }, "greater": 0 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_compile_error_contains: "must end with an unquoted [*]"
+
+  - note: inner_count_any_quoted_key_then_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]'][*]", "where": { "value": true, "equals": true } }, "greater": 0 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_effect: "deny"
+
+  - note: inner_count_any_quoted_key_then_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]", "where": { "count": { "field": "items[*].m['k[*]'][*]", "where": { "value": false, "equals": true } }, "greater": 0 } }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "m": { "k[*]": [1, 2] } }, { "m": { "k[*]": [3] } } ] }
+    want_undefined: true
+
+  # =========================================================================
+  # Count over a tag (R1-4)
+  # =========================================================================
+  # A tag value is a string, so a tag count field is rejected.  It used to
+  # become `tags.a[*]`, which counted the array under tag `a`.
+
+  - note: count_tag_quoted_wildcard_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "tags['a[*]']" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "a": [ "x" ] } }
+    want_compile_error_contains: "count over a tag field is not supported"
+
+  - note: count_tag_dotted_wildcard_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "tags.a[*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "a": [ "x" ] } }
+    want_compile_error_contains: "count over a tag field is not supported"
+
+  - note: field_tag_quoted_wildcard_reads_literal_tag
+    policy_rule: |
+      { "if": { "field": "tags['a[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "tags": { "a[*]": "x" } }
+    want_effect: "deny"
+
+  - note: field_tag_quoted_wildcard_reads_literal_tag_no_match
+    policy_rule: |
+      { "if": { "field": "tags['a[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "tags": { "a": [ "x" ] } }
+    want_undefined: true
+
+  # =========================================================================
+  # Unclosed quotes are rejected (R1-6, R1-11)
+  # =========================================================================
+  # A bracket whose quote never closes would be read as unquoted text in one
+  # path and as part of a quoted key in a longer path, so a count binding and
+  # its where-field could disagree about where the wildcard is.
+
+  - note: count_prefix_unclosed_quote_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "m['a].x[*]", "where": { "field": "m['a].x[*].y[*]['b']", "equals": "v" } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: { "m": { "'a]": { "x": [ { "y": [ { "b": "v" } ] } ] } } }
+    want_compile_error_contains: "unclosed quote"
+
+  - note: count_prefix_closed_quote_twin
+    policy_rule: |
+      { "if": { "count": { "field": "m['a]'].x[*]", "where": { "field": "m['a]'].x[*].y", "equals": "v" } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: { "m": { "a]": { "x": [ { "y": "v" } ] } } }
+    want_effect: "deny"
+
+  - note: count_prefix_closed_quote_twin_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "m['a]'].x[*]", "where": { "field": "m['a]'].x[*].y", "equals": "v" } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: { "m": { "a]": { "x": [ { "y": "w" } ] } } }
+    want_undefined: true
+
+  - note: count_unclosed_quote_after_wildcard_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "m[*].x['b[*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "m": [ { "x": { "'b": [ 1 ] } } ] }
+    want_compile_error_contains: "unclosed quote"
+
+  # Outside a count, a bracket whose quote never closes is still read as
+  # unquoted text (the key keeps its quote), as on main.
+
+  - note: field_unbalanced_leading_quote_is_unquoted_text
+    policy_rule: |
+      { "if": { "field": "m['a].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "'a": { "n": "x" } } }
+    want_effect: "deny"
+
+  - note: field_unbalanced_leading_quote_is_unquoted_text_no_match
+    policy_rule: |
+      { "if": { "field": "m['a].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a]": { "n": "x" } } }
+    want_undefined: true
+
+  - note: field_balanced_leading_quote_twin
+    policy_rule: |
+      { "if": { "field": "m['a]'].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a]": { "n": "x" } } }
+    want_effect: "deny"
+
+  - note: field_balanced_leading_quote_twin_no_match
+    policy_rule: |
+      { "if": { "field": "m['a]'].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "'a": { "n": "x" } } }
+    want_undefined: true
+
+  - note: field_unclosed_double_quote_is_unquoted_text
+    policy_rule: |
+      { "if": { "field": "m[\"a].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "\"a": { "n": "x" } } }
+    want_effect: "deny"
+
+  - note: field_unclosed_double_quote_is_unquoted_text_no_match
+    policy_rule: |
+      { "if": { "field": "m[\"a].n", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a]": { "n": "x" } } }
+    want_undefined: true
+
+  # =========================================================================
+  # Edge cases (R1-11)
+  # =========================================================================
+
+  - note: field_spaced_quoted_wildcard_key
+    policy_rule: |
+      { "if": { "field": "m[ 'a[*]' ]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a[*]": "x" } }
+    want_effect: "deny"
+
+  - note: field_spaced_quoted_wildcard_key_no_match
+    policy_rule: |
+      { "if": { "field": "m[ 'a[*]' ]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a[*]": "y" } }
+    want_undefined: true
+
+  - note: field_spaced_star_is_a_key
+    policy_rule: |
+      { "if": { "field": "m[ * ]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "*": "x" } }
+    want_effect: "deny"
+
+  - note: field_spaced_star_is_a_key_does_not_iterate
+    policy_rule: |
+      { "if": { "field": "m[ * ]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": [ "x" ] }
+    want_undefined: true
+
+  - note: field_mixed_quotes_double_outside
+    policy_rule: |
+      { "if": { "field": "m[\"a'[*]\"]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a'[*]": "x" } }
+    want_effect: "deny"
+
+  - note: field_mixed_quotes_double_outside_no_match
+    policy_rule: |
+      { "if": { "field": "m[\"a'[*]\"]", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a'[*]": "y" } }
+    want_undefined: true
+
+  - note: field_mixed_quotes_single_outside
+    policy_rule: |
+      { "if": { "field": "m['a\"]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a\"]": "x" } }
+    want_effect: "deny"
+
+  - note: field_mixed_quotes_single_outside_no_match
+    policy_rule: |
+      { "if": { "field": "m['a\"]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a\"]": "y" } }
+    want_undefined: true
+
+  - note: field_uppercase_quoted_wildcard_key
+    policy_rule: |
+      { "if": { "field": "M['A[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "A[*]": "x" } }
+    want_effect: "deny"
+
+  - note: field_uppercase_quoted_wildcard_key_no_match
+    policy_rule: |
+      { "if": { "field": "M['A[*]']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "A[*]": "y" } }
+    want_undefined: true
+
+  - note: field_pinned_rule_hides_later_wildcard
+    policy_rule: |
+      { "if": { "field": "m['a].arr[*]['k']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a].arr[*]['k": "x" } }
+    want_effect: "deny"
+
+  - note: field_pinned_rule_hides_later_wildcard_no_match
+    policy_rule: |
+      { "if": { "field": "m['a].arr[*]['k']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "'a]": { "arr": [ { "k": "x" } ] } } }
+    want_undefined: true
+
+  - note: field_pinned_rule_spans_dotted_segment
+    policy_rule: |
+      { "if": { "field": "m['a].n['b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "a].n['b": "x" } }
+    want_effect: "deny"
+
+  - note: field_pinned_rule_spans_dotted_segment_no_match
+    policy_rule: |
+      { "if": { "field": "m['a].n['b']", "equals": "x" }, "then": { "effect": "deny" } }
+    resource: { "m": { "'a": { "n": { "b": "x" } } } }
+    want_undefined: true
+
+  # =========================================================================
+  # Round-2 review gaps (R2-2)
+  # =========================================================================
+
+  # G1: whitespace after the final `[*]` is ignored, as `str::trim` would.
+
+  - note: count_field_trailing_space_after_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "items[*] " }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "items": [ 1, 2 ] }
+    want_effect: "deny"
+
+  - note: count_field_trailing_space_after_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*] " }, "equals": 3 }, "then": { "effect": "deny" } }
+    resource: { "items": [ 1, 2 ] }
+    want_undefined: true
+
+  # G2: tag counts are rejected whatever the tag name.
+
+  - note: count_bare_tags_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "tags" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "a": "x" } }
+    want_compile_error_contains: "must contain [*]"
+
+  - note: count_dotted_tag_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "tags.x" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "x": [ 1 ] } }
+    want_compile_error_contains: "count over a tag field is not supported"
+
+  - note: count_bracket_tag_rejected
+    policy_rule: |
+      { "if": { "count": { "field": "tags['x']" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "x": [ 1 ] } }
+    want_compile_error_contains: "count over a tag field is not supported"
+
+  # `tags['x'][*]` is an ordinary path (not a tag field), so it still counts.
+
+  - note: count_tag_bracket_then_wildcard_is_a_path
+    policy_rule: |
+      { "if": { "count": { "field": "tags['x'][*]" }, "equals": 2 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "x": [ 1, 2 ] } }
+    want_effect: "deny"
+
+  - note: count_tag_bracket_then_wildcard_is_a_path_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "tags['x'][*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "x": [ 1, 2 ] } }
+    want_undefined: true
+
+  # G5: missing twins.
+
+  - note: count_field_dotted_suffix_twin_counts_array_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "x": 1 }, { "x": 2 } ] }
+    want_undefined: true
+
+  - note: count_any_field_quoted_key_then_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]'][*]", "where": { "value": true, "equals": true } }, "greater": 0 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "a[*]": [ 1, 2 ] } ] }
+    want_effect: "deny"
+
+  - note: count_any_field_quoted_key_then_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "items[*]['a[*]'][*]", "where": { "value": true, "equals": true } }, "greater": 3 }, "then": { "effect": "deny" } }
+    resource: { "items": [ { "a[*]": [ 1, 2 ] } ] }
+    want_undefined: true
+
+  - note: count_closed_quote_after_wildcard
+    policy_rule: |
+      { "if": { "count": { "field": "m[*].x['b[*]'][*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "m": [ { "x": { "b[*]": [ 1 ] } } ] }
+    want_effect: "deny"
+
+  - note: count_closed_quote_after_wildcard_no_match
+    policy_rule: |
+      { "if": { "count": { "field": "m[*].x['b[*]'][*]" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "m": [ { "x": { "b": [ 1 ] } } ] }
+    want_undefined: true
