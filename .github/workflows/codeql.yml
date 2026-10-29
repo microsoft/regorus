@@ -69,7 +69,7 @@ jobs:
       uses: ./.github/actions/toolchains/rust
 
     - name: Cache cargo
-      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         shared-key: ${{ runner.os }}-regorus
 
@@ -86,13 +86,13 @@ jobs:
 
     - name: Setup Python
       if: matrix.language == 'python'
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.10'
 
     - name: Setup Java
       if: matrix.language == 'java-kotlin'
-      uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
       with:
         distribution: 'corretto'
         java-version: '8'
@@ -120,7 +120,7 @@ jobs:
         node-version: '18'
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
@@ -147,7 +147,7 @@ jobs:
 
     - name: Setup Ruby
       if: matrix.language == 'rust' && contains(matrix.working-directory, 'ruby')
-      uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+      uses: ruby/setup-ruby@26e5b7d197ebf60545ee9667bcbace0be11ccaec # v1.334.0
       with:
         ruby-version: '3.4.2'
         bundler-cache: true
@@ -195,7 +195,7 @@ jobs:
 
     - name: Perform CodeQL Analysis
       id: analyze
-      uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
       env:
         CODEQL_ACTION_EXTRA_OPTIONS: ${{ matrix.language == 'rust' && '{"database":{"interpret-results":["--max-paths=5"]}}' || '{}' }}
       with:
@@ -203,7 +203,7 @@ jobs:
 
     - name: Retain Rust SARIF
       if: matrix.language == 'rust'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: codeql-rust-sarif-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ steps.analyze.outputs.sarif-output }}/*.sarif
