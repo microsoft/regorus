@@ -9,6 +9,7 @@ use core::cmp::Ordering;
 use crate::number::Number;
 use num_bigint::BigInt;
 use super::bigint_assumptions::*;
+use super::f64_assumptions::*;
 use super::number_specs::NumberView;
 use vstd::arithmetic::power2::pow2;
 use vstd::arithmetic::div_mod::{
@@ -153,6 +154,218 @@ impl View for Number
 }
 
 /// Helpful lemmas
+
+pub proof fn lemma_f64_integer_part(f: f64, exponent: int)
+    requires
+        f.is_finite_spec(),
+        exponent == if f64_finite_exponent(f) < 0 { f64_finite_exponent(f) } else { 0 },
+        f64_scaled_value(f, exponent) >= 0,
+    ensures
+        f64_scaled_value(f, 0) >= 0,
+        f64_scaled_value(f, 0) * pow2((-exponent) as nat)
+            <= f64_scaled_value(f, exponent),
+        f64_scaled_value(f, exponent)
+            < (f64_scaled_value(f, 0) + 1) * pow2((-exponent) as nat),
+        (f64_scaled_value(f, exponent)
+            > f64_scaled_value(f, 0) * pow2((-exponent) as nat)) == f64_has_fraction(f),
+        f64_biased_exponent(f) < 1023 ==> f64_scaled_value(f, 0) == 0,
+{
+    vstd::arithmetic::power2::lemma2_to64();
+    vstd::arithmetic::power2::lemma2_to64_rest();
+    vstd::arithmetic::power2::lemma_pow2_pos((-exponent) as nat);
+    let significand = f64_finite_significand(f);
+    let unit = pow2((-exponent) as nat) as int;
+    let bits = f.to_bits_abs_spec();
+    assert((bits & 0x000f_ffff_ffff_ffff) < 0x0010_0000_0000_0000u64)
+        by (bit_vector);
+    assert(0 <= significand < pow2(53));
+    if exponent < 0 {
+        let shift = f64_finite_exponent(f) - exponent;
+        let magnitude = significand * pow2(shift as nat);
+        assert(magnitude == significand) by (nonlinear_arith)
+            requires shift == 0, pow2(0) == 1, magnitude == significand * pow2(shift as nat);
+        assert(f64_scaled_value(f, exponent) ==
+            if f.is_sign_negative_spec() { -significand } else { significand });
+        lemma_fundamental_div_mod(significand, unit);
+        vstd::arithmetic::div_mod::lemma_mod_bound(significand, unit);
+        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(significand, unit);
+        if f64_biased_exponent(f) < 1023 {
+            if -exponent > 53 {
+                vstd::arithmetic::power2::lemma_pow2_strictly_increases(
+                    53, (-exponent) as nat,
+                );
+            }
+            assert(unit >= pow2(53));
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                significand, unit, 0, significand,
+            );
+        }
+        assert(!f.is_sign_negative_spec() || significand == 0);
+        assert(f64_scaled_value(f, 0) == significand / unit);
+        assert(f64_scaled_value(f, exponent) == significand);
+        assert(f64_scaled_value(f, 0) * unit <= significand
+            < (f64_scaled_value(f, 0) + 1) * unit)
+            by (nonlinear_arith)
+            requires
+                significand == unit * (significand / unit) + significand % unit,
+                0 <= significand % unit < unit,
+                f64_scaled_value(f, 0) == significand / unit;
+        assert((significand > f64_scaled_value(f, 0) * unit)
+            == (significand % unit != 0))
+            by (nonlinear_arith)
+            requires
+                significand == unit * (significand / unit) + significand % unit,
+                0 <= significand % unit < unit,
+                f64_scaled_value(f, 0) == significand / unit;
+    } else {
+        assert(exponent == 0);
+        assert(unit == 1);
+        assert(!f64_has_fraction(f));
+        assert(f64_scaled_value(f, 0) * unit == f64_scaled_value(f, exponent))
+            by (nonlinear_arith)
+            requires unit == 1, exponent == 0;
+        assert(f64_scaled_value(f, exponent) < (f64_scaled_value(f, 0) + 1) * unit)
+            by (nonlinear_arith)
+            requires unit == 1, exponent == 0;
+    }
+}
+
+// Cast facts follow execution order: earlier returns do not evaluate the later casts.
+pub proof fn lemma_cmp_float_uint(f: f64, n: u64)
+    ensures
+        <f64 as PartialOrdSpec>::obeys_partial_cmp_spec(),
+        f.is_nan_spec() ==>
+            NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) == Ordering::Greater,
+        !f.is_nan_spec() && !f.is_finite_spec() ==>
+            NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+                if f.is_lt(&0.0f64) { Ordering::Less } else { Ordering::Greater },
+        f.is_finite_spec() && f.is_lt(&0.0f64) ==>
+            NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) == Ordering::Less,
+        forall|upper: f64| #[trigger] float_cast_spec::<u64, f64>(u64::MAX, upper)
+            && f.is_finite_spec() && !f.is_lt(&0.0f64) ==> {
+                &&& f.is_ge(&upper) ==>
+                    NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                        == Ordering::Greater
+                &&& forall|integer_part: u64| #[trigger] float_cast_spec::<f64, u64>(f, integer_part)
+                    && !f.is_ge(&upper) ==> {
+                        &&& integer_part < n ==>
+                            NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                                == Ordering::Less
+                        &&& integer_part > n ==>
+                            NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                                == Ordering::Greater
+                        &&& forall|back: f64| #[trigger] float_cast_spec::<u64, f64>(integer_part, back)
+                            && integer_part == n ==>
+                            NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+                                if f.is_gt(&back) { Ordering::Greater } else { Ordering::Equal }
+                    }
+            },
+{
+    axiom_f64_obeys_partial_cmp_spec();
+    axiom_f64_comparisons_match_ieee();
+    axiom_f64_ops_deterministic();
+    let exponent = if f64_finite_exponent(f) < 0 {
+        f64_finite_exponent(f)
+    } else {
+        0
+    };
+    if !f.is_nan_spec() {
+        axiom_f64_order_zero(f, exponent);
+    }
+    vstd::arithmetic::power2::lemma_pow2_pos((-exponent) as nat);
+    let value = f64_scaled_value(f, exponent);
+    let unit = pow2((-exponent) as nat);
+    assert(NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+        if f.is_nan_spec() {
+            Ordering::Greater
+        } else if !f.is_finite_spec() {
+            if f.is_sign_negative_spec() { Ordering::Less } else { Ordering::Greater }
+        } else if value < n as int * unit {
+            Ordering::Less
+        } else if value > n as int * unit {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        });
+    assert(0 <= n as int * unit <= (u64::MAX as int) * unit)
+        by (nonlinear_arith)
+        requires 0 <= n <= u64::MAX, unit > 0;
+    assert(n as int * unit < (u64::MAX as int + 1) * unit)
+        by (nonlinear_arith)
+        requires 0 <= n <= u64::MAX, unit > 0;
+    assert forall|upper: f64| #[trigger] float_cast_spec::<u64, f64>(u64::MAX, upper)
+        && f.is_finite_spec() && !f.is_lt(&0.0f64) implies {
+            &&& f.is_ge(&upper) ==>
+                NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                    == Ordering::Greater
+            &&& forall|integer_part: u64| #[trigger] float_cast_spec::<f64, u64>(f, integer_part)
+                && !f.is_ge(&upper) ==> {
+                    &&& integer_part < n ==>
+                        NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                            == Ordering::Less
+                    &&& integer_part > n ==>
+                        NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                            == Ordering::Greater
+                    &&& forall|back: f64| #[trigger] float_cast_spec::<u64, f64>(integer_part, back)
+                        && integer_part == n ==>
+                        NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+                            if f.is_gt(&back) { Ordering::Greater } else { Ordering::Equal }
+                }
+        } by
+    {
+        axiom_f64_u64_max_cast(exponent);
+        vstd::arithmetic::power2::lemma_pow2_adds(52, (12 - exponent) as nat);
+        vstd::arithmetic::power2::lemma_pow2_adds(64, (-exponent) as nat);
+        vstd::arithmetic::power2::lemma2_to64();
+        assert(f64_scaled_value(upper, exponent)
+            == (u64::MAX as int + 1) * unit);
+        axiom_f64_finite_order(f, upper, exponent);
+        assert forall|integer_part: u64| #[trigger] float_cast_spec::<f64, u64>(f, integer_part)
+            && !f.is_ge(&upper) implies {
+                &&& integer_part < n ==>
+                    NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                        == Ordering::Less
+                &&& integer_part > n ==>
+                    NumberView::Float(f).cmp_values(NumberView::Integer(n as int))
+                        == Ordering::Greater
+                &&& forall|back: f64| #[trigger] float_cast_spec::<u64, f64>(integer_part, back)
+                    && integer_part == n ==>
+                    NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+                        if f.is_gt(&back) { Ordering::Greater } else { Ordering::Equal }
+            } by
+        {
+            lemma_f64_integer_part(f, exponent);
+            assert(f64_scaled_value(f, 0) <= u64::MAX)
+                by (nonlinear_arith)
+                requires
+                    f64_scaled_value(f, 0) * unit <= value,
+                    value < (u64::MAX as int + 1) * unit,
+                    unit > 0;
+            if f64_biased_exponent(f) < 1023 {
+                axiom_f64_to_u64_below_one(f);
+            } else {
+                axiom_f64_to_u64_in_range(f);
+            }
+            assert(integer_part < n ==> value < n as int * unit)
+                by (nonlinear_arith)
+                requires
+                    value < (integer_part as int + 1) * unit,
+                    unit > 0;
+            assert(integer_part > n ==> value > n as int * unit)
+                by (nonlinear_arith)
+                requires
+                    integer_part as int * unit <= value,
+                    unit > 0;
+            assert forall|back: f64| #[trigger] float_cast_spec::<u64, f64>(integer_part, back)
+                && integer_part == n implies
+                NumberView::Float(f).cmp_values(NumberView::Integer(n as int)) ==
+                    if f.is_gt(&back) { Ordering::Greater } else { Ordering::Equal } by
+            {
+                axiom_f64_to_u64_backcast(f);
+            }
+        }
+    }
+}
 
 pub open spec fn reverse_ordering(ordering: Ordering) -> Ordering
 {

@@ -451,14 +451,14 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
-    // Pinned Verus cannot prove the exact bridge from primitive f64 casts/comparisons to the
-    // bit-level scaled-integer `NumberView` model; trust only this executable helper's contract.
     fn cmp_float_uint(f: f64, n: u64) -> Ordering {
+        proof! {
+            lemma_cmp_float_uint(f, n);
+        }
         if f.is_nan() {
             return Ordering::Greater;
         }
