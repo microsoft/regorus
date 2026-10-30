@@ -17,7 +17,8 @@ cache = ["regorus/cache"]
 coverage = ["regorus/coverage"]
 
 [dependencies]
-magnus = { version = "0.9.2" }
+# serde_magnus 0.11 uses Magnus 0.8; both must share Ruby wrapper types.
+magnus = { version = "0.8.3" }
 regorus = { path = "../../../..", default-features = false, features = ["arc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.140"

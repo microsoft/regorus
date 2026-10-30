@@ -211,7 +211,7 @@ fn rule_conflict_percent_encodes_percent_sequences_in_previous_file_label() {
     assert!(message.contains("| p := 2"));
 }
 
-mod timer_test_support {
+pub mod timer_test_support {
     use super::{ExecutionTimerTestConfig, TimeSourceTestConfig};
     #[cfg(any(test, not(feature = "std")))]
     use crate::utils::limits::set_time_source;
@@ -971,6 +971,38 @@ fn yaml_test(file: &str) -> Result<()> {
     // Targets are supported only with azure_policy feature.
     #[cfg(not(feature = "azure_policy"))]
     if file.contains("target") {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "glob"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/glob"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "semver"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/semver"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "time"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/time"))
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "uuid"))]
+    if std::path::Path::new(file)
+        .parent()
+        .is_some_and(|parent| parent.ends_with("builtins/uuid"))
+    {
         return Ok(());
     }
 

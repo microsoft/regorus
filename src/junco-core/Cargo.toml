@@ -1,0 +1,31 @@
+[package]
+name = "junco-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata.verus]
+verify = true
+
+[features]
+default = []
+serde = ["dep:serde", "history-syntax/serde"]
+runtime = ["dep:smallvec"]
+std = ["vstd/std", "history-syntax/std"]
+test-util = ["runtime"]
+
+[dependencies]
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
+thiserror = { version = "2", default-features = false }
+history-syntax = { path = "../history-syntax", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+smallvec = { version = "=1.16.2", default-features = false, optional = true }
+
+[dev-dependencies]
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }

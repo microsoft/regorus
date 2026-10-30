@@ -144,6 +144,77 @@ ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).
 
 ---
 
+## History table instructions
+
+| Mnemonic | Operands / Params | Behaviour |
+| :------- | :---------------- | :-------- |
+| `HistoryStep` | `params_index=pN` | Advances one rule by at most `batch_size` events; repeats at the same PC while unfinished. Requires feature `history`, otherwise execution reports `HistoryFeatureDisabled`. |
+
+`HistoryStepParams` contains `table: u16`, `rule: u16`, and `batch_size: u32`.
+Zero batch size and invalid table/rule/source references are rejected. There are
+no request/history Value registers or destination register. A nonmatching head
+continues; a violated rule returns its zero-based index. A completed successful
+rule continues to the next instruction. The compiler emits one step per rule,
+then `LoadNull; Return`, with entry point `decide`.
+
+The canonical production trace engine lives in in-tree `src/history-semantics`.
+Policies are authored only in the owned Rust DSL from `history-syntax`; Regorus
+lowers them with `junco-core`'s flat source validation and constant lowering. Regorus's thin
+`rvm::vm::history_tables` adapter calls `execute_history_step`, then Semantics'
+`RuleRuntime::resume_cursor` and `RuleRuntime::advance_cursor`; the latter owns
+the cursor-last `BatchCursor::advance` transaction and publication. Normalization
+and symbolic derivatives belong to Semantics; numeric histories, byte interning,
+and cache containers belong to `history-store`.
+Regorus retains the Program-keyed shared table cache, VM continuation handling,
+and host clock/memory-limit translation. There is no builtin history module or
+interpreter trace evaluator. Portable source validation is available without
+history execution, through core's base APIs.
+
+Use `languages::history_table::compile(&rules, batch_size)` with borrowed
+`Rule<SourceEvent<'_>>` values, load the program,
+attach an `Arc<HistoryStore>`, and stage a `HistoryHandle` and
+typed `Event` with `set_history_input`. Every wrapper fronts one process-wide store
+for identity interning and history append/truncate; the wrapper owns shared compiled
+runtimes, and each runtime retains that store and keys retained prefixes by the
+locked record's immutable ID.
+Each decision captures a fixed history prefix. Append does not change it;
+truncation invalidates its revision and produces typed `HistoryChanged` before
+a result can be published, including empty-table and terminal-return paths.
+Suspension retains private progress and pins the graph; no lock guard is stored
+in the VM. Changing attachment/input while active is rejected. Program replacement
+cancels execution and clears attachment/input, not the application's histories.
+
+`RuleRuntime::new` consumes canonical `FlatPair<u64>` and exports compiled-root
+language equivalence through optional precompilation and GraphLimit recompilation.
+The verified `template_cached_decision` client calls the real constructor and
+cache-backed decision bodies: a successful answer equals the numeric template's
+`source_regex` acceptance on the selected history prefix, without an extra semantic
+assumption. Core body proofs also cover owned Rust DSL flattening, constant
+encoding under later map extensions, and the typed raw/numeric history bridge.
+Regorus's borrowed-string constant ownership pass and native byte-encoder adapter remain outside those
+generic body proofs; the encoder delegates actual UTF-8 interning to core.
+
+Verification associates each residual with its history/revision prefix and fixed
+bindings through a ghost-only snapshot catalog owned by the graph generation.
+Cache reuse discharges the batch semantic precondition; publication and graph
+extensions preserve retained associations, including after failed batches.
+The catalog has no native storage. Lock linearization, singleton initialization and
+history-key allocation locks, and same-revision observation extension remain explicit
+native provenance obligations, not a proof of synchronization.
+Native Eq/Hash coherence and stable user projections remain conditional obligations,
+including Junco root's `LockEvent` adapter. Narrow map/container leaves, locking,
+allocation, and facade/formatting callbacks are not universally body-verified.
+
+Rules use only principal/action/resource string constants and same-domain
+bindings; see [typed history tables](../builtins.md#typed-history-tables-native-rust-rvm-only).
+Programs serialize portable source tables rather than store IDs. `HistoryTableRule`
+uses core `RuleMode` and `FlatPair<String>` (with `Component`, `FlatHead`, `FlatTerm`,
+`FlatTest`, and `FlatRegex`), preserving v8 field/variant order and serialized names.
+`HistoryStepParams` is unchanged. Version 8 bytecode is required; older artifacts
+must be recompiled. Validation still runs with `history` disabled.
+
+---
+
 ## Call and return instructions
 
 | Mnemonic              | Operands / Params         | Behaviour                                       |

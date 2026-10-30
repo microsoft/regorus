@@ -239,3 +239,172 @@ In future, each builtin will be associated with a feature (many builtins could b
    | Builtin                                                                                      | Feature |
    |----------------------------------------------------------------------------------------------|---------|
    | [trace](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-tracing-trace) | _       |
+
+## Typed history tables (native Rust, RVM only)
+
+The opt-in `history` feature enables typed history tables, not a Rego builtin.
+It implies `rvm` and `arc`, supports no_std, and is not included in the default
+features or `full-opa`. The former generic history builtin is removed; calls to
+it fail function resolution. Language bindings do not forward a `history` feature
+or expose the native owner/identity API.
+
+The canonical owned DSL and Event trait belong to in-tree `src/history-syntax`;
+`junco-core` owns flat source validation/lowering and shared contracts,
+`history-store` owns interning and history transactions, and `history-semantics`
+owns numeric compilation/evaluation and generic policies. Regorus retains the
+borrowed-string compiler adapter, VM dispatch/limit adapter, and shared Program-keyed table
+cache. Its public `HistoryStore::{new, intern_principal, intern_action,
+intern_resource, new_history, append, truncate, len}` APIs keep their signatures;
+every wrapper shares one process-wide numeric store (`history_store::store::HistoryStore::global()`). Store's
+generic typed `Store<E>`/`History<E>` APIs are separate, not replacement Regorus
+entrypoints. Native no_std + alloc remains supported. `std` and Semantics' `cache`
+do not imply `runtime`; Regorus `history` enables Store and Semantics runtime,
+while source validation depends only on core and Syntax. `test-util` supplies
+dev-only integration probes.
+
+### Native boundary
+
+Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Each
+wrapper owns only its Program-keyed table cache; identities and histories live in
+one process-wide store, so wrappers accept each other's handles and IDs and are
+not a tenant isolation boundary. Intern exact raw UTF-8 paths separately with
+`intern_principal`, `intern_action`, and `intern_resource`. The resulting opaque
+eight-byte `Principal`, `Action`, and `Resource` IDs form an `Event` containing
+exactly those three coordinates. Case, slashes, embedded NULs, and distinct
+Unicode encodings remain distinct; there is no normalization or ancestry match.
+Interned paths live for the process; IDs are not recycled. IDs issued only by a
+typed `Store<E>` view are not byte-domain members and are rejected.
+
+Use `store.new_history()`, then `store.append(&history, &events)`,
+`store.truncate(&history, len)`, and `store.len(&history)`. Cloned handles share
+events. Compile ordered Rust rules with `compile(&rules, batch_size)`; zero is an
+error. After `vm.load_program(program)`, call `vm.attach_history(store.clone())`
+and `vm.set_history_input(history, request)`, then
+`vm.execute_entry_point_by_name("decide")`. The result is `Value::Null` for grant
+or the zero-based first violated rule index. Decisions never append the candidate.
+Repeated executions retain staged input. Loading another program cancels an old
+execution and requires explicit reattachment and restaging.
+
+### Rust policy DSL
+
+Policies are authored only with the Rust DSL re-exported from
+`regorus::languages::history_table`: `Rule`, `RuleMode`, `Head`,
+`ComponentPattern`, `TestExpr`, `AtomPattern`, `Comparison`, and `RegexExpr`.
+`compile` borrows `&[Rule<SourceEvent<'_>>]`; constants are `&str` values copied
+exactly into the compiled program, so the source strings and rules may be
+dropped after compilation. There is no JSON policy grammar.
+
+```rust
+use regorus::languages::history_table::*;
+
+let rule = Rule::new(
+    RuleMode::Require,
+    Head::new(
+        ComponentPattern::variable("actor"),
+        ComponentPattern::constant("release"),
+        ComponentPattern::variable("doc"),
+    ),
+    RegexExpr::concat([
+        RegexExpr::all(),
+        RegexExpr::test(TestExpr::and([
+            TestExpr::atom(Comparison::Eq, AtomPattern::Principal(ComponentPattern::variable("actor"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::Action(ComponentPattern::constant("edit"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::Resource(ComponentPattern::variable("doc"))),
+        ])),
+        RegexExpr::all(),
+    ]),
+);
+let program = compile(&[rule], 256)?;
+```
+
+Rules are ordered: require rejects a matching request when the history is outside
+its language; forbid rejects when it is inside. Nonmatching request heads skip the
+rule. Each head coordinate is a constant or a variable; use a distinct unused
+variable for a wildcard. Variables belong to one coordinate; reusing a name across
+coordinates or referencing an unbound name fails with
+`HistoryTableError::InvalidRule { index, source }` carrying a typed `CompileError`.
+
+Tests are `TestExpr::{True, False, And, Or}` and component `Eq`/`Neq` atoms whose
+term is a constant or a head variable from the same coordinate. Empty conjunction
+is true; empty disjunction is false. Every runtime coordinate is present, so
+equality and disequality are complements.
+
+| `RegexExpr` | Complete-history language |
+|---|---|
+| `Empty` | No histories |
+| `All` | All finite histories |
+| `Epsilon` | Empty history only |
+| `Test(test)` | One event satisfying the test |
+| `Concat([...])` | Chronological concatenation; empty is epsilon |
+| `Union([...])` | Union; empty is empty language |
+| `Intersect([...])` | Intersection; empty is universal |
+| `Star(regex)` | Kleene star |
+| `Not(regex)` | Complement over complete finite histories |
+
+Compilation is iterative, but dropping a very deep owned rule is recursive; use
+`Rule::dispose()` for such trees.
+
+### Batching, sharing, and errors
+
+Compilation emits one `HistoryStep` instruction per ordered rule. Each dispatch
+consumes at most the explicit batch size and repeats at the same PC when more
+events remain. Intermediate nullable prefixes do not grant. The existing VM
+executor charges dispatch budgets and preserves continuations during suspension.
+
+A decision captures a revision and target length before execution, including an
+empty table. Concurrent appends are excluded until the next decision. Truncation
+that removes events changes the revision; resume or finalization reports typed
+`HistoryChanged`, rather than restarting or publishing a stale grant. Attachment
+or staged-input changes during an active/suspended execution fail.
+
+Each wrapper shares bounded table/graph and retained-prefix caches across VMs;
+retained prefixes are keyed by each record's immutable process-wide history ID;
+active continuations pin their graph instance. Eviction or graph replacement
+cannot reinterpret a pinned residual. Successful batches publish their cursor
+only after fallible batch work completes; errors preserve the batch-entry cursor.
+Graph exhaustion permits one fresh lazy-graph retry per rule per decision,
+replayed through bounded dispatches. Native errors remain typed in
+`VmError::History`; resource limits retain the VM's existing limit variants.
+
+Programs contain portable postorder source tables, not live IDs or store identity.
+`HistoryTableRule` retains its mode/source envelope, now using core `RuleMode`
+and `FlatPair<String>` with `Component`, `FlatHead`, `FlatTerm`, `FlatTest`, and
+`FlatRegex`. The v8 field/variant order and serialized names are unchanged.
+`Program::validate_limits` validates these sources even without `history`;
+repeated edges, unused nodes, and valid non-last roots remain supported without
+unfolding the DAG. Attachment interns constants in the supplied store outside
+decision execution. Serialization version 8 rejects older bytecode; recompile
+rather than translate.
+
+### Proof and measurement boundaries
+
+The shared specifications live in core's `src/verify/history_specs.rs`; semantic
+algebra lives in `history-semantics/src/verify/history_algebra.rs`. Body proofs cover
+owned DSL lowering, constant encoding under later map extensions, the numeric
+compiler/evaluator, raw/numeric typed-history correspondence, and cached lifecycle
+and publication receipts. Native Eq/Hash coherence and stable user projections
+are conditional obligations; separating these crates is not a universal proof of
+external Event implementations, including root Junco's native `LockEvent` adapter.
+Narrow map/container leaves, synchronization, allocation, clocks, arena destruction,
+Regorus's borrowed-string constant ownership pass, and native facade/diagnostic callbacks remain explicit
+trust boundaries. Regorus's byte encoder is a native adapter that delegates UTF-8
+interning to `history-store`, not a universally verified external component encoder.
+
+The matched proof configuration uses Rust `1.98.1`, Verus
+`0.2026.10.04.426d8b0`, Z3 `4.16.0`, and `vstd = 0.0.0-2026-10-04-0306`.
+These boundaries describe the implementation and contracts, not a claim that
+every configuration or external consumer has passed verification.
+
+`cargo bench --features history --bench history_table` measures native decisions
+with batch size 256 and 16/256/4096 events for both early-accepting `contains edit`
+and full-scan `edit*` policies. Cases cover unchanged-prefix reuse, one appended
+event after priming the retained prefix, and revision-invalidated root replay
+with graph/successor caches warm. Compilation, interning, attachment, staging,
+truncation, append, and the priming decision occur outside timing. The replay
+control bypasses retained-prefix reuse without disabling symbolic graph caches;
+the `cache` Cargo feature is not a retained-prefix-cache switch.
+`retained_residuals_avoid_replay_without_changing_answers` also checks identical
+accept/reject answers and exact event work with retained cursors versus clearing
+only those cursors, in both execution modes. These are decision measurements,
+not ingestion or generic-builtin benchmarks.
+

@@ -131,3 +131,8 @@ pub fn must_cache(path: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// Resource failures must retain their identity through evaluator error envelopes.
+pub fn is_fatal_builtin_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<crate::LimitError>().is_some()
+}

@@ -12,6 +12,7 @@ use core::fmt;
 use core::ops::Bound;
 
 use crate::value::Value;
+use vstd::prelude::verus_verify;
 
 #[allow(unused_imports)] // surface for downstream PRs
 pub use iter::{IntoIter, Iter};
@@ -29,6 +30,8 @@ pub use iter::{IntoIter, Iter};
 /// - [`Set::cursor`] / [`Set::next`] — implementation-defined order,
 ///   resumable; cheapest per-step cost. Used by interpreter/RVM when iteration
 ///   must yield mid-flight.
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Default, Clone, Eq, PartialEq)]
 pub struct Set {
     inner: BTreeSet<Value>,
@@ -267,5 +270,38 @@ impl From<Set> for Value {
     #[inline]
     fn from(s: Set) -> Self {
         s.into_value()
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+mod verify {
+    use super::*;
+    use vstd::prelude::*;
+
+    verus! {
+        impl View for super::Set {
+            type V = vstd::set::Set<Value>;
+            closed spec fn view(&self) -> Self::V { self.inner@ }
+        }
+
+        impl super::Set {
+            pub proof fn lemma_elems_smaller(s: crate::Rc<super::Set>)
+                ensures forall|x: Value| s@.contains(x)
+                    ==> is_smaller_than(x, Value::Set(s)),
+            {
+                broadcast use vstd::std_specs::btree::group_btree_axioms;
+                broadcast use vstd::set::group_set_lemmas;
+                reveal(<super::Set as View>::view);
+                let bound = Value::Set(s);
+                let field: crate::Rc<super::Set> = get_variant_field(bound, "Set", "0");
+                assert(is_smaller_than(field, bound));
+                assert(is_smaller_than((*s).inner, s));
+                assert(is_smaller_than((*s).inner@, (*s).inner));
+                assert forall|x: Value| s@.contains(x)
+                    implies is_smaller_than(x, bound) by {
+                    assert(is_smaller_than(x, (*s).inner@));
+                }
+            }
+        }
     }
 }

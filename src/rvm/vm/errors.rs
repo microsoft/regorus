@@ -39,6 +39,41 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
+    /// Typed native history failures are never ordinary rule failures.
+    #[cfg(feature = "history")]
+    #[error("{source} (pc={pc})")]
+    History {
+        source: crate::languages::history_table::HistoryError,
+        pc: usize,
+    },
+
+    #[cfg(feature = "history")]
+    #[error("History attachment and typed input are required (pc={pc})")]
+    HistoryContextMissing { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History execution is active (pc={pc})")]
+    HistoryExecutionActive { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step params index {index} out of bounds (pc={pc})")]
+    InvalidHistoryStepParams { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table index {index} out of bounds (pc={pc})")]
+    InvalidHistoryTableIndex { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table {table} rule index {rule} out of bounds (pc={pc})")]
+    InvalidHistoryRuleIndex { table: u16, rule: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step batch_size {batch_size} must be greater than zero (pc={pc})")]
+    InvalidHistoryBatchSize { batch_size: u32, pc: usize },
+
+    #[error("history_step requires the `history` feature (pc={pc})")]
+    HistoryFeatureDisabled { pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 

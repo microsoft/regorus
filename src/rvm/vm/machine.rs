@@ -142,6 +142,19 @@ pub struct RegoVM {
     /// Cooperative execution timer used to enforce wall-clock limits
     pub(super) execution_timer: ExecutionTimer,
 
+    /// Attachment/input survive ordinary executions, never program replacement.
+    #[cfg(feature = "history")]
+    pub(super) history_attachment: Option<super::history_tables::HistoryAttachment>,
+    #[cfg(feature = "history")]
+    pub(super) history_input: Option<(
+        crate::languages::history_table::HistoryHandle,
+        crate::languages::history_table::Event,
+    )>,
+    #[cfg(feature = "history")]
+    pub(super) history_decision: Option<super::history_tables::HistoryDecision>,
+    #[cfg(feature = "history")]
+    pub(super) history_active_rule: Option<super::history_tables::ActiveHistoryRule>,
+
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
 
@@ -243,6 +256,14 @@ impl RegoVM {
             builtins_cache: BTreeMap::new(),
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
+            #[cfg(feature = "history")]
+            history_attachment: None,
+            #[cfg(feature = "history")]
+            history_input: None,
+            #[cfg(feature = "history")]
+            history_decision: None,
+            #[cfg(feature = "history")]
+            history_active_rule: None,
             execution_timer_elapsed_at_suspend: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_config: None,
@@ -267,7 +288,20 @@ impl RegoVM {
 
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
+        // Loading cancels even a suspended execution; resuming the old program is invalid.
+        self.reset_execution_state();
+        self.execution_timer.reset();
+        self.execution_timer_elapsed_at_suspend = None;
+        self.frame_pc_overridden = false;
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        self.finish_active_memory_budget_execution();
         self.program = program.clone();
+        #[cfg(feature = "history")]
+        {
+            self.history_attachment = None;
+            self.history_input = None;
+            self.clear_history_execution();
+        }
 
         // Use the dispatch window size from the program for initial register allocation
         let dispatch_size = usize::from(program.dispatch_window_size).max(2); // Ensure at least 2 registers
@@ -677,7 +711,7 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     #[allow(clippy::unused_self)]
-    pub(super) fn apply_memory_budget_precedence(&mut self, err: VmError) -> VmError {
+    pub(super) const fn apply_memory_budget_precedence(&mut self, err: VmError) -> VmError {
         err
     }
 

@@ -7,8 +7,8 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
-    VirtualDataDocumentLookupParams,
+    FunctionCallParams, HistoryStepParams, InstructionData, LoopStartParams, ObjectCreateParams,
+    SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
     ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
@@ -357,6 +357,12 @@ pub enum Instruction {
 
     /// End a comprehension block
     ComprehensionEnd {},
+
+    /// Advance one ordered history rule by at most its configured batch size.
+    HistoryStep {
+        /// Index into `instruction_data.history_step_params`.
+        params_index: u16,
+    },
 
     // ── Azure Policy condition operators (consolidated) ────────────────
     /// Consolidated Azure Policy condition instruction.

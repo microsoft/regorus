@@ -15,6 +15,9 @@ pub use listing::{
 };
 pub(crate) use serialization::value::{binaries_to_values, BinaryValue};
 pub use serialization::{DeserializationResult, VersionedProgram};
-pub use types::{BuiltinInfo, FunctionInfo, RuleInfo, RuleType, SourceFile, SpanInfo};
+pub use types::{
+    BuiltinInfo, FunctionInfo, HistoryTable, HistoryTableRule, RuleInfo, RuleType, SourceFile,
+    SpanInfo,
+};
 
 pub use metadata::ProgramMetadata;

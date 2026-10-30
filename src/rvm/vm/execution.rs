@@ -15,6 +15,14 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    #[cfg(not(feature = "history"))]
+    fn begin_history_execution(&self) -> Result<()> {
+        if self.program.metadata.language == "history_table" {
+            return Err(VmError::HistoryFeatureDisabled { pc: self.pc });
+        }
+        Ok(())
+    }
+
     pub fn execute(&mut self) -> Result<Value> {
         self.ensure_memory_budget_execution_mode()?;
         match self.execution_mode {
@@ -62,6 +70,8 @@ impl RegoVM {
                         .jump_to(entry_point_pc_u32)
                         .map_err(|err| self.apply_memory_budget_precedence(err))?;
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(result)
                 })();
                 match result {
@@ -119,6 +129,8 @@ impl RegoVM {
                         .jump_to(entry_point_pc_u32)
                         .map_err(|err| self.apply_memory_budget_precedence(err))?;
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(result)
                 })();
                 match result {
@@ -143,6 +155,7 @@ impl RegoVM {
         let program = self.program.clone();
         let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
+        self.begin_history_execution()?;
         while self.pc < program.instructions.len() {
             // Per-instruction sanity check: every iteration of the dispatch
             // loop must re-enter with the VM in a Running/Ready state and the
@@ -171,6 +184,8 @@ impl RegoVM {
                 InstructionOutcome::Continue => {
                     self.pc = self.pc.saturating_add(1);
                 }
+                #[cfg(feature = "history")]
+                InstructionOutcome::Repeat => {}
                 InstructionOutcome::Return(value) => {
                     return Ok(value);
                 }
@@ -198,6 +213,8 @@ impl RegoVM {
                 .map_err(|err| self.apply_memory_budget_precedence(err))
                 .and_then(|value| {
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(value)
                 })
         })();
@@ -219,10 +236,7 @@ impl RegoVM {
         self.execution_state = ExecutionState::Running;
         match self.run_stackless_from(0) {
             Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
-            }
+            Err(err) => Err(self.fail_suspendable_execution(err)),
         }
     }
 
@@ -235,10 +249,7 @@ impl RegoVM {
         self.reset_execution_timer_state();
         match self.run_stackless_from(entry_point_pc) {
             Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
-            }
+            Err(err) => Err(self.fail_suspendable_execution(err)),
         }
     }
 
@@ -301,17 +312,10 @@ impl RegoVM {
         self.restore_execution_timer_after_resume();
 
         let program = self.program.clone();
-        self.run_stackless_loop(&program, &mut last_result)?;
-
-        if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
+        if let Err(error) = self.run_stackless_loop(&program, &mut last_result) {
+            return Err(self.fail_suspendable_execution(error));
         }
+        self.finish_stackless_execution(last_result)
     }
 
     fn run_stackless_from(&mut self, start_pc: usize) -> Result<Value> {
@@ -319,20 +323,39 @@ impl RegoVM {
 
         self.execution_stack.clear();
         self.execution_stack.push(ExecutionFrame::main(start_pc, 0));
+        self.pc = start_pc;
+        self.begin_history_execution()?;
 
         let mut last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
 
         self.run_stackless_loop(&program, &mut last_result)?;
 
+        self.finish_stackless_execution(last_result)
+    }
+
+    fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
+        self.execution_stack.clear();
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
+        error
+    }
+
+    fn finish_stackless_execution(&mut self, result: Value) -> Result<Value> {
         if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
+            return Ok(result);
         }
+        #[cfg(feature = "history")]
+        if let Err(error) = self.finish_history_execution() {
+            return Err(self.fail_suspendable_execution(error));
+        }
+        self.execution_stack.clear();
+        self.execution_state = ExecutionState::Completed {
+            result: result.clone(),
+        };
+        Ok(result)
     }
 
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
@@ -467,6 +490,15 @@ impl RegoVM {
                             frame.pc = self.pc.saturating_add(1);
                         }
                     }
+                    if self.step_mode {
+                        self.handle_instruction_suspend(SuspendReason::Step, &*last_result);
+                        return Ok(());
+                    }
+                }
+                #[cfg(feature = "history")]
+                Ok(InstructionOutcome::Repeat) => {
+                    // A repeated dispatch charges budgets normally but keeps the frame PC.
+                    self.frame_pc_overridden = true;
                     if self.step_mode {
                         self.handle_instruction_suspend(SuspendReason::Step, &*last_result);
                         return Ok(());
@@ -623,8 +655,8 @@ impl RegoVM {
     }
 
     fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
-        // Resource-limit errors must never be absorbed by rule evaluation.
-        // They represent engine-level constraints, not rule-level failures.
+        // Engine-level failures and scoped strict builtin errors must never be
+        // absorbed as ordinary rule failures.
         // Returning Ok(false) causes the caller to clear execution_stack and
         // propagate the error, terminating the evaluation entirely.
         if RegoVM::is_fatal_vm_error(&err) {
@@ -704,6 +736,37 @@ mod tests {
     use super::super::errors::VmError;
     use super::{ExecutionMode, ExecutionState, Instruction, Program, RegoVM, Value};
     use alloc::sync::Arc;
+
+    #[cfg(not(feature = "history"))]
+    #[test]
+    fn history_disabled_empty_table_rejects_both_runners() {
+        let mut producer = Program::new();
+        producer.metadata.language = "history_table".into();
+        producer.add_history_table(crate::rvm::program::HistoryTable {
+            rules: alloc::vec![],
+        });
+        producer.instructions = alloc::vec![
+            Instruction::LoadNull { dest: 0 },
+            Instruction::Return { value: 0 },
+        ];
+        producer.dispatch_window_size = 1;
+        producer.add_entry_point("decide".into(), 0);
+        let bytes = producer.serialize_binary().unwrap();
+        let crate::rvm::program::DeserializationResult::Complete(consumer) =
+            Program::deserialize_binary(&bytes).unwrap()
+        else {
+            panic!("current program must deserialize completely");
+        };
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::new(consumer.clone()));
+            vm.set_execution_mode(mode);
+            assert_eq!(
+                vm.execute_entry_point_by_name("decide"),
+                Err(VmError::HistoryFeatureDisabled { pc: 0 }),
+            );
+        }
+    }
 
     fn two_instruction_program() -> Arc<Program> {
         let mut program = Program::new();

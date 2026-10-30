@@ -38,6 +38,7 @@ hex = ["dep:data-encoding"]
 http = []
 glob = ["dep:globset"]
 graph = []
+history = ["rvm", "arc", "dep:history-store", "dep:history-semantics", "history-store/runtime", "history-semantics/runtime"]
 jsonschema = ["dep:jsonschema"]
 jsonpatch = []
 mimalloc = ["dep:mimalloc"]
@@ -45,11 +46,11 @@ net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
-cache = ["dep:lru"]
-rvm = ["dep:postcard", "dep:indexmap"]
+cache = ["dep:lru", "history-semantics?/cache"]
+rvm = ["dep:postcard", "dep:indexmap", "dep:hashbrown"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
-std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std" ]
+std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std", "junco-core/std", "history-syntax/std", "history-store?/std", "history-semantics?/std" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url"]
@@ -104,6 +105,10 @@ opa-testutil = []
 rand = ["dep:rand"]
 
 [dependencies]
+junco-core = { path = "src/junco-core", default-features = false, features = ["serde"] }
+history-syntax = { path = "src/history-syntax", default-features = false, features = ["serde"] }
+history-store = { path = "src/history-store", default-features = false, optional = true }
+history-semantics = { path = "src/history-semantics", default-features = false, optional = true }
 anyhow = { version = "1.0.102", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
 serde_json = { version = "1.0.150", default-features = false, features = ["alloc"] }
@@ -115,7 +120,7 @@ data-encoding = { version = "2.8.0", optional = true, default-features=false, fe
 num-bigint = { version = "0.5", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 parking_lot = { version = "0.12", optional = true }
-spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex"] }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"] }
 
 globset = { version = "0.4.16", features = ["simd-accel"], default-features = false, optional = true }
 regex = {version = "1.12.3", optional = true, default-features = false }
@@ -145,9 +150,10 @@ postcard = { version = "1.1.3", default-features = false, features = ["alloc"], 
 # Verus-related dependencies.
 # In no_std builds only the `alloc` feature is used; the crate's `std` feature
 # additionally enables `vstd/std` (matching vstd's default features).
-vstd = { version = "=0.0.0-2026-09-06-0133", default-features = false, features = ["alloc"] }
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
+history-semantics = { path = "src/history-semantics", default-features = false, features = ["test-util"] }
 anyhow = "1.0.102"
 cfg-if = "1.0.0"
 clap = { version = "4.5.53", features = ["derive"] }
@@ -186,6 +192,11 @@ test=false
 [[bench]]
 name = "regorus_benchmark"
 harness = false
+
+[[bench]]
+name = "history_table"
+harness = false
+required-features = ["history"]
 
 [[bench]]
 name = "schema_validation_benchmark"

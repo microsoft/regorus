@@ -1,0 +1,1985 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+#![cfg(all(feature = "rvm", feature = "history"))]
+
+use history_semantics::CompiledRule;
+use history_store::{History, Store};
+use history_syntax::Component;
+use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
+use junco_core::observation::fail_reservations_after;
+use regorus::languages::history_table::{
+    compile, AtomPattern, Comparison, CompileError, ComponentPattern, Event, Head, HistoryError,
+    HistoryHandle, HistoryStore, HistoryTableError, RegexExpr, Rule, RuleMode, SourceEvent,
+    TestExpr,
+};
+use regorus::rvm::program::{DeserializationResult, Program};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
+use regorus::rvm::Instruction;
+use regorus::{Engine, Value};
+use serde_json::Value as Json;
+use std::sync::Arc;
+
+const MODES: [ExecutionMode; 2] = [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable];
+const BATCHES: [u32; 5] = [1, 2, 64, 256, 1024];
+const ACTIONS: [&str; 4] = ["edit", "read", "release", "remove"];
+const OWNED: [&str; 3] = ["edit", "release", "remove"];
+const READ: [&str; 2] = ["read", "remove"];
+type Sample = (usize, &'static str, usize);
+
+fn event(store: &HistoryStore, principal: &str, action: &str, resource: &str) -> Event {
+    Event {
+        principal: store.intern_principal(principal).unwrap(),
+        action: store.intern_action(action).unwrap(),
+        resource: store.intern_resource(resource).unwrap(),
+    }
+}
+
+struct Fixture {
+    store: Arc<HistoryStore>,
+    history: HistoryHandle,
+    vm: RegoVM,
+}
+
+impl Fixture {
+    fn sample(&self, e: Sample) -> Event {
+        event(&self.store, &format!("a{}", e.0), e.1, &format!("f{}", e.2))
+    }
+
+    fn new(program: &Arc<Program>, mode: ExecutionMode) -> Self {
+        Self::with_store(program, mode, Arc::new(HistoryStore::new()))
+    }
+
+    fn with_store(program: &Arc<Program>, mode: ExecutionMode, store: Arc<HistoryStore>) -> Self {
+        let history = store.new_history().unwrap();
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.attach_history(store.clone()).unwrap();
+        Self { store, history, vm }
+    }
+
+    fn replace(&self, events: &[Event]) {
+        self.store.truncate(&self.history, 0).unwrap();
+        self.store.append(&self.history, events).unwrap();
+    }
+
+    fn decide(&mut self, request: Event) -> Result<Value, VmError> {
+        self.vm.set_history_input(self.history.clone(), request)?;
+        self.vm.execute_entry_point_by_name("decide")
+    }
+}
+
+fn table(rules: Vec<Rule<SourceEvent<'_>>>, batch_size: u32) -> Arc<Program> {
+    compile(&rules, batch_size).unwrap()
+}
+
+fn any_head() -> Head<SourceEvent<'static>> {
+    Head::new(
+        ComponentPattern::variable("_principal"),
+        ComponentPattern::variable("_action"),
+        ComponentPattern::variable("_resource"),
+    )
+}
+
+fn expected(index: Option<usize>) -> Value {
+    index.map_or(Value::Null, Value::from)
+}
+
+fn prior_edit_rule<'a>(release: &'a str, edit: &'a str) -> Rule<SourceEvent<'a>> {
+    Rule::new(
+        RuleMode::Require,
+        Head::new(
+            ComponentPattern::variable("actor"),
+            ComponentPattern::constant(release),
+            ComponentPattern::variable("resource"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant(edit)),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("resource")),
+                ),
+            ])),
+            RegexExpr::All,
+        ]),
+    )
+}
+
+#[test]
+fn prior_edit_requires_same_principal_and_resource_without_appending_candidate() {
+    let program = table(vec![prior_edit_rule("release", "edit")], 256);
+    for mode in MODES {
+        let mut f = Fixture::new(&program, mode);
+        let edit = event(&f.store, "alice", "edit", "doc");
+        let release = event(&f.store, "alice", "release", "doc");
+        let bob = event(&f.store, "bob", "release", "doc");
+        let other = event(&f.store, "alice", "release", "other");
+        assert_eq!(f.decide(release).unwrap(), Value::from(0usize));
+        f.store.append(&f.history, &[edit]).unwrap();
+        assert_eq!(f.decide(release).unwrap(), Value::Null);
+        assert_eq!(f.decide(bob).unwrap(), Value::from(0usize));
+        assert_eq!(f.decide(other).unwrap(), Value::from(0usize));
+        assert_eq!(f.decide(edit).unwrap(), Value::Null);
+        assert_eq!(f.store.len(&f.history).unwrap(), 1);
+        // Ordinary repeated execution keeps the staged typed input.
+        assert_eq!(
+            f.vm.execute_entry_point_by_name("decide").unwrap(),
+            Value::Null
+        );
+    }
+}
+
+#[test]
+fn cached_prefixes_preserve_history_revision_and_binding_semantics() {
+    let program = table(vec![prior_edit_rule("release", "edit")], 1);
+    for mode in MODES {
+        let store = Arc::new(HistoryStore::new());
+        let mut a = Fixture::with_store(&program, mode, store.clone());
+        let mut b = Fixture::with_store(&program, mode, store.clone());
+        let alice_edit = event(&store, "alice", "edit", "doc");
+        let bob_edit = event(&store, "bob", "edit", "doc");
+        let alice_release = event(&store, "alice", "release", "doc");
+        let bob_release = event(&store, "bob", "release", "doc");
+        store.append(&a.history, &[alice_edit]).unwrap();
+        store.append(&b.history, &[bob_edit]).unwrap();
+
+        let assert_verdict = |f: &mut Fixture, request: Event, granted: bool| {
+            let len = f.store.len(&f.history).unwrap();
+            assert_eq!(
+                f.decide(request).unwrap(),
+                expected((!granted).then_some(0))
+            );
+            assert_eq!(f.store.len(&f.history).unwrap(), len);
+        };
+
+        for _ in 0..2 {
+            assert_verdict(&mut a, alice_release, true);
+            assert_verdict(&mut a, bob_release, false);
+            assert_verdict(&mut b, alice_release, false);
+            assert_verdict(&mut b, bob_release, true);
+        }
+
+        store.append(&b.history, &[alice_edit]).unwrap();
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+
+        a.replace(&[bob_edit]);
+        assert_eq!(store.len(&a.history).unwrap(), 1);
+        assert_verdict(&mut a, alice_release, false);
+        assert_verdict(&mut a, bob_release, true);
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+
+        for _ in 0..17 {
+            let mut other = Fixture::with_store(&program, mode, store.clone());
+            store.append(&other.history, &[alice_edit]).unwrap();
+            assert_verdict(&mut other, alice_release, true);
+            assert_verdict(&mut other, bob_release, false);
+        }
+
+        assert_verdict(&mut a, alice_release, false);
+        assert_verdict(&mut a, bob_release, true);
+        assert_verdict(&mut b, alice_release, true);
+        assert_verdict(&mut b, bob_release, true);
+    }
+}
+
+#[test]
+fn wrappers_share_histories_without_sharing_residuals() {
+    let program = table(vec![prior_edit_rule("release", "edit")], 1);
+    for mode in MODES {
+        let peer = Arc::new(HistoryStore::new());
+        // The VM caches tables in its own wrapper; histories and requests come from `peer`.
+        let mut f = Fixture::new(&program, mode);
+        let alice_edit = event(&peer, "alice", "edit", "doc");
+        let bob_edit = event(&peer, "bob", "edit", "doc");
+        let alice_release = event(&peer, "alice", "release", "doc");
+        let bob_release = event(&peer, "bob", "release", "doc");
+        let other_release = event(&peer, "alice", "release", "other");
+        let history = peer.new_history().unwrap();
+        let interleaved = peer.new_history().unwrap();
+        let mut decide = |history: &HistoryHandle, request: Event| {
+            f.vm.set_history_input(history.clone(), request).unwrap();
+            f.vm.execute_entry_point_by_name("decide").unwrap()
+        };
+        let deny = Value::from(0usize);
+        assert_eq!(decide(&history, alice_release), deny);
+        // Equal lengths, revisions and bindings: only the record key separates residuals.
+        peer.append(&history, &[alice_edit]).unwrap();
+        peer.append(&interleaved, &[bob_edit]).unwrap();
+        for _ in 0..2 {
+            assert_eq!(decide(&history, alice_release), Value::Null);
+            assert_eq!(decide(&interleaved, alice_release), deny);
+            assert_eq!(decide(&history, bob_release), deny);
+            assert_eq!(decide(&interleaved, bob_release), Value::Null);
+            assert_eq!(decide(&history, other_release), deny);
+        }
+        peer.truncate(&history, 0).unwrap();
+        peer.append(&history, &[bob_edit]).unwrap();
+        assert_eq!(decide(&history, alice_release), deny);
+        assert_eq!(decide(&history, bob_release), Value::Null);
+        assert_eq!(peer.len(&history).unwrap(), 1);
+        assert_eq!(peer.len(&interleaved).unwrap(), 1);
+    }
+}
+
+fn approval_rule() -> Rule<SourceEvent<'static>> {
+    let same_resource = TestExpr::atom(
+        Comparison::Eq,
+        AtomPattern::Resource(ComponentPattern::variable("resource")),
+    );
+    let no_edit = RegexExpr::star(RegexExpr::test(TestExpr::or([
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Resource(ComponentPattern::variable("resource")),
+        ),
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Action(ComponentPattern::constant("edit")),
+        ),
+    ])));
+    Rule::new(
+        RuleMode::Require,
+        Head::new(
+            ComponentPattern::variable("actor"),
+            ComponentPattern::constant("release"),
+            ComponentPattern::variable("resource"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                same_resource.clone(),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("edit")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+            ])),
+            no_edit.clone(),
+            RegexExpr::test(TestExpr::and([
+                same_resource,
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("approve")),
+                ),
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+            ])),
+            no_edit,
+        ]),
+    )
+}
+
+#[test]
+fn approval_must_follow_edit_be_other_actor_and_not_be_stale() {
+    let program = table(vec![approval_rule()], 256);
+    for mode in MODES {
+        let mut f = Fixture::new(&program, mode);
+        let edit = event(&f.store, "alice", "edit", "doc");
+        let approve = event(&f.store, "bob", "approve", "doc");
+        let self_approve = event(&f.store, "alice", "approve", "doc");
+        let wrong = event(&f.store, "bob", "approve", "other");
+        let unrelated = event(&f.store, "alice", "edit", "other");
+        let request = event(&f.store, "alice", "release", "doc");
+        for (history, grant) in [
+            (vec![], false),
+            (vec![edit], false),
+            (vec![approve, edit], false),
+            (vec![edit, self_approve], false),
+            (vec![edit, wrong], false),
+            (vec![edit, approve], true),
+            (vec![edit, approve, edit], false),
+            (vec![edit, approve, unrelated], true),
+            (vec![edit, approve, edit, approve], true),
+        ] {
+            f.replace(&history);
+            assert_eq!(
+                f.decide(request).unwrap(),
+                expected((!grant).then_some(0)),
+                "{history:?}"
+            );
+        }
+        f.replace(&[edit, approve, edit]);
+        assert_eq!(f.decide(request).unwrap(), Value::from(0usize));
+        f.store.truncate(&f.history, 2).unwrap();
+        assert_eq!(f.decide(request).unwrap(), Value::Null);
+    }
+}
+
+fn lock_rule<'a>(action: &'a str, setter: &'a str, changes: &[&'a str]) -> Rule<SourceEvent<'a>> {
+    let unchanged = TestExpr::and(changes.iter().map(|&change| {
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Action(ComponentPattern::constant(change)),
+        )
+    }));
+    Rule::new(
+        RuleMode::Forbid,
+        Head::new(
+            ComponentPattern::variable("p"),
+            ComponentPattern::constant(action),
+            ComponentPattern::variable("r"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant(setter)),
+                ),
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Principal(ComponentPattern::variable("p")),
+                ),
+            ])),
+            RegexExpr::star(RegexExpr::test(TestExpr::or([
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                ),
+                unchanged,
+            ]))),
+        ]),
+    )
+}
+
+fn lock_table() -> Arc<Program> {
+    table(
+        vec![
+            lock_rule("edit", "edit", &OWNED),
+            lock_rule("edit", "read", &READ),
+            lock_rule("release", "edit", &OWNED),
+            lock_rule("remove", "edit", &OWNED),
+            lock_rule("remove", "read", &READ),
+        ],
+        256,
+    )
+}
+
+// Enumerate setters and inspect their suffixes, independently of regex derivatives.
+fn lock_oracle(history: &[Sample], candidate: Sample) -> Option<usize> {
+    let rules: [(&str, &str, &[&str]); 5] = [
+        ("edit", "edit", &OWNED),
+        ("edit", "read", &READ),
+        ("release", "edit", &OWNED),
+        ("remove", "edit", &OWNED),
+        ("remove", "read", &READ),
+    ];
+    rules.iter().position(|&(action, setter, changes)| {
+        action == candidate.1
+            && history.iter().enumerate().any(|(i, e)| {
+                e.2 == candidate.2
+                    && e.1 == setter
+                    && e.0 != candidate.0
+                    && history[i + 1..]
+                        .iter()
+                        .all(|f| f.2 != candidate.2 || !changes.contains(&f.1))
+            })
+    })
+}
+
+struct Generator(u64);
+impl Generator {
+    fn below(&mut self, upper: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        usize::try_from(self.0 >> 32).unwrap() % upper
+    }
+    fn event(&mut self) -> Sample {
+        (self.below(3), ACTIONS[self.below(4)], self.below(3))
+    }
+}
+
+#[test]
+fn lock_table_matches_independent_oracle_in_both_runners() {
+    for mode in MODES {
+        let mut f = Fixture::new(&lock_table(), mode);
+        let mut rng = Generator(7);
+        let mut denials = 0;
+        for _ in 0..3000 {
+            let len = rng.below(25);
+            let history: Vec<_> = (0..len).map(|_| rng.event()).collect();
+            let candidate = rng.event();
+            let events: Vec<_> = history.iter().map(|&e| f.sample(e)).collect();
+            let request = f.sample(candidate);
+            f.replace(&events);
+            let want = lock_oracle(&history, candidate);
+            denials += usize::from(want.is_some());
+            assert_eq!(
+                f.decide(request).unwrap(),
+                expected(want),
+                "{history:?} {candidate:?}"
+            );
+        }
+        assert!(denials > 3000 / 100, "only {denials} denials");
+    }
+}
+
+#[test]
+fn incremental_append_truncate_and_repeated_candidates_match_scratch() {
+    let program = lock_table();
+    for mode in MODES {
+        let mut f = Fixture::new(&program, mode);
+        let mut history = Vec::new();
+        let mut rng = Generator(11);
+        for _ in 0..500 {
+            match rng.below(3) {
+                0 => {
+                    let count = 1 + rng.below(8);
+                    let batch: Vec<_> = (0..count).map(|_| rng.event()).collect();
+                    let events: Vec<_> = batch.iter().map(|&e| f.sample(e)).collect();
+                    f.store.append(&f.history, &events).unwrap();
+                    history.extend(batch);
+                }
+                1 => {
+                    let len = rng.below(history.len() + 1);
+                    f.store.truncate(&f.history, len).unwrap();
+                    history.truncate(len);
+                }
+                _ => {
+                    let candidate = rng.event();
+                    let request = f.sample(candidate);
+                    let got = f.decide(request).unwrap();
+                    let mut fresh = Fixture::new(&program, mode);
+                    let events: Vec<_> = history.iter().map(|&e| fresh.sample(e)).collect();
+                    let fresh_request = fresh.sample(candidate);
+                    fresh.replace(&events);
+                    assert_eq!(got, fresh.decide(fresh_request).unwrap());
+                    assert_eq!(got, expected(lock_oracle(&history, candidate)));
+                    assert_eq!(f.decide(request).unwrap(), got);
+                }
+            }
+            assert_eq!(f.store.len(&f.history).unwrap(), history.len());
+        }
+    }
+}
+
+#[test]
+fn require_forbid_order_returns_first_violated_rule() {
+    let programs = [
+        table(
+            vec![
+                Rule::new(RuleMode::Require, any_head(), RegexExpr::Empty),
+                Rule::new(RuleMode::Forbid, any_head(), RegexExpr::All),
+            ],
+            256,
+        ),
+        table(
+            vec![
+                Rule::new(
+                    RuleMode::Forbid,
+                    Head::new(
+                        ComponentPattern::variable("_principal"),
+                        ComponentPattern::constant("skip"),
+                        ComponentPattern::variable("_resource"),
+                    ),
+                    RegexExpr::All,
+                ),
+                Rule::new(RuleMode::Require, any_head(), RegexExpr::Empty),
+                Rule::new(RuleMode::Forbid, any_head(), RegexExpr::All),
+            ],
+            256,
+        ),
+    ];
+    for mode in MODES {
+        for (index, program) in programs.iter().enumerate() {
+            let mut f = Fixture::new(program, mode);
+            let request = event(&f.store, "alice", "read", "doc");
+            assert_eq!(f.decide(request).unwrap(), Value::from(index));
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum Test {
+    Bool(bool),
+    Compare {
+        field: usize,
+        unequal: bool,
+        variable: bool,
+        literal: usize,
+    },
+    And(Vec<Test>),
+    Or(Vec<Test>),
+}
+
+#[derive(Clone, Debug)]
+enum Regex {
+    Empty,
+    All,
+    Epsilon,
+    Test(Test),
+    Union(Vec<Regex>),
+    Concat(Vec<Regex>),
+    Star(Box<Regex>),
+    Intersect(Vec<Regex>),
+    Not(Box<Regex>),
+}
+
+type WordEvent = [usize; 3];
+const IDS: [&str; 3] = ["id0", "id1", "id2"];
+const VARIABLES: [&str; 3] = ["p", "a", "r"];
+
+fn source_event(word: WordEvent) -> SourceEvent<'static> {
+    SourceEvent {
+        principal: IDS[word[0]],
+        action: IDS[word[1]],
+        resource: IDS[word[2]],
+    }
+}
+
+impl Test {
+    fn owned(&self) -> TestExpr<SourceEvent<'static>> {
+        match self {
+            Self::Bool(true) => TestExpr::True,
+            Self::Bool(false) => TestExpr::False,
+            Self::Compare {
+                field,
+                unequal,
+                variable,
+                literal,
+            } => {
+                let component = if *variable {
+                    ComponentPattern::variable(VARIABLES[*field])
+                } else {
+                    ComponentPattern::constant(IDS[*literal])
+                };
+                TestExpr::Atom {
+                    comparison: if *unequal {
+                        Comparison::Neq
+                    } else {
+                        Comparison::Eq
+                    },
+                    pattern: match field {
+                        0 => AtomPattern::Principal(component),
+                        1 => AtomPattern::Action(component),
+                        2 => AtomPattern::Resource(component),
+                        _ => unreachable!("oracle has three coordinates"),
+                    },
+                }
+            }
+            Self::And(children) => TestExpr::And(children.iter().map(Self::owned).collect()),
+            Self::Or(children) => TestExpr::Or(children.iter().map(Self::owned).collect()),
+        }
+    }
+
+    fn matches(&self, event: &WordEvent, binding: &WordEvent) -> bool {
+        match self {
+            Test::Bool(value) => *value,
+            Test::Compare {
+                field,
+                unequal,
+                variable,
+                literal,
+            } => (event[*field] == if *variable { binding[*field] } else { *literal }) != *unequal,
+            Test::And(children) => children.iter().all(|t| t.matches(event, binding)),
+            Test::Or(children) => children.iter().any(|t| t.matches(event, binding)),
+        }
+    }
+}
+
+impl Regex {
+    fn owned(&self) -> RegexExpr<SourceEvent<'static>> {
+        match self {
+            Self::Empty => RegexExpr::Empty,
+            Self::All => RegexExpr::All,
+            Self::Epsilon => RegexExpr::Epsilon,
+            Self::Test(test) => RegexExpr::Test(test.owned()),
+            Self::Union(children) => RegexExpr::union(children.iter().map(Self::owned)),
+            Self::Concat(children) => RegexExpr::concat(children.iter().map(Self::owned)),
+            Self::Intersect(children) => RegexExpr::intersect(children.iter().map(Self::owned)),
+            Self::Star(inner) => RegexExpr::star(inner.owned()),
+            Self::Not(inner) => RegexExpr::complement(inner.owned()),
+        }
+    }
+
+    // Bounded recursive oracle enumerates word splits; it shares no production
+    // normalization, nullable, derivative, graph or cache implementation.
+    fn accepts(&self, history: &[WordEvent], binding: &WordEvent) -> bool {
+        match self {
+            Regex::Empty => false,
+            Regex::All => true,
+            Regex::Epsilon => history.is_empty(),
+            Regex::Test(test) => matches!(history, [e] if test.matches(e, binding)),
+            Regex::Union(children) => children.iter().any(|r| r.accepts(history, binding)),
+            Regex::Intersect(children) => children.iter().all(|r| r.accepts(history, binding)),
+            Regex::Not(inner) => !inner.accepts(history, binding),
+            Regex::Concat(factors) => Self::accepts_concat(factors, history, binding),
+            Regex::Star(inner) => {
+                history.is_empty()
+                    || (1..=history.len()).any(|split| {
+                        inner.accepts(&history[..split], binding)
+                            && self.accepts(&history[split..], binding)
+                    })
+            }
+        }
+    }
+
+    fn accepts_concat(factors: &[Self], history: &[WordEvent], binding: &WordEvent) -> bool {
+        match factors {
+            [] => history.is_empty(),
+            [first, rest @ ..] => (0..=history.len()).any(|split| {
+                first.accepts(&history[..split], binding)
+                    && Self::accepts_concat(rest, &history[split..], binding)
+            }),
+        }
+    }
+
+    fn derivative(&self, event: &WordEvent, binding: &WordEvent) -> Self {
+        match self {
+            Regex::Empty | Regex::Epsilon => Regex::Empty,
+            Regex::All => Regex::All,
+            Regex::Test(test) => {
+                if test.matches(event, binding) {
+                    Regex::Epsilon
+                } else {
+                    Regex::Empty
+                }
+            }
+            Regex::Union(children) => Regex::Union(
+                children
+                    .iter()
+                    .map(|r| r.derivative(event, binding))
+                    .collect(),
+            ),
+            Regex::Intersect(children) => Regex::Intersect(
+                children
+                    .iter()
+                    .map(|r| r.derivative(event, binding))
+                    .collect(),
+            ),
+            Regex::Not(inner) => Regex::Not(Box::new(inner.derivative(event, binding))),
+            Regex::Star(inner) => {
+                Regex::Concat(vec![inner.derivative(event, binding), self.clone()])
+            }
+            Regex::Concat(children) => {
+                let mut alternatives = Vec::new();
+                for (index, child) in children.iter().enumerate() {
+                    let mut factors = vec![child.derivative(event, binding)];
+                    factors.extend_from_slice(&children[index + 1..]);
+                    alternatives.push(Regex::Concat(factors));
+                    if !child.accepts(&[], binding) {
+                        break;
+                    }
+                }
+                Regex::Union(alternatives)
+            }
+        }
+    }
+}
+
+impl Generator {
+    fn test(&mut self, depth: usize) -> Test {
+        if depth > 0 {
+            match self.below(4) {
+                0 => return Test::And(vec![self.test(depth - 1), self.test(depth - 1)]),
+                1 => return Test::Or(vec![self.test(depth - 1), self.test(depth - 1)]),
+                _ => {}
+            }
+        }
+        match self.below(6) {
+            0 => Test::Bool(true),
+            1 => Test::Bool(false),
+            n => Test::Compare {
+                field: self.below(3),
+                unequal: n % 2 == 0,
+                variable: n >= 4,
+                literal: 1,
+            },
+        }
+    }
+    fn regex(&mut self, depth: usize) -> Regex {
+        if depth == 0 {
+            return match self.below(5) {
+                0 => Regex::Empty,
+                1 => Regex::All,
+                2 => Regex::Epsilon,
+                _ => Regex::Test(self.test(1)),
+            };
+        }
+        match self.below(9) {
+            0 => Regex::Empty,
+            1 => Regex::All,
+            2 => Regex::Epsilon,
+            3 => Regex::Test(self.test(1)),
+            4 => Regex::Union(vec![self.regex(depth - 1), self.regex(depth - 1)]),
+            5 => Regex::Concat(vec![self.regex(depth - 1), self.regex(depth - 1)]),
+            6 => Regex::Star(Box::new(self.regex(depth - 1))),
+            7 => Regex::Intersect(vec![self.regex(depth - 1), self.regex(depth - 1)]),
+            _ => Regex::Not(Box::new(self.regex(depth - 1))),
+        }
+    }
+}
+
+fn oracle_corpus_and_words() -> (Vec<Regex>, [WordEvent; 3], Vec<Vec<WordEvent>>) {
+    let leaf = Regex::Test(Test::Compare {
+        field: 0,
+        unequal: false,
+        variable: true,
+        literal: 1,
+    });
+    let mut corpus = vec![
+        Regex::Empty,
+        Regex::All,
+        Regex::Epsilon,
+        leaf.clone(),
+        Regex::Union(vec![]),
+        Regex::Concat(vec![]),
+        Regex::Intersect(vec![]),
+        Regex::Star(Box::new(leaf.clone())),
+        Regex::Not(Box::new(leaf.clone())),
+        Regex::Union(vec![leaf.clone(), Regex::Epsilon]),
+        Regex::Concat(vec![leaf.clone(), leaf.clone()]),
+        Regex::Intersect(vec![leaf, Regex::All]),
+        Regex::Test(Test::And(vec![])),
+        Regex::Test(Test::Or(vec![])),
+        Regex::Concat(vec![
+            Regex::Union(vec![]),
+            Regex::Intersect(vec![]),
+            Regex::Test(Test::And(vec![])),
+            Regex::Test(Test::Or(vec![])),
+        ]),
+    ];
+    let mut generator = Generator(0x5eed_cafe_f00d_beef);
+    corpus.extend((0..500).map(|_| generator.regex(2)));
+    let alphabet = [[1, 1, 1], [2, 2, 2], [1, 2, 1]];
+    let mut words = vec![vec![]];
+    let mut layer = vec![vec![]];
+    for _ in 0..3 {
+        layer = layer
+            .iter()
+            .flat_map(|prefix| {
+                alphabet.iter().map(move |e| {
+                    let mut word = prefix.clone();
+                    word.push(*e);
+                    word
+                })
+            })
+            .collect();
+        words.extend(layer.iter().cloned());
+    }
+    (corpus, alphabet, words)
+}
+
+#[test]
+fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
+    let (corpus, alphabet, words) = oracle_corpus_and_words();
+    for regex in corpus {
+        for batch_size in BATCHES {
+            let program = table(
+                vec![Rule::new(
+                    RuleMode::Require,
+                    Head::new(
+                        ComponentPattern::variable("p"),
+                        ComponentPattern::variable("a"),
+                        ComponentPattern::variable("r"),
+                    ),
+                    regex.owned(),
+                )],
+                batch_size,
+            );
+            for mode in MODES {
+                let mut f = Fixture::new(&program, mode);
+                let ids = [
+                    event(&f.store, "id1", "id1", "id1"),
+                    event(&f.store, "id2", "id2", "id2"),
+                    event(&f.store, "id1", "id2", "id1"),
+                ];
+                for binding in [[1, 1, 1], [2, 2, 2]] {
+                    let request = ids[binding[0] - 1];
+                    for word in &words {
+                        let events: Vec<_> = word
+                            .iter()
+                            .map(|e| ids[alphabet.iter().position(|a| a == e).unwrap()])
+                            .collect();
+                        f.replace(&events);
+                        let want = regex.accepts(word, &binding);
+                        assert_eq!(
+                            f.decide(request).unwrap(),
+                            expected((!want).then_some(0)),
+                            "{regex:?} {word:?} {binding:?} batch={batch_size} mode={mode:?}"
+                        );
+                        assert_eq!(
+                            f.decide(request).unwrap(),
+                            expected((!want).then_some(0)),
+                            "warm repeat"
+                        );
+                        if let Some((first, tail)) = word.split_first() {
+                            assert_eq!(
+                                regex.derivative(first, &binding).accepts(tail, &binding),
+                                want
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_shared_decision(
+    regex: &Regex,
+    mode: RuleMode,
+    fixture: &mut Fixture,
+    compiled: &mut CompiledRule<SourceEvent<'static>>,
+    history: &History<SourceEvent<'static>>,
+    word: &[WordEvent],
+    binding: WordEvent,
+) {
+    let inside = regex.accepts(word, &binding);
+    let violation = match mode {
+        RuleMode::Require => !inside,
+        RuleMode::Forbid => inside,
+    };
+    let request = event(
+        &fixture.store,
+        &format!("id{}", binding[0]),
+        &format!("id{}", binding[1]),
+        &format!("id{}", binding[2]),
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            compiled
+                .accepts_history(history, &source_event(binding))
+                .unwrap(),
+            Some(inside),
+            "owned DSL: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(
+            fixture.decide(request).unwrap(),
+            expected(violation.then_some(0)),
+            "history table RVM: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(fixture.store.len(&fixture.history).unwrap(), word.len());
+        assert_eq!(history.len(), word.len());
+    }
+}
+
+#[test]
+fn dsl_semantics_and_history_table_rvm_agree() {
+    let (corpus, alphabet, words) = oracle_corpus_and_words();
+    for regex in corpus {
+        for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+            for batch_size in BATCHES {
+                let program = table(
+                    vec![Rule::new(
+                        rule_mode,
+                        Head::new(
+                            ComponentPattern::variable("p"),
+                            ComponentPattern::variable("a"),
+                            ComponentPattern::variable("r"),
+                        ),
+                        regex.owned(),
+                    )],
+                    batch_size,
+                );
+                for execution_mode in MODES {
+                    let mut fixture = Fixture::new(&program, execution_mode);
+                    let store = Arc::new(Store::new().unwrap());
+                    let mut compiled = CompiledRule::new(
+                        store.clone(),
+                        Rule::new(
+                            rule_mode,
+                            Head::new(
+                                ComponentPattern::variable("p"),
+                                ComponentPattern::variable("a"),
+                                ComponentPattern::variable("r"),
+                            ),
+                            regex.owned(),
+                        ),
+                    )
+                    .unwrap();
+                    let mut history = History::new(store).unwrap();
+                    let ids: Vec<_> = alphabet
+                        .iter()
+                        .map(|e| {
+                            event(
+                                &fixture.store,
+                                &format!("id{}", e[0]),
+                                &format!("id{}", e[1]),
+                                &format!("id{}", e[2]),
+                            )
+                        })
+                        .collect();
+                    for binding in [[1, 1, 1], [2, 2, 2]] {
+                        for word in &words {
+                            history.truncate(0).unwrap();
+                            fixture.replace(&[]);
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                &[],
+                                binding,
+                            );
+                            for e in word {
+                                history.push(source_event(*e)).unwrap();
+                                fixture
+                                    .store
+                                    .append(
+                                        &fixture.history,
+                                        &[ids[alphabet.iter().position(|a| a == e).unwrap()]],
+                                    )
+                                    .unwrap();
+                            }
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                word,
+                                binding,
+                            );
+                            if let Some((last, prefix)) = word.split_last() {
+                                history.truncate(prefix.len()).unwrap();
+                                fixture
+                                    .store
+                                    .truncate(&fixture.history, prefix.len())
+                                    .unwrap();
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    prefix,
+                                    binding,
+                                );
+                                let replacement = alphabet.iter().position(|e| e != last).unwrap();
+                                history.push(source_event(alphabet[replacement])).unwrap();
+                                fixture
+                                    .store
+                                    .append(&fixture.history, &[ids[replacement]])
+                                    .unwrap();
+                                let mut replaced = prefix.to_vec();
+                                replaced.push(alphabet[replacement]);
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    &replaced,
+                                    binding,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A constant action head does not fire, independently of the tail's answer or mode.
+    let regex = Regex::Test(Test::Compare {
+        field: 0,
+        unequal: false,
+        variable: true,
+        literal: 1,
+    });
+    for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+        for batch_size in BATCHES {
+            let program = table(
+                vec![Rule::new(
+                    rule_mode,
+                    Head::new(
+                        ComponentPattern::variable("p"),
+                        ComponentPattern::constant(IDS[1]),
+                        ComponentPattern::variable("r"),
+                    ),
+                    regex.owned(),
+                )],
+                batch_size,
+            );
+            for execution_mode in MODES {
+                let mut fixture = Fixture::new(&program, execution_mode);
+                let store = Arc::new(Store::new().unwrap());
+                let mut compiled = CompiledRule::new(
+                    store.clone(),
+                    Rule::new(
+                        rule_mode,
+                        Head::new(
+                            ComponentPattern::variable("p"),
+                            ComponentPattern::constant(IDS[1]),
+                            ComponentPattern::variable("r"),
+                        ),
+                        regex.owned(),
+                    ),
+                )
+                .unwrap();
+                let mut history = History::new(store).unwrap();
+                for word in [vec![], vec![[1, 1, 1]]] {
+                    fixture.replace(&[]);
+                    history.truncate(0).unwrap();
+                    for e in word {
+                        history.push(source_event(e)).unwrap();
+                        let recorded = event(&fixture.store, "id1", "id1", "id1");
+                        fixture.store.append(&fixture.history, &[recorded]).unwrap();
+                    }
+                    let mismatch = event(&fixture.store, "id1", "id2", "id1");
+                    for _ in 0..2 {
+                        assert_eq!(
+                            compiled
+                                .accepts_history(&history, &source_event([1, 2, 1]))
+                                .unwrap(),
+                            None
+                        );
+                        assert_eq!(fixture.decide(mismatch).unwrap(), Value::Null);
+                        assert_eq!(fixture.store.len(&fixture.history).unwrap(), history.len());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_flat_epsilon_language(source: FlatPair<String>, nodes: usize, edges: usize) {
+    source.validate().unwrap();
+    let assert_shape = |program: &Program| {
+        let stored = &program.history_tables[0].rules[0].source;
+        assert_eq!(stored, &source);
+        assert_eq!(stored.regexes.len(), nodes);
+        assert_eq!(
+            stored
+                .regexes
+                .iter()
+                .map(|node| match node {
+                    FlatRegex::Concat(children)
+                    | FlatRegex::Union(children)
+                    | FlatRegex::Intersect(children) => children.len(),
+                    FlatRegex::Star(_) | FlatRegex::Complement(_) => 1,
+                    _ => 0,
+                })
+                .sum::<usize>(),
+            edges
+        );
+    };
+    for batch_size in BATCHES {
+        let mut program = (*table(
+            vec![Rule::new(RuleMode::Require, any_head(), RegexExpr::Epsilon)],
+            batch_size,
+        ))
+        .clone();
+        program.history_tables[0].rules[0].source = source.clone();
+        assert_shape(&program);
+        let json_program = Program::deserialize_json(&program.serialize_json().unwrap()).unwrap();
+        let DeserializationResult::Complete(binary_program) =
+            Program::deserialize_binary(&program.serialize_binary().unwrap()).unwrap()
+        else {
+            panic!("current version must deserialize completely");
+        };
+        for restored in [program, json_program, binary_program] {
+            assert_shape(&restored);
+            let restored = Arc::new(restored);
+            for mode in MODES {
+                let mut fixture = Fixture::new(&restored, mode);
+                let probe = event(&fixture.store, "alice", "read", "doc");
+                for _ in 0..2 {
+                    assert_eq!(fixture.decide(probe).unwrap(), Value::Null);
+                }
+                fixture.store.append(&fixture.history, &[probe]).unwrap();
+                for _ in 0..2 {
+                    assert_eq!(fixture.decide(probe).unwrap(), Value::from(0usize));
+                    assert_eq!(fixture.store.len(&fixture.history).unwrap(), 1);
+                }
+                assert_shape(&restored);
+            }
+        }
+    }
+}
+
+#[test]
+fn flat_shared_dag_roundtrips_and_executes_without_unfolding() {
+    let mut regexes = vec![FlatRegex::Epsilon];
+    for index in 1..4096 {
+        regexes.push(FlatRegex::Concat(vec![index - 1, index - 1]));
+    }
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![],
+            regexes,
+            root: 4095,
+        },
+        4096,
+        8190,
+    );
+}
+
+#[test]
+fn flat_deep_unary_and_non_last_root_preserve_topology() {
+    let mut regexes = vec![FlatRegex::Epsilon];
+    for index in 1..4096 {
+        regexes.push(FlatRegex::Star(index - 1));
+    }
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![],
+            regexes,
+            root: 4095,
+        },
+        4096,
+        4095,
+    );
+    assert_flat_epsilon_language(
+        FlatPair {
+            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            tests: vec![FlatTest::Bool(false)],
+            regexes: vec![
+                FlatRegex::Epsilon,
+                FlatRegex::All,
+                FlatRegex::Test(0),
+                FlatRegex::Star(1),
+            ],
+            root: 0,
+        },
+        4,
+        1,
+    );
+}
+
+#[test]
+fn rust_dsl_compiler_handles_deep_policy_without_recursive_drop() {
+    let mut tail = RegexExpr::Epsilon;
+    for _ in 1..4096 {
+        tail = RegexExpr::star(tail);
+    }
+    let rule = Rule::new(RuleMode::Require, any_head(), tail);
+    for batch_size in BATCHES {
+        let program = compile(std::slice::from_ref(&rule), batch_size).unwrap();
+        let source = &program.history_tables[0].rules[0].source;
+        assert_eq!(source.regexes.len(), 4096);
+        assert_eq!(source.regexes[0], FlatRegex::Epsilon);
+        for (index, node) in source.regexes.iter().enumerate().skip(1) {
+            assert_eq!(node, &FlatRegex::Star(u32::try_from(index - 1).unwrap()));
+        }
+        assert_eq!(source.root, 4095);
+        for mode in MODES {
+            let mut fixture = Fixture::new(&program, mode);
+            let probe = event(&fixture.store, "alice", "read", "doc");
+            assert_eq!(fixture.decide(probe).unwrap(), Value::Null);
+            fixture.store.append(&fixture.history, &[probe]).unwrap();
+            assert_eq!(fixture.decide(probe).unwrap(), Value::from(0usize));
+        }
+    }
+    rule.dispose();
+}
+
+fn read_star(batch_size: u32) -> Arc<Program> {
+    table(
+        vec![Rule::new(
+            RuleMode::Require,
+            any_head(),
+            RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                Comparison::Eq,
+                AtomPattern::Action(ComponentPattern::constant("read")),
+            ))),
+        )],
+        batch_size,
+    )
+}
+
+fn assert_step(vm: &RegoVM, pc: usize) {
+    assert!(
+        matches!(vm.execution_state(), ExecutionState::Suspended {
+        reason: SuspendReason::Step, pc: actual, ..
+    } if *actual == pc),
+        "{:?}",
+        vm.execution_state()
+    );
+    assert_eq!(vm.get_pc(), pc);
+}
+
+fn finish(vm: &mut RegoVM) -> Result<Value, VmError> {
+    while matches!(vm.execution_state(), ExecutionState::Suspended { .. }) {
+        vm.resume(None)?;
+    }
+    match vm.execution_state() {
+        ExecutionState::Completed { result } => Ok(result.clone()),
+        state => panic!("expected completion, got {state:?}"),
+    }
+}
+
+#[test]
+fn batch_edges_repeat_pc_zero_and_charge_every_dispatch() {
+    for len in [0usize, 1, 2, 3, 4, 6, 7] {
+        let program = read_star(3);
+        assert_eq!(program.instructions.len(), 3);
+        assert!(matches!(
+            program.instructions[0],
+            Instruction::HistoryStep { .. }
+        ));
+        assert!(matches!(
+            program.instructions[1],
+            Instruction::LoadNull { dest: 0 }
+        ));
+        assert!(matches!(
+            program.instructions[2],
+            Instruction::Return { value: 0 }
+        ));
+        let batches = len.div_ceil(3).max(1);
+        let mut f = Fixture::new(&program, ExecutionMode::Suspendable);
+        let read = event(&f.store, "alice", "read", "doc");
+        f.replace(&vec![read; len]);
+        f.vm.set_step_mode(true);
+        f.decide(read).unwrap();
+        for index in 0..batches {
+            assert_step(&f.vm, 0);
+            if index + 1 < batches {
+                f.vm.resume(None).unwrap();
+            }
+        }
+        f.vm.resume(None).unwrap();
+        assert_step(&f.vm, 1);
+        assert_eq!(finish(&mut f.vm).unwrap(), Value::Null);
+        for mode in MODES {
+            let mut limited = Fixture::new(&program, mode);
+            let read = event(&limited.store, "alice", "read", "doc");
+            limited.replace(&vec![read; len]);
+            limited.vm.set_max_instructions(batches + 1);
+            assert!(matches!(
+                limited.decide(read),
+                Err(VmError::InstructionLimitExceeded { .. })
+            ));
+            limited.vm.set_max_instructions(batches + 2);
+            assert_eq!(limited.decide(read).unwrap(), Value::Null);
+        }
+    }
+}
+
+#[test]
+fn nullable_intermediate_prefix_cannot_grant_before_rejecting_suffix() {
+    for mode in MODES {
+        let mut f = Fixture::new(&read_star(1), mode);
+        let read = event(&f.store, "alice", "read", "doc");
+        let edit = event(&f.store, "alice", "edit", "doc");
+        f.replace(&[read, edit]);
+        if mode == ExecutionMode::Suspendable {
+            f.vm.set_step_mode(true);
+            f.decide(read).unwrap();
+            assert_step(&f.vm, 0);
+            assert_eq!(finish(&mut f.vm).unwrap(), Value::from(0usize));
+        } else {
+            assert_eq!(f.decide(read).unwrap(), Value::from(0usize));
+        }
+    }
+}
+
+#[test]
+fn append_after_snapshot_is_excluded_but_fresh_decision_includes_it() {
+    let mut f = Fixture::new(&read_star(3), ExecutionMode::Suspendable);
+    let read = event(&f.store, "alice", "read", "doc");
+    let edit = event(&f.store, "alice", "edit", "doc");
+    f.replace(&[read; 4]);
+    f.vm.set_step_mode(true);
+    f.decide(read).unwrap();
+    assert_step(&f.vm, 0);
+    f.store.append(&f.history, &[edit]).unwrap();
+    assert_eq!(finish(&mut f.vm).unwrap(), Value::Null);
+    f.vm.set_step_mode(false);
+    assert_eq!(f.decide(read).unwrap(), Value::from(0usize));
+}
+
+#[test]
+fn newer_shared_cache_prefix_cannot_seed_an_older_decision_target() {
+    let program = table(
+        vec![
+            Rule::new(RuleMode::Require, any_head(), RegexExpr::All),
+            Rule::new(
+                RuleMode::Require,
+                any_head(),
+                RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("read")),
+                ))),
+            ),
+        ],
+        1,
+    );
+    let mut old = Fixture::new(&program, ExecutionMode::Suspendable);
+    let read = event(&old.store, "alice", "read", "doc");
+    let edit = event(&old.store, "alice", "edit", "doc");
+    old.replace(&[read; 3]);
+    old.vm.set_step_mode(true);
+    old.decide(read).unwrap();
+    assert_step(&old.vm, 0);
+    old.store.append(&old.history, &[edit]).unwrap();
+    let mut newer = RegoVM::new();
+    newer.load_program(program);
+    newer.attach_history(old.store.clone()).unwrap();
+    newer.set_history_input(old.history.clone(), read).unwrap();
+    assert_eq!(
+        newer.execute_entry_point_by_name("decide").unwrap(),
+        Value::from(1usize)
+    );
+    assert_eq!(finish(&mut old.vm).unwrap(), Value::Null);
+    old.vm.set_step_mode(false);
+    assert_eq!(old.decide(read).unwrap(), Value::from(1usize));
+}
+
+#[test]
+fn truncate_reappend_invalidates_batch_and_both_terminal_boundaries() {
+    for resumes in 0..3 {
+        let mut f = Fixture::new(&read_star(3), ExecutionMode::Suspendable);
+        let read = event(&f.store, "alice", "read", "doc");
+        f.replace(&[read; 4]);
+        f.vm.set_step_mode(true);
+        f.decide(read).unwrap();
+        for _ in 0..resumes {
+            f.vm.resume(None).unwrap();
+        }
+        assert_step(&f.vm, usize::from(resumes == 2));
+        // Preserve length and bytes: only the revision can detect this rewrite.
+        f.store.truncate(&f.history, 0).unwrap();
+        f.store.append(&f.history, &[read; 4]).unwrap();
+        assert!(matches!(
+            finish(&mut f.vm),
+            Err(VmError::History {
+                source: HistoryError::HistoryChanged {
+                    expected: 0,
+                    actual: 1
+                },
+                ..
+            })
+        ));
+        assert!(!matches!(
+            f.vm.execution_state(),
+            ExecutionState::Completed { .. }
+        ));
+        f.vm.set_step_mode(false);
+        assert_eq!(f.decide(read).unwrap(), Value::Null);
+    }
+}
+
+#[test]
+fn suspended_execution_rejects_restaging_and_reattachment() {
+    let mut f = Fixture::new(&read_star(1), ExecutionMode::Suspendable);
+    let read = event(&f.store, "alice", "read", "doc");
+    f.replace(&[read; 3]);
+    f.vm.set_step_mode(true);
+    f.decide(read).unwrap();
+    assert!(matches!(
+        f.vm.set_history_input(f.history.clone(), read),
+        Err(VmError::HistoryExecutionActive { .. })
+    ));
+    assert!(matches!(
+        f.vm.attach_history(f.store.clone()),
+        Err(VmError::HistoryExecutionActive { .. })
+    ));
+    assert!(matches!(
+        f.vm.attach_history(Arc::new(HistoryStore::new())),
+        Err(VmError::HistoryExecutionActive { .. })
+    ));
+    assert_eq!(finish(&mut f.vm).unwrap(), Value::Null);
+}
+
+#[test]
+fn load_program_cancels_suspension_and_drops_typed_context_not_shared_history() {
+    let program = read_star(1);
+    let mut f = Fixture::new(&program, ExecutionMode::Suspendable);
+    let read = event(&f.store, "alice", "read", "doc");
+    f.replace(&[read; 3]);
+    let mut peer = RegoVM::new();
+    peer.load_program(program);
+    peer.attach_history(f.store.clone()).unwrap();
+    peer.set_history_input(f.history.clone(), read).unwrap();
+    f.vm.set_step_mode(true);
+    f.decide(read).unwrap();
+    f.vm.load_program(table(vec![], 256));
+    assert!(matches!(f.vm.execution_state(), ExecutionState::Ready));
+    assert!(matches!(
+        f.vm.resume(None),
+        Err(VmError::InvalidResumeState { .. })
+    ));
+    f.vm.set_step_mode(false);
+    assert!(matches!(
+        f.vm.execute_entry_point_by_name("decide"),
+        Err(VmError::HistoryContextMissing { .. })
+    ));
+    f.vm.attach_history(f.store.clone()).unwrap();
+    assert!(matches!(
+        f.vm.execute_entry_point_by_name("decide"),
+        Err(VmError::HistoryContextMissing { .. })
+    ));
+    f.vm.set_history_input(f.history.clone(), read).unwrap();
+    assert_eq!(
+        f.vm.execute_entry_point_by_name("decide").unwrap(),
+        Value::Null
+    );
+    assert_eq!(f.store.len(&f.history).unwrap(), 3);
+    assert_eq!(
+        peer.execute_entry_point_by_name("decide").unwrap(),
+        Value::Null
+    );
+}
+
+#[test]
+fn staging_requires_attachment_and_each_domain_membership() {
+    let program = read_star(256);
+    let store = Arc::new(HistoryStore::new());
+    let peer = Arc::new(HistoryStore::new());
+    let history = peer.new_history().unwrap();
+    let own = event(&peer, "alice", "read", "doc");
+    // Typed views encode through dictionaries the byte domains never contain.
+    let typed =
+        History::from_events(Arc::new(Store::new().unwrap()), [source_event([0; 3])]).unwrap();
+    let other = typed.numeric().as_slice()[0];
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert!(matches!(
+        vm.set_history_input(history.clone(), own),
+        Err(VmError::HistoryContextMissing { .. })
+    ));
+    vm.attach_history(store.clone()).unwrap();
+    // Wrappers share one process-wide store, so a peer's handle and identities stage.
+    vm.set_history_input(history.clone(), own).unwrap();
+    for (request, domain) in [
+        (
+            Event {
+                principal: other.principal,
+                ..own
+            },
+            "principal",
+        ),
+        (
+            Event {
+                action: other.action,
+                ..own
+            },
+            "action",
+        ),
+        (
+            Event {
+                resource: other.resource,
+                ..own
+            },
+            "resource",
+        ),
+    ] {
+        assert!(matches!(vm.set_history_input(history.clone(), request),
+            Err(VmError::History { source: HistoryError::UnknownId { domain: actual, .. }, .. }) if actual == domain));
+    }
+    // Failed requests leave the previously staged input intact.
+    assert_eq!(
+        vm.execute_entry_point_by_name("decide").unwrap(),
+        Value::Null
+    );
+}
+
+#[test]
+fn empty_table_preflights_context_in_both_runners() {
+    let program = table(vec![], 256);
+    assert_eq!(program.instructions.len(), 2);
+    for mode in MODES {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        assert!(matches!(
+            vm.execute_entry_point_by_name("decide"),
+            Err(VmError::HistoryContextMissing { .. })
+        ));
+        let store = Arc::new(HistoryStore::new());
+        let history = store.new_history().unwrap();
+        let request = event(&store, "alice", "read", "doc");
+        vm.attach_history(store).unwrap();
+        assert!(matches!(
+            vm.execute_entry_point_by_name("decide"),
+            Err(VmError::HistoryContextMissing { .. })
+        ));
+        vm.set_history_input(history, request).unwrap();
+        assert_eq!(
+            vm.execute_entry_point_by_name("decide").unwrap(),
+            Value::Null
+        );
+    }
+}
+
+#[test]
+fn empty_table_still_checks_revision_before_terminal_return() {
+    let mut f = Fixture::new(&table(vec![], 256), ExecutionMode::Suspendable);
+    let request = event(&f.store, "alice", "read", "doc");
+    f.replace(&[request]);
+    f.vm.set_step_mode(true);
+    f.decide(request).unwrap();
+    assert_step(&f.vm, 0);
+    f.store.truncate(&f.history, 0).unwrap();
+    assert!(matches!(
+        finish(&mut f.vm),
+        Err(VmError::History {
+            source: HistoryError::HistoryChanged { .. },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn zero_batch_is_rejected_before_empty_or_head_mismatch_shortcuts() {
+    assert!(matches!(
+        compile(&[], 0),
+        Err(HistoryTableError::InvalidBatchSize)
+    ));
+    let unbound = Rule::new(
+        RuleMode::Require,
+        any_head(),
+        RegexExpr::test(TestExpr::atom(
+            Comparison::Eq,
+            AtomPattern::Principal(ComponentPattern::variable("missing")),
+        )),
+    );
+    assert!(matches!(
+        compile(&[unbound], 0),
+        Err(HistoryTableError::InvalidBatchSize)
+    ));
+    for mode in MODES {
+        for matching in [false, true] {
+            let mut program = (*table(
+                vec![Rule::new(
+                    RuleMode::Require,
+                    Head::new(
+                        ComponentPattern::variable("_principal"),
+                        ComponentPattern::constant(if matching { "read" } else { "release" }),
+                        ComponentPattern::variable("_resource"),
+                    ),
+                    RegexExpr::All,
+                )],
+                256,
+            ))
+            .clone();
+            program.instruction_data.history_step_params[0].batch_size = 0;
+            assert!(program.validate_limits().is_err());
+            let mut f = Fixture::new(&Arc::new(program), mode);
+            let request = event(&f.store, "alice", "read", "doc");
+            assert!(matches!(
+                f.decide(request),
+                Err(VmError::InvalidHistoryBatchSize { batch_size: 0, .. })
+            ));
+        }
+    }
+}
+
+#[test]
+fn current_binary_and_json_reintern_constants_in_fresh_store() {
+    // Compiled constants own their bytes after the borrowed authoring strings are gone.
+    let program = {
+        let (release, edit) = (String::from("release"), String::from("edit"));
+        table(vec![prior_edit_rule(&release, &edit)], 256)
+    };
+    let mut original = Fixture::new(&program, ExecutionMode::RunToCompletion);
+    let old_edit = event(&original.store, "alice", "edit", "doc");
+    let old_request = event(&original.store, "alice", "release", "doc");
+    original.replace(&[old_edit]);
+    assert_eq!(original.decide(old_request).unwrap(), Value::Null);
+    let bytes = program.serialize_binary().unwrap();
+    assert_eq!(Program::SERIALIZATION_VERSION, 8);
+    assert_eq!(&bytes[4..8], &8u32.to_le_bytes());
+    let DeserializationResult::Complete(binary) = Program::deserialize_binary(&bytes).unwrap()
+    else {
+        panic!("current version must deserialize completely");
+    };
+    let json_program = Program::deserialize_json(&program.serialize_json().unwrap()).unwrap();
+    for restored in [binary, json_program] {
+        let store = Arc::new(HistoryStore::new());
+        let edit = event(&store, "alice", "edit", "doc");
+        let request = event(&store, "alice", "release", "doc");
+        // Wrappers share process-wide identities: restored byte constants reintern to them.
+        assert_eq!(edit, old_edit);
+        assert_eq!(request, old_request);
+        let mut f = Fixture::with_store(&Arc::new(restored), ExecutionMode::RunToCompletion, store);
+        assert_eq!(f.decide(request).unwrap(), Value::from(0usize));
+        f.replace(&[edit]);
+        assert_eq!(f.decide(request).unwrap(), Value::Null);
+        let other = event(&f.store, "bob", "release", "doc");
+        assert_eq!(f.decide(other).unwrap(), Value::from(0usize));
+    }
+    let mut obsolete = bytes;
+    obsolete[4..8].copy_from_slice(&7u32.to_le_bytes());
+    obsolete.truncate(8); // Version rejection must precede payload decoding.
+    let error = Program::deserialize_binary(&obsolete).unwrap_err();
+    assert!(error.to_lowercase().contains("recompil"), "{error}");
+    assert_eq!(std::mem::size_of::<Instruction>(), 6);
+}
+
+fn unchecked_binary(program: &Program) -> Vec<u8> {
+    let mut bytes = read_star(256).serialize_binary().unwrap();
+    let section_bytes: usize = (8..24)
+        .step_by(4)
+        .map(|offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize)
+        .sum();
+    bytes.truncate(25 + section_bytes);
+    let payload = postcard::to_allocvec(program).unwrap();
+    bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    bytes
+}
+
+#[test]
+fn malformed_source_nodes_variables_and_indexes_are_rejected() {
+    let base = (*table(vec![prior_edit_rule("release", "edit")], 256)).clone();
+    let mut invalid = Vec::new();
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.regexes = vec![FlatRegex::Star(0)];
+    p.history_tables[0].rules[0].source.root = 0;
+    invalid.push(p);
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.regexes = vec![FlatRegex::Test(u32::MAX)];
+    p.history_tables[0].rules[0].source.root = 0;
+    invalid.push(p);
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.root = u32::MAX;
+    invalid.push(p);
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::And(vec![0])];
+    invalid.push(p);
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
+        field: Component::Principal,
+        term: FlatTerm::Variable(Component::Resource),
+        positive: true,
+    }];
+    invalid.push(p);
+    let mut p = base.clone();
+    p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
+        field: Component::Action,
+        term: FlatTerm::Variable(Component::Action),
+        positive: true,
+    }];
+    invalid.push(p); // Action is Constant in the head, not Bind.
+    let mut p = base.clone();
+    p.instruction_data.history_step_params[0].table = u16::MAX;
+    invalid.push(p);
+    let mut p = base.clone();
+    p.instruction_data.history_step_params[0].rule = u16::MAX;
+    invalid.push(p);
+    let mut p = base.clone();
+    p.instructions[0] = Instruction::HistoryStep {
+        params_index: u16::MAX,
+    };
+    invalid.push(p);
+    let mut p = base;
+    p.instruction_data.history_step_params[0].batch_size = 0;
+    invalid.push(p);
+    for program in invalid {
+        assert!(program.validate_limits().is_err());
+        assert!(program.serialize_binary().is_err());
+        let mut serialized: Json =
+            serde_json::from_str(&read_star(256).serialize_json().unwrap()).unwrap();
+        serialized["history_tables"] = serde_json::to_value(&program.history_tables).unwrap();
+        serialized["instructions"] = serde_json::to_value(&program.instructions).unwrap();
+        serialized["instruction_data"] = serde_json::to_value(&program.instruction_data).unwrap();
+        assert!(Program::deserialize_json(&serialized.to_string()).is_err());
+        assert!(!matches!(
+            Program::deserialize_binary(&unchecked_binary(&program)),
+            Ok(DeserializationResult::Complete(_))
+        ));
+        let invalid_source = program.history_tables[0].rules[0]
+            .source
+            .validate()
+            .is_err();
+        let store = Arc::new(HistoryStore::new());
+        let history = store.new_history().unwrap();
+        let request = event(&store, "alice", "release", "doc");
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        if invalid_source {
+            assert!(vm.attach_history(store).is_err());
+        } else {
+            vm.attach_history(store).unwrap();
+            vm.set_history_input(history, request).unwrap();
+            assert!(matches!(
+                vm.execute_entry_point_by_name("decide"),
+                Err(VmError::InvalidHistoryStepParams { .. }
+                    | VmError::InvalidHistoryTableIndex { .. }
+                    | VmError::InvalidHistoryRuleIndex { .. }
+                    | VmError::InvalidHistoryBatchSize { .. })
+            ));
+        }
+    }
+}
+
+#[test]
+fn dsl_compile_reports_scope_errors_at_rule_index() {
+    let tail_head = || {
+        Head::new(
+            ComponentPattern::variable("p"),
+            ComponentPattern::variable("_action"),
+            ComponentPattern::variable("_resource"),
+        )
+    };
+    let cases = [
+        (
+            Rule::new(
+                RuleMode::Require,
+                Head::new(
+                    ComponentPattern::variable("x"),
+                    ComponentPattern::variable("_action"),
+                    ComponentPattern::variable("x"),
+                ),
+                RegexExpr::All,
+            ),
+            CompileError::VariableComponentConflict { name: "x".into() },
+        ),
+        (
+            Rule::new(
+                RuleMode::Require,
+                tail_head(),
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("missing")),
+                )),
+            ),
+            CompileError::UnboundVariable {
+                name: "missing".into(),
+            },
+        ),
+        (
+            Rule::new(
+                RuleMode::Require,
+                tail_head(),
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("p")),
+                )),
+            ),
+            CompileError::VariableComponentConflict { name: "p".into() },
+        ),
+    ];
+    for (invalid, source) in cases {
+        let rules = [prior_edit_rule("release", "edit"), invalid];
+        assert_eq!(
+            compile(&rules, 256).err(),
+            Some(HistoryTableError::InvalidRule { index: 1, source })
+        );
+    }
+
+    // A failed reservation leaves the borrowed rule intact and reusable.
+    let rules = [prior_edit_rule("release", "edit")];
+    let failing = fail_reservations_after(0);
+    assert_eq!(
+        compile(&rules, 256).err(),
+        Some(HistoryTableError::InvalidRule {
+            index: 0,
+            source: CompileError::Runtime(HistoryError::AllocationFailed),
+        })
+    );
+    drop(failing);
+    let mut f = Fixture::new(
+        &compile(&rules, 256).unwrap(),
+        ExecutionMode::RunToCompletion,
+    );
+    let edit = event(&f.store, "alice", "edit", "doc");
+    let release = event(&f.store, "alice", "release", "doc");
+    assert_eq!(f.decide(release).unwrap(), Value::from(0usize));
+    f.replace(&[edit]);
+    assert_eq!(f.decide(release).unwrap(), Value::Null);
+}
+
+#[test]
+fn removed_history_builtin_is_unknown_in_interpreter_and_rvm_compilation() {
+    const SOURCE: &str = "package removed\nimport rego.v1\nresult := history.match({}, [], {})";
+    let mut engine = Engine::new();
+    engine
+        .add_policy("removed.rego".into(), SOURCE.into())
+        .unwrap();
+    assert!(engine.eval_rule("data.removed.result".into()).is_err());
+    let mut engine = Engine::new();
+    engine
+        .add_policy("removed.rego".into(), SOURCE.into())
+        .unwrap();
+    let policy = engine
+        .compile_with_entrypoint(&"data.removed.result".into())
+        .unwrap();
+    let error = regorus::languages::rego::compiler::Compiler::compile_from_policy(
+        &policy,
+        &["data.removed.result"],
+    )
+    .unwrap_err();
+    assert!(matches!(error.error,
+        regorus::languages::rego::compiler::CompilerError::UnknownFunction { ref name }
+        if name == "history.match"));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn concurrent_vms_share_identities_and_fixed_prefix_without_sharing_candidates() {
+    use std::sync::Barrier;
+    let program = table(
+        vec![Rule::new(
+            RuleMode::Require,
+            Head::new(
+                ComponentPattern::variable("p"),
+                ComponentPattern::variable("_action"),
+                ComponentPattern::variable("_resource"),
+            ),
+            RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                Comparison::Eq,
+                AtomPattern::Principal(ComponentPattern::variable("p")),
+            ))),
+        )],
+        1,
+    );
+    let store = Arc::new(HistoryStore::new());
+    let history = store.new_history().unwrap();
+    let alice = event(&store, "alice", "read", "doc");
+    let bob = event(&store, "bob", "read", "doc");
+    store.append(&history, &[alice; 3]).unwrap();
+    let ready = Arc::new(Barrier::new(3));
+    let appended = Arc::new(Barrier::new(3));
+    let threads: Vec<_> = [alice, bob]
+        .into_iter()
+        .map(|request| {
+            let store = store.clone();
+            let history = history.clone();
+            let program = program.clone();
+            let ready = ready.clone();
+            let appended = appended.clone();
+            std::thread::spawn(move || {
+                assert_eq!(event(&store, "alice", "read", "doc"), alice);
+                let mut vm = RegoVM::new();
+                vm.load_program(program);
+                vm.set_execution_mode(ExecutionMode::Suspendable);
+                vm.set_step_mode(true);
+                vm.attach_history(store.clone()).unwrap();
+                vm.set_history_input(history, request).unwrap();
+                vm.execute_entry_point_by_name("decide").unwrap();
+                assert_step(&vm, 0);
+                ready.wait();
+                appended.wait();
+                let first = finish(&mut vm).unwrap();
+                vm.set_step_mode(false);
+                let fresh = vm.execute_entry_point_by_name("decide").unwrap();
+                (request, first, fresh)
+            })
+        })
+        .collect();
+    ready.wait();
+    store.append(&history, &[bob]).unwrap();
+    appended.wait();
+    for worker in threads {
+        let (request, first, fresh) = worker.join().unwrap();
+        assert_eq!(first, expected((request == bob).then_some(0)));
+        assert_eq!(fresh, Value::from(0usize));
+    }
+    assert_eq!(store.len(&history).unwrap(), 4);
+}
+
+#[test]
+fn mixed_program_captures_history_on_first_history_instruction() {
+    let mut program = (*read_star(1)).clone();
+    program.metadata.language = "mixed".into();
+    program
+        .instructions
+        .insert(0, Instruction::LoadTrue { dest: 0 });
+    program.instruction_spans.insert(0, None);
+    let mut f = Fixture::new(&Arc::new(program), ExecutionMode::Suspendable);
+    let read = event(&f.store, "alice", "read", "doc");
+    let edit = event(&f.store, "alice", "edit", "doc");
+    f.replace(&[read]);
+    f.vm.set_step_mode(true);
+    f.decide(read).unwrap();
+    assert_step(&f.vm, 0);
+    // No HISTORY_STEP has executed, so this append belongs to the captured prefix.
+    f.store.append(&f.history, &[edit]).unwrap();
+    assert_eq!(finish(&mut f.vm).unwrap(), Value::from(0usize));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn concurrent_rewrite_invalidates_both_pinned_decisions() {
+    use std::sync::Barrier;
+    let program = read_star(1);
+    let store = Arc::new(HistoryStore::new());
+    let history = store.new_history().unwrap();
+    let read = event(&store, "alice", "read", "doc");
+    store.append(&history, &[read; 3]).unwrap();
+    let paused = Arc::new(Barrier::new(3));
+    let rewritten = Arc::new(Barrier::new(3));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let store = store.clone();
+            let history = history.clone();
+            let program = program.clone();
+            let paused = paused.clone();
+            let rewritten = rewritten.clone();
+            std::thread::spawn(move || {
+                let mut vm = RegoVM::new();
+                vm.load_program(program);
+                vm.set_execution_mode(ExecutionMode::Suspendable);
+                vm.set_step_mode(true);
+                vm.attach_history(store).unwrap();
+                vm.set_history_input(history, read).unwrap();
+                vm.execute_entry_point_by_name("decide").unwrap();
+                assert_step(&vm, 0);
+                paused.wait();
+                rewritten.wait();
+                assert!(matches!(
+                    finish(&mut vm),
+                    Err(VmError::History {
+                        source: HistoryError::HistoryChanged {
+                            expected: 0,
+                            actual: 1
+                        },
+                        ..
+                    })
+                ));
+            })
+        })
+        .collect();
+    paused.wait();
+    store.truncate(&history, 0).unwrap();
+    store.append(&history, &[read; 3]).unwrap();
+    rewritten.wait();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
+fn fixed_head_compares_all_three_exact_byte_identities() {
+    let program = table(
+        vec![Rule::new(
+            RuleMode::Require,
+            Head::new(
+                ComponentPattern::constant("alice/\0é"),
+                ComponentPattern::constant("edit"),
+                ComponentPattern::constant("doc/é"),
+            ),
+            RegexExpr::Empty,
+        )],
+        256,
+    );
+    for mode in MODES {
+        let mut f = Fixture::new(&program, mode);
+        let exact = event(&f.store, "alice/\0é", "edit", "doc/é");
+        let other_principal = event(&f.store, "alice/\0e\u{301}", "edit", "doc/é");
+        let other_action = event(&f.store, "alice/\0é", "Edit", "doc/é");
+        let other_resource = event(&f.store, "alice/\0é", "edit", "doc//é");
+        assert_eq!(f.decide(exact).unwrap(), Value::from(0usize));
+        for request in [other_principal, other_action, other_resource] {
+            assert_eq!(f.decide(request).unwrap(), Value::Null);
+        }
+    }
+}

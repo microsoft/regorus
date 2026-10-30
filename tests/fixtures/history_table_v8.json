@@ -1,0 +1,136 @@
+{
+  "builtin_info_table": [],
+  "entry_points": {
+    "decide": 0
+  },
+  "history_tables": [
+    {
+      "rules": [
+        {
+          "mode": "Require",
+          "source": {
+            "head": [
+              "Bind",
+              {
+                "Constant": "release"
+              },
+              "Bind"
+            ],
+            "regexes": [
+              "All",
+              {
+                "Test": 3
+              },
+              "All",
+              {
+                "Concat": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            ],
+            "root": 3,
+            "tests": [
+              {
+                "Atom": {
+                  "field": "Principal",
+                  "positive": true,
+                  "term": {
+                    "Variable": "Principal"
+                  }
+                }
+              },
+              {
+                "Atom": {
+                  "field": "Action",
+                  "positive": true,
+                  "term": {
+                    "Constant": "edit"
+                  }
+                }
+              },
+              {
+                "Atom": {
+                  "field": "Resource",
+                  "positive": true,
+                  "term": {
+                    "Variable": "Resource"
+                  }
+                }
+              },
+              {
+                "And": [
+                  0,
+                  1,
+                  2
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "instruction_data": {
+    "array_create_params": [],
+    "builtin_call_params": [],
+    "chained_index_params": [],
+    "comprehension_begin_params": [],
+    "function_call_params": [],
+    "history_step_params": [
+      {
+        "batch_size": 1,
+        "rule": 0,
+        "table": 0
+      }
+    ],
+    "loop_params": [],
+    "object_create_params": [],
+    "set_create_params": [],
+    "virtual_data_document_lookup_params": []
+  },
+  "instruction_spans": [
+    null,
+    null,
+    null
+  ],
+  "instructions": [
+    {
+      "HistoryStep": {
+        "params_index": 0
+      }
+    },
+    {
+      "LoadNull": {
+        "dest": 0
+      }
+    },
+    {
+      "Return": {
+        "value": 0
+      }
+    }
+  ],
+  "literals": [],
+  "metadata": {
+    "annotations": {},
+    "compiled_at": "unknown",
+    "compiler_version": "0.13.0",
+    "has_host_await": false,
+    "language": "history_table",
+    "needs_recompilation": false,
+    "needs_runtime_recursion_check": false,
+    "optimization_level": 0,
+    "rego_v0": false,
+    "source_info": "unknown"
+  },
+  "program_structure": {
+    "dispatch_window_size": 1,
+    "main_entry_point": 0,
+    "max_rule_window_size": 1
+  },
+  "rule_infos": [],
+  "rule_tree": {},
+  "sources": []
+}

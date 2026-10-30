@@ -196,7 +196,7 @@ class TestRegorus < Minitest::Test
   end
 
   def test_set_policy_length_config
-    @engine.set_policy_length_config({ max_col: 2000, max_file_bytes: 1048576, max_lines: 20000 })
+    @engine.set_policy_length_config({ max_col: 2000, max_file_bytes: 1_048_576, max_lines: 20_000 })
     @engine.clear_policy_length_config
   end
 

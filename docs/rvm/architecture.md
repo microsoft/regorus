@@ -75,10 +75,40 @@ layout is deliberately split:
 | `needs_runtime_recursion_check: bool`           | Flags when `VirtualDataDocumentLookup` requires runtime guards.  | Ensures the VM short-circuits recursion before hitting the instruction budget ceiling. |
 | `needs_recompilation: bool`                     | Indicates partial deserialization of execution data.             | Set when the extensible section fails; signals the loader to recompile. |
 | `rego_v0: bool`                                 | Records whether the policy targeted Rego v0 semantics.          | Ensures recompilation preserves language-version behaviour. |
+| `history_tables: Vec<HistoryTable>`             | Ordered typed rule tables advanced by `HistoryStep`.             | Each rule is a mode plus portable postorder source nodes; validated by `validate_limits`, lowered into an attached shared `HistoryStore`. |
 
 Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
 inspection tooling to populate and render the program.
+
+History policies use the owned Rust DSL in in-tree `src/history-syntax` and shared
+representations/contracts in `junco-core`: the DSL lowers to canonical
+`FlatPair<C>`, constants are encoded once into `FlatPair<u64>`, and
+`history-semantics` supplies the numeric compiler/evaluator for Junco and Regorus.
+Regorus lowers borrowed `Rule<SourceEvent<'_>>` values through core and copies
+their string constants into `FlatPair<String>`. Compiled shared DAG nodes are
+never unfolded. Program tables retain
+the `HistoryTable`/`HistoryTableRule` envelope but import `Component` and `RuleMode`
+from `history-syntax`, and `FlatHead`, `FlatTerm`, `FlatTest`, `FlatRegex`, and
+`FlatPair` from core.
+The v8 source schema, variant/field order, and `HistoryStepParams` are unchanged.
+`Program::validate_limits` uses core's base validation even without `history`.
+
+Regorus owns only the borrowed-string compiler adapter, `HistoryStep` dispatch and host-limit
+translation, and the Program-keyed shared table cache retaining `Arc<Program>`.
+The native history store adapter delegates interning and record mutation to
+`history-store`; its public API and cross-VM cache sharing remain unchanged.
+All four libraries support native no_std + alloc. `std` and Semantics' `cache`
+do not imply `runtime`; only `history` enables Store/Semantics execution, leaving
+core/Syntax source validation available without it. `test-util` is enabled only
+for development probes. All four packages live under `src/`; `hashconsius` and
+`verus-bumpalo` are pinned git dependencies.
+
+Body proofs cover DSL lowering, encoding under later map extensions, numeric
+compilation/evaluation, raw/numeric typed histories, and cached lifecycle receipts.
+Native equality/hash/projection correspondence, map/container leaves, locking,
+allocation, `Value` parsing, and diagnostic/facade callbacks remain explicit trust
+boundaries, not universally verified application behavior.
 
 ### Serialization layout
 
@@ -87,7 +117,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `3`).
+  `8`; older versions are rejected and must be recompiled).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper
