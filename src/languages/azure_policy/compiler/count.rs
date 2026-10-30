@@ -17,7 +17,7 @@ use crate::rvm::Instruction;
 use crate::Value;
 
 use super::binding_path::{
-    join_count_prefix, match_count_prefix, split_bound_path, CountPrefixMatch,
+    is_binding_path, join_count_prefix, match_count_prefix, split_bound_path, CountPrefixMatch,
 };
 use super::core::{Compiler, CountBinding};
 use super::utils::{
@@ -79,6 +79,7 @@ impl Compiler {
                             span,
                         );
                     }
+                    self.ensure_not_malformed_below_binding(&field_path, span)?;
                     return self.compile_count_nested(
                         None,
                         &field_path,
@@ -654,6 +655,7 @@ impl Compiler {
                             span,
                         );
                     }
+                    self.ensure_not_malformed_below_binding(&field_path, span)?;
                     return self.compile_count_nested_any(None, &field_path, wc, "", exists, span);
                 }
 
@@ -813,6 +815,38 @@ impl Compiler {
             })),
             _ => Ok(None),
         }
+    }
+
+    /// Reject a field path that is spelled under an active count binding's
+    /// prefix (`prefix[*]…` or `prefix.…`) but cannot be parsed, so it
+    /// is not silently read from the resource root instead.
+    fn ensure_not_malformed_below_binding(
+        &self,
+        field_path: &str,
+        span: &crate::lexer::Span,
+    ) -> Result<()> {
+        if is_binding_path(field_path) {
+            return Ok(());
+        }
+        let lc_path = field_path.to_ascii_lowercase();
+        for binding in self.count_bindings.iter().rev() {
+            if binding.resource_override_reg != self.resource_override_reg {
+                continue;
+            }
+            let Some(prefix) = &binding.field_wildcard_prefix else {
+                continue;
+            };
+            let below = lc_path
+                .strip_prefix(prefix.to_ascii_lowercase().as_str())
+                .is_some_and(|rest| rest.starts_with("[*]") || rest.starts_with('.'));
+            if below {
+                bail!(span.error(&format!(
+                    "invalid field path below count binding '{}': {}",
+                    prefix, field_path
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Find the innermost active field-count binding for the current resource
@@ -1368,6 +1402,20 @@ mod tests {
             &binding,
             "items[*]['a[*]']"
         ));
+
+        // Paths outside the binding fall back to quote-aware detection.
+        assert!(Compiler::binding_selects_single_value(
+            &binding,
+            "other['a[*]']"
+        ));
+        assert!(!Compiler::binding_selects_single_value(
+            &binding, "other[*]"
+        ));
+        let unbound = CountBinding {
+            field_wildcard_prefix: None,
+            ..binding
+        };
+        assert!(Compiler::binding_selects_single_value(&unbound, "a[*]"));
     }
 
     // -----------------------------------------------------------------------

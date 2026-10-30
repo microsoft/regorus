@@ -177,6 +177,11 @@ pub(super) fn join_count_prefix(outer: &str, inner: &str) -> String {
     }
 }
 
+/// Whether `path` parses with the grammar used for count binding matching.
+pub(super) fn is_binding_path(path: &str) -> bool {
+    parse_binding_path(path).is_some()
+}
+
 /// Navigate bound suffixes using the same quoted-key grammar as the matcher.
 pub(super) fn split_bound_path(path: &str) -> Result<Vec<PathSegment>> {
     parse_binding_path(path)
@@ -199,8 +204,9 @@ pub(super) fn split_bound_path(path: &str) -> Result<Vec<PathSegment>> {
 /// unquoted literal, mirroring `split_path_without_wildcards`.  Unquoted
 /// `*` is a wildcard and unquoted ASCII digits are an index; anything else
 /// is a key.  A blank dotted segment before a bracket (`a. ['b']`) or at
-/// the end of the path (`a.b. `) is skipped, as
-/// `split_path_without_wildcards` does.  Returns `None` for malformed paths.
+/// the end of the path (`a.b. `), and trailing whitespace after the last
+/// segment (`a[*] `), are skipped, as `split_path_without_wildcards` and
+/// `ensure_count_field_path` allow.  Returns `None` for malformed paths.
 fn parse_binding_path(path: &str) -> Option<Vec<ParsedSegment>> {
     parse_binding_path_with(path, &mut ClosingQuotes::default())
 }
@@ -238,8 +244,10 @@ fn parse_binding_path_with(path: &str, quotes: &mut ClosingQuotes) -> Option<Vec
         segments.push(ParsedSegment { segment, start });
         pos = next;
 
+        if path.get(pos..)?.trim_start().is_empty() {
+            return Some(segments);
+        }
         match bytes.get(pos).copied() {
-            None => return Some(segments),
             Some(b'.') => {
                 pos = pos.saturating_add(1);
                 if pos >= bytes.len() {
@@ -247,7 +255,7 @@ fn parse_binding_path_with(path: &str, quotes: &mut ClosingQuotes) -> Option<Vec
                 }
             }
             Some(b'[') => {}
-            Some(_) => return None,
+            Some(_) | None => return None,
         }
     }
 }
@@ -726,6 +734,43 @@ mod tests {
             split_bound_path("state. ").unwrap(),
             vec![PathSegment::Key("state".to_string())]
         );
+    }
+
+    #[test]
+    fn trailing_blanks_after_final_segment_are_skipped() {
+        assert_eq!(
+            segments("a[*]. "),
+            vec![Segment::key("a"), Segment::Wildcard]
+        );
+        assert_eq!(
+            segments("a[*] "),
+            vec![Segment::key("a"), Segment::Wildcard]
+        );
+        assert_eq!(
+            segments("a['b']\u{00A0}"),
+            vec![Segment::key("a"), Segment::key("b")]
+        );
+        for path in ["items[*]. ", "items. ", "items[*] "] {
+            assert_eq!(
+                match_count_prefix("items", path),
+                Some(CountPrefixMatch::CurrentElement),
+                "{path:?}"
+            );
+        }
+        assert_eq!(
+            match_count_prefix("items", "items[*].subs[*] "),
+            Some(below("subs[*] ", true, true))
+        );
+        for path in ["a[*] x", "a[0] .b", "a[*] ."] {
+            assert!(parse_binding_path(path).is_none(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn blank_before_legacy_key_does_not_match() {
+        assert_eq!(match_count_prefix("a.b", "a. b.c"), None);
+        assert_eq!(match_count_prefix("a. b", "a.b.c"), None);
+        assert_eq!(match_count_prefix("a[*].b", "a[*]. b.c"), None);
     }
 
     #[test]

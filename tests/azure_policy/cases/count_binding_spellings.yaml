@@ -489,3 +489,49 @@ cases:
     resource:
       items: [{state: "on"}, {state: "off"}]
     want_undefined: true
+
+  # Trailing blanks after the final `]` of a nested count field are ignored,
+  # so the inner count still runs over the current item.
+  - note: nested_count_trailing_blank_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_effect: deny
+
+  - note: nested_count_trailing_blank_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_any_trailing_blank_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "y"}]}]
+    want_effect: deny
+
+  - note: nested_count_any_trailing_blank_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "y"}]}]
+    want_undefined: true
+
+  # An inner count path under the bound prefix that cannot be parsed is an
+  # error rather than a count from the resource root.
+  - note: nested_count_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_any_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
