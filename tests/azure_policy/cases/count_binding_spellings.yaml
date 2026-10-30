@@ -460,3 +460,32 @@ cases:
     resource:
       items: [{"a][b": ["y"], "'a": {"b'": ["x"]}}]
     want_undefined: true
+
+  # A blank final segment is dropped, as by the plain path splitter.
+  - note: trailing_blank_segment_legacy_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.state. ","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: trailing_blank_segment_legacy_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.state. ","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  - note: trailing_blank_segment_wildcard_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*].state. ","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: trailing_blank_segment_wildcard_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*].state. ","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
