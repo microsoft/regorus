@@ -1,0 +1,316 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Negation, iteration (`some`, `every`, `in`) and comprehensions.
+
+cases:
+  - note: negation_of_input_field
+    description: Negation of an input field, distinguishing absent, false and true.
+    constructs: [negation, default, undefined_vs_false, unknown_input]
+    unknowns: [input.user]
+    modules:
+      - |
+        package test
+        default allow := false
+        allow if {
+          input.user.authenticated
+          not input.user.suspended
+        }
+    query: data.test.allow
+    examples:
+      - note: field_absent
+        input: {user: {authenticated: true}}
+        want_result: true
+      - note: field_false
+        input: {user: {authenticated: true, suspended: false}}
+        want_result: true
+      - note: field_true
+        input: {user: {authenticated: true, suspended: true}}
+        want_result: false
+      - note: guard_fails
+        input: {user: {authenticated: false}}
+        want_result: false
+
+  - note: negation_of_helper_rule
+    description: Negation of a helper rule that checks membership in data.
+    constructs: [negation, helper_rule, membership]
+    data:
+      blocklist: ["10.0.0.1", "10.0.0.2"]
+    modules:
+      - |
+        package test
+        blocked if input.ip in data.blocklist
+        allow if not blocked
+    query: data.test.allow
+    examples:
+      - note: not_blocked
+        input: {ip: "192.168.0.1"}
+        want_result: true
+      - note: blocked
+        input: {ip: "10.0.0.2"}
+        want_result: "#undefined"
+
+  - note: negation_of_comparison_with_missing_operand
+    description: Negating a comparison whose operand is Undefined succeeds.
+    constructs: [negation, undefined_vs_false]
+    modules:
+      - |
+        package test
+        not_admin if not input.role == "admin"
+    query: data.test.not_admin
+    examples:
+      - note: comparison_true
+        input: {role: admin}
+        want_result: "#undefined"
+      - note: comparison_false
+        input: {role: guest}
+        want_result: true
+      - note: operand_missing
+        input: {}
+        want_result: true
+
+  - note: some_in_any_match
+    description: An existential loop that succeeds when any element matches.
+    constructs: [some_in, complete_rule, unknown_input]
+    unknowns: [input.roles]
+    modules:
+      - |
+        package test
+        allow if {
+          some role in input.roles
+          role == "admin"
+        }
+    query: data.test.allow
+    examples:
+      - note: later_element_matches
+        input: {roles: [user, admin]}
+        want_result: true
+      - note: no_element_matches
+        input: {roles: [user]}
+        want_result: "#undefined"
+      - note: empty_collection
+        input: {roles: []}
+        want_result: "#undefined"
+      - note: missing_collection
+        input: {}
+        want_result: "#undefined"
+
+  - note: some_in_key_value
+    description: Key/value iteration over an object, collecting into a partial set.
+    constructs: [some_in, partial_set]
+    modules:
+      - |
+        package test
+        public_ports contains port if {
+          some name, svc in input.services
+          svc.public
+          port := sprintf("%s:%d", [name, svc.port])
+        }
+    query: data.test.public_ports
+    examples:
+      - note: one_public
+        input:
+          services:
+            web: {port: 443, public: true}
+            db: {port: 5432, public: false}
+        want_result: {"set!": ["web:443"]}
+      - note: none_public
+        input:
+          services:
+            db: {port: 5432, public: false}
+        want_result: {"set!": []}
+
+  - note: every_quantifier
+    description: A universal quantifier, including the vacuous and missing-collection cases.
+    constructs: [every, default, undefined_vs_false, unknown_input]
+    unknowns: [input.images]
+    modules:
+      - |
+        package test
+        default all_signed := false
+        all_signed if {
+          every img in input.images {
+            img.signed == true
+          }
+        }
+    query: data.test.all_signed
+    examples:
+      - note: all_match
+        input: {images: [{signed: true}, {signed: true}]}
+        want_result: true
+      - note: one_fails
+        input: {images: [{signed: true}, {signed: false}]}
+        want_result: false
+      - note: one_undefined
+        input: {images: [{signed: true}, {}]}
+        want_result: false
+      - note: vacuous
+        input: {images: []}
+        want_result: true
+      - note: missing_collection
+        input: {}
+        want_result: false
+
+  - note: every_without_default
+    description: A universal quantifier whose failure leaves the rule Undefined.
+    constructs: [every, complete_rule]
+    modules:
+      - |
+        package test
+        ok if {
+          every k, v in input.limits {
+            v <= data.max[k]
+          }
+        }
+    data:
+      max: {cpu: 4, memory: 8}
+    query: data.test.ok
+    examples:
+      - note: all_within
+        input: {limits: {cpu: 2, memory: 8}}
+        want_result: true
+      - note: one_exceeds
+        input: {limits: {cpu: 8, memory: 1}}
+        want_result: "#undefined"
+        divergence:
+          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
+          engines: [rvm]
+          actual_result: true
+      - note: exceeds_own_key_only
+        input: {limits: {cpu: 5}}
+        want_result: "#undefined"
+        divergence:
+          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
+          engines: [rvm]
+          actual_result: true
+      - note: unknown_key
+        input: {limits: {gpu: 1}}
+        want_result: "#undefined"
+        divergence:
+          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
+          engines: [rvm]
+          actual_result: true
+
+  - note: membership_literal_collection
+    description: Membership in a literal set used as a rule body condition.
+    constructs: [membership, complete_rule]
+    modules:
+      - |
+        package test
+        safe_method if input.method in {"GET", "HEAD"}
+    query: data.test.safe_method
+    examples:
+      - note: member
+        input: {method: GET}
+        want_result: true
+      - note: not_member
+        input: {method: POST}
+        want_result: "#undefined"
+      - note: element_missing
+        input: {}
+        want_result: "#undefined"
+
+  - note: membership_value_undefined_collection
+    description: The value of `x in coll` is true, false, or Undefined when coll is missing.
+    constructs: [membership, undefined_vs_false]
+    modules:
+      - |
+        package test
+        has_admin := "admin" in input.roles
+    query: data.test.has_admin
+    examples:
+      - note: member
+        input: {roles: [admin]}
+        want_result: true
+      - note: not_member
+        input: {roles: [user]}
+        want_result: false
+      - note: collection_missing
+        input: {}
+        want_result: "#undefined"
+        divergence:
+          reason: Membership on an Undefined collection yields false instead of Undefined.
+          engines: [interpreter, rvm]
+          actual_result: false
+
+  - note: membership_negated_undefined_collection
+    description: Negated membership where the collection may be missing.
+    constructs: [membership, negation, undefined_vs_false]
+    modules:
+      - |
+        package test
+        deny if not "admin" in input.roles
+    query: data.test.deny
+    examples:
+      - note: member
+        input: {roles: [admin]}
+        want_result: "#undefined"
+      - note: not_member
+        input: {roles: [user]}
+        want_result: true
+      - note: collection_missing
+        input: {}
+        want_result: "#undefined"
+        divergence:
+          reason: Membership on an Undefined collection yields false instead of Undefined, so its negation succeeds.
+          engines: [interpreter, rvm]
+          actual_result: true
+
+  - note: array_comprehension
+    description: An array comprehension, which is empty rather than Undefined when nothing matches.
+    constructs: [comprehension, some_in, undefined_vs_false]
+    modules:
+      - |
+        package test
+        privileged := [c.name | some c in input.containers; c.privileged]
+    query: data.test.privileged
+    examples:
+      - note: some_match
+        input: {containers: [{name: a, privileged: true}, {name: b, privileged: false}]}
+        want_result: [a]
+      - note: none_match
+        input: {containers: [{name: b, privileged: false}]}
+        want_result: []
+      - note: missing_collection
+        input: {}
+        want_result: []
+
+  - note: set_and_object_comprehensions
+    description: Set and object comprehensions feeding a rule value.
+    constructs: [comprehension, some_in, complete_rule]
+    modules:
+      - |
+        package test
+        summary := {
+          "ports": {s.port | some s in input.services},
+          "images": {c.name: c.image | some c in input.containers},
+        }
+    query: data.test.summary
+    examples:
+      - note: populated
+        input:
+          services: [{port: 80}, {port: 443}, {port: 80}]
+          containers: [{name: a, image: "x:1"}]
+        want_result: {ports: {"set!": [80, 443]}, images: {a: "x:1"}}
+      - note: empty
+        input: {}
+        want_result: {ports: {"set!": []}, images: {}}
+
+  - note: comprehension_in_condition
+    description: A comprehension counted inside a rule condition.
+    constructs: [comprehension, builtin, complete_rule, unknown_input]
+    unknowns: [input.containers]
+    modules:
+      - |
+        package test
+        too_many_privileged if {
+          count([c | some c in input.containers; c.privileged]) > 1
+        }
+    query: data.test.too_many_privileged
+    examples:
+      - note: above_limit
+        input: {containers: [{privileged: true}, {privileged: true}]}
+        want_result: true
+      - note: at_limit
+        input: {containers: [{privileged: true}, {privileged: false}]}
+        want_result: "#undefined"
