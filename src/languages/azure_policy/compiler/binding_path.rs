@@ -848,6 +848,10 @@ mod tests {
             );
         }
         assert_eq!(match_count_prefix("a[*]['b']", "a[*] x['b'].c"), None);
+        // A blank before `[` is skipped only after `[*]`; otherwise the legacy
+        // raw spelling must match.
+        assert_eq!(match_count_prefix("a['b']", "a ['b'].c"), None);
+        assert_eq!(match_count_prefix("a ['b']", "a['b'].c"), None);
     }
 
     #[test]
@@ -859,6 +863,7 @@ mod tests {
             ("items", "items.a[*]..b[*]"),
             ("items", "items[*]subs[*]"),
             ("items[*]['subs']", "items[*].subs[*]..v"),
+            ("a[*]['b']", "a[*] ['b']..v"),
         ] {
             assert!(is_malformed_below(prefix, path), "{prefix} / {path}");
         }
