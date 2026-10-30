@@ -37,6 +37,7 @@ impl Compiler {
         if self.resolve_count_binding(&path)?.is_some() {
             return Ok(None);
         }
+        self.ensure_not_malformed_below_binding(&path, &field.span)?;
 
         Ok(Some(path))
     }

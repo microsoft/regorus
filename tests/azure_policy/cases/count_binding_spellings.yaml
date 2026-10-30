@@ -535,3 +535,94 @@ cases:
     resource:
       items: [{subs: [{v: "x"}]}]
     want_compile_error_contains: "invalid field path below count binding"
+
+  # Blanks between `[*]` and the next bracket are skipped, as the wildcard
+  # splitters read the text after `[*]` as a fresh path.
+  - note: nested_count_blank_before_bracket_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*] ['subs'][*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_effect: deny
+
+  - note: nested_count_blank_before_bracket_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*] ['subs'][*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_key_glued_to_wildcard_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # A legacy dotted nested count field parses, so it is not rejected.
+  - note: nested_count_legacy_dotted_compiles
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.x[*].y[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  # Malformed paths under the binding are errors whatever the spelling of
+  # the bound prefix; a different prefix is not under the binding.
+  - note: nested_count_legacy_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.a[*]..b[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_case_insensitive_prefix_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"Items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: field_function_quoted_prefix_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[length(field('[''items''][*]..subs[*]'))]","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_other_prefix_empty_segment_compiles
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"itemsX[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_empty_segment_under_outer_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"others[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # Field conditions and field() under the binding report malformed paths
+  # instead of reading them from the resource root.
+  - note: where_field_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]..subs","exists":true}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: where_wildcard_field_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]..subs[*]","exists":true}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: field_function_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[length(field('items[*]..subs[*]'))]","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"

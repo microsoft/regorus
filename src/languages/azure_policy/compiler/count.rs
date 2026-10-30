@@ -17,7 +17,7 @@ use crate::rvm::Instruction;
 use crate::Value;
 
 use super::binding_path::{
-    is_binding_path, join_count_prefix, match_count_prefix, split_bound_path, CountPrefixMatch,
+    is_malformed_below, join_count_prefix, match_count_prefix, split_bound_path, CountPrefixMatch,
 };
 use super::core::{Compiler, CountBinding};
 use super::utils::{
@@ -818,17 +818,14 @@ impl Compiler {
     }
 
     /// Reject a field path that is spelled under an active count binding's
-    /// prefix (`prefix[*]…` or `prefix.…`) but cannot be parsed, so it
-    /// is not silently read from the resource root instead.
-    fn ensure_not_malformed_below_binding(
+    /// prefix but cannot be parsed (see [`is_malformed_below`]), so it is
+    /// not silently read from the resource root instead.  Call this wherever
+    /// an unbound wildcard path falls back to the root.
+    pub(super) fn ensure_not_malformed_below_binding(
         &self,
         field_path: &str,
         span: &crate::lexer::Span,
     ) -> Result<()> {
-        if is_binding_path(field_path) {
-            return Ok(());
-        }
-        let lc_path = field_path.to_ascii_lowercase();
         for binding in self.count_bindings.iter().rev() {
             if binding.resource_override_reg != self.resource_override_reg {
                 continue;
@@ -836,10 +833,7 @@ impl Compiler {
             let Some(prefix) = &binding.field_wildcard_prefix else {
                 continue;
             };
-            let below = lc_path
-                .strip_prefix(prefix.to_ascii_lowercase().as_str())
-                .is_some_and(|rest| rest.starts_with("[*]") || rest.starts_with('.'));
-            if below {
+            if is_malformed_below(prefix, field_path) {
                 bail!(span.error(&format!(
                     "invalid field path below count binding '{}': {}",
                     prefix, field_path
@@ -1376,6 +1370,36 @@ mod tests {
             .resolve_path_below_bound_element("items.subs[*]")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn malformed_path_below_any_active_binding_is_rejected() {
+        let span = dummy_span();
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 1);
+        for path in ["items.x[*].y[*]", "items[*][*]", "itemsX[*]..subs[*]"] {
+            c.ensure_not_malformed_below_binding(path, &span).unwrap();
+        }
+        assert!(c
+            .ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .is_err());
+
+        // The outer binding is checked, not only the innermost one.
+        push_prefix_binding(&mut c, "others", 2);
+        assert!(c
+            .ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .is_err());
+
+        // Bindings over another resource do not apply.
+        c.count_bindings.clear();
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("items".to_string()),
+            current_reg: 1,
+            resource_override_reg: Some(7),
+        });
+        c.ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .unwrap();
     }
 
     #[test]

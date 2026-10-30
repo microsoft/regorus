@@ -177,9 +177,32 @@ pub(super) fn join_count_prefix(outer: &str, inner: &str) -> String {
     }
 }
 
-/// Whether `path` parses with the grammar used for count binding matching.
-pub(super) fn is_binding_path(path: &str) -> bool {
-    parse_binding_path(path).is_some()
+/// Whether `path` is malformed below a count binding's `prefix`: it does
+/// not parse, but the segments parsed before the error equal `prefix`'s
+/// and continue with the counted `[*]` or the legacy raw `prefix.` form.
+/// Such a path must not fall back to reading from the resource root.
+pub(super) fn is_malformed_below(prefix: &str, path: &str) -> bool {
+    let mut partial = Vec::new();
+    if parse_segments_into(path, &mut ClosingQuotes::default(), &mut partial).is_some() {
+        return false;
+    }
+    let Some(prefix_segments) = parse_binding_path(prefix) else {
+        return false;
+    };
+    let Some(head) = partial.get(..prefix_segments.len()) else {
+        return false;
+    };
+    if !head
+        .iter()
+        .zip(prefix_segments.iter())
+        .all(|(a, b)| a.segment == b.segment)
+    {
+        return false;
+    }
+    partial
+        .get(prefix_segments.len())
+        .is_some_and(|next| next.segment == Segment::Wildcard)
+        || has_legacy_raw_prefix(prefix, path)
 }
 
 /// Navigate bound suffixes using the same quoted-key grammar as the matcher.
@@ -204,16 +227,30 @@ pub(super) fn split_bound_path(path: &str) -> Result<Vec<PathSegment>> {
 /// unquoted literal, mirroring `split_path_without_wildcards`.  Unquoted
 /// `*` is a wildcard and unquoted ASCII digits are an index; anything else
 /// is a key.  A blank dotted segment before a bracket (`a. ['b']`) or at
-/// the end of the path (`a.b. `), and trailing whitespace after the last
-/// segment (`a[*] `), are skipped, as `split_path_without_wildcards` and
-/// `ensure_count_field_path` allow.  Returns `None` for malformed paths.
+/// the end of the path (`a.b. `) is skipped, as
+/// `split_path_without_wildcards` does.  Whitespace after `[*]` before
+/// another bracket (`a[*] ['b']`) is skipped, as the wildcard splitters
+/// read the text after each `[*]` as a fresh path.  Trailing whitespace
+/// after the last segment (`a[*] `) is skipped, as `ensure_count_field_path`
+/// allows.  Returns `None` for malformed paths.
 fn parse_binding_path(path: &str) -> Option<Vec<ParsedSegment>> {
     parse_binding_path_with(path, &mut ClosingQuotes::default())
 }
 
 fn parse_binding_path_with(path: &str, quotes: &mut ClosingQuotes) -> Option<Vec<ParsedSegment>> {
-    let bytes = path.as_bytes();
     let mut segments = Vec::new();
+    parse_segments_into(path, quotes, &mut segments)?;
+    Some(segments)
+}
+
+/// Parse `path` into `segments`.  On failure returns `None`, leaving the
+/// segments parsed before the error in `segments`.
+fn parse_segments_into(
+    path: &str,
+    quotes: &mut ClosingQuotes,
+    segments: &mut Vec<ParsedSegment>,
+) -> Option<()> {
+    let bytes = path.as_bytes();
     let mut pos = 0_usize;
 
     loop {
@@ -233,7 +270,7 @@ fn parse_binding_path_with(path: &str, quotes: &mut ClosingQuotes) -> Option<Vec
                     continue;
                 }
                 if end == path.len() && !segments.is_empty() {
-                    return Some(segments);
+                    return Some(());
                 }
             }
             if token.is_empty() || token.contains(']') {
@@ -241,11 +278,17 @@ fn parse_binding_path_with(path: &str, quotes: &mut ClosingQuotes) -> Option<Vec
             }
             (Segment::Key(token.to_ascii_lowercase()), end)
         };
+        let is_wildcard = segment == Segment::Wildcard;
         segments.push(ParsedSegment { segment, start });
         pos = next;
 
-        if path.get(pos..)?.trim_start().is_empty() {
-            return Some(segments);
+        let trimmed = path.get(pos..)?.trim_start();
+        if trimmed.is_empty() {
+            return Some(());
+        }
+        if is_wildcard && trimmed.starts_with('[') {
+            pos = path.len().saturating_sub(trimmed.len());
+            continue;
         }
         match bytes.get(pos).copied() {
             Some(b'.') => {
@@ -763,6 +806,49 @@ mod tests {
         );
         for path in ["a[*] x", "a[0] .b", "a[*] ."] {
             assert!(parse_binding_path(path).is_none(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn blanks_after_wildcard_before_bracket_are_skipped() {
+        assert_eq!(
+            segments("a[*] [0]"),
+            vec![Segment::key("a"), Segment::Wildcard, Segment::Index(0)]
+        );
+        assert_eq!(
+            segments("a[*]\u{00A0}['b']"),
+            vec![Segment::key("a"), Segment::Wildcard, Segment::key("b")]
+        );
+        assert_eq!(
+            match_count_prefix("a", "a[*] ['b'][*]"),
+            Some(below("['b'][*]", true, true))
+        );
+        for path in ["a[*] x", "a[*]x", "a[*] .b", "a[0] [1]", "a['b'] ['c']"] {
+            assert!(parse_binding_path(path).is_none(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_below_prefix() {
+        for (prefix, path) in [
+            ("items", "items[*]..subs[*]"),
+            ("items", "Items[*]..subs[*]"),
+            ("items", "['items'][*]..subs[*]"),
+            ("items", "items.a[*]..b[*]"),
+            ("items", "items[*]subs[*]"),
+            ("items[*]['subs']", "items[*].subs[*]..v"),
+        ] {
+            assert!(is_malformed_below(prefix, path), "{prefix} / {path}");
+        }
+        for (prefix, path) in [
+            ("items", "itemsX[*]..subs[*]"),
+            ("items", "items.x[*].y[*]"),
+            ("items", "items[*][*]"),
+            ("items", "items[*] ['subs'][*]"),
+            ("items", "items[0]..x[*]"),
+            ("items", "other[*]..x"),
+        ] {
+            assert!(!is_malformed_below(prefix, path), "{prefix} / {path}");
         }
     }
 

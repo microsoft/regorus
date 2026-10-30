@@ -173,6 +173,7 @@ impl Compiler {
             return self.compile_from_binding(&binding, field_path, span);
         }
         if has_unquoted_wildcard(field_path) {
+            self.ensure_not_malformed_below_binding(field_path, span)?;
             return self.compile_field_wildcard_collect(None, field_path, span);
         }
         self.compile_resource_path_value(field_path, span)
