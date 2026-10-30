@@ -11,6 +11,7 @@ pub use crate::progress::WorkCounters;
 use crate::progress::verify as progress;
 #[cfg(verus_keep_ghost)]
 use crate::verify::history_algebra;
+use alloc::sync::Arc;
 #[cfg(any(test, feature = "test-util"))]
 use alloc::vec::Vec;
 #[cfg(verus_keep_ghost)]
@@ -19,7 +20,7 @@ use history_store::cache::HISTORY_CACHE_CAPACITY;
 use history_store::cache::verify::{cursor_key_eq, longer_cached_prefix};
 use history_store::cache::{CursorCache, HistoryCursor};
 use history_store::history::StoredHistory;
-use history_store::store::Event;
+use history_store::store::{Event, HistoryStore};
 use junco_core::error::HistoryError;
 use junco_core::kernel::Bindings;
 #[cfg(verus_keep_ghost)]
@@ -48,9 +49,11 @@ pub mod verify {
     }
 
     pub open(crate) spec fn constructor_result(
-        result: Result<RuleRuntime, HistoryError>, template: junco_core::flat::FlatPair<u64>,
+        result: Result<RuleRuntime, HistoryError>, store: Arc<HistoryStore>,
+        template: junco_core::flat::FlatPair<u64>,
     ) -> bool {
         result matches Ok(runtime) ==> runtime_wf(runtime)
+            && runtime.store == store
             && runtime.cursors@ == Seq::<HistoryCursor>::empty()
             && runtime.snapshots@ == HistorySnapshots::empty()
             && crate::compile::verify::regex_correct(
@@ -58,43 +61,41 @@ pub mod verify {
     }
 
     pub open(crate) spec fn resume_requires(
-        runtime: RuleRuntime, history: usize, bindings: Bindings,
-        stored: StoredHistory, target_len: usize,
+        runtime: RuleRuntime, bindings: Bindings, stored: StoredHistory, target_len: usize,
     ) -> bool {
         runtime_wf(runtime)
-            && snapshot_compatible(runtime.snapshots@, history, stored.revision(), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
+            && snapshot_compatible(runtime.snapshots@, stored.id(), stored.revision(), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
             && language::event_wf(bindings@) && target_len <= history_store::history::verify::stored_events(&stored).len()
     }
 
     pub open(crate) spec fn resume_ensures(
-        before: RuleRuntime, after: RuleRuntime, result: BatchCursor, history: usize,
+        before: RuleRuntime, after: RuleRuntime, result: BatchCursor,
         bindings: Bindings, stored: StoredHistory, target_len: usize,
     ) -> bool {
-        after.pair == before.pair && after.cursors@ == before.cursors@
-            && after.snapshots@ == before.snapshots@.insert((history, stored.revision()), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
+        after.store == before.store && after.pair == before.pair && after.cursors@ == before.cursors@
+            && after.snapshots@ == before.snapshots@.insert((stored.id(), stored.revision()), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
             && runtime_wf(after) && result.consumed <= target_len
             && progress::residual_after_prefix(after.pair, history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)),
                 bindings@, result.consumed as nat, result.residual)
-            && batch_matches_snapshot(after.pair, result, history, stored.revision(), bindings, after.snapshots@)
+            && batch_matches_snapshot(after.pair, result, stored.id(), stored.revision(), bindings, after.snapshots@)
     }
 
     pub open(crate) spec fn advance_requires(
-        runtime: RuleRuntime, cursor: BatchCursor, history: usize,
-        bindings: Bindings, stored: StoredHistory,
+        runtime: RuleRuntime, cursor: BatchCursor, bindings: Bindings, stored: StoredHistory,
     ) -> bool {
         runtime_wf(runtime)
-            && snapshot_compatible(runtime.snapshots@, history, stored.revision(), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
-            && batch_matches_snapshot(runtime.pair, cursor, history, stored.revision(), bindings, runtime.snapshots@)
+            && snapshot_compatible(runtime.snapshots@, stored.id(), stored.revision(), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
+            && batch_matches_snapshot(runtime.pair, cursor, stored.id(), stored.revision(), bindings, runtime.snapshots@)
     }
 
     pub open(crate) spec fn advance_ensures(
         before: RuleRuntime, after: RuleRuntime, start: BatchCursor, cursor: BatchCursor,
-        history: usize, bindings: Bindings, stored: StoredHistory,
+        bindings: Bindings, stored: StoredHistory,
         target_len: usize, batch_size: usize, result: Result<Option<bool>, HistoryError>,
     ) -> bool {
-        runtime_wf(after) && progress::pair_frame(before.pair, after.pair)
-            && after.snapshots@ == before.snapshots@.insert((history, stored.revision()), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
-            && batch_matches_snapshot(after.pair, cursor, history, stored.revision(), bindings, after.snapshots@)
+        runtime_wf(after) && after.store == before.store && progress::pair_frame(before.pair, after.pair)
+            && after.snapshots@ == before.snapshots@.insert((stored.id(), stored.revision()), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)))
+            && batch_matches_snapshot(after.pair, cursor, stored.id(), stored.revision(), bindings, after.snapshots@)
             && progress::residual_after_prefix(after.pair, history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)),
                 bindings@, cursor.consumed as nat, cursor.residual)
             && (result is Err ==> cursor.consumed == start.consumed
@@ -107,9 +108,9 @@ pub mod verify {
                     history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored)).take(target_len as int)))
     }
 
-    /// Logical graph IDs retained before a transaction remain valid afterward.
+    /// Logical graph IDs and the retained numeric store survive every transaction.
     pub open(crate) spec fn runtime_frame(before: RuleRuntime, after: RuleRuntime) -> bool {
-        progress::pair_frame(before.pair, after.pair)
+        after.store == before.store && progress::pair_frame(before.pair, after.pair)
     }
 
     /// A failed transaction preserves every previously retained cursor.
@@ -117,19 +118,21 @@ pub mod verify {
         after.cursors@ == before.cursors@
     }
 
-    pub proof fn lemma_constructor_runtime_wf(runtime: RuleRuntime, template: junco_core::flat::FlatPair<u64>)
-        requires constructor_result(Ok(runtime), template),
-        ensures runtime_wf(runtime),
+    pub proof fn lemma_constructor_runtime_wf(runtime: RuleRuntime, store: Arc<HistoryStore>,
+        template: junco_core::flat::FlatPair<u64>)
+        requires constructor_result(Ok(runtime), store, template),
+        ensures runtime_wf(runtime), runtime.spec_store() == store,
     {
         reveal(constructor_result);
     }
 
     pub proof fn lemma_resume_can_advance(
-        before: RuleRuntime, after: RuleRuntime, cursor: BatchCursor, history: usize,
+        before: RuleRuntime, after: RuleRuntime, cursor: BatchCursor,
         bindings: Bindings, stored: StoredHistory, target_len: usize,
     )
-        requires resume_ensures(before, after, cursor, history, bindings, stored, target_len),
-        ensures advance_requires(after, cursor, history, bindings, stored),
+        requires resume_ensures(before, after, cursor, bindings, stored, target_len),
+        ensures advance_requires(after, cursor, bindings, stored),
+            after.spec_store() == before.spec_store(),
     {
         reveal(resume_ensures);
         reveal(advance_requires);
@@ -138,12 +141,13 @@ pub mod verify {
 
     pub proof fn lemma_advance_result_facts(
         before: RuleRuntime, after: RuleRuntime, start: BatchCursor, cursor: BatchCursor,
-        history: usize, bindings: Bindings, stored: StoredHistory,
+        bindings: Bindings, stored: StoredHistory,
         target_len: usize, batch_size: usize, result: Result<Option<bool>, HistoryError>,
     )
-        requires advance_ensures(before, after, start, cursor, history, bindings, stored,
+        requires advance_ensures(before, after, start, cursor, bindings, stored,
             target_len, batch_size, result),
         ensures runtime_wf(after), runtime_frame(before, after),
+            after.spec_store() == before.spec_store(),
             result is Err ==> cursor_consumed(cursor) == cursor_consumed(start)
                 && cursor_cache_unchanged(before, after),
             result matches Ok(None) ==> cursor_consumed(cursor) < target_len,
@@ -323,6 +327,7 @@ pub mod verify {
 pub struct RuleRuntime {
     pub(crate) pair: crate::progress::CompiledPair,
     pub(crate) cursors: CursorCache,
+    pub(crate) store: Arc<HistoryStore>,
     #[cfg(verus_keep_ghost)]
     pub(crate) snapshots: Ghost<verify::HistorySnapshots>,
 }
@@ -338,6 +343,17 @@ impl core::fmt::Debug for RuleRuntime {
 
 #[verus_verify]
 impl RuleRuntime {
+    #[cfg(verus_keep_ghost)]
+    verus! {
+        pub open(crate) spec fn spec_store(&self) -> Arc<HistoryStore> { self.store }
+    }
+
+    /// The numeric store whose records name this runtime's cursor keys.
+    #[verus_spec(result => ensures *result == self.spec_store())]
+    pub fn store(&self) -> &Arc<HistoryStore> {
+        &self.store
+    }
+
     /// Start a replacement graph generation without exposing or fabricating graph IDs.
     #[verus_spec(result => ensures root_cursor_matches(*self, result))]
     pub fn root_cursor(&self) -> BatchCursor {
@@ -348,8 +364,9 @@ impl RuleRuntime {
         }
     }
 
-    #[verus_spec(result => ensures constructor_result(result, *template))]
+    #[verus_spec(result => ensures constructor_result(result, *store, *template))]
     pub fn new<L: Limits>(
+        store: &Arc<HistoryStore>,
         template: &junco_core::flat::FlatPair<u64>,
         precompile: bool,
         limits: &mut L,
@@ -382,6 +399,7 @@ impl RuleRuntime {
         let runtime = Self {
             pair,
             cursors,
+            store: Arc::clone(store),
             #[cfg(verus_keep_ghost)]
             snapshots: verus_exec_expr! { Ghost(Map::empty()) },
         };
@@ -393,17 +411,17 @@ impl RuleRuntime {
         reason = "Pinned Verus does not support let-chain expressions"
     )]
     #[verus_spec(result =>
-        requires resume_requires(*old(self), history, *bindings, *stored, target_len),
-        ensures resume_ensures(*old(self), *final(self), result, history, *bindings, *stored, target_len),
+        requires resume_requires(*old(self), *bindings, *stored, target_len),
+        ensures resume_ensures(*old(self), *final(self), result, *bindings, *stored, target_len),
     )]
     pub fn resume_cursor(
         &mut self,
-        history: usize,
         bindings: &Bindings,
         stored: &StoredHistory,
         target_len: usize,
     ) -> BatchCursor {
         proof! { reveal(resume_requires); reveal(resume_ensures); reveal(runtime_wf); }
+        let history = stored.id();
         proof_decl! { let ghost entry = *self; }
         proof! {
             lemma_cursor_cache_observe(self.pair, self.cursors@, self.snapshots@,
@@ -413,8 +431,8 @@ impl RuleRuntime {
         let mut index = 0;
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant index <= self.cursors@.len(),
-                entry == *old(self),
-                self.pair == entry.pair, self.cursors@ == entry.cursors@,
+                entry == *old(self), history == stored.id(),
+                self.pair == entry.pair, self.cursors@ == entry.cursors@, self.store == entry.store,
                 self.snapshots@ == entry.snapshots@.insert((history, stored.revision()), history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored))),
                 cursor_cache_wf(self.pair, self.cursors@, self.snapshots@),
                 self.snapshots@.contains_key((history, stored.revision())),
@@ -461,14 +479,13 @@ impl RuleRuntime {
         reason = "Keep the locked history transaction inputs explicit."
     )]
     #[verus_spec(result =>
-        requires advance_requires(*old(self), *old(cursor), history, *bindings, *stored),
+        requires advance_requires(*old(self), *old(cursor), *bindings, *stored),
         ensures advance_ensures(*old(self), *final(self), *old(cursor), *final(cursor),
-            history, *bindings, *stored, target_len, batch_size, result),
+            *bindings, *stored, target_len, batch_size, result),
     )]
     pub fn advance_cursor<L: Limits>(
         &mut self,
         cursor: &mut BatchCursor,
-        history: usize,
         bindings: &Bindings,
         stored: &StoredHistory,
         target_len: usize,
@@ -477,6 +494,7 @@ impl RuleRuntime {
         world: &mut ObservationWorld,
     ) -> Result<Option<bool>, HistoryError> {
         proof! { reveal(advance_requires); reveal(advance_ensures); reveal(runtime_wf); }
+        let history = stored.id();
         proof_decl! { let ghost entry = self.pair; let ghost entry_cursors = self.cursors@; let ghost start = *cursor; }
         proof! {
             let events = history_store::store::verify::events_view(history_store::history::verify::stored_events(&stored));
@@ -532,7 +550,7 @@ impl RuleRuntime {
         requires cursor_cache_wf(old(self).pair, old(self).cursors@, old(self).snapshots@),
             cursor_matches_snapshot(old(self).pair, cursor, old(self).snapshots@),
         ensures
-        final(self).pair == old(self).pair,
+        final(self).pair == old(self).pair, final(self).store == old(self).store,
         final(self).snapshots@ == old(self).snapshots@,
         cursor_cache_wf(final(self).pair, final(self).cursors@, final(self).snapshots@),
         longer_cached_prefix(old(self).cursors@, cursor) ==> final(self).cursors@ == old(self).cursors@,
@@ -735,14 +753,15 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
-    use alloc::sync::Arc;
     use alloc::vec;
-    use history_store::store::HistoryStore;
-    use junco_core::flat::{FlatHead, FlatPair, FlatRegex};
+    use history_syntax::syntax::Component;
+    use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
     use junco_core::limits::Unmetered;
 
     fn runtime(regex: FlatRegex) -> RuleRuntime {
-        RuleRuntime::new(
+        let store = HistoryStore::global();
+        let runtime = RuleRuntime::new(
+            &store,
             &FlatPair {
                 head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
                 tests: Vec::new(),
@@ -753,7 +772,9 @@ mod tests {
             &mut Unmetered,
             &mut ObservationWorld,
         )
-        .unwrap()
+        .unwrap();
+        assert!(Arc::ptr_eq(runtime.store(), &store));
+        runtime
     }
 
     fn event(store: &HistoryStore) -> Event {
@@ -779,7 +800,7 @@ mod tests {
 
     #[test]
     fn batch_cursor_ends_and_retained_prefix_are_exact() {
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -800,7 +821,6 @@ mod tests {
             let answer = runtime
                 .advance_cursor(
                     &mut cursor,
-                    history.index(),
                     &bindings,
                     &stored,
                     7,
@@ -821,7 +841,7 @@ mod tests {
         });
         assert_eq!(runtime.cursors.entries()[0].consumed, 7);
         assert_eq!(runtime.cursors.entries()[0].residual, latest.residual);
-        let warm = runtime.resume_cursor(history.index(), &bindings, &stored, 7);
+        let warm = runtime.resume_cursor(&bindings, &stored, 7);
         assert_eq!(warm.consumed(), 7);
     }
 
@@ -846,7 +866,7 @@ mod tests {
         assert_eq!(cursor.residual, before.residual);
         assert!(empty.cursors.entries().is_empty());
 
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -867,7 +887,6 @@ mod tests {
             runtime
                 .advance_cursor(
                     &mut cursor,
-                    history.index(),
                     &bindings,
                     &stored,
                     2,
@@ -884,7 +903,6 @@ mod tests {
         assert!(matches!(
             runtime.advance_cursor(
                 &mut cursor,
-                history.index(),
                 &bindings,
                 &stored,
                 2,
@@ -903,7 +921,6 @@ mod tests {
             runtime
                 .advance_cursor(
                     &mut cursor,
-                    history.index(),
                     &bindings,
                     &stored,
                     2,
@@ -931,7 +948,7 @@ mod tests {
                 Err(junco_core::limits::LimitError::MemoryLimitExceeded { usage: 1, limit: 0 })
             }
         }
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -943,7 +960,6 @@ mod tests {
         assert!(matches!(
             runtime.advance_cursor(
                 &mut cursor,
-                0,
                 &Bindings::new([0; 3]),
                 &stored,
                 0,
@@ -960,24 +976,22 @@ mod tests {
 
     #[test]
     fn retained_cursor_lru_is_bounded_and_keeps_recent_histories() {
-        let store = Arc::new(HistoryStore::new());
-        let first = store
-            .new_history(&mut Unmetered, &mut ObservationWorld)
-            .unwrap();
-        assert_eq!(first.index(), 0);
+        let store = HistoryStore::global();
         let mut runtime = runtime(FlatRegex::All);
+        let mut keys = Vec::new();
         for _ in 0..17 {
             let history = store
                 .new_history(&mut Unmetered, &mut ObservationWorld)
                 .unwrap();
             let record = store.history_record(&history).unwrap();
             let stored = record.read();
+            assert_eq!(stored.id(), history.index());
+            keys.push(history.index());
             let mut cursor = runtime.root_cursor();
             assert_eq!(
                 runtime
                     .advance_cursor(
                         &mut cursor,
-                        history.index(),
                         &Bindings::new([0; 3]),
                         &stored,
                         0,
@@ -990,8 +1004,8 @@ mod tests {
             );
         }
         assert_eq!(runtime.cursors.entries().len(), 16);
-        assert_eq!(runtime.cursors.entries()[0].history, 17);
-        assert_eq!(runtime.cursors.entries()[15].history, 2);
+        assert_eq!(runtime.cursors.entries()[0].history, keys[16]);
+        assert_eq!(runtime.cursors.entries()[15].history, keys[1]);
         assert!(
             runtime
                 .cursors
@@ -999,5 +1013,73 @@ mod tests {
                 .iter()
                 .all(|cursor| cursor.bindings == Bindings::new([0; 3]))
         );
+    }
+
+    #[test]
+    fn equal_shape_records_never_share_residuals() {
+        let store = HistoryStore::global();
+        let event = |action: &str| Event {
+            principal: store
+                .intern_principal("alice", &mut Unmetered, &mut ObservationWorld)
+                .unwrap(),
+            action: store
+                .intern_action(action, &mut Unmetered, &mut ObservationWorld)
+                .unwrap(),
+            resource: store
+                .intern_resource("doc", &mut Unmetered, &mut ObservationWorld)
+                .unwrap(),
+        };
+        let read = event("read");
+        let mut runtime = RuleRuntime::new(
+            &store,
+            &FlatPair {
+                head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+                tests: vec![FlatTest::Atom {
+                    field: Component::Action,
+                    term: FlatTerm::Constant(read.action.get()),
+                    positive: true,
+                }],
+                regexes: vec![FlatRegex::Test(0), FlatRegex::Star(0)],
+                root: 1,
+            },
+            false,
+            &mut Unmetered,
+            &mut ObservationWorld,
+        )
+        .unwrap();
+        let mut histories = Vec::new();
+        for (event, expected) in [(read, true), (event("edit"), false)] {
+            let history = store
+                .new_history(&mut Unmetered, &mut ObservationWorld)
+                .unwrap();
+            store
+                .append(&history, &[event], &mut Unmetered, &mut ObservationWorld)
+                .unwrap();
+            histories.push((history, expected));
+        }
+        assert_ne!(histories[0].0.index(), histories[1].0.index());
+        let bindings = Bindings::new([0; 3]);
+        // Cold then warm, in both orders: same length, revision and bindings, distinct keys.
+        for order in [[0, 1], [1, 0], [0, 1], [1, 0]] {
+            for index in order {
+                let (history, expected) = &histories[index];
+                let record = store.history_record(history).unwrap();
+                let stored = record.read();
+                let mut cursor = runtime.resume_cursor(&bindings, &stored, 1);
+                let answer = runtime
+                    .advance_cursor(
+                        &mut cursor,
+                        &bindings,
+                        &stored,
+                        1,
+                        1,
+                        &mut Unmetered,
+                        &mut ObservationWorld,
+                    )
+                    .unwrap();
+                assert_eq!(answer, Some(*expected));
+            }
+        }
+        assert_eq!(runtime.cursors.entries().len(), 2);
     }
 }

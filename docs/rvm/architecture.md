@@ -85,15 +85,16 @@ History policies use the owned Rust DSL in in-tree `src/history-syntax` and shar
 representations/contracts in `junco-core`: the DSL lowers to canonical
 `FlatPair<C>`, constants are encoded once into `FlatPair<u64>`, and
 `history-semantics` supplies the numeric compiler/evaluator for Junco and Regorus.
-The Regorus `Value` frontend builds `FlatPair<String>` directly; it does not
-reconstruct recursive DSL trees or unfold shared DAG nodes. Program tables retain
+Regorus lowers borrowed `Rule<SourceEvent<'_>>` values through core and copies
+their string constants into `FlatPair<String>`. Compiled shared DAG nodes are
+never unfolded. Program tables retain
 the `HistoryTable`/`HistoryTableRule` envelope but import `Component` and `RuleMode`
 from `history-syntax`, and `FlatHead`, `FlatTerm`, `FlatTest`, `FlatRegex`, and
 `FlatPair` from core.
 The v8 source schema, variant/field order, and `HistoryStepParams` are unchanged.
 `Program::validate_limits` uses core's base validation even without `history`.
 
-Regorus owns only the native `Value` parser, `HistoryStep` dispatch and host-limit
+Regorus owns only the borrowed-string compiler adapter, `HistoryStep` dispatch and host-limit
 translation, and the Program-keyed shared table cache retaining `Arc<Program>`.
 The native history store adapter delegates interning and record mutation to
 `history-store`; its public API and cross-VM cache sharing remain unchanged.

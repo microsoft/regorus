@@ -324,13 +324,12 @@ mod tests {
     use super::*;
     use crate::graph::{ArenaStorage, CanonicalStore};
     use crate::store::HistoryStore;
-    use alloc::sync::Arc;
     use junco_core::kernel::Bindings;
     use junco_core::limits::Unmetered;
 
     #[test]
     fn publication_evicts_replaces_and_retains_longer_prefix() -> Result<(), HistoryError> {
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let graph = CanonicalStore::new(ArenaStorage::new()?, &mut ObservationWorld)?;
         let mut cache = CursorCache::new(&mut Unmetered, &mut ObservationWorld)?;
         let mut handles = Vec::new();

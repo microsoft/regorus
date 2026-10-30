@@ -1,6 +1,9 @@
-//! Store-bound typed identities. Numeric histories never re-project retained events.
+//! Scoped typed views: codebooks stay per view; all numeric IDs come from the
+//! process-wide numeric store. Numeric histories never re-project retained events.
 
 use crate::store::Event as NumericEvent;
+use crate::store::HistoryStore;
+use alloc::sync::Arc;
 use core::hash::Hash;
 use history_syntax::Event;
 #[cfg(verus_keep_ghost)]
@@ -63,7 +66,8 @@ impl<K: Copy + Eq + Hash> Codebook<K> {
         Self { values: NativeMap::new(), last: 0 }
     }
 
-    fn intern(&mut self, value: &K, index: usize, domain: &'static str) -> (result: Result<u64, HistoryError>)
+    fn intern(&mut self, value: &K, index: usize, domain: &'static str,
+        numeric_store: &HistoryStore) -> (result: Result<u64, HistoryError>)
         ensures map::key_obligations::<K>() && book_wf(*old(self)) ==> {
             &&& book_wf(*final(self))
             &&& book_entries(*old(self)).is_prefix_of(book_entries(*final(self)))
@@ -80,7 +84,7 @@ impl<K: Copy + Eq + Hash> Codebook<K> {
             return Ok(id);
         }
         // Reuse is checked first, so an exhausted domain still accepts established keys.
-        let id = crate::store::allocate_after(index, domain, self.last)?;
+        let id = numeric_store.allocate_after(index, domain, self.last)?;
         self.values.reserve_one()?;
         self.values.insert_fresh(*value, id);
         self.last = id;
@@ -159,17 +163,25 @@ impl<E: Event> Codebooks<E> {
         (result, Tracked(birth))
     }
 
-    fn allocate_history_id(&mut self) -> (result: Result<usize, HistoryError>)
+    // The local frontier is registration bookkeeping; the process store is the allocation authority.
+    fn allocate_history_id(&mut self, numeric_store: &HistoryStore) -> (result: Result<usize, HistoryError>)
         ensures self_same_books(*old(self), *final(self)),
             final(self).history_resources@ == old(self).history_resources@,
             match result {
-                Ok(id) => id == old(self).next_history && id < usize::MAX
+                Ok(id) => old(self).next_history <= id && 0 < id < usize::MAX
                     && final(self).next_history == id + 1,
-                Err(_) => final(self).next_history == old(self).next_history
-                    && old(self).next_history == usize::MAX,
+                Err(_) => final(self).next_history == old(self).next_history,
             },
     {
-        let id = self.next_history;
+        let frontier = self.next_history;
+        if frontier == usize::MAX {
+            return Err(HistoryError::IdExhausted { domain: "history" });
+        }
+        let last = match frontier.checked_sub(1) {
+            Some(last) => last,
+            None => return Err(HistoryError::invariant("history frontier is zero")),
+        };
+        let id = numeric_store.allocate_history_after(last)?;
         let next = match id.checked_add(1) {
             Some(next) => next,
             None => return Err(HistoryError::IdExhausted { domain: "history" }),
@@ -178,7 +190,8 @@ impl<E: Event> Codebooks<E> {
         Ok(id)
     }
 
-    fn allocate_history_id_for_resource(&mut self, Ghost(location): Ghost<vstd::resource::Loc>,
+    fn allocate_history_id_for_resource(&mut self, numeric_store: &HistoryStore,
+        Ghost(location): Ghost<vstd::resource::Loc>,
         Tracked(prior): Tracked<Option<&HistoryRegistration>>)
         -> (result: Result<(usize, Tracked<HistoryRegistration>), HistoryError>)
         requires registry_wf(*old(self)),
@@ -187,7 +200,7 @@ impl<E: Event> Codebooks<E> {
             final(self).history_resources@.id() == old(self).history_resources@.id(),
             (old(self).history_resources@)@.submap_of((final(self).history_resources@)@),
             match result {
-                Ok((id, registration)) => 0 < id < usize::MAX && id == old(self).next_history
+                Ok((id, registration)) => 0 < id < usize::MAX && old(self).next_history <= id
                     && final(self).next_history == id + 1
                     && (final(self).history_resources@)@ == (old(self).history_resources@)@.insert(id, location)
                     && registration@.id() == old(self).history_resources@.id()
@@ -204,13 +217,13 @@ impl<E: Event> Codebooks<E> {
                 previous.agree(self.history_resources.borrow());
             }
         }
-        let id = self.allocate_history_id()?;
+        let id = self.allocate_history_id(numeric_store)?;
         proof { assert(!resources.contains_key(id)); }
         let tracked registration = self.history_resources.borrow_mut().insert(id, location).persist();
         proof {
             assert forall|previous: usize| (self.history_resources@)@.contains_key(previous)
-                <==> previous < self.next_history by {
-                if previous != id { assert(resources.contains_key(previous) <==> previous < frontier); }
+                implies previous < self.next_history by {
+                if previous != id { assert(resources.contains_key(previous)); }
             }
         }
         Ok((id, Tracked(registration)))
@@ -263,11 +276,13 @@ impl<E: Event> NativeBooks<E> {
     }
 }
 
-/// Three typed coordinate codebooks and a never-reused history-ID allocator.
+/// Three typed coordinate codebooks scoped to this view. Component and history IDs come
+/// from the process-wide numeric store, so views never issue colliding numeric identities.
 /// Share a store with `Arc`; components and events retain their original Rust values.
 pub struct Store<E: Event> {
     pub(crate) id: u64,
     pub(crate) books: NativeBooks<E>,
+    pub(crate) numeric_store: Arc<HistoryStore>,
     #[cfg(verus_keep_ghost)]
     pub(crate) history_registry: Ghost<vstd::resource::Loc>,
 }
@@ -283,7 +298,7 @@ fn allocate_store_id() -> (result: Result<u64, HistoryError>)
 }
 
 impl<E: Event> Store<E> {
-    /// Create an empty owner. Store-ID exhaustion is reported before wrapping.
+    /// Create an empty typed view. Store-ID exhaustion is reported before wrapping.
     pub fn new() -> (result: Result<Self, HistoryError>)
         ensures result matches Ok(store) ==> store_wf(store),
     {
@@ -291,10 +306,18 @@ impl<E: Event> Store<E> {
         let (state, birth) = Codebooks::new(Ghost(id));
         let ghost registry = state.history_resources@.id();
         let books = NativeBooks::new(state, birth);
-        Ok(Self { id, books,
+        Ok(Self { id, books, numeric_store: HistoryStore::global(),
             #[cfg(verus_keep_ghost)]
             history_registry: Ghost(registry),
         })
+    }
+
+    /// Return the process-wide numeric store shared by every typed view and byte history.
+    pub fn numeric_store(&self) -> (result: &Arc<HistoryStore>)
+        ensures *result == numeric_owner(*self),
+            store_wf(*self) ==> *result == crate::store::verify::singleton_store(),
+    {
+        &self.numeric_store
     }
 
     pub(crate) fn id(&self) -> (result: u64)
@@ -325,8 +348,9 @@ impl<E: Event> Store<E> {
         proof { if native_obligations::<E>() { lemma_empty_maps_wf::<E>(); } }
         let ghost owner = self.id;
         let ghost registry = self.history_registry@;
-        self.books.with_books(Ghost(owner), Ghost(empty_maps::<E>()), Ghost(empty_maps::<E>()), Ghost(registry), (),
-            |books: &mut Codebooks<E>, _context: ()| -> (result: Result<(usize, Tracked<HistoryRegistration>), HistoryError>)
+        self.books.with_books(Ghost(owner), Ghost(empty_maps::<E>()), Ghost(empty_maps::<E>()), Ghost(registry),
+            &*self.numeric_store,
+            |books: &mut Codebooks<E>, numeric_store: &HistoryStore| -> (result: Result<(usize, Tracked<HistoryRegistration>), HistoryError>)
                 requires books_acquired(*old(books), owner, registry, empty_maps::<E>(), empty_maps::<E>()),
                 ensures publication_frame(*old(books), *final(books)),
                     result matches Ok((id, registration)) ==> 0 < id < usize::MAX
@@ -334,7 +358,7 @@ impl<E: Event> Store<E> {
                         && registration@.value() == location
                         && match prior { Some(previous) => previous.key() < id, None => true },
             {
-                books.allocate_history_id_for_resource(Ghost(location), Tracked(prior))
+                books.allocate_history_id_for_resource(numeric_store, Ghost(location), Tracked(prior))
             })
     }
 
@@ -365,8 +389,8 @@ impl<E: Event> Store<E> {
     {
         let ghost owner = self.id;
         let ghost registry = self.history_registry@;
-        self.books.with_books(Ghost(owner), Ghost(first), Ghost(second), Ghost(registry), (),
-            |books: &mut Codebooks<E>, _context: ()| -> (output: (Result<NumericEvent, HistoryError>, Ghost<ComponentMaps<E>>))
+        self.books.with_books(Ghost(owner), Ghost(first), Ghost(second), Ghost(registry), &*self.numeric_store,
+            |books: &mut Codebooks<E>, numeric_store: &HistoryStore| -> (output: (Result<NumericEvent, HistoryError>, Ghost<ComponentMaps<E>>))
                 requires books_acquired(*old(books), owner, registry, first, second),
                 ensures publication_frame(*old(books), *final(books)),
                     output.1@ == books_maps(*final(books)),
@@ -376,7 +400,7 @@ impl<E: Event> Store<E> {
             {
                 let ghost initial = books_maps(*books);
                 let result = {
-                    let mut encoder = BorrowedEncoder { books: &mut books.components };
+                    let mut encoder = BorrowedEncoder { books: &mut books.components, numeric_store };
                     encoder.encode_event(event)
                 };
                 let ghost maps = books_maps(*books);
@@ -411,8 +435,9 @@ impl<E: Event> Store<E> {
     {
         let ghost owner = self.id;
         let ghost registry = self.history_registry@;
-        self.books.with_books(Ghost(owner), Ghost(prior), Ghost(prior), Ghost(registry), (limits, world),
-            |books: &mut Codebooks<E>, context: (&mut L, &mut ObservationWorld)|
+        self.books.with_books(Ghost(owner), Ghost(prior), Ghost(prior), Ghost(registry),
+            (limits, world, &*self.numeric_store),
+            |books: &mut Codebooks<E>, context: (&mut L, &mut ObservationWorld, &HistoryStore)|
                 -> (output: (Result<FlatPair<u64>, HistoryError>, Ghost<ComponentMaps<E>>))
                 requires books_acquired(*old(books), owner, registry, prior, prior),
                 ensures publication_frame(*old(books), *final(books)),
@@ -424,11 +449,11 @@ impl<E: Event> Store<E> {
                                 junco_core::verify::flatten::component_equality::<E>())
                             && junco_core::verify::encoding::constants_in_domain(*source, domain::<E>())),
             {
-                let (limits, world) = context;
+                let (limits, world, numeric_store) = context;
                 let ghost initial = books_maps(*books);
                 proof { if native_obligations::<E>() { lemma_books_maps_wf(*books); } }
                 let result = {
-                    let mut encoder = BorrowedEncoder { books: &mut books.components };
+                    let mut encoder = BorrowedEncoder { books: &mut books.components, numeric_store };
                     lower_flat(source, &mut encoder, limits, world)
                 };
                 let ghost maps = books_maps(*books);
@@ -443,9 +468,10 @@ impl<E: Event> Store<E> {
     }
 }
 
-/// A scoped encoder borrows the three codebooks, never a graph or history record.
+/// A scoped encoder borrows the three codebooks and the process numeric allocator only.
 pub(crate) struct BorrowedEncoder<'a, E: Event> {
     pub(crate) books: &'a mut ComponentBooks<E>,
+    pub(crate) numeric_store: &'a HistoryStore,
 }
 
 impl<'a, E: Event> FlatEncoder<ComponentValue<E>> for BorrowedEncoder<'a, E> {
@@ -472,9 +498,9 @@ impl<'a, E: Event> FlatEncoder<ComponentValue<E>> for BorrowedEncoder<'a, E> {
         let ghost initial_books = *self.books;
         validate_component(field, value)?;
         let result = match value {
-            ComponentValue::Principal(value) => self.books.principal.intern(value, 0, "principal"),
-            ComponentValue::Action(value) => self.books.action.intern(value, 1, "action"),
-            ComponentValue::Resource(value) => self.books.resource.intern(value, 2, "resource"),
+            ComponentValue::Principal(value) => self.books.principal.intern(value, 0, "principal", self.numeric_store),
+            ComponentValue::Action(value) => self.books.action.intern(value, 1, "action", self.numeric_store),
+            ComponentValue::Resource(value) => self.books.resource.intern(value, 2, "resource", self.numeric_store),
         };
         proof {
             if native_obligations::<E>() && initial_wf {
@@ -626,9 +652,11 @@ pub mod verify {
     pub uninterp spec fn snapshot_published<E: Event>(registry: vstd::resource::Loc, maps: ComponentMaps<E>) -> bool;
 
     pub open(super) spec fn store_id<E: Event>(store: Store<E>) -> u64 { store.id }
+    pub open(super) spec fn numeric_owner<E: Event>(store: Store<E>) -> Arc<HistoryStore> { store.numeric_store }
     pub open(super) spec fn store_wf<E: Event>(store: Store<E>) -> bool {
         store.id > 0 && mutex_valid(store.books, store.id, store.history_registry@)
             && snapshot_published::<E>(store.history_registry@, empty_maps::<E>())
+            && store.numeric_store == crate::store::verify::singleton_store()
     }
 
     pub open(super) spec fn registry_id<E: Event>(store: &Store<E>) -> vstd::resource::Loc {
@@ -701,9 +729,11 @@ pub mod verify {
     pub(crate) open(crate) spec fn self_same_books<E: Event>(before: Codebooks<E>, after: Codebooks<E>) -> bool {
         before.components == after.components && before.owner@ == after.owner@
     }
+    // Keys may be sparse: other views and byte records share the process allocator.
     pub(crate) open(crate) spec fn registry_wf<E: Event>(books: Codebooks<E>) -> bool {
-        books.next_history > 0 && (books.history_resources@)@[0] == books.history_resources@.id()
-            && forall|id: usize| (books.history_resources@)@.contains_key(id) <==> id < books.next_history
+        books.next_history > 0 && (books.history_resources@)@.contains_key(0)
+            && (books.history_resources@)@[0] == books.history_resources@.id()
+            && forall|id: usize| (books.history_resources@)@.contains_key(id) ==> id < books.next_history
     }
     pub(crate) uninterp spec fn mutex_valid<E: Event>(mutex: NativeBooks<E>, owner: u64, registry: vstd::resource::Loc) -> bool;
 
@@ -845,6 +875,7 @@ mod tests {
 
     #[test]
     fn failed_allocation_preserves_reuse_and_collisions_are_not_identity() {
+        let numeric = HistoryStore::global();
         let mut book = Codebook::new();
         let first = Key {
             identity: 7,
@@ -859,30 +890,40 @@ mod tests {
             payload: 1,
         };
         assert_eq!(equivalent.payload, 2);
-        let id = book.intern(&first, 0, "principal").unwrap();
-        assert_eq!(book.intern(&equivalent, 0, "principal").unwrap(), id);
+        let id = book.intern(&first, 0, "principal", &numeric).unwrap();
+        assert_eq!(
+            book.intern(&equivalent, 0, "principal", &numeric).unwrap(),
+            id
+        );
         // No shared-counter ID exceeds this book's newest one, so only reuse can succeed.
         book.last = u64::MAX;
         assert!(matches!(
-            book.intern(&other, 0, "principal"),
+            book.intern(&other, 0, "principal", &numeric),
             Err(HistoryError::Invariant { .. })
         ));
         assert_eq!(book.last, u64::MAX);
-        assert_eq!(book.intern(&equivalent, 0, "principal").unwrap(), id);
+        assert_eq!(
+            book.intern(&equivalent, 0, "principal", &numeric).unwrap(),
+            id
+        );
         assert_eq!(book.values.lookup(&other), None);
         let mut book = Codebook::new();
-        let first_action = book.intern(&first, 1, "action").unwrap();
-        assert!(book.intern(&other, 1, "action").unwrap() > first_action);
-        assert_eq!(book.intern(&equivalent, 1, "action").unwrap(), first_action);
+        let first_action = book.intern(&first, 1, "action", &numeric).unwrap();
+        assert!(book.intern(&other, 1, "action", &numeric).unwrap() > first_action);
+        assert_eq!(
+            book.intern(&equivalent, 1, "action", &numeric).unwrap(),
+            first_action
+        );
     }
 
     #[test]
     fn history_exhaustion_is_checked_and_does_not_change_codebooks() {
+        // The shared counter's MAX boundary is covered by `store::next_history_id` on locals.
+        let numeric = HistoryStore::global();
         let (mut books, _birth) = Codebooks::<TestEvent>::new(Ghost::assume_new());
-        books.next_history = usize::MAX - 1;
-        assert_eq!(books.allocate_history_id().unwrap(), usize::MAX - 1);
+        books.next_history = usize::MAX;
         assert!(matches!(
-            books.allocate_history_id(),
+            books.allocate_history_id(&numeric),
             Err(HistoryError::IdExhausted { domain: "history" })
         ));
         assert_eq!(books.next_history, usize::MAX);
@@ -951,6 +992,7 @@ mod tests {
             let mut books = store.books.inner.lock();
             let mut encoder = BorrowedEncoder {
                 books: &mut books.components,
+                numeric_store: &store.numeric_store,
             };
             let value = Key {
                 identity: 8,
@@ -988,15 +1030,20 @@ mod tests {
     fn typed_numeric_events_never_name_byte_store_identities() {
         use junco_core::limits::Unmetered;
         use junco_core::observation::ObservationWorld;
-        let byte = alloc::sync::Arc::new(crate::store::HistoryStore::new());
-        let before = byte
-            .intern_principal("alice", &mut Unmetered, &mut ObservationWorld)
+        let byte = HistoryStore::global();
+        let fresh = |path: &str| {
+            byte.intern_principal(path, &mut Unmetered, &mut ObservationWorld)
+                .unwrap()
+        };
+        let before = fresh("typed-vs-byte/before");
+        let action = byte
+            .intern_action("typed-vs-byte/edit", &mut Unmetered, &mut ObservationWorld)
             .unwrap();
-        byte.intern_action("edit", &mut Unmetered, &mut ObservationWorld)
-            .unwrap();
-        byte.intern_resource("doc", &mut Unmetered, &mut ObservationWorld)
+        let resource = byte
+            .intern_resource("typed-vs-byte/doc", &mut Unmetered, &mut ObservationWorld)
             .unwrap();
         let typed = alloc::sync::Arc::new(Store::<TestEvent>::new().unwrap());
+        assert!(alloc::sync::Arc::ptr_eq(typed.numeric_store(), &byte));
         let history = crate::history::History::from_events(
             typed,
             [TestEvent(Key {
@@ -1006,19 +1053,99 @@ mod tests {
         )
         .unwrap();
         let exported = history.numeric().as_slice()[0];
-        let after = byte
-            .intern_principal("bob", &mut Unmetered, &mut ObservationWorld)
-            .unwrap();
+        let after = fresh("typed-vs-byte/after");
+        // Fresh per-test names: the shared counter orders these three issuances.
         assert!(before.get() < exported.principal.get());
         assert!(exported.principal.get() < after.get());
+        assert_ne!(exported.action.get(), action.get());
+        assert_ne!(exported.resource.get(), resource.get());
         let target = byte
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
-        assert!(matches!(
-            byte.append(&target, &[exported], &mut Unmetered, &mut ObservationWorld),
-            Err(HistoryError::UnknownId { .. })
-        ));
-        assert_eq!(byte.history_record(&target).unwrap().read().len(), 0);
+        let valid = NumericEvent {
+            principal: before,
+            action,
+            resource,
+        };
+        byte.append(&target, &[valid], &mut Unmetered, &mut ObservationWorld)
+            .unwrap();
+        for invalid in [
+            NumericEvent {
+                principal: exported.principal,
+                ..valid
+            },
+            NumericEvent {
+                action: exported.action,
+                ..valid
+            },
+            NumericEvent {
+                resource: exported.resource,
+                ..valid
+            },
+        ] {
+            assert!(matches!(
+                byte.append(
+                    &target,
+                    &[valid, invalid],
+                    &mut Unmetered,
+                    &mut ObservationWorld
+                ),
+                Err(HistoryError::UnknownId { .. })
+            ));
+            let record = byte.history_record(&target).unwrap();
+            let record = record.read();
+            assert_eq!(record.as_slice(), &[valid]);
+            assert_eq!(record.revision(), 0);
+        }
+    }
+
+    #[test]
+    // The test proves non-Send components work; `History` still takes its store by `Arc`.
+    #[allow(clippy::arc_with_non_send_sync)]
+    fn borrowed_non_send_components_stay_scoped() {
+        use core::cell::Cell;
+        #[derive(Copy, Clone, Debug)]
+        struct Borrowed<'a> {
+            id: u8,
+            cell: &'a Cell<u8>,
+        }
+        impl PartialEq for Borrowed<'_> {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for Borrowed<'_> {}
+        impl Hash for Borrowed<'_> {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.id.hash(state);
+            }
+        }
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        struct BorrowedEvent<'a>(Borrowed<'a>);
+        impl<'a> Event for BorrowedEvent<'a> {
+            type Principal = Borrowed<'a>;
+            type Action = u8;
+            type Resource = u8;
+            fn principal(self) -> Borrowed<'a> {
+                self.0
+            }
+            fn action(self) -> u8 {
+                1
+            }
+            fn resource(self) -> u8 {
+                2
+            }
+        }
+        let cell = Cell::new(3);
+        let event = BorrowedEvent(Borrowed { id: 9, cell: &cell });
+        let store = alloc::sync::Arc::new(Store::new().unwrap());
+        let mut history = crate::history::History::from_events(store, [event]).unwrap();
+        history.push(event).unwrap();
+        cell.set(4);
+        assert_eq!(history.len(), 2);
+        assert!(history.iter().all(|event| event.0.cell.get() == 4));
+        let numeric = history.numeric().as_slice();
+        assert_eq!(numeric[0], numeric[1]);
     }
 
     #[test]
@@ -1032,14 +1159,15 @@ mod tests {
             identity: 8,
             payload: 2,
         };
-        let id = book.intern(&first, 2, "resource").unwrap();
+        let numeric = HistoryStore::global();
+        let id = book.intern(&first, 2, "resource", &numeric).unwrap();
         let _failure = junco_core::observation::fail_reservations_after(0);
         assert!(matches!(
-            book.intern(&other, 2, "resource"),
+            book.intern(&other, 2, "resource", &numeric),
             Err(HistoryError::AllocationFailed)
         ));
         assert_eq!(book.last, id);
-        assert_eq!(book.intern(&first, 2, "resource").unwrap(), id);
+        assert_eq!(book.intern(&first, 2, "resource", &numeric).unwrap(), id);
         assert_eq!(book.values.lookup(&other), None);
     }
 

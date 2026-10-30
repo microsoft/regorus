@@ -49,6 +49,7 @@ pub proof fn lemma_stored_history_view(stored: StoredHistory)
 pub struct StoredHistory {
     pub(crate) events: Vec<Event>,
     pub(crate) revision: u64,
+    pub(crate) id: usize,
 }
 
 #[verus_verify]
@@ -56,6 +57,7 @@ impl StoredHistory {
     #[cfg(verus_keep_ghost)]
     verus! {
         pub closed spec fn spec_revision(&self) -> u64 { self.revision }
+        pub closed spec fn spec_id(&self) -> usize { self.id }
     }
 
     #[verus_spec(result => ensures result@ == verify::stored_events(self),
@@ -87,16 +89,25 @@ impl StoredHistory {
         self.revision
     }
 
-    #[verus_spec(result => ensures result.events@ == Seq::<Event>::empty(), result.revision == 0)]
-    pub(crate) const fn new() -> Self {
+    /// Return the immutable process-wide key that names this record in cursor caches.
+    #[cfg_attr(verus_keep_ghost, verifier::when_used_as_spec(spec_id))]
+    #[verus_spec(result => ensures result == self.spec_id())]
+    pub const fn id(&self) -> usize {
+        self.id
+    }
+
+    #[verus_spec(result => ensures result.events@ == Seq::<Event>::empty(), result.revision == 0,
+        result.id == id)]
+    pub(crate) const fn new(id: usize) -> Self {
         Self {
             events: Vec::new(),
             revision: 0,
+            id,
         }
     }
 
     #[verus_spec(result =>
-        ensures final(self).revision == old(self).revision,
+        ensures final(self).revision == old(self).revision, final(self).id == old(self).id,
             result is Err ==> final(self).events@ == old(self).events@,
             result is Ok ==> final(self).events@ == old(self).events@ + events@,
             junco_core::verify::history_specs::history_mutation(old(self)@, final(self)@),
@@ -126,7 +137,8 @@ impl StoredHistory {
     }
 
     #[verus_spec(result =>
-        ensures result is Err ==> final(self)@ == old(self)@
+        ensures final(self).id == old(self).id,
+            result is Err ==> final(self)@ == old(self)@
                 && final(self).events@ == old(self).events@ && final(self).revision == old(self).revision,
             junco_core::verify::history_specs::history_mutation(old(self)@, final(self)@),
             result is Ok && len < old(self).events@.len() ==> final(self).revision == old(self).revision + 1
@@ -173,7 +185,6 @@ pub struct History<E: TypedEvent> {
     pub(crate) events: Vec<E>,
     pub(crate) numeric: StoredHistory,
     pub(crate) store: Arc<Store<E>>,
-    pub(crate) id: usize,
     #[cfg(verus_keep_ghost)]
     pub(crate) maps: Ghost<books::ComponentMaps<E>>,
     #[cfg(verus_keep_ghost)]
@@ -193,14 +204,15 @@ fn share_store<E: TypedEvent>(store: &Arc<Store<E>>) -> Arc<Store<E>> {
 impl<E: TypedEvent> History<E> {
     #[cfg(verus_keep_ghost)]
     verus! {
-        pub closed spec fn spec_id(&self) -> usize { self.id }
+        pub closed spec fn spec_id(&self) -> usize { self.numeric.id }
         pub closed spec fn spec_numeric(&self) -> &StoredHistory { &self.numeric }
     }
 
+    /// Returns the numeric record's process-wide key.
     #[cfg_attr(verus_keep_ghost, verifier::when_used_as_spec(spec_id))]
     #[verus_spec(result => ensures result == self.spec_id())]
     pub const fn id(&self) -> usize {
-        self.id
+        self.numeric.id
     }
 
     #[cfg_attr(verus_keep_ghost, verifier::when_used_as_spec(spec_numeric))]
@@ -209,16 +221,19 @@ impl<E: TypedEvent> History<E> {
         &self.numeric
     }
 
-    /// Creates an empty history in `store`, with a fresh local identity.
+    /// Creates an empty history in `store`, with a fresh process-wide key.
     #[verus_spec(result =>
         requires books::store_wf(*store),
         ensures result matches Ok(history) ==> history_wf(history) && empty_history(history, store),
     )]
     pub fn new(store: Arc<Store<E>>) -> Result<Self, HistoryError> {
         proof! { books::lemma_empty_snapshot(&*store); }
-        let numeric = StoredHistory::new();
-        proof! { reveal(<StoredHistory as View>::view); }
-        proof_decl! { let tracked lifecycle = Lifecycle::new(numeric@); }
+        proof_decl! {
+            let ghost empty = junco_core::verify::history_specs::HistoryStateView {
+                events: Seq::empty(), revision: 0,
+            };
+            let tracked lifecycle = Lifecycle::new(empty);
+        }
         #[cfg(verus_keep_ghost)]
         let (id, registration) = store.allocate_history_id_for_resource(
             verus_exec_expr! { Ghost(lifecycle.id()) },
@@ -226,14 +241,17 @@ impl<E: TypedEvent> History<E> {
         )?;
         #[cfg(not(verus_keep_ghost))]
         let id = store.allocate_history_id()?;
+        let numeric = StoredHistory::new(id);
         proof! {
+            reveal(<StoredHistory as View>::view);
+            assert(crate::store::verify::events_view(numeric.events@) =~= Seq::empty());
+            assert(numeric@ == empty);
             if books::native_obligations::<E>() { books::lemma_empty_maps_wf::<E>(); }
         }
         Ok(Self {
             events: Vec::new(),
             numeric,
             store,
-            id,
             #[cfg(verus_keep_ghost)]
             maps: verus_exec_expr! { Ghost(books::empty_maps::<E>()) },
             #[cfg(verus_keep_ghost)]
@@ -410,7 +428,7 @@ impl<E: TypedEvent> History<E> {
         ensures history_wf(*final(self)), rollback_result(*old(self), *final(self), checkpoint, result),
     )]
     pub fn rollback(&mut self, checkpoint: Checkpoint) -> Result<(), HistoryError> {
-        if checkpoint.store_id != self.store.id() || checkpoint.history != self.id {
+        if checkpoint.store_id != self.store.id() || checkpoint.history != self.numeric.id {
             return Err(HistoryError::WrongCheckpointOwner);
         }
         if checkpoint.len > self.events.len() {
@@ -420,7 +438,7 @@ impl<E: TypedEvent> History<E> {
     }
 
     /// Copies raw and numeric events without invoking user projections or `Clone`.
-    /// The fork shares codebooks, but has a fresh identity and revision zero.
+    /// The fork shares codebooks, but has a fresh key and revision zero.
     #[verus_spec(result =>
         requires history_wf(*self),
         ensures result matches Ok(history) ==> history_wf(history) && clone_result(*self, history),
@@ -440,24 +458,28 @@ impl<E: TypedEvent> History<E> {
     ) -> Result<Self, HistoryError> {
         let mut events = Vec::new();
         allocation(world.try_reserve_vec_exact(&mut events, self.events.len()))?;
-        let mut numeric = StoredHistory::new();
-        allocation(world.try_reserve_vec_exact(&mut numeric.events, self.numeric.events.len()))?;
+        let mut numeric_events = Vec::new();
+        allocation(world.try_reserve_vec_exact(&mut numeric_events, self.numeric.events.len()))?;
         limits.enforce_memory()?;
         let mut index = 0;
         #[cfg_attr(verus_keep_ghost, verus_spec(invariant index <= self.events@.len(),
             events@ == self.events@.take(index as int),
-            numeric.events@ == self.numeric.events@.take(index as int), numeric.revision == 0,
+            numeric_events@ == self.numeric.events@.take(index as int),
             history_wf(*self),
             decreases self.events@.len() - index))]
         while index < self.events.len() {
             limits.checkpoint()?;
             events.push(self.events[index]);
-            numeric.events.push(self.numeric.events[index]);
+            numeric_events.push(self.numeric.events[index]);
             index += 1;
         }
         limits.enforce_memory()?;
-        proof! { reveal(<StoredHistory as View>::view); }
-        proof_decl! { let tracked lifecycle = Lifecycle::new(numeric@); }
+        proof_decl! {
+            let ghost copied = junco_core::verify::history_specs::HistoryStateView {
+                events: crate::store::verify::events_view(numeric_events@), revision: 0,
+            };
+            let tracked lifecycle = Lifecycle::new(copied);
+        }
         #[cfg(verus_keep_ghost)]
         let (id, registration) = self.store.allocate_history_id_for_resource(
             verus_exec_expr! { Ghost(lifecycle.id()) },
@@ -465,11 +487,17 @@ impl<E: TypedEvent> History<E> {
         )?;
         #[cfg(not(verus_keep_ghost))]
         let id = self.store.allocate_history_id()?;
+        // Move the copied buffer into the fresh record; no event is copied twice.
+        let numeric = StoredHistory {
+            events: numeric_events,
+            revision: 0,
+            id,
+        };
+        proof! { reveal(<StoredHistory as View>::view); }
         let clone = Self {
             events,
             numeric,
             store: share_store(&self.store),
-            id,
             #[cfg(verus_keep_ghost)]
             maps: self.maps,
             #[cfg(verus_keep_ghost)]
@@ -482,7 +510,7 @@ impl<E: TypedEvent> History<E> {
             assert(clone.numeric.events@ == self.numeric.events@);
             assert(clone.numeric.revision == 0);
             assert(clone.store == self.store);
-            assert(clone.id > self.id);
+            assert(clone.numeric.id > self.numeric.id);
             assert(history_wf(clone));
             assert(clone_result(*self, clone));
         }
@@ -517,7 +545,7 @@ impl<E: TypedEvent> History<E> {
     pub fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             store_id: self.store.id(),
-            history: self.id,
+            history: self.numeric.id,
             len: self.events.len(),
         }
     }
@@ -588,6 +616,7 @@ pub mod verify {
         ensures books::store_wf(*store_of(history)),
             history.registration_model().id() == books::registry_id::<E>(&*store_of(history)),
             history.registration_model().key() == history.spec_id(),
+            history.spec_id() == history.spec_numeric().spec_id(),
             raw_events(history).len() == stored_events(history.spec_numeric()).len(),
             history.lifecycle_model().wf(), history.lifecycle_model().state() == (*history.spec_numeric())@,
             history.lifecycle_model().id() == history.registration_model().value(),
@@ -702,7 +731,7 @@ pub mod verify {
 
     pub open(super) spec fn checkpoint_matches<E: TypedEvent>(history: History<E>, checkpoint: Checkpoint) -> bool {
         checkpoint.store_id == books::store_id(*history.store)
-            && checkpoint.history == history.id && checkpoint.len == history.events@.len()
+            && checkpoint.history == history.numeric.id && checkpoint.len == history.events@.len()
     }
 
     pub open(super) spec fn rollback_result<E: TypedEvent>(before: History<E>, after: History<E>,
@@ -710,9 +739,9 @@ pub mod verify {
         owner_frame(before, after)
         && (result is Err ==> state_frame(before, after))
         && (result is Ok ==> truncate_result(before, after, checkpoint.len, result))
-        && (checkpoint.store_id != books::store_id(*before.store) || checkpoint.history != before.id
+        && (checkpoint.store_id != books::store_id(*before.store) || checkpoint.history != before.numeric.id
             ==> result == Err(HistoryError::WrongCheckpointOwner))
-        && (checkpoint.store_id == books::store_id(*before.store) && checkpoint.history == before.id
+        && (checkpoint.store_id == books::store_id(*before.store) && checkpoint.history == before.numeric.id
             && checkpoint.len > before.events@.len() ==> result == Err(HistoryError::CheckpointBeyondHistory))
     }
 
@@ -730,7 +759,7 @@ pub mod verify {
     pub open(super) spec fn history_wf<E: TypedEvent>(history: History<E>) -> bool {
         books::store_wf(*history.store)
         && history.registration@.id() == books::registry_id::<E>(&*history.store)
-        && history.registration@.key() == history.id
+        && history.registration@.key() == history.numeric.id
         && history.events@.len() == history.numeric.events@.len()
         && history.lifecycle@.wf() && history.lifecycle@.state() == history.numeric@
         && history.lifecycle@.id() == history.registration@.value()
@@ -752,7 +781,7 @@ pub mod verify {
     }
 
     pub open(super) spec fn owner_frame<E: TypedEvent>(before: History<E>, after: History<E>) -> bool {
-        after.store == before.store && after.id == before.id
+        after.store == before.store && after.numeric.id == before.numeric.id
             && after.lifecycle@.id() == before.lifecycle@.id()
     }
 
@@ -792,14 +821,14 @@ pub mod verify {
     }
 
     pub open(super) spec fn clone_result<E: TypedEvent>(before: History<E>, after: History<E>) -> bool {
-        history_wf(after) && after.store == before.store && after.id > before.id
+        history_wf(after) && after.store == before.store && after.numeric.id > before.numeric.id
         && after.events@ == before.events@ && after.numeric.events@ == before.numeric.events@
         && after.numeric.revision == 0 && after.maps@ == before.maps@
     }
 
     pub proof fn lemma_clone_raw_word<E: TypedEvent>(before: History<E>, after: History<E>)
         requires clone_result(before, after),
-        ensures raw_word(after) == raw_word(before),
+        ensures raw_word(after) == raw_word(before), after.spec_id() != before.spec_id(),
     {}
 
     pub proof fn lemma_correspondence_extends<E: TypedEvent>(
@@ -846,8 +875,12 @@ mod tests {
         }
     }
 
+    fn fresh_key() -> usize {
+        HistoryStore::global().allocate_history_after(0).unwrap()
+    }
+
     fn event() -> Event {
-        let store = HistoryStore::new();
+        let store = HistoryStore::global();
         Event {
             principal: store
                 .intern_principal("alice", &mut Unmetered, &mut ObservationWorld)
@@ -864,7 +897,7 @@ mod tests {
     #[test]
     fn append_memory_failures_preserve_sequence_and_revision() {
         let event = event();
-        let mut stored = StoredHistory::new();
+        let mut stored = StoredHistory::new(fresh_key());
         stored
             .append_events(&[event], &mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -891,7 +924,7 @@ mod tests {
     #[test]
     fn truncate_revision_exhaustion_fails_before_mutation() {
         let event = event();
-        let mut stored = StoredHistory::new();
+        let mut stored = StoredHistory::new(fresh_key());
         stored
             .append_events(&[event, event], &mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -977,7 +1010,7 @@ mod typed_tests {
 
         let clone = original.try_clone().unwrap();
         assert_eq!(clone, original);
-        assert_ne!(clone.id, original.id);
+        assert_ne!(clone.id(), original.id());
         assert_eq!(clone.numeric.revision, 0);
         assert_eq!(clone.numeric.events, original.numeric.events);
         assert!(Arc::ptr_eq(clone.store(), original.store()));
@@ -1016,16 +1049,59 @@ mod typed_tests {
     }
 
     #[test]
-    fn every_constructor_allocates_a_distinct_identity() {
-        let store = store();
-        let first = History::new(store.clone()).unwrap();
-        let second = History::new(store.clone()).unwrap();
-        let from_events = History::from_events(store.clone(), [read(Actor(1))]).unwrap();
-        let clone = from_events.try_clone().unwrap();
-        let ids = [first.id, second.id, from_events.id, clone.id];
-        for (index, id) in ids.iter().enumerate() {
-            assert!(!ids[index + 1..].contains(id));
+    fn byte_and_typed_records_share_one_key_space() {
+        use crate::store::HistoryStore;
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        struct Other(u8);
+        impl TypedEvent for Other {
+            type Principal = u8;
+            type Action = u8;
+            type Resource = u8;
+            fn principal(self) -> u8 {
+                self.0
+            }
+            fn action(self) -> u8 {
+                self.0
+            }
+            fn resource(self) -> u8 {
+                self.0
+            }
         }
+        let bytes = HistoryStore::global();
+        let byte_first = bytes
+            .new_history(&mut Unmetered, &mut ObservationWorld)
+            .unwrap();
+        let byte_second = bytes
+            .new_history(&mut Unmetered, &mut ObservationWorld)
+            .unwrap();
+        let view = store();
+        let first = History::new(view.clone()).unwrap();
+        let second = History::new(view.clone()).unwrap();
+        let from_events = History::from_events(view.clone(), [read(Actor(1))]).unwrap();
+        let fork = from_events.try_clone().unwrap();
+        let other_view = History::new(store()).unwrap();
+        let other_event =
+            History::from_events(Arc::new(Store::new().unwrap()), [Other(1)]).unwrap();
+        assert!(Arc::ptr_eq(view.numeric_store(), &bytes));
+        assert!(Arc::ptr_eq(other_event.store().numeric_store(), &bytes));
+        assert_eq!(
+            bytes.history_record(&byte_first).unwrap().read().id(),
+            byte_first.index()
+        );
+        assert_eq!(fork.numeric().id(), fork.id());
+        let keys = [
+            byte_first.index(),
+            byte_second.index(),
+            first.id(),
+            second.id(),
+            from_events.id(),
+            fork.id(),
+            other_view.id(),
+            other_event.id(),
+        ];
+        let distinct: alloc::collections::BTreeSet<_> = keys.iter().copied().collect();
+        assert_eq!(distinct.len(), keys.len());
+        assert!(keys.iter().all(|key| *key > 0));
     }
 
     struct FailLimits {
@@ -1162,7 +1238,7 @@ mod typed_tests {
         let clone = history.try_clone().unwrap();
         assert_eq!(clone.numeric.revision, 0);
         assert_eq!(clone.numeric.events, numeric);
-        assert_ne!(clone.id, history.id);
+        assert_ne!(clone.id(), history.id());
     }
 }
 

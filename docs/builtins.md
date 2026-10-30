@@ -252,9 +252,10 @@ The canonical owned DSL and Event trait belong to in-tree `src/history-syntax`;
 `junco-core` owns flat source validation/lowering and shared contracts,
 `history-store` owns interning and history transactions, and `history-semantics`
 owns numeric compilation/evaluation and generic policies. Regorus retains the
-native `Value` parser, VM dispatch/limit adapter, and shared Program-keyed table
+borrowed-string compiler adapter, VM dispatch/limit adapter, and shared Program-keyed table
 cache. Its public `HistoryStore::{new, intern_principal, intern_action,
-intern_resource, new_history, append, truncate, len}` APIs are unchanged. Store's
+intern_resource, new_history, append, truncate, len}` APIs keep their signatures;
+every wrapper shares one process-wide numeric store (`history_store::store::HistoryStore::global()`). Store's
 generic typed `Store<E>`/`History<E>` APIs are separate, not replacement Regorus
 entrypoints. Native no_std + alloc remains supported. `std` and Semantics' `cache`
 do not imply `runtime`; Regorus `history` enables Store and Semantics runtime,
@@ -263,17 +264,20 @@ dev-only integration probes.
 
 ### Native boundary
 
-Create an application-owned `Arc<HistoryStore>` from
-`regorus::languages::history_table`. Intern exact raw UTF-8 paths separately with
+Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Each
+wrapper owns only its Program-keyed table cache; identities and histories live in
+one process-wide store, so wrappers accept each other's handles and IDs and are
+not a tenant isolation boundary. Intern exact raw UTF-8 paths separately with
 `intern_principal`, `intern_action`, and `intern_resource`. The resulting opaque
 eight-byte `Principal`, `Action`, and `Resource` IDs form an `Event` containing
 exactly those three coordinates. Case, slashes, embedded NULs, and distinct
 Unicode encodings remain distinct; there is no normalization or ancestry match.
-IDs are not recycled, and foreign-owner IDs are rejected.
+Interned paths live for the process; IDs are not recycled. IDs issued only by a
+typed `Store<E>` view are not byte-domain members and are rejected.
 
 Use `store.new_history()`, then `store.append(&history, &events)`,
 `store.truncate(&history, len)`, and `store.len(&history)`. Cloned handles share
-events. Compile cold policy JSON with `compile(&table, batch_size)`; zero is an
+events. Compile ordered Rust rules with `compile(&rules, batch_size)`; zero is an
 error. After `vm.load_program(program)`, call `vm.attach_history(store.clone())`
 and `vm.set_history_input(history, request)`, then
 `vm.execute_entry_point_by_name("decide")`. The result is `Value::Null` for grant
@@ -281,37 +285,64 @@ or the zero-based first violated rule index. Decisions never append the candidat
 Repeated executions retain staged input. Loading another program cancels an old
 execution and requires explicit reattachment and restaging.
 
-### Cold policy grammar
+### Rust policy DSL
 
-The table envelope is `{"rules": [{"mode": "require"|"forbid", "request": …,
-"history": …}]}`. Rules are ordered: require rejects a matching request when the
-history is outside its language; forbid rejects when it is inside. Nonmatching
-request heads skip the rule.
+Policies are authored only with the Rust DSL re-exported from
+`regorus::languages::history_table`: `Rule`, `RuleMode`, `Head`,
+`ComponentPattern`, `TestExpr`, `AtomPattern`, `Comparison`, and `RegexExpr`.
+`compile` borrows `&[Rule<SourceEvent<'_>>]`; constants are `&str` values copied
+exactly into the compiled program, so the source strings and rules may be
+dropped after compilation. There is no JSON policy grammar.
 
-The request is `{"any":true}` or `{"object":{…}}` containing only `principal`,
-`action`, and `resource`. Each coordinate is omitted/a wildcard, `{"any":true}`,
-`{"value":"raw path"}`, or `{"var":"name"}`. Variables belong to one domain;
-reusing a name across domains is invalid. No nested patterns, arbitrary Value
-constants, optional runtime coordinates, or container matching remain.
+```rust
+use regorus::languages::history_table::*;
 
-Tests are Boolean literals, `{"and":[test,…]}`, `{"or":[test,…]}`, or
-`{"eq":{"path":["action"],"term":{"value":"edit"}}}` (also `neq`). Paths
-select exactly one of the three coordinates. A term is a string constant or
-`{"var":"name"}` declared by the head in that same domain. Empty conjunction
+let rule = Rule::new(
+    RuleMode::Require,
+    Head::new(
+        ComponentPattern::variable("actor"),
+        ComponentPattern::constant("release"),
+        ComponentPattern::variable("doc"),
+    ),
+    RegexExpr::concat([
+        RegexExpr::all(),
+        RegexExpr::test(TestExpr::and([
+            TestExpr::atom(Comparison::Eq, AtomPattern::Principal(ComponentPattern::variable("actor"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::Action(ComponentPattern::constant("edit"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::Resource(ComponentPattern::variable("doc"))),
+        ])),
+        RegexExpr::all(),
+    ]),
+);
+let program = compile(&[rule], 256)?;
+```
+
+Rules are ordered: require rejects a matching request when the history is outside
+its language; forbid rejects when it is inside. Nonmatching request heads skip the
+rule. Each head coordinate is a constant or a variable; use a distinct unused
+variable for a wildcard. Variables belong to one coordinate; reusing a name across
+coordinates or referencing an unbound name fails with
+`HistoryTableError::InvalidRule { index, source }` carrying a typed `CompileError`.
+
+Tests are `TestExpr::{True, False, And, Or}` and component `Eq`/`Neq` atoms whose
+term is a constant or a head variable from the same coordinate. Empty conjunction
 is true; empty disjunction is false. Every runtime coordinate is present, so
 equality and disequality are complements.
 
-| History expression | Complete-history language |
+| `RegexExpr` | Complete-history language |
 |---|---|
-| `{"empty":true}` | No histories |
-| `{"all":true}` | All finite histories |
-| `{"epsilon":true}` | Empty history only |
-| `{"test":test}` | One event satisfying the test |
-| `{"concat":[regex,…]}` | Chronological concatenation; empty is epsilon |
-| `{"union":[regex,…]}` | Union; empty is empty language |
-| `{"intersect":[regex,…]}` | Intersection; empty is universal |
-| `{"star":regex}` | Kleene star |
-| `{"not":regex}` | Complement over complete finite histories |
+| `Empty` | No histories |
+| `All` | All finite histories |
+| `Epsilon` | Empty history only |
+| `Test(test)` | One event satisfying the test |
+| `Concat([...])` | Chronological concatenation; empty is epsilon |
+| `Union([...])` | Union; empty is empty language |
+| `Intersect([...])` | Intersection; empty is universal |
+| `Star(regex)` | Kleene star |
+| `Not(regex)` | Complement over complete finite histories |
+
+Compilation is iterative, but dropping a very deep owned rule is recursive; use
+`Rule::dispose()` for such trees.
 
 ### Batching, sharing, and errors
 
@@ -326,7 +357,8 @@ that removes events changes the revision; resume or finalization reports typed
 `HistoryChanged`, rather than restarting or publishing a stale grant. Attachment
 or staged-input changes during an active/suspended execution fail.
 
-The owner shares bounded table/graph and retained-prefix caches across VMs;
+Each wrapper shares bounded table/graph and retained-prefix caches across VMs;
+retained prefixes are keyed by each record's immutable process-wide history ID;
 active continuations pin their graph instance. Eviction or graph replacement
 cannot reinterpret a pinned residual. Successful batches publish their cursor
 only after fallible batch work completes; errors preserve the batch-entry cursor.
@@ -354,7 +386,7 @@ and publication receipts. Native Eq/Hash coherence and stable user projections
 are conditional obligations; separating these crates is not a universal proof of
 external Event implementations, including root Junco's native `LockEvent` adapter.
 Narrow map/container leaves, synchronization, allocation, clocks, arena destruction,
-Regorus `Value` parsing, and native facade/diagnostic callbacks remain explicit
+Regorus's borrowed-string constant ownership pass, and native facade/diagnostic callbacks remain explicit
 trust boundaries. Regorus's byte encoder is a native adapter that delegates UTF-8
 interning to `history-store`, not a universally verified external component encoder.
 

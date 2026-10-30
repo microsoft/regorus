@@ -28,11 +28,21 @@ use vstd::prelude::*;
 
 const HISTORY_CACHE_CAPACITY: usize = 16;
 
-/// Application-owned synchronized identities, histories, and shared compiled tables.
-#[derive(Debug, Default)]
+/// A Program-keyed table cache over the process-wide history store. Identities and
+/// histories are shared by every wrapper; wrapper construction is not an isolation boundary.
+#[derive(Debug)]
 pub struct HistoryStore {
     core: Arc<CoreHistoryStore>,
     tables: Mutex<Vec<TableCacheEntry>>,
+}
+
+impl Default for HistoryStore {
+    fn default() -> Self {
+        Self {
+            core: CoreHistoryStore::global(),
+            tables: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 /// A retained program Arc prevents pointer identity from being reused while cached.
@@ -108,7 +118,7 @@ impl FlatEncoder<String> for ByteEncoder<'_> {
 }
 
 impl HistoryStore {
-    /// Create an empty owner. Share it through an `Arc` before creating histories.
+    /// Create an empty table cache over the process-wide identities and histories.
     pub fn new() -> Self {
         Self::default()
     }
@@ -183,7 +193,7 @@ impl HistoryStore {
                 &mut limits,
                 &mut world,
             )?;
-            let runtime = RuleRuntime::new(&template, true, &mut limits, &mut world)?;
+            let runtime = RuleRuntime::new(&self.core, &template, true, &mut limits, &mut world)?;
             rules.push(HistoryRuleSlot {
                 mode: rule.mode,
                 template,
@@ -223,7 +233,7 @@ impl HistoryStore {
         Ok(runtime)
     }
 
-    /// Create a history whose lifetime is retained by its core owner.
+    /// Create a history kept alive by its handles and read-only records.
     pub fn new_history(self: &Arc<Self>) -> Result<HistoryHandle, HistoryError> {
         self.core.new_history(
             &mut RegorusLimits {
@@ -317,49 +327,66 @@ mod tests {
         );
     }
 
+    fn typed_only_event() -> Event {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        struct Typed;
+        impl history_syntax::Event for Typed {
+            type Principal = ();
+            type Action = ();
+            type Resource = ();
+            fn principal(self) {}
+            fn action(self) {}
+            fn resource(self) {}
+        }
+        let store = Arc::new(history_store::Store::<Typed>::new().unwrap());
+        let history = history_store::History::from_events(store, [Typed]).unwrap();
+        history.numeric().as_slice()[0]
+    }
+
     #[test]
     fn ownership_atomic_append_and_revisions() {
         let store = Arc::new(HistoryStore::new());
-        let foreign = Arc::new(HistoryStore::new());
+        let peer = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
         let valid = event(&store);
-        let foreign_event = event(&foreign);
-        assert!(matches!(
-            foreign.len(&history),
-            Err(HistoryError::WrongHistoryOwner)
-        ));
-        assert!(matches!(
-            foreign.append(&history, &[]),
-            Err(HistoryError::WrongHistoryOwner)
-        ));
-        assert!(matches!(
-            store.append(&history, &[valid, foreign_event]),
-            Err(HistoryError::UnknownId {
-                domain: "principal",
-                ..
-            })
-        ));
-        assert_eq!(store.len(&history).unwrap(), 0);
-        assert!(matches!(
-            store.validate_event(&Event {
-                action: foreign_event.action,
-                ..valid
-            }),
-            Err(HistoryError::UnknownId {
-                domain: "action",
-                ..
-            })
-        ));
-        assert!(matches!(
-            store.validate_event(&Event {
-                resource: foreign_event.resource,
-                ..valid
-            }),
-            Err(HistoryError::UnknownId {
-                domain: "resource",
-                ..
-            })
-        ));
+        // Wrappers are caches over one process-wide identity and history store.
+        assert_eq!(event(&peer), valid);
+        peer.append(&history, &[]).unwrap();
+        assert_eq!(peer.len(&history).unwrap(), 0);
+        let typed = typed_only_event();
+        for (invalid, domain) in [
+            (
+                Event {
+                    principal: typed.principal,
+                    ..valid
+                },
+                "principal",
+            ),
+            (
+                Event {
+                    action: typed.action,
+                    ..valid
+                },
+                "action",
+            ),
+            (
+                Event {
+                    resource: typed.resource,
+                    ..valid
+                },
+                "resource",
+            ),
+        ] {
+            assert!(matches!(
+                store.append(&history, &[valid, invalid]),
+                Err(HistoryError::UnknownId { domain: actual, .. }) if actual == domain
+            ));
+            assert!(matches!(
+                peer.validate_event(&invalid),
+                Err(HistoryError::UnknownId { domain: actual, .. }) if actual == domain
+            ));
+            assert_eq!(store.len(&history).unwrap(), 0);
+        }
         store.append(&history, &[valid, valid]).unwrap();
         assert_eq!(store.len(&history.clone()).unwrap(), 2);
         let record = store.history_record(&history).unwrap();

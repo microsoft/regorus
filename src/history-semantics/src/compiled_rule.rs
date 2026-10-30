@@ -321,7 +321,8 @@ impl<E: Event> CompiledRule<E> {
         let lowered = lower_rule(&store, &rule, limits, world);
         rule.dispose();
         let (mode, template, _maps) = lowered?;
-        let runtime = RuleRuntime::new(&template, precompile, limits, world)?;
+        let runtime =
+            RuleRuntime::new(store.numeric_store(), &template, precompile, limits, world)?;
         proof! { reveal(crate::runtime::verify::constructor_result); }
         proof_decl! { let tracked observations = Map::<(usize, u64), ObservedHistory>::tracked_empty(); }
         Ok(Self {
@@ -399,7 +400,6 @@ impl<E: Event> CompiledRule<E> {
         let first = decide_template(
             &mut self.runtime,
             &self.template,
-            history.id(),
             &request,
             history.numeric(),
             limits,
@@ -415,8 +415,13 @@ impl<E: Event> CompiledRule<E> {
         let result = match first {
             Err(HistoryError::GraphLimit { .. }) => {
                 // A failed replacement must not discard the old committed cursor cache.
-                let mut replacement =
-                    RuleRuntime::new(&self.template, cfg!(feature = "cache"), limits, world)?;
+                let mut replacement = RuleRuntime::new(
+                    self.store.numeric_store(),
+                    &self.template,
+                    cfg!(feature = "cache"),
+                    limits,
+                    world,
+                )?;
                 proof! { reveal(crate::runtime::verify::constructor_result); }
                 proof_decl! { let tracked mut replacement_observations = Map::<(usize, u64), ObservedHistory>::tracked_empty(); }
                 proof! {
@@ -437,7 +442,6 @@ impl<E: Event> CompiledRule<E> {
                 let answer = decide_template(
                     &mut replacement,
                     &self.template,
-                    history.id(),
                     &request,
                     history.numeric(),
                     limits,
@@ -474,20 +478,20 @@ impl<E: Event> CompiledRule<E> {
 #[verus_spec(result =>
     requires decision::runtime_represents(*template, *old(runtime)),
         junco_core::flat::verify::structural_wf(*template),
-        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, history,
+        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, stored.id(),
             stored.revision(), history_store::store::verify::events_view(raw::stored_events(&stored))),
     ensures decision::runtime_represents(*template, *final(runtime)),
         crate::progress::verify::pair_frame(old(runtime).pair, final(runtime).pair),
+        final(runtime).spec_store() == old(runtime).spec_store(),
         result is Err ==> final(runtime).cursors@ == old(runtime).cursors@,
         final(runtime).snapshots@ == old(runtime).snapshots@
-            || final(runtime).snapshots@ == old(runtime).snapshots@.insert((history, stored.revision()),
+            || final(runtime).snapshots@ == old(runtime).snapshots@.insert((stored.id(), stored.revision()),
                 history_store::store::verify::events_view(raw::stored_events(&stored))),
         numeric_result(*template, *request, *stored, result),
 )]
 pub(crate) fn decide_template<L: Limits>(
     runtime: &mut RuleRuntime,
     template: &FlatPair<u64>,
-    history: usize,
     request: &history_store::store::Event,
     stored: &StoredHistory,
     limits: &mut L,
@@ -503,7 +507,7 @@ pub(crate) fn decide_template<L: Limits>(
         reveal(crate::runtime::verify::resume_requires);
         reveal(crate::runtime::verify::runtime_wf);
     }
-    let result = decide_numeric(runtime, history, &bindings, stored, limits, world);
+    let result = decide_numeric(runtime, &bindings, stored, limits, world);
     proof! {
         decision::lemma_runtime_frame(*template, entry, *runtime);
     }
@@ -529,13 +533,14 @@ pub(crate) fn decide_template<L: Limits>(
 #[verus_verify]
 #[verus_spec(result =>
     requires crate::runtime::verify::runtime_wf(*old(runtime)),
-        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, history, stored.revision(),
+        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, stored.id(), stored.revision(),
             history_store::store::verify::events_view(raw::stored_events(&stored))),
         junco_core::verify::history_specs::event_wf(bindings@),
     ensures crate::runtime::verify::runtime_wf(*final(runtime)),
         crate::progress::verify::pair_frame(old(runtime).pair, final(runtime).pair),
+        final(runtime).spec_store() == old(runtime).spec_store(),
         result is Err ==> final(runtime).cursors@ == old(runtime).cursors@,
-        final(runtime).snapshots@ == old(runtime).snapshots@.insert((history, stored.revision()),
+        final(runtime).snapshots@ == old(runtime).snapshots@.insert((stored.id(), stored.revision()),
             history_store::store::verify::events_view(raw::stored_events(&stored))),
         result matches Ok(answer) ==> answer == junco_core::kernel::verify::regex_lang(
             old(runtime).pair.store.graph(), bindings@, old(runtime).pair.root@,
@@ -543,7 +548,6 @@ pub(crate) fn decide_template<L: Limits>(
 )]
 pub(crate) fn decide_numeric<L: Limits>(
     runtime: &mut RuleRuntime,
-    history: usize,
     bindings: &junco_core::kernel::Bindings,
     stored: &StoredHistory,
     limits: &mut L,
@@ -559,15 +563,14 @@ pub(crate) fn decide_numeric<L: Limits>(
     }
     proof_decl! { let ghost initial_snapshots = runtime.snapshots@; }
     let target = stored.len();
-    let mut cursor = runtime.resume_cursor(history, bindings, stored, target);
+    let mut cursor = runtime.resume_cursor(bindings, stored, target);
     proof! {
-        assert(runtime.snapshots@ == initial_snapshots.insert((history, stored.revision()),
+        assert(runtime.snapshots@ == initial_snapshots.insert((stored.id(), stored.revision()),
             history_store::store::verify::events_view(raw::stored_events(&stored))));
     }
     proof_decl! { let ghost start = cursor; }
     let result = runtime.advance_cursor(
         &mut cursor,
-        history,
         bindings,
         stored,
         target,
@@ -576,7 +579,7 @@ pub(crate) fn decide_numeric<L: Limits>(
         world,
     );
     proof! {
-        let key = (history, stored.revision());
+        let key = (stored.id(), stored.revision());
         let events = history_store::store::verify::events_view(raw::stored_events(&stored));
         assert(runtime.snapshots@ == initial_snapshots.insert(key, events).insert(key, events));
         assert(initial_snapshots.insert(key, events).insert(key, events) =~= initial_snapshots.insert(key, events));
@@ -802,7 +805,6 @@ mod tests {
             decide_template(
                 &mut compiled.runtime,
                 &compiled.template,
-                history.id(),
                 &request,
                 history.numeric(),
                 &mut Unmetered,

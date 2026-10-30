@@ -4,18 +4,19 @@
 
 use history_semantics::CompiledRule;
 use history_store::{History, Store};
-use history_syntax::{
-    AtomPattern, Comparison, Component, ComponentPattern, Head, RegexExpr, Rule, RuleMode, TestExpr,
-};
+use history_syntax::Component;
 use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
+use junco_core::observation::fail_reservations_after;
 use regorus::languages::history_table::{
-    compile, Event, HistoryError, HistoryHandle, HistoryStore, HistoryTableError,
+    compile, AtomPattern, Comparison, CompileError, ComponentPattern, Event, Head, HistoryError,
+    HistoryHandle, HistoryStore, HistoryTableError, RegexExpr, Rule, RuleMode, SourceEvent,
+    TestExpr,
 };
 use regorus::rvm::program::{DeserializationResult, Program};
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
 use regorus::rvm::Instruction;
 use regorus::{Engine, Value};
-use serde_json::{json, Value as Json};
+use serde_json::Value as Json;
 use std::sync::Arc;
 
 const MODES: [ExecutionMode; 2] = [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable];
@@ -68,62 +69,54 @@ impl Fixture {
     }
 }
 
-fn table(rules: Vec<Json>, batch_size: u32) -> Arc<Program> {
-    let rule_count = rules.len();
-    let program = compile(&json!({"rules": rules}).into(), batch_size).unwrap();
-    assert_eq!(program.instructions.len(), rule_count + 2);
-    assert_eq!(program.entry_points.get("decide"), Some(&0));
-    for index in 0..rule_count {
-        let Instruction::HistoryStep { params_index } = program.instructions[index] else {
-            panic!("expected one HISTORY_STEP per ordered rule");
-        };
-        let params = &program.instruction_data.history_step_params[usize::from(params_index)];
-        assert_eq!(params.table, 0);
-        assert_eq!(usize::from(params.rule), index);
-        assert_eq!(params.batch_size, batch_size);
-    }
-    program
+fn table(rules: Vec<Rule<SourceEvent<'_>>>, batch_size: u32) -> Arc<Program> {
+    compile(&rules, batch_size).unwrap()
 }
 
-fn rule(mode: &str, request: Json, history: Json) -> Json {
-    json!({"mode": mode, "request": request, "history": history})
-}
-
-fn comparison(op: &str, field: &str, term: Json) -> Json {
-    json!({(op): {"path": [field], "term": term}})
-}
-
-fn constant(field: &str, value: &str) -> Json {
-    comparison("eq", field, json!({"value": value}))
+fn any_head() -> Head<SourceEvent<'static>> {
+    Head::new(
+        ComponentPattern::variable("_principal"),
+        ComponentPattern::variable("_action"),
+        ComponentPattern::variable("_resource"),
+    )
 }
 
 fn expected(index: Option<usize>) -> Value {
     index.map_or(Value::Null, Value::from)
 }
 
-fn prior_edit_rule() -> Json {
-    rule(
-        "require",
-        json!({"object": {
-            "principal": {"var": "actor"},
-            "action": {"value": "release"},
-            "resource": {"var": "resource"}
-        }}),
-        json!({"concat": [
-            {"all": true},
-            {"test": {"and": [
-                comparison("eq", "principal", json!({"var": "actor"})),
-                constant("action", "edit"),
-                comparison("eq", "resource", json!({"var": "resource"}))
-            ]}},
-            {"all": true}
-        ]}),
+fn prior_edit_rule<'a>(release: &'a str, edit: &'a str) -> Rule<SourceEvent<'a>> {
+    Rule::new(
+        RuleMode::Require,
+        Head::new(
+            ComponentPattern::variable("actor"),
+            ComponentPattern::constant(release),
+            ComponentPattern::variable("resource"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant(edit)),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("resource")),
+                ),
+            ])),
+            RegexExpr::All,
+        ]),
     )
 }
 
 #[test]
 fn prior_edit_requires_same_principal_and_resource_without_appending_candidate() {
-    let program = table(vec![prior_edit_rule()], 256);
+    let program = table(vec![prior_edit_rule("release", "edit")], 256);
     for mode in MODES {
         let mut f = Fixture::new(&program, mode);
         let edit = event(&f.store, "alice", "edit", "doc");
@@ -147,7 +140,7 @@ fn prior_edit_requires_same_principal_and_resource_without_appending_candidate()
 
 #[test]
 fn cached_prefixes_preserve_history_revision_and_binding_semantics() {
-    let program = table(vec![prior_edit_rule()], 1);
+    let program = table(vec![prior_edit_rule("release", "edit")], 1);
     for mode in MODES {
         let store = Arc::new(HistoryStore::new());
         let mut a = Fixture::with_store(&program, mode, store.clone());
@@ -200,32 +193,94 @@ fn cached_prefixes_preserve_history_revision_and_binding_semantics() {
     }
 }
 
-fn approval_rule() -> Json {
-    let same_resource = comparison("eq", "resource", json!({"var": "resource"}));
-    let no_edit = json!({"star": {"test": {"or": [
-        comparison("neq", "resource", json!({"var": "resource"})),
-        comparison("neq", "action", json!({"value": "edit"}))
-    ]}}});
-    rule(
-        "require",
-        json!({"object": {
-            "principal": {"var": "actor"},
-            "action": {"value": "release"},
-            "resource": {"var": "resource"}
-        }}),
-        json!({"concat": [
-            {"all": true},
-            {"test": {"and": [
-                same_resource.clone(), constant("action", "edit"),
-                comparison("eq", "principal", json!({"var": "actor"}))
-            ]}},
+#[test]
+fn wrappers_share_histories_without_sharing_residuals() {
+    let program = table(vec![prior_edit_rule("release", "edit")], 1);
+    for mode in MODES {
+        let peer = Arc::new(HistoryStore::new());
+        // The VM caches tables in its own wrapper; histories and requests come from `peer`.
+        let mut f = Fixture::new(&program, mode);
+        let alice_edit = event(&peer, "alice", "edit", "doc");
+        let bob_edit = event(&peer, "bob", "edit", "doc");
+        let alice_release = event(&peer, "alice", "release", "doc");
+        let bob_release = event(&peer, "bob", "release", "doc");
+        let other_release = event(&peer, "alice", "release", "other");
+        let history = peer.new_history().unwrap();
+        let interleaved = peer.new_history().unwrap();
+        let mut decide = |history: &HistoryHandle, request: Event| {
+            f.vm.set_history_input(history.clone(), request).unwrap();
+            f.vm.execute_entry_point_by_name("decide").unwrap()
+        };
+        let deny = Value::from(0usize);
+        assert_eq!(decide(&history, alice_release), deny);
+        // Equal lengths, revisions and bindings: only the record key separates residuals.
+        peer.append(&history, &[alice_edit]).unwrap();
+        peer.append(&interleaved, &[bob_edit]).unwrap();
+        for _ in 0..2 {
+            assert_eq!(decide(&history, alice_release), Value::Null);
+            assert_eq!(decide(&interleaved, alice_release), deny);
+            assert_eq!(decide(&history, bob_release), deny);
+            assert_eq!(decide(&interleaved, bob_release), Value::Null);
+            assert_eq!(decide(&history, other_release), deny);
+        }
+        peer.truncate(&history, 0).unwrap();
+        peer.append(&history, &[bob_edit]).unwrap();
+        assert_eq!(decide(&history, alice_release), deny);
+        assert_eq!(decide(&history, bob_release), Value::Null);
+        assert_eq!(peer.len(&history).unwrap(), 1);
+        assert_eq!(peer.len(&interleaved).unwrap(), 1);
+    }
+}
+
+fn approval_rule() -> Rule<SourceEvent<'static>> {
+    let same_resource = TestExpr::atom(
+        Comparison::Eq,
+        AtomPattern::Resource(ComponentPattern::variable("resource")),
+    );
+    let no_edit = RegexExpr::star(RegexExpr::test(TestExpr::or([
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Resource(ComponentPattern::variable("resource")),
+        ),
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Action(ComponentPattern::constant("edit")),
+        ),
+    ])));
+    Rule::new(
+        RuleMode::Require,
+        Head::new(
+            ComponentPattern::variable("actor"),
+            ComponentPattern::constant("release"),
+            ComponentPattern::variable("resource"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                same_resource.clone(),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("edit")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+            ])),
             no_edit.clone(),
-            {"test": {"and": [
-                same_resource, constant("action", "approve"),
-                comparison("neq", "principal", json!({"var": "actor"}))
-            ]}},
-            no_edit
-        ]}),
+            RegexExpr::test(TestExpr::and([
+                same_resource,
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("approve")),
+                ),
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                ),
+            ])),
+            no_edit,
+        ]),
     )
 }
 
@@ -265,28 +320,44 @@ fn approval_must_follow_edit_be_other_actor_and_not_be_stale() {
     }
 }
 
-fn lock_rule(action: &str, setter: &str, changes: &[&str]) -> Json {
-    let unchanged: Vec<_> = changes
-        .iter()
-        .map(|c| comparison("neq", "action", json!({"value": c})))
-        .collect();
-    rule(
-        "forbid",
-        json!({"object": {
-            "principal": {"var": "p"}, "action": {"value": action}, "resource": {"var": "r"}
-        }}),
-        json!({"concat": [
-            {"all": true},
-            {"test": {"and": [
-                comparison("eq", "resource", json!({"var": "r"})),
-                constant("action", setter),
-                comparison("neq", "principal", json!({"var": "p"}))
-            ]}},
-            {"star": {"test": {"or": [
-                comparison("neq", "resource", json!({"var": "r"})),
-                {"and": unchanged}
-            ]}}}
-        ]}),
+fn lock_rule<'a>(action: &'a str, setter: &'a str, changes: &[&'a str]) -> Rule<SourceEvent<'a>> {
+    let unchanged = TestExpr::and(changes.iter().map(|&change| {
+        TestExpr::atom(
+            Comparison::Neq,
+            AtomPattern::Action(ComponentPattern::constant(change)),
+        )
+    }));
+    Rule::new(
+        RuleMode::Forbid,
+        Head::new(
+            ComponentPattern::variable("p"),
+            ComponentPattern::constant(action),
+            ComponentPattern::variable("r"),
+        ),
+        RegexExpr::concat([
+            RegexExpr::All,
+            RegexExpr::test(TestExpr::and([
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant(setter)),
+                ),
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Principal(ComponentPattern::variable("p")),
+                ),
+            ])),
+            RegexExpr::star(RegexExpr::test(TestExpr::or([
+                TestExpr::atom(
+                    Comparison::Neq,
+                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                ),
+                unchanged,
+            ]))),
+        ]),
     )
 }
 
@@ -408,20 +479,24 @@ fn require_forbid_order_returns_first_violated_rule() {
     let programs = [
         table(
             vec![
-                rule("require", json!({"any": true}), json!({"empty": true})),
-                rule("forbid", json!({"any": true}), json!({"all": true})),
+                Rule::new(RuleMode::Require, any_head(), RegexExpr::Empty),
+                Rule::new(RuleMode::Forbid, any_head(), RegexExpr::All),
             ],
             256,
         ),
         table(
             vec![
-                rule(
-                    "forbid",
-                    json!({"object": {"action": {"value": "skip"}}}),
-                    json!({"all": true}),
+                Rule::new(
+                    RuleMode::Forbid,
+                    Head::new(
+                        ComponentPattern::variable("_principal"),
+                        ComponentPattern::constant("skip"),
+                        ComponentPattern::variable("_resource"),
+                    ),
+                    RegexExpr::All,
                 ),
-                rule("require", json!({"any": true}), json!({"empty": true})),
-                rule("forbid", json!({"any": true}), json!({"all": true})),
+                Rule::new(RuleMode::Require, any_head(), RegexExpr::Empty),
+                Rule::new(RuleMode::Forbid, any_head(), RegexExpr::All),
             ],
             256,
         ),
@@ -462,30 +537,19 @@ enum Regex {
 }
 
 type WordEvent = [usize; 3];
-const FIELDS: [&str; 3] = ["principal", "action", "resource"];
+const IDS: [&str; 3] = ["id0", "id1", "id2"];
 const VARIABLES: [&str; 3] = ["p", "a", "r"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct TypedWord(WordEvent);
-
-impl history_syntax::Event for TypedWord {
-    type Principal = usize;
-    type Action = usize;
-    type Resource = usize;
-
-    fn principal(self) -> usize {
-        self.0[0]
-    }
-    fn action(self) -> usize {
-        self.0[1]
-    }
-    fn resource(self) -> usize {
-        self.0[2]
+fn source_event(word: WordEvent) -> SourceEvent<'static> {
+    SourceEvent {
+        principal: IDS[word[0]],
+        action: IDS[word[1]],
+        resource: IDS[word[2]],
     }
 }
 
 impl Test {
-    fn owned(&self) -> TestExpr<TypedWord> {
+    fn owned(&self) -> TestExpr<SourceEvent<'static>> {
         match self {
             Self::Bool(true) => TestExpr::True,
             Self::Bool(false) => TestExpr::False,
@@ -498,7 +562,7 @@ impl Test {
                 let component = if *variable {
                     ComponentPattern::variable(VARIABLES[*field])
                 } else {
-                    ComponentPattern::constant(*literal)
+                    ComponentPattern::constant(IDS[*literal])
                 };
                 TestExpr::Atom {
                     comparison: if *unequal {
@@ -532,36 +596,10 @@ impl Test {
             Test::Or(children) => children.iter().any(|t| t.matches(event, binding)),
         }
     }
-
-    fn source(&self) -> Json {
-        match self {
-            Test::Bool(value) => json!(value),
-            Test::Compare {
-                field,
-                unequal,
-                variable,
-                literal,
-            } => comparison(
-                if *unequal { "neq" } else { "eq" },
-                FIELDS[*field],
-                if *variable {
-                    json!({"var": VARIABLES[*field]})
-                } else {
-                    json!({"value": format!("id{literal}")})
-                },
-            ),
-            Test::And(children) => {
-                json!({"and": children.iter().map(Test::source).collect::<Vec<_>>()})
-            }
-            Test::Or(children) => {
-                json!({"or": children.iter().map(Test::source).collect::<Vec<_>>()})
-            }
-        }
-    }
 }
 
 impl Regex {
-    fn owned(&self) -> RegexExpr<TypedWord> {
+    fn owned(&self) -> RegexExpr<SourceEvent<'static>> {
         match self {
             Self::Empty => RegexExpr::Empty,
             Self::All => RegexExpr::All,
@@ -646,26 +684,6 @@ impl Regex {
                 }
                 Regex::Union(alternatives)
             }
-        }
-    }
-
-    fn source(&self) -> Json {
-        match self {
-            Regex::Empty => json!({"empty": true}),
-            Regex::All => json!({"all": true}),
-            Regex::Epsilon => json!({"epsilon": true}),
-            Regex::Test(test) => json!({"test": test.source()}),
-            Regex::Union(children) => {
-                json!({"union": children.iter().map(Regex::source).collect::<Vec<_>>()})
-            }
-            Regex::Concat(children) => {
-                json!({"concat": children.iter().map(Regex::source).collect::<Vec<_>>()})
-            }
-            Regex::Intersect(children) => {
-                json!({"intersect": children.iter().map(Regex::source).collect::<Vec<_>>()})
-            }
-            Regex::Star(inner) => json!({"star": inner.source()}),
-            Regex::Not(inner) => json!({"not": inner.source()}),
         }
     }
 }
@@ -769,12 +787,14 @@ fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
     for regex in corpus {
         for batch_size in BATCHES {
             let program = table(
-                vec![rule(
-                    "require",
-                    json!({"object": {
-                        "principal": {"var": "p"}, "action": {"var": "a"}, "resource": {"var": "r"}
-                    }}),
-                    regex.source(),
+                vec![Rule::new(
+                    RuleMode::Require,
+                    Head::new(
+                        ComponentPattern::variable("p"),
+                        ComponentPattern::variable("a"),
+                        ComponentPattern::variable("r"),
+                    ),
+                    regex.owned(),
                 )],
                 batch_size,
             );
@@ -821,8 +841,8 @@ fn assert_shared_decision(
     regex: &Regex,
     mode: RuleMode,
     fixture: &mut Fixture,
-    compiled: &mut CompiledRule<TypedWord>,
-    history: &History<TypedWord>,
+    compiled: &mut CompiledRule<SourceEvent<'static>>,
+    history: &History<SourceEvent<'static>>,
     word: &[WordEvent],
     binding: WordEvent,
 ) {
@@ -840,7 +860,7 @@ fn assert_shared_decision(
     for _ in 0..2 {
         assert_eq!(
             compiled
-                .accepts_history(history, &TypedWord(binding))
+                .accepts_history(history, &source_event(binding))
                 .unwrap(),
             Some(inside),
             "owned DSL: {regex:?} {word:?} {binding:?} {mode:?}"
@@ -848,7 +868,7 @@ fn assert_shared_decision(
         assert_eq!(
             fixture.decide(request).unwrap(),
             expected(violation.then_some(0)),
-            "JSON frontend: {regex:?} {word:?} {binding:?} {mode:?}"
+            "history table RVM: {regex:?} {word:?} {binding:?} {mode:?}"
         );
         assert_eq!(fixture.store.len(&fixture.history).unwrap(), word.len());
         assert_eq!(history.len(), word.len());
@@ -856,21 +876,20 @@ fn assert_shared_decision(
 }
 
 #[test]
-fn junco_dsl_and_history_table_frontends_agree() {
+fn dsl_semantics_and_history_table_rvm_agree() {
     let (corpus, alphabet, words) = oracle_corpus_and_words();
     for regex in corpus {
         for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
             for batch_size in BATCHES {
                 let program = table(
-                    vec![rule(
-                        match rule_mode {
-                            RuleMode::Require => "require",
-                            RuleMode::Forbid => "forbid",
-                        },
-                        json!({"object": {
-                            "principal": {"var": "p"}, "action": {"var": "a"}, "resource": {"var": "r"}
-                        }}),
-                        regex.source(),
+                    vec![Rule::new(
+                        rule_mode,
+                        Head::new(
+                            ComponentPattern::variable("p"),
+                            ComponentPattern::variable("a"),
+                            ComponentPattern::variable("r"),
+                        ),
+                        regex.owned(),
                     )],
                     batch_size,
                 );
@@ -916,7 +935,7 @@ fn junco_dsl_and_history_table_frontends_agree() {
                                 binding,
                             );
                             for e in word {
-                                history.push(TypedWord(*e)).unwrap();
+                                history.push(source_event(*e)).unwrap();
                                 fixture
                                     .store
                                     .append(
@@ -950,7 +969,7 @@ fn junco_dsl_and_history_table_frontends_agree() {
                                     binding,
                                 );
                                 let replacement = alphabet.iter().position(|e| e != last).unwrap();
-                                history.push(TypedWord(alphabet[replacement])).unwrap();
+                                history.push(source_event(alphabet[replacement])).unwrap();
                                 fixture
                                     .store
                                     .append(&fixture.history, &[ids[replacement]])
@@ -984,14 +1003,14 @@ fn junco_dsl_and_history_table_frontends_agree() {
     for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
         for batch_size in BATCHES {
             let program = table(
-                vec![rule(
-                    match rule_mode {
-                        RuleMode::Require => "require",
-                        RuleMode::Forbid => "forbid",
-                    },
-                    json!({"object": {"principal": {"var": "p"}, "action": {"value": "id1"},
-                    "resource": {"var": "r"}}}),
-                    regex.source(),
+                vec![Rule::new(
+                    rule_mode,
+                    Head::new(
+                        ComponentPattern::variable("p"),
+                        ComponentPattern::constant(IDS[1]),
+                        ComponentPattern::variable("r"),
+                    ),
+                    regex.owned(),
                 )],
                 batch_size,
             );
@@ -1004,7 +1023,7 @@ fn junco_dsl_and_history_table_frontends_agree() {
                         rule_mode,
                         Head::new(
                             ComponentPattern::variable("p"),
-                            ComponentPattern::constant(1usize),
+                            ComponentPattern::constant(IDS[1]),
                             ComponentPattern::variable("r"),
                         ),
                         regex.owned(),
@@ -1016,7 +1035,7 @@ fn junco_dsl_and_history_table_frontends_agree() {
                     fixture.replace(&[]);
                     history.truncate(0).unwrap();
                     for e in word {
-                        history.push(TypedWord(e)).unwrap();
+                        history.push(source_event(e)).unwrap();
                         let recorded = event(&fixture.store, "id1", "id1", "id1");
                         fixture.store.append(&fixture.history, &[recorded]).unwrap();
                     }
@@ -1024,7 +1043,7 @@ fn junco_dsl_and_history_table_frontends_agree() {
                     for _ in 0..2 {
                         assert_eq!(
                             compiled
-                                .accepts_history(&history, &TypedWord([1, 2, 1]))
+                                .accepts_history(&history, &source_event([1, 2, 1]))
                                 .unwrap(),
                             None
                         );
@@ -1060,11 +1079,7 @@ fn assert_flat_epsilon_language(source: FlatPair<String>, nodes: usize, edges: u
     };
     for batch_size in BATCHES {
         let mut program = (*table(
-            vec![rule(
-                "require",
-                json!({"any": true}),
-                json!({"epsilon": true}),
-            )],
+            vec![Rule::new(RuleMode::Require, any_head(), RegexExpr::Epsilon)],
             batch_size,
         ))
         .clone();
@@ -1148,32 +1163,14 @@ fn flat_deep_unary_and_non_last_root_preserve_topology() {
 }
 
 #[test]
-fn native_value_parser_handles_deep_policy_without_recursive_fixture_drop() {
-    fn object(fields: Vec<(&str, Value)>) -> Value {
-        fields
-            .into_iter()
-            .map(|(key, value)| (Value::from(key), value))
-            .collect::<std::collections::BTreeMap<_, _>>()
-            .into()
-    }
-
-    let mut history = object(vec![("epsilon", Value::from(true))]);
-    // Keep every level alive until its parents have dropped, so fixture teardown is iterative.
-    let mut keepalive = vec![history.clone()];
+fn rust_dsl_compiler_handles_deep_policy_without_recursive_drop() {
+    let mut tail = RegexExpr::Epsilon;
     for _ in 1..4096 {
-        history = object(vec![("star", history)]);
-        keepalive.push(history.clone());
+        tail = RegexExpr::star(tail);
     }
-    let document = object(vec![(
-        "rules",
-        Value::from(vec![object(vec![
-            ("mode", Value::from("require")),
-            ("request", object(vec![("any", Value::from(true))])),
-            ("history", history),
-        ])]),
-    )]);
+    let rule = Rule::new(RuleMode::Require, any_head(), tail);
     for batch_size in BATCHES {
-        let program = compile(&document, batch_size).unwrap();
+        let program = compile(std::slice::from_ref(&rule), batch_size).unwrap();
         let source = &program.history_tables[0].rules[0].source;
         assert_eq!(source.regexes.len(), 4096);
         assert_eq!(source.regexes[0], FlatRegex::Epsilon);
@@ -1189,20 +1186,18 @@ fn native_value_parser_handles_deep_policy_without_recursive_fixture_drop() {
             assert_eq!(fixture.decide(probe).unwrap(), Value::from(0usize));
         }
     }
-    drop(document);
-    while let Some(level) = keepalive.pop() {
-        drop(level);
-    }
+    rule.dispose();
 }
 
 fn read_star(batch_size: u32) -> Arc<Program> {
     table(
-        vec![rule(
-            "require",
-            json!({"any": true}),
-            json!({"star": {
-                "test": constant("action", "read")
-            }}),
+        vec![Rule::new(
+            RuleMode::Require,
+            any_head(),
+            RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                Comparison::Eq,
+                AtomPattern::Action(ComponentPattern::constant("read")),
+            ))),
         )],
         batch_size,
     )
@@ -1313,11 +1308,14 @@ fn append_after_snapshot_is_excluded_but_fresh_decision_includes_it() {
 fn newer_shared_cache_prefix_cannot_seed_an_older_decision_target() {
     let program = table(
         vec![
-            rule("require", json!({"any": true}), json!({"all": true})),
-            rule(
-                "require",
-                json!({"any": true}),
-                json!({"star": {"test": constant("action", "read")}}),
+            Rule::new(RuleMode::Require, any_head(), RegexExpr::All),
+            Rule::new(
+                RuleMode::Require,
+                any_head(),
+                RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("read")),
+                ))),
             ),
         ],
         1,
@@ -1440,13 +1438,16 @@ fn load_program_cancels_suspension_and_drops_typed_context_not_shared_history() 
 }
 
 #[test]
-fn staging_requires_attachment_owner_and_each_domain_membership() {
+fn staging_requires_attachment_and_each_domain_membership() {
     let program = read_star(256);
     let store = Arc::new(HistoryStore::new());
-    let foreign = Arc::new(HistoryStore::new());
-    let history = store.new_history().unwrap();
-    let own = event(&store, "alice", "read", "doc");
-    let other = event(&foreign, "alice", "read", "doc");
+    let peer = Arc::new(HistoryStore::new());
+    let history = peer.new_history().unwrap();
+    let own = event(&peer, "alice", "read", "doc");
+    // Typed views encode through dictionaries the byte domains never contain.
+    let typed =
+        History::from_events(Arc::new(Store::new().unwrap()), [source_event([0; 3])]).unwrap();
+    let other = typed.numeric().as_slice()[0];
     let mut vm = RegoVM::new();
     vm.load_program(program);
     assert!(matches!(
@@ -1454,13 +1455,8 @@ fn staging_requires_attachment_owner_and_each_domain_membership() {
         Err(VmError::HistoryContextMissing { .. })
     ));
     vm.attach_history(store.clone()).unwrap();
-    assert!(matches!(
-        vm.set_history_input(foreign.new_history().unwrap(), own),
-        Err(VmError::History {
-            source: HistoryError::WrongHistoryOwner,
-            ..
-        })
-    ));
+    // Wrappers share one process-wide store, so a peer's handle and identities stage.
+    vm.set_history_input(history.clone(), own).unwrap();
     for (request, domain) in [
         (
             Event {
@@ -1487,7 +1483,7 @@ fn staging_requires_attachment_owner_and_each_domain_membership() {
         assert!(matches!(vm.set_history_input(history.clone(), request),
             Err(VmError::History { source: HistoryError::UnknownId { domain: actual, .. }, .. }) if actual == domain));
     }
-    vm.set_history_input(history, own).unwrap();
+    // Failed requests leave the previously staged input intact.
     assert_eq!(
         vm.execute_entry_point_by_name("decide").unwrap(),
         Value::Null
@@ -1543,14 +1539,36 @@ fn empty_table_still_checks_revision_before_terminal_return() {
 #[test]
 fn zero_batch_is_rejected_before_empty_or_head_mismatch_shortcuts() {
     assert!(matches!(
-        compile(&json!({"rules": []}).into(), 0),
+        compile(&[], 0),
+        Err(HistoryTableError::InvalidBatchSize)
+    ));
+    let unbound = Rule::new(
+        RuleMode::Require,
+        any_head(),
+        RegexExpr::test(TestExpr::atom(
+            Comparison::Eq,
+            AtomPattern::Principal(ComponentPattern::variable("missing")),
+        )),
+    );
+    assert!(matches!(
+        compile(&[unbound], 0),
         Err(HistoryTableError::InvalidBatchSize)
     ));
     for mode in MODES {
         for matching in [false, true] {
-            let mut program = (*table(vec![rule("require",
-                json!({"object": {"action": {"value": if matching { "read" } else { "release" }}}}),
-                json!({"all": true}))], 256)).clone();
+            let mut program = (*table(
+                vec![Rule::new(
+                    RuleMode::Require,
+                    Head::new(
+                        ComponentPattern::variable("_principal"),
+                        ComponentPattern::constant(if matching { "read" } else { "release" }),
+                        ComponentPattern::variable("_resource"),
+                    ),
+                    RegexExpr::All,
+                )],
+                256,
+            ))
+            .clone();
             program.instruction_data.history_step_params[0].batch_size = 0;
             assert!(program.validate_limits().is_err());
             let mut f = Fixture::new(&Arc::new(program), mode);
@@ -1565,7 +1583,11 @@ fn zero_batch_is_rejected_before_empty_or_head_mismatch_shortcuts() {
 
 #[test]
 fn current_binary_and_json_reintern_constants_in_fresh_store() {
-    let program = table(vec![prior_edit_rule()], 256);
+    // Compiled constants own their bytes after the borrowed authoring strings are gone.
+    let program = {
+        let (release, edit) = (String::from("release"), String::from("edit"));
+        table(vec![prior_edit_rule(&release, &edit)], 256)
+    };
     let mut original = Fixture::new(&program, ExecutionMode::RunToCompletion);
     let old_edit = event(&original.store, "alice", "edit", "doc");
     let old_request = event(&original.store, "alice", "release", "doc");
@@ -1581,12 +1603,11 @@ fn current_binary_and_json_reintern_constants_in_fresh_store() {
     let json_program = Program::deserialize_json(&program.serialize_json().unwrap()).unwrap();
     for restored in [binary, json_program] {
         let store = Arc::new(HistoryStore::new());
-        let _ = event(&store, "bob", "release", "other");
         let edit = event(&store, "alice", "edit", "doc");
         let request = event(&store, "alice", "release", "doc");
-        assert_ne!(edit.principal, old_edit.principal);
-        assert_ne!(edit.action, old_edit.action);
-        assert_ne!(edit.resource, old_edit.resource);
+        // Wrappers share process-wide identities: restored byte constants reintern to them.
+        assert_eq!(edit, old_edit);
+        assert_eq!(request, old_request);
         let mut f = Fixture::with_store(&Arc::new(restored), ExecutionMode::RunToCompletion, store);
         assert_eq!(f.decide(request).unwrap(), Value::from(0usize));
         f.replace(&[edit]);
@@ -1617,7 +1638,7 @@ fn unchecked_binary(program: &Program) -> Vec<u8> {
 
 #[test]
 fn malformed_source_nodes_variables_and_indexes_are_rejected() {
-    let base = (*table(vec![prior_edit_rule()], 256)).clone();
+    let base = (*table(vec![prior_edit_rule("release", "edit")], 256)).clone();
     let mut invalid = Vec::new();
     let mut p = base.clone();
     p.history_tables[0].rules[0].source.regexes = vec![FlatRegex::Star(0)];
@@ -1700,108 +1721,80 @@ fn malformed_source_nodes_variables_and_indexes_are_rejected() {
 }
 
 #[test]
-fn source_rejects_removed_generic_language_and_invalid_shapes() {
-    let bad_heads = [
-        json!({"object": {"metadata": {"any": true}}}),
-        json!({"object": {"principal": {"object": {"name": {"any": true}}}}}),
-        json!({"object": {"principal": {"value": 1}}}),
-        json!({"object": {"principal": {"value": null}}}),
-        json!({"object": {"principal": {"type": "string"}}}),
-        json!({"object": {"principal": {"var": "x"}, "resource": {"var": "x"}}}),
-        json!({"object": {"principal": {"var": "x"}, "action": {"var": "x"}}}),
-        json!({"array": []}),
-        json!({"set": []}),
-        json!({"var": "x"}),
-        json!({"value": "alice"}),
-    ];
-    for request in bad_heads {
-        let source = json!({"rules": [rule("require", request, json!({"all": true}))]});
-        assert!(matches!(
-            compile(&source.into(), 256),
-            Err(HistoryTableError::InvalidPair { index: 0, .. })
-        ));
-    }
-    let bad_tests = [
-        json!({"eq": {"path": ["principal", "name"], "term": {"value": "alice"}}}),
-        json!({"eq": {"path": [], "term": {"value": "alice"}}}),
-        constant("unknown", "alice"),
-        comparison("eq", "action", json!({"value": 1})),
-        comparison("eq", "action", json!({"var": "missing"})),
-        comparison("eq", "resource", json!({"var": "actor"})),
-        comparison("eq", "action", json!({"var": "actor"})),
-        comparison("eq", "principal", json!({"var": "unknown"})),
-        json!({"eq": {"path": ["action"]}}),
-        json!({"eq": {"path": ["action"], "term": {"value": "read"}, "extra": true}}),
-        json!({"and": true}),
-        json!({"not": true}),
-    ];
-    for test in bad_tests {
-        let source = json!({"rules": [rule("require",
-            json!({"object": {"principal": {"var": "actor"}}}), json!({"test": test}))]});
-        assert!(matches!(
-            compile(&source.into(), 256),
-            Err(HistoryTableError::InvalidPair { index: 0, .. })
-        ));
-    }
-    for regex in [
-        json!({"bogus": true}),
-        json!({"star": []}),
-        json!({"concat": true}),
-        json!({"empty": false}),
-    ] {
-        assert!(compile(
-            &json!({"rules": [rule("require", json!({"any": true}), regex)]}).into(),
-            256
+fn dsl_compile_reports_scope_errors_at_rule_index() {
+    let tail_head = || {
+        Head::new(
+            ComponentPattern::variable("p"),
+            ComponentPattern::variable("_action"),
+            ComponentPattern::variable("_resource"),
         )
-        .is_err());
-    }
-    assert!(matches!(
-        compile(&json!({}).into(), 256),
-        Err(HistoryTableError::MissingRules)
-    ));
-    assert!(matches!(
-        compile(
-            &json!({"rules": [rule("deny", json!({"any": true}), json!({"all": true}))]}).into(),
-            256
-        ),
-        Err(HistoryTableError::BadMode { index: 0, .. })
-    ));
-    for (pair, missing) in [
+    };
+    let cases = [
         (
-            json!({"mode": "require", "history": {"star": []}}),
-            "request",
+            Rule::new(
+                RuleMode::Require,
+                Head::new(
+                    ComponentPattern::variable("x"),
+                    ComponentPattern::variable("_action"),
+                    ComponentPattern::variable("x"),
+                ),
+                RegexExpr::All,
+            ),
+            CompileError::VariableComponentConflict { name: "x".into() },
         ),
         (
-            json!({"mode": "require", "request": {"value": 3}}),
-            "history",
+            Rule::new(
+                RuleMode::Require,
+                tail_head(),
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::variable("missing")),
+                )),
+            ),
+            CompileError::UnboundVariable {
+                name: "missing".into(),
+            },
         ),
-    ] {
-        assert!(matches!(
-            compile(&json!({"rules": [pair]}).into(), 256),
-            Err(HistoryTableError::MissingMember { index: 0, member }) if member == missing
-        ));
+        (
+            Rule::new(
+                RuleMode::Require,
+                tail_head(),
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Resource(ComponentPattern::variable("p")),
+                )),
+            ),
+            CompileError::VariableComponentConflict { name: "p".into() },
+        ),
+    ];
+    for (invalid, source) in cases {
+        let rules = [prior_edit_rule("release", "edit"), invalid];
+        assert_eq!(
+            compile(&rules, 256).err(),
+            Some(HistoryTableError::InvalidRule { index: 1, source })
+        );
     }
-    assert!(matches!(
-        compile(
-            &json!({"rules": [{"mode": "deny", "history": {"star": []}}]}).into(),
-            256
-        ),
-        Err(HistoryTableError::BadMode { index: 0, .. })
-    ));
-    assert!(matches!(
-        compile(
-            &json!({"rules": [{"mode": "require", "unknown": true}]}).into(),
-            256
-        ),
-        Err(HistoryTableError::InvalidPair { index: 0, .. })
-    ));
-    assert!(matches!(
-        compile(
-            &json!({"rules": [{"mode": "deny", "unknown": true}]}).into(),
-            0
-        ),
-        Err(HistoryTableError::InvalidBatchSize)
-    ));
+
+    // A failed reservation leaves the borrowed rule intact and reusable.
+    let rules = [prior_edit_rule("release", "edit")];
+    let failing = fail_reservations_after(0);
+    assert_eq!(
+        compile(&rules, 256).err(),
+        Some(HistoryTableError::InvalidRule {
+            index: 0,
+            source: CompileError::Runtime(HistoryError::AllocationFailed),
+        })
+    );
+    drop(failing);
+    let mut f = Fixture::new(
+        &compile(&rules, 256).unwrap(),
+        ExecutionMode::RunToCompletion,
+    );
+    let edit = event(&f.store, "alice", "edit", "doc");
+    let release = event(&f.store, "alice", "release", "doc");
+    assert_eq!(f.decide(release).unwrap(), Value::from(0usize));
+    f.replace(&[edit]);
+    assert_eq!(f.decide(release).unwrap(), Value::Null);
 }
 
 #[test]
@@ -1834,10 +1827,17 @@ fn removed_history_builtin_is_unknown_in_interpreter_and_rvm_compilation() {
 fn concurrent_vms_share_identities_and_fixed_prefix_without_sharing_candidates() {
     use std::sync::Barrier;
     let program = table(
-        vec![rule(
-            "require",
-            json!({"object": {"principal": {"var": "p"}}}),
-            json!({"star": {"test": comparison("eq", "principal", json!({"var": "p"}))}}),
+        vec![Rule::new(
+            RuleMode::Require,
+            Head::new(
+                ComponentPattern::variable("p"),
+                ComponentPattern::variable("_action"),
+                ComponentPattern::variable("_resource"),
+            ),
+            RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                Comparison::Eq,
+                AtomPattern::Principal(ComponentPattern::variable("p")),
+            ))),
         )],
         1,
     );
@@ -1960,14 +1960,14 @@ fn concurrent_rewrite_invalidates_both_pinned_decisions() {
 #[test]
 fn fixed_head_compares_all_three_exact_byte_identities() {
     let program = table(
-        vec![rule(
-            "require",
-            json!({"object": {
-                "principal": {"value": "alice/\0é"},
-                "action": {"value": "edit"},
-                "resource": {"value": "doc/é"}
-            }}),
-            json!({"empty": true}),
+        vec![Rule::new(
+            RuleMode::Require,
+            Head::new(
+                ComponentPattern::constant("alice/\0é"),
+                ComponentPattern::constant("edit"),
+                ComponentPattern::constant("doc/é"),
+            ),
+            RegexExpr::Empty,
         )],
         256,
     );

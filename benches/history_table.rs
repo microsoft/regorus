@@ -2,15 +2,17 @@
 // Licensed under the MIT License.
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use regorus::languages::history_table::{compile, Event, HistoryStore};
+use regorus::languages::history_table::{
+    compile, AtomPattern, Comparison, ComponentPattern, Event, Head, HistoryStore, RegexExpr, Rule,
+    RuleMode, SourceEvent, TestExpr,
+};
 use regorus::rvm::vm::RegoVM;
 use regorus::Value;
 use std::hint::black_box;
 use std::sync::Arc;
 
-fn history_table_case(c: &mut Criterion, name: &str, source: &str) {
-    let source = Value::from_json_str(source).unwrap();
-    let program = compile(&source, 256).unwrap();
+fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_>>) {
+    let program = compile(core::slice::from_ref(&source), 256).unwrap();
     let store = Arc::new(HistoryStore::new());
     let principal = store.intern_principal("alice").unwrap();
     let resource = store.intern_resource("document").unwrap();
@@ -88,15 +90,50 @@ fn history_table_case(c: &mut Criterion, name: &str, source: &str) {
 }
 
 fn history_table(c: &mut Criterion) {
+    let release_head = || {
+        Head::new(
+            ComponentPattern::variable("p"),
+            ComponentPattern::constant("release"),
+            ComponentPattern::variable("r"),
+        )
+    };
+    let edit = || {
+        TestExpr::atom(
+            Comparison::Eq,
+            AtomPattern::Action(ComponentPattern::constant("edit")),
+        )
+    };
     history_table_case(
         c,
         "history_table_batch_256",
-        r#"{"rules":[{"mode":"require","request":{"object":{"principal":{"var":"p"},"action":{"value":"release"},"resource":{"var":"r"}}},"history":{"concat":[{"all":true},{"test":{"and":[{"eq":{"path":["principal"],"term":{"var":"p"}}},{"eq":{"path":["action"],"term":{"value":"edit"}}},{"eq":{"path":["resource"],"term":{"var":"r"}}}]}},{"all":true}]}}]}"#,
+        Rule::new(
+            RuleMode::Require,
+            release_head(),
+            RegexExpr::concat([
+                RegexExpr::All,
+                RegexExpr::test(TestExpr::and([
+                    TestExpr::atom(
+                        Comparison::Eq,
+                        AtomPattern::Principal(ComponentPattern::variable("p")),
+                    ),
+                    edit(),
+                    TestExpr::atom(
+                        Comparison::Eq,
+                        AtomPattern::Resource(ComponentPattern::variable("r")),
+                    ),
+                ])),
+                RegexExpr::All,
+            ]),
+        ),
     );
     history_table_case(
         c,
         "history_table_full_scan_batch_256",
-        r#"{"rules":[{"mode":"require","request":{"object":{"principal":{"var":"p"},"action":{"value":"release"},"resource":{"var":"r"}}},"history":{"star":{"test":{"eq":{"path":["action"],"term":{"value":"edit"}}}}}}]}"#,
+        Rule::new(
+            RuleMode::Require,
+            release_head(),
+            RegexExpr::star(RegexExpr::test(edit())),
+        ),
     );
 }
 

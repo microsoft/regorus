@@ -2331,7 +2331,7 @@ mod tests {
     }
 
     fn events() -> (Event, Event) {
-        let store = HistoryStore::new();
+        let store = HistoryStore::global();
         let mut limits = Unmetered;
         let mut world = ObservationWorld;
         let action = store

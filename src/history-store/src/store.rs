@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-//! Exact-byte identities and application-owned synchronized numeric histories.
+//! Process-wide exact-byte identities and synchronized numeric histories.
 
 use crate::graph::allocation;
 use crate::history::StoredHistory;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use junco_core::error::HistoryError;
 use junco_core::limits::Limits;
 use junco_core::observation::ObservationWorld;
@@ -20,10 +19,10 @@ use spin::{Mutex, RwLock, RwLockReadGuard};
 use verify::*;
 use vstd::prelude::*;
 
-// Only allocation is global; paths, membership and histories belong to each store.
-static NEXT_IDS: spin::Mutex<[u64; 3]> = spin::Mutex::new([1; 3]);
+// One process-wide owner; event buffers stay owned by their handles, never by this static.
+static STORE: spin::Mutex<Option<Arc<HistoryStore>>> = spin::Mutex::new(None);
 
-/// An interned principal identity, local to its owning store.
+/// An interned principal identity, issued by the process-wide store.
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[repr(transparent)]
@@ -39,7 +38,7 @@ impl Principal {
     }
 }
 
-/// An interned action identity, local to its owning store.
+/// An interned action identity, issued by the process-wide store.
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[repr(transparent)]
@@ -55,7 +54,7 @@ impl Action {
     }
 }
 
-/// An interned resource identity, local to its owning store.
+/// An interned resource identity, issued by the process-wide store.
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[repr(transparent)]
@@ -218,8 +217,13 @@ impl Domain {
     #[inline]
     // The receiver binds the allocator's freshness guarantee to the owned-ID set.
     #[allow(clippy::unused_self)]
-    fn allocate_global(&self, index: usize, domain: &'static str) -> Result<u64, HistoryError> {
-        allocate_after(index, domain, 0)
+    fn allocate_global(
+        &self,
+        index: usize,
+        domain: &'static str,
+        numeric_store: &HistoryStore,
+    ) -> Result<u64, HistoryError> {
+        numeric_store.allocate_after(index, domain, 0)
     }
 
     #[verus_spec(result =>
@@ -238,6 +242,7 @@ impl Domain {
         index: usize,
         domain: &'static str,
         limits: &mut L,
+        numeric_store: &HistoryStore,
     ) -> Result<u64, HistoryError> {
         proof! { reveal(<Domain as View>::view); reveal(domain_wf); }
         proof_decl! { let ghost entry = self@; }
@@ -248,7 +253,7 @@ impl Domain {
         allocation(owned.try_reserve(path.len()))?;
         owned.push_str(path);
         limits.enforce_memory()?;
-        let id = self.allocate_global(index, domain)?;
+        let id = self.allocate_global(index, domain, numeric_store)?;
         proof! {
             assert(vstd::utf8::encode_utf8(owned@) == vstd::utf8::encode_utf8(path@));
             assert(entry.ids == self.ids@);
@@ -333,26 +338,22 @@ impl Domain {
     }
 }
 
-/// Issue a component ID above `last` from the counters shared by byte and typed stores, so a
-/// numeric event from one store can never name another store's identity.
-#[verus_verify(external_body)]
-#[verus_spec(result => ensures result matches Ok(id) ==> last < id < u64::MAX)]
-pub(crate) fn allocate_after(
-    index: usize,
-    domain: &'static str,
-    last: u64,
-) -> Result<u64, HistoryError> {
-    let mut counters = NEXT_IDS.lock();
-    let next = counters
-        .get_mut(index)
-        .ok_or(HistoryError::invariant("invalid identity domain"))?;
-    let id = Domain::allocate_id(next, domain)?;
-    // Counters only grow; checking keeps the caller's freshness fact out of the trusted contract.
-    if id <= last {
-        return Err(HistoryError::invariant(
-            "identity allocator moved backwards",
-        ));
+/// Advance the process history-key counter, failing at `usize::MAX` without changing it.
+#[verus_verify]
+#[verus_spec(result =>
+    requires 0 < *old(next),
+    ensures match result {
+        Ok(id) => id == *old(next) && 0 < id < usize::MAX && *final(next) == id + 1,
+        Err(_) => *old(next) == usize::MAX && *final(next) == *old(next),
     }
+)]
+fn next_history_id(next: &mut usize) -> Result<usize, HistoryError> {
+    let id = *next;
+    let following = match id.checked_add(1) {
+        Some(following) => following,
+        None => return Err(HistoryError::IdExhausted { domain: "history" }),
+    };
+    *next = following;
     Ok(id)
 }
 
@@ -360,6 +361,14 @@ pub(crate) fn allocate_after(
 verus! {
 pub mod verify {
     use super::*;
+    // Native opaque owner: its locks and one-time static initialization are trusted leaves.
+    #[verifier::external_type_specification]
+    #[verifier::external_body]
+    pub struct ExHistoryStore(HistoryStore);
+
+    /// The one Arc allocated by native `HistoryStore::global` initialization.
+    pub uninterp spec fn singleton_store() -> Arc<HistoryStore>;
+
     use junco_core::verify::history_specs as language;
     impl View for Event {
         type V = language::EventView;
@@ -405,13 +414,16 @@ pub mod verify {
 }
 }
 
-/// Application-owned synchronized identities and histories; no global history state.
-#[derive(Debug, Default)]
+/// The process-wide synchronized byte identities and numeric ID allocators.
+///
+/// Every handle owns its record; this owner never retains histories, runtimes or caches.
+#[derive(Debug)]
 pub struct HistoryStore {
     principals: Mutex<Domain>,
     actions: Mutex<Domain>,
     resources: Mutex<Domain>,
-    histories: Mutex<Vec<Arc<RwLock<StoredHistory>>>>,
+    next_ids: spin::Mutex<[u64; 3]>,
+    next_history: spin::Mutex<usize>,
 }
 
 /// A shared history reference. Cloning it never copies events.
@@ -419,10 +431,11 @@ pub struct HistoryStore {
 pub struct HistoryHandle {
     pub(crate) owner: Arc<HistoryStore>,
     pub(crate) index: usize,
+    pub(crate) record: Arc<RwLock<StoredHistory>>,
 }
 
 impl HistoryHandle {
-    /// Return the never-reused local history index.
+    /// Return the opaque, never-reused process-wide history ID.
     pub const fn index(&self) -> usize {
         self.index
     }
@@ -486,12 +499,70 @@ impl core::ops::Deref for HistoryRecordReadGuard<'_> {
     }
 }
 
+#[verus_verify]
 impl HistoryStore {
-    /// Create an empty owner. Share it through an `Arc` before creating histories.
-    pub fn new() -> Self {
-        Self::default()
+    /// Return the process-wide store, creating it on first use.
+    // Native static initialization and Arc allocation; no user code runs under this lock.
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures result == singleton_store())]
+    pub fn global() -> Arc<Self> {
+        let mut store = STORE.lock();
+        Arc::clone(store.get_or_insert_with(|| {
+            Arc::new(Self {
+                principals: Mutex::new(Domain::default()),
+                actions: Mutex::new(Domain::default()),
+                resources: Mutex::new(Domain::default()),
+                next_ids: spin::Mutex::new([1; 3]),
+                next_history: spin::Mutex::new(1),
+            })
+        }))
     }
 
+    /// Issue a component ID above `last` from the counters shared by byte and typed views,
+    /// so a numeric event from one view can never name another view's identity.
+    // Native mutex leaf: each counter only grows; `Domain::allocate_id` is body-verified.
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures result matches Ok(id) ==> last < id < u64::MAX)]
+    pub(crate) fn allocate_after(
+        &self,
+        index: usize,
+        domain: &'static str,
+        last: u64,
+    ) -> Result<u64, HistoryError> {
+        let mut counters = self.next_ids.lock();
+        let next = counters
+            .get_mut(index)
+            .ok_or(HistoryError::invariant("invalid identity domain"))?;
+        let id = Domain::allocate_id(next, domain)?;
+        // Counters only grow; checking keeps the caller's freshness fact out of the trusted contract.
+        if id <= last {
+            return Err(HistoryError::invariant(
+                "identity allocator moved backwards",
+            ));
+        }
+        Ok(id)
+    }
+
+    /// Issue a never-recycled history ID above `last`; gaps after later failures are allowed.
+    // Native mutex leaf: `next_history_id` is body-verified; only the lock is trusted.
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures result matches Ok(id) ==> last < id < usize::MAX)]
+    pub(crate) fn allocate_history_after(&self, last: usize) -> Result<usize, HistoryError> {
+        if last == usize::MAX {
+            return Err(HistoryError::IdExhausted { domain: "history" });
+        }
+        let mut next = self.next_history.lock();
+        let id = next_history_id(&mut next)?;
+        if id <= last {
+            return Err(HistoryError::invariant(
+                "history identity allocator moved backwards",
+            ));
+        }
+        Ok(id)
+    }
+}
+
+impl HistoryStore {
     /// Intern the complete UTF-8 bytes without normalization or prefix matching.
     pub fn intern_principal<L: Limits>(
         &self,
@@ -501,7 +572,7 @@ impl HistoryStore {
     ) -> Result<Principal, HistoryError> {
         self.principals
             .lock()
-            .intern(path, 0, "principal", limits)
+            .intern(path, 0, "principal", limits, self)
             .map(Principal)
     }
 
@@ -514,7 +585,7 @@ impl HistoryStore {
     ) -> Result<Action, HistoryError> {
         self.actions
             .lock()
-            .intern(path, 1, "action", limits)
+            .intern(path, 1, "action", limits, self)
             .map(Action)
     }
 
@@ -527,29 +598,24 @@ impl HistoryStore {
     ) -> Result<Resource, HistoryError> {
         self.resources
             .lock()
-            .intern(path, 2, "resource", limits)
+            .intern(path, 2, "resource", limits, self)
             .map(Resource)
     }
 
-    /// Create a history whose lifetime is retained by this owner.
+    /// Create an empty history owned by its handles and read-only records.
     pub fn new_history<L: Limits>(
         self: &Arc<Self>,
         limits: &mut L,
-        world: &mut ObservationWorld,
+        _world: &mut ObservationWorld,
     ) -> Result<HistoryHandle, HistoryError> {
-        let record = Arc::new(RwLock::new(StoredHistory::new()));
-        let mut histories = self.histories.lock();
-        allocation(world.try_reserve_vec(&mut histories, 1))?;
+        let index = self.allocate_history_after(0)?;
         limits.enforce_memory()?;
-        let index = histories.len();
-        histories.push(record);
-        if let Err(error) = limits.enforce_memory() {
-            histories.pop();
-            return Err(error.into());
-        }
+        let record = Arc::new(RwLock::new(StoredHistory::new(index)));
+        limits.enforce_memory()?;
         Ok(HistoryHandle {
             owner: Arc::clone(self),
             index,
+            record,
         })
     }
 
@@ -576,11 +642,7 @@ impl HistoryStore {
         if !core::ptr::eq(self, history.owner.as_ref()) {
             return Err(HistoryError::WrongHistoryOwner);
         }
-        self.histories
-            .lock()
-            .get(history.index)
-            .cloned()
-            .ok_or(HistoryError::invariant("invalid local history index"))
+        Ok(Arc::clone(&history.record))
     }
 
     /// Atomically append validated events, preserving the history revision.
@@ -642,9 +704,60 @@ mod tests {
         }
     }
 
+    fn typed_event() -> Event {
+        // A fresh typed view issues IDs that are never members of a byte domain.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        struct Typed;
+        impl history_syntax::Event for Typed {
+            type Principal = ();
+            type Action = ();
+            type Resource = ();
+            fn principal(self) {}
+            fn action(self) {}
+            fn resource(self) {}
+        }
+        crate::typed::Store::<Typed>::new()
+            .unwrap()
+            .encode_event(&Typed)
+            .unwrap()
+    }
+
+    #[test]
+    fn global_owners_share_identities_and_handles() {
+        let first = HistoryStore::global();
+        let second = HistoryStore::global();
+        assert!(Arc::ptr_eq(&first, &second));
+        let principal = first
+            .intern_principal("global-test/alice", &mut Unmetered, &mut ObservationWorld)
+            .unwrap();
+        assert_eq!(
+            principal,
+            second
+                .intern_principal("global-test/alice", &mut Unmetered, &mut ObservationWorld)
+                .unwrap()
+        );
+        let history = first
+            .new_history(&mut Unmetered, &mut ObservationWorld)
+            .unwrap();
+        assert!(history.belongs_to(&second));
+        second
+            .append(
+                &history,
+                &[event(&first)],
+                &mut Unmetered,
+                &mut ObservationWorld,
+            )
+            .unwrap();
+        assert_eq!(first.len(&history).unwrap(), 1);
+        assert!(matches!(
+            first.allocate_history_after(usize::MAX),
+            Err(HistoryError::IdExhausted { domain: "history" })
+        ));
+    }
+
     #[test]
     fn read_only_record_clones_observe_store_transactions() {
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -656,25 +769,38 @@ mod tests {
             assert!(core::ptr::eq(&*first, &*second));
             assert_eq!(first.len(), 0);
             assert_eq!(second.revision(), 0);
+            assert_eq!(first.id(), history.index());
         }
+        let event = event(&store);
         store
-            .append(
-                &history,
-                &[event(&store)],
-                &mut Unmetered,
-                &mut ObservationWorld,
-            )
+            .append(&history, &[event], &mut Unmetered, &mut ObservationWorld)
             .unwrap();
         assert_eq!(retained.read().len(), 1);
         assert_eq!(record.read().revision(), 0);
         store.truncate(&history, 0).unwrap();
         assert_eq!(retained.read().len(), 0);
         assert_eq!(record.read().revision(), 1);
+        store
+            .append(
+                &history,
+                &[event, event],
+                &mut Unmetered,
+                &mut ObservationWorld,
+            )
+            .unwrap();
+        // Records keep the buffer alive after the handle; the singleton never retains it.
+        let weak = Arc::downgrade(&history.record);
+        drop(history);
+        assert_eq!(retained.read().as_slice(), [event, event]);
+        assert_eq!(retained.read().revision(), 1);
+        drop(record);
+        drop(retained);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]
     fn exact_identities_and_large_domain() {
-        let store = HistoryStore::new();
+        let store = HistoryStore::global();
         let paths = ["a", "A", "/a", "a/", "a\0", "é", "e\u{301}"];
         let mut ids = BTreeSet::new();
         for path in paths {
@@ -692,14 +818,19 @@ mod tests {
         let first = store
             .intern_resource("common/prefix/0", &mut Unmetered, &mut ObservationWorld)
             .unwrap();
+        let mut resources = BTreeSet::from([first]);
         for index in 1..5000 {
-            store
-                .intern_resource(
-                    &alloc::format!("common/prefix/{index}"),
-                    &mut Unmetered,
-                    &mut ObservationWorld,
+            assert!(
+                resources.insert(
+                    store
+                        .intern_resource(
+                            &alloc::format!("common/prefix/{index}"),
+                            &mut Unmetered,
+                            &mut ObservationWorld,
+                        )
+                        .unwrap()
                 )
-                .unwrap();
+            );
         }
         assert_eq!(
             first,
@@ -707,7 +838,7 @@ mod tests {
                 .intern_resource("common/prefix/0", &mut Unmetered, &mut ObservationWorld)
                 .unwrap()
         );
-        assert_eq!(store.resources.lock().ids.len(), 5000);
+        assert_eq!(resources.len(), 5000);
         let action = store
             .intern_action("a", &mut Unmetered, &mut ObservationWorld)
             .unwrap();
@@ -753,26 +884,35 @@ mod tests {
     }
 
     #[test]
-    fn ownership_atomic_append_and_revisions() {
-        let store = Arc::new(HistoryStore::new());
-        let foreign = Arc::new(HistoryStore::new());
+    fn checked_history_key_counter() {
+        let mut next = 1;
+        assert_eq!(next_history_id(&mut next).unwrap(), 1);
+        assert_eq!(next, 2);
+        next = usize::MAX - 1;
+        assert_eq!(next_history_id(&mut next).unwrap(), usize::MAX - 1);
+        assert_eq!(next, usize::MAX);
+        assert!(matches!(
+            next_history_id(&mut next),
+            Err(HistoryError::IdExhausted { domain: "history" })
+        ));
+        assert_eq!(next, usize::MAX);
+    }
+
+    #[test]
+    fn atomic_append_and_revisions() {
+        let store = HistoryStore::global();
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
         let valid = event(&store);
-        let foreign_event = event(&foreign);
-        assert!(matches!(
-            foreign.len(&history),
-            Err(HistoryError::WrongHistoryOwner)
-        ));
-        assert!(matches!(
-            foreign.append(&history, &[], &mut Unmetered, &mut ObservationWorld),
-            Err(HistoryError::WrongHistoryOwner)
-        ));
+        let typed = typed_event();
+        store
+            .append(&history, &[valid], &mut Unmetered, &mut ObservationWorld)
+            .unwrap();
         assert!(matches!(
             store.append(
                 &history,
-                &[valid, foreign_event],
+                &[valid, typed],
                 &mut Unmetered,
                 &mut ObservationWorld
             ),
@@ -781,10 +921,12 @@ mod tests {
                 ..
             })
         ));
-        assert_eq!(store.len(&history).unwrap(), 0);
+        let record = store.history_record(&history).unwrap();
+        assert_eq!(record.read().as_slice(), [valid]);
+        assert_eq!(record.read().revision, 0);
         assert!(matches!(
             store.validate_event(&Event {
-                action: foreign_event.action,
+                action: typed.action,
                 ..valid
             }),
             Err(HistoryError::UnknownId {
@@ -794,7 +936,7 @@ mod tests {
         ));
         assert!(matches!(
             store.validate_event(&Event {
-                resource: foreign_event.resource,
+                resource: typed.resource,
                 ..valid
             }),
             Err(HistoryError::UnknownId {
@@ -810,13 +952,12 @@ mod tests {
                 &mut ObservationWorld,
             )
             .unwrap();
-        assert_eq!(store.len(&history.clone()).unwrap(), 2);
-        let record = store.history_record(&history).unwrap();
+        assert_eq!(store.len(&history.clone()).unwrap(), 3);
         assert_eq!(record.read().revision, 0);
+        store.truncate(&history, 4).unwrap();
         store.truncate(&history, 3).unwrap();
-        store.truncate(&history, 2).unwrap();
         assert_eq!(record.read().revision, 0);
-        store.truncate(&history, 1).unwrap();
+        store.truncate(&history, 2).unwrap();
         assert_eq!(record.read().revision, 1);
         store
             .history_record_inner(&history)
@@ -827,34 +968,41 @@ mod tests {
             store.truncate(&history, 0),
             Err(HistoryError::RevisionExhausted)
         ));
-        assert_eq!(store.len(&history).unwrap(), 1);
+        assert_eq!(store.len(&history).unwrap(), 2);
     }
 
     #[cfg(feature = "std")]
     #[test]
     fn synchronized_interning_shares_one_identity() {
         fn assert_send_sync<T: Send + Sync>() {}
+        use alloc::vec::Vec;
         assert_send_sync::<HistoryStore>();
-        let store = Arc::new(HistoryStore::new());
         let barrier = Arc::new(std::sync::Barrier::new(8));
         let threads: Vec<_> = (0..8)
             .map(|_| {
-                let store = Arc::clone(&store);
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     barrier.wait();
-                    event(&store)
+                    let store = HistoryStore::global();
+                    let history = store
+                        .new_history(&mut Unmetered, &mut ObservationWorld)
+                        .unwrap();
+                    (event(&store), history)
                 })
             })
             .collect();
-        let events: Vec<_> = threads
+        let results: Vec<_> = threads
             .into_iter()
             .map(|thread| thread.join().unwrap())
             .collect();
-        assert!(events.iter().all(|event| *event == events[0]));
-        assert_eq!(store.principals.lock().paths.len(), 1);
-        assert_eq!(store.actions.lock().paths.len(), 1);
-        assert_eq!(store.resources.lock().paths.len(), 1);
+        let store = HistoryStore::global();
+        let mut keys = BTreeSet::new();
+        for (event, history) in &results {
+            assert_eq!(*event, results[0].0);
+            assert!(Arc::ptr_eq(&history.owner, &store));
+            assert!(history.index() > 0);
+            assert!(keys.insert(history.index()));
+        }
     }
 
     #[test]
@@ -879,21 +1027,19 @@ mod tests {
                 }
             }
         }
-        let store = Arc::new(HistoryStore::new());
+        let store = HistoryStore::global();
         let known = store
-            .intern_principal("known", &mut Unmetered, &mut ObservationWorld)
+            .intern_principal("rollback-test/known", &mut Unmetered, &mut ObservationWorld)
             .unwrap();
         for fail_at in [1, 2] {
             let mut limits = FailMemory { calls: 0, fail_at };
             assert!(matches!(
-                store.intern_principal("new", &mut limits, &mut ObservationWorld),
+                store.intern_principal("rollback-test/new", &mut limits, &mut ObservationWorld),
                 Err(HistoryError::Limit(_))
             ));
             let domain = store.principals.lock();
-            assert_eq!(domain.paths.len(), 1);
-            assert_eq!(domain.ids.len(), 1);
-            assert_eq!(domain.paths.get("known"), Some(&known.get()));
-            assert!(!domain.paths.contains_key("new"));
+            assert_eq!(domain.paths.get("rollback-test/known"), Some(&known.get()));
+            assert!(!domain.paths.contains_key("rollback-test/new"));
             drop(domain);
 
             let mut limits = FailMemory { calls: 0, fail_at };
@@ -901,14 +1047,12 @@ mod tests {
                 store.new_history(&mut limits, &mut ObservationWorld),
                 Err(HistoryError::Limit(_))
             ));
-            assert!(store.histories.lock().is_empty());
         }
         let history = store
             .new_history(&mut Unmetered, &mut ObservationWorld)
             .unwrap();
-        assert_eq!(history.index(), 0);
+        assert!(history.index() > 0);
         assert!(history.belongs_to(&store));
-        assert!(!history.belongs_to(&HistoryStore::new()));
         assert_eq!(store.len(&history).unwrap(), 0);
     }
 }

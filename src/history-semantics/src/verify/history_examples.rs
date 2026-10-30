@@ -9,9 +9,10 @@ use crate::progress::{CompiledPair, verify as progress};
 use crate::runtime::RuleRuntime;
 use crate::runtime::verify::{self as cache, HistorySnapshots};
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use history_store::cache::HistoryCursor;
 use history_store::history::StoredHistory;
-use history_store::store::Event;
+use history_store::store::{Event, HistoryStore};
 use history_syntax::syntax::Component;
 use junco_core::flat::FlatPair;
 use junco_core::kernel::verify as model;
@@ -213,15 +214,16 @@ pub(crate) proof fn cache_rejects_wrong_residual(
 
 /// Cache selection and every batch use the production transaction bodies.
 pub(crate) fn cached_decision<L: Limits>(
-    runtime: &mut RuleRuntime, history: usize, bindings: &Bindings, stored: &StoredHistory,
+    runtime: &mut RuleRuntime, bindings: &Bindings, stored: &StoredHistory,
     target_len: usize, batch_size: usize, limits: &mut L, world: &mut ObservationWorld,
 ) -> (result: KernelResult<bool>)
     requires cache::cursor_cache_wf(old(runtime).pair, old(runtime).cursors@, old(runtime).snapshots@),
-        cache::snapshot_compatible(old(runtime).snapshots@, history, (stored@.revision as u64),
+        cache::snapshot_compatible(old(runtime).snapshots@, stored.id(), (stored@.revision as u64),
             stored@.events),
         language::event_wf(bindings@), batch_size > 0, target_len <= stored@.events.len(),
     ensures cache::cursor_cache_wf(final(runtime).pair, final(runtime).cursors@, final(runtime).snapshots@),
         progress::pair_frame(old(runtime).pair, final(runtime).pair),
+        final(runtime).spec_store() == old(runtime).spec_store(),
         result matches Ok(answer) ==> answer == model::regex_lang(
             old(runtime).pair.store.graph(), bindings@, old(runtime).pair.root@,
             stored@.events.take(target_len as int)),
@@ -236,15 +238,16 @@ pub(crate) fn cached_decision<L: Limits>(
     reveal(cache::advance_ensures);
     proof { history_store::history::lemma_stored_history_view(*stored); }
     let ghost entry = runtime.pair;
-    let mut cursor = runtime.resume_cursor(history, bindings, stored, target_len);
+    let mut cursor = runtime.resume_cursor(bindings, stored, target_len);
     loop
         invariant entry == old(runtime).pair,
+            runtime.store == old(runtime).store,
             progress::pair_wf(entry),
             cache::cursor_cache_wf(runtime.pair, runtime.cursors@, runtime.snapshots@),
             progress::pair_frame(entry, runtime.pair),
-            runtime.snapshots@.contains_key((history, (stored@.revision as u64))),
-            runtime.snapshots@[(history, (stored@.revision as u64))] == stored@.events,
-            cache::batch_matches_snapshot(runtime.pair, cursor, history, (stored@.revision as u64),
+            runtime.snapshots@.contains_key((stored.id(), (stored@.revision as u64))),
+            runtime.snapshots@[(stored.id(), (stored@.revision as u64))] == stored@.events,
+            cache::batch_matches_snapshot(runtime.pair, cursor, stored.id(), (stored@.revision as u64),
                 *bindings, runtime.snapshots@),
             cursor.consumed <= target_len, target_len <= stored@.events.len(),
             language::event_wf(bindings@), batch_size > 0,
@@ -253,7 +256,7 @@ pub(crate) fn cached_decision<L: Limits>(
         proof { history_store::history::lemma_stored_history_view(*stored); }
         let ghost batch_entry = runtime.pair;
         let ghost consumed = cursor.consumed;
-        let result = runtime.advance_cursor(&mut cursor, history, bindings, stored,
+        let result = runtime.advance_cursor(&mut cursor, bindings, stored,
             target_len, batch_size, limits, world);
         proof {
             let first = entry.store.graph();
@@ -282,7 +285,7 @@ pub(crate) fn cached_decision<L: Limits>(
 
 /// Construction and cache-backed decisions preserve the supplied numeric template's language.
 pub(crate) fn template_cached_decision<L: Limits>(
-    template: &FlatPair<u64>, precompile: bool, history: usize, bindings: &Bindings,
+    store: &Arc<HistoryStore>, template: &FlatPair<u64>, precompile: bool, bindings: &Bindings,
     stored: &StoredHistory, target_len: usize, batch_size: usize,
     limits: &mut L, world: &mut ObservationWorld,
 ) -> (result: KernelResult<bool>)
@@ -296,13 +299,13 @@ pub(crate) fn template_cached_decision<L: Limits>(
     hide(model::test_holds);
     reveal(cache::constructor_result);
     reveal(cache::runtime_wf);
-    let mut runtime = RuleRuntime::new(template, precompile, limits, world)?;
-    cached_decision(&mut runtime, history, bindings, stored, target_len, batch_size, limits, world)
+    let mut runtime = RuleRuntime::new(store, template, precompile, limits, world)?;
+    cached_decision(&mut runtime, bindings, stored, target_len, batch_size, limits, world)
 }
 
 /// The portable encoding endpoint reaches the same construction and cache transaction bodies.
 pub(crate) fn flat_template_cached_decision<L: Limits>(
-    template: &FlatPair<u64>, precompile: bool, history: usize, request: &Event,
+    store: &Arc<HistoryStore>, template: &FlatPair<u64>, precompile: bool, request: &Event,
     stored: &StoredHistory, target_len: usize, batch_size: usize,
     Ghost(candidate): Ghost<Seq<u64>>, Ghost(word): Ghost<Seq<Seq<u64>>>,
     limits: &mut L, world: &mut ObservationWorld,
@@ -331,7 +334,7 @@ pub(crate) fn flat_template_cached_decision<L: Limits>(
         },
     };
     proof { assert(language::event_wf(bindings@)); }
-    let accepted = template_cached_decision(template, precompile, history, &bindings,
+    let accepted = template_cached_decision(store, template, precompile, &bindings,
         stored, target_len, batch_size, limits, world)?;
     proof {
         source::lemma_flat_regex(*template, template.root as nat, candidate, request@,

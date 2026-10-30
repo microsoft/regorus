@@ -36,7 +36,6 @@ pub(super) struct HistoryAttachment {
 
 #[derive(Debug)]
 pub(super) struct HistoryDecision {
-    history: usize,
     record: HistoryRecord,
     revision: u64,
     target_len: usize,
@@ -184,7 +183,6 @@ impl RegoVM {
         let target_len = stored.len();
         drop(stored);
         self.history_decision = Some(HistoryDecision {
-            history: staged.0.index(),
             record,
             revision,
             target_len,
@@ -308,10 +306,9 @@ impl RegoVM {
             else {
                 return Ok(InstructionOutcome::Continue);
             };
-            // Native provenance: this locked record belongs to decision.history;
+            // Native provenance: this locked record is the staged history, and
             // same-revision observations extend its previously recorded word.
-            let cursor =
-                graph.resume_cursor(decision.history, &bindings, &stored, decision.target_len);
+            let cursor = graph.resume_cursor(&bindings, &stored, decision.target_len);
             drop(stored);
             drop(graph);
             self.history_active_rule = Some(ActiveHistoryRule {
@@ -334,7 +331,6 @@ impl RegoVM {
             .map_err(|error| VmError::from_history(error, pc))?;
         let outcome = graph.advance_cursor(
             &mut active.cursor,
-            decision.history,
             &active.bindings,
             &stored,
             decision.target_len,
@@ -366,10 +362,17 @@ impl RegoVM {
             }
             Err(HistoryError::GraphLimit { .. }) if !active.retried => {
                 let exhausted = Arc::clone(&active.instance);
+                let numeric_store = Arc::clone(graph.store());
                 drop(stored);
                 drop(graph);
-                let replacement = RuleRuntime::new(&slot.template, false, &mut limits, &mut world)
-                    .map_err(|error| VmError::from_history(error, pc))?;
+                let replacement = RuleRuntime::new(
+                    &numeric_store,
+                    &slot.template,
+                    false,
+                    &mut limits,
+                    &mut world,
+                )
+                .map_err(|error| VmError::from_history(error, pc))?;
                 let replacement = slot.replace(&exhausted, Arc::new(Mutex::new(replacement)));
                 let cursor = replacement.lock().root_cursor();
                 active.instance = replacement;
@@ -391,19 +394,29 @@ mod tests {
     )]
 
     use super::*;
-    use crate::languages::history_table::compile;
+    use crate::languages::history_table::{
+        compile, AtomPattern, Comparison, ComponentPattern, Head, RegexExpr, Rule, RuleMode,
+        SourceEvent, TestExpr,
+    };
     use crate::rvm::program::Program;
     use crate::rvm::vm::ExecutionMode;
     use crate::utils::limits::ExecutionTimer;
-    use alloc::string::ToString as _;
     use junco_core::limits::MAX_GRAPH_BYTES;
-    use serde_json::{json, Value as Json};
 
-    fn program(request: &str, tail: &str, batch: u32) -> Arc<Program> {
-        let policy = alloc::format!(
-            r#"{{"rules":[{{"mode":"require","request":{request},"history":{tail}}}]}}"#
-        );
-        compile(&Value::from_json_str(&policy).unwrap(), batch).unwrap()
+    fn program<'a>(
+        head: Head<SourceEvent<'a>>,
+        tail: RegexExpr<SourceEvent<'a>>,
+        batch: u32,
+    ) -> Arc<Program> {
+        compile(&[Rule::new(RuleMode::Require, head, tail)], batch).unwrap()
+    }
+
+    fn any_head<'a>() -> Head<SourceEvent<'a>> {
+        Head::new(
+            ComponentPattern::variable("_principal"),
+            ComponentPattern::variable("_action"),
+            ComponentPattern::variable("_resource"),
+        )
     }
 
     fn event(store: &HistoryStore, principal: &str, action: &str) -> Event {
@@ -428,6 +441,7 @@ mod tests {
         let slot = &table.rules[0];
         let instance = Arc::new(Mutex::new(
             RuleRuntime::new(
+                &history_store::store::HistoryStore::global(),
                 &slot.template,
                 false,
                 &mut RegorusLimits {
@@ -441,7 +455,13 @@ mod tests {
         instance
     }
 
-    const ACTOR: &str = r#"{"object":{"principal":{"var":"actor"}}}"#;
+    fn actor_head<'a>() -> Head<SourceEvent<'a>> {
+        Head::new(
+            ComponentPattern::variable("actor"),
+            ComponentPattern::variable("_action"),
+            ComponentPattern::variable("_resource"),
+        )
+    }
 
     fn decide(
         vm: &mut RegoVM,
@@ -456,15 +476,18 @@ mod tests {
         vm.execute_entry_point_by_name("decide").unwrap()
     }
 
-    fn equality() -> Json {
-        json!({"test": {"eq": {"path": ["principal"], "term": {"var": "actor"}}}})
+    fn equality<'a>() -> RegexExpr<SourceEvent<'a>> {
+        RegexExpr::test(TestExpr::atom(
+            Comparison::Eq,
+            AtomPattern::Principal(ComponentPattern::variable("actor")),
+        ))
     }
 
     #[test]
     fn fixed_bindings_share_classes_only_when_truth_words_match() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let program = program(ACTOR, &json!({"star": equality()}).to_string(), 256);
+        let program = program(actor_head(), RegexExpr::star(equality()), 256);
         let mut vm = vm(&store, &history, &program);
         vm.set_execution_mode(ExecutionMode::RunToCompletion);
         let instance = lazy_instance(&vm);
@@ -495,11 +518,11 @@ mod tests {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
         let program = program(
-            ACTOR,
-            &json!({"test": {"neq": {
-                "path": ["principal"], "term": {"value": "alice"}
-            }}})
-            .to_string(),
+            actor_head(),
+            RegexExpr::test(TestExpr::atom(
+                Comparison::Neq,
+                AtomPattern::Principal(ComponentPattern::constant("alice")),
+            )),
             256,
         );
         let mut vm = vm(&store, &history, &program);
@@ -521,13 +544,13 @@ mod tests {
     #[test]
     fn absorbing_states_skip_event_caches() {
         for (regex, expected, visits, count) in [
-            (json!({"test": true}), Value::Null, 1, 1),
-            (json!({"all": true}), Value::Null, 0, 2),
-            (json!({"empty": true}), Value::from(0_usize), 0, 2),
+            (RegexExpr::test(TestExpr::True), Value::Null, 1, 1),
+            (RegexExpr::All, Value::Null, 0, 2),
+            (RegexExpr::Empty, Value::from(0_usize), 0, 2),
         ] {
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
-            let program = program(ACTOR, &regex.to_string(), 256);
+            let program = program(actor_head(), regex, 256);
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(ExecutionMode::RunToCompletion);
             let instance = lazy_instance(&vm);
@@ -548,12 +571,13 @@ mod tests {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
         let program = program(
-            ACTOR,
-            &json!({"star": {"concat": [
-                {"test": {"eq": {"path": ["principal"], "term": {"value": "alice"}}}},
-                {"test": {"eq": {"path": ["principal"], "term": {"value": "bob"}}}}
-            ]}})
-            .to_string(),
+            actor_head(),
+            RegexExpr::star(RegexExpr::concat(["alice", "bob"].map(|principal| {
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::constant(principal)),
+                ))
+            }))),
             256,
         );
         let mut vm = vm(&store, &history, &program);
@@ -599,8 +623,8 @@ mod tests {
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
             let program = program(
-                ACTOR,
-                &json!({"concat": [{"all": true}, equality()]}).to_string(),
+                actor_head(),
+                RegexExpr::concat([RegexExpr::All, equality()]),
                 256,
             );
             let mut vm = vm(&store, &history, &program);
@@ -625,8 +649,8 @@ mod tests {
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
             let program = program(
-                ACTOR,
-                &json!({"concat": [equality(), equality(), equality()]}).to_string(),
+                actor_head(),
+                RegexExpr::concat([equality(), equality(), equality()]),
                 batch,
             );
             let mut vm = vm(&store, &history, &program);
@@ -659,7 +683,7 @@ mod tests {
                 }
             }
             let star_program =
-                super::tests::program(ACTOR, &json!({"star": equality()}).to_string(), batch);
+                super::tests::program(actor_head(), RegexExpr::star(equality()), batch);
             let mut star_vm = super::tests::vm(&store, &history, &star_program);
             star_vm.set_execution_mode(ExecutionMode::RunToCompletion);
             assert_eq!(
@@ -682,8 +706,11 @@ mod tests {
             let rejecting = event(&store, "alice", "read");
             store.append(&history, &[matching; 256]).unwrap();
             let program = program(
-                r#"{"any":true}"#,
-                r#"{"star":{"test":{"eq":{"path":["action"],"term":{"value":"edit"}}}}}"#,
+                any_head(),
+                RegexExpr::star(RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant("edit")),
+                ))),
                 64,
             );
             let mut vm = vm(&store, &history, &program);
@@ -723,10 +750,9 @@ mod tests {
     fn precompile_keeps_the_typed_lazy_language() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let regex =
-            json!({"concat": [{"all": true}, equality(), {"star": equality()}]}).to_string();
-        let eager_program = program(ACTOR, &regex, 256);
-        let lazy_program = program(ACTOR, &regex, 256);
+        let regex = RegexExpr::concat([RegexExpr::All, equality(), RegexExpr::star(equality())]);
+        let eager_program = program(actor_head(), regex.clone(), 256);
+        let lazy_program = program(actor_head(), regex, 256);
         let mut eager = vm(&store, &history, &eager_program);
         let mut lazy = vm(&store, &history, &lazy_program);
         eager.set_execution_mode(ExecutionMode::RunToCompletion);
@@ -759,18 +785,22 @@ mod tests {
 
     #[test]
     fn event_class_lru_keeps_its_256_entry_ceiling() {
-        let tests: Vec<_> = (0..17)
-            .flat_map(|id| {
-                ["principal", "action"].map(|field| {
-                    json!({"eq": {
-                        "path": [field], "term": {"value": alloc::format!("identity-{id}")}
-                    }})
-                })
-            })
-            .collect();
+        let identities: Vec<_> = (0..17).map(|id| alloc::format!("identity-{id}")).collect();
+        let tests = identities.iter().flat_map(|id| {
+            [
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::constant(id.as_str())),
+                ),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Action(ComponentPattern::constant(id.as_str())),
+                ),
+            ]
+        });
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let program = program(ACTOR, &json!({"test": {"or": tests}}).to_string(), 256);
+        let program = program(actor_head(), RegexExpr::test(TestExpr::or(tests)), 256);
         let mut vm = vm(&store, &history, &program);
         vm.set_execution_mode(ExecutionMode::RunToCompletion);
         let instance = lazy_instance(&vm);
@@ -806,16 +836,18 @@ mod tests {
     #[test]
     fn precompile_leaves_wide_typed_transitions_lazy() {
         for count in [9, 8] {
-            let tests: Vec<_> = (0..count)
-                .map(|id| {
-                    json!({"eq": {
-                        "path": ["principal"], "term": {"value": alloc::format!("identity-{id}")}
-                    }})
-                })
+            let identities: Vec<_> = (0..count)
+                .map(|id| alloc::format!("identity-{id}"))
                 .collect();
+            let tests = identities.iter().map(|id| {
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::Principal(ComponentPattern::constant(id.as_str())),
+                )
+            });
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
-            let program = program(ACTOR, &json!({"test": {"or": tests}}).to_string(), 256);
+            let program = program(actor_head(), RegexExpr::test(TestExpr::or(tests)), 256);
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(ExecutionMode::RunToCompletion);
             let instance = Arc::clone(
@@ -853,7 +885,7 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 7]).unwrap();
-        let program = program(r#"{"any":true}"#, r#"{"all":true}"#, 3);
+        let program = program(any_head(), RegexExpr::All, 3);
         let mut first = vm(&store, &history, &program);
         let instance = lazy_instance(&first);
         assert!(matches!(
@@ -919,7 +951,7 @@ mod tests {
         let mut empty_vm = vm(
             &store,
             &history,
-            &program(r#"{"any":true}"#, r#"{"epsilon":true}"#, 3),
+            &program(any_head(), RegexExpr::Epsilon, 3),
         );
         let empty_instance = lazy_instance(&empty_vm);
         empty_instance.lock().set_answer_checkpoint_failure(true);
@@ -946,11 +978,7 @@ mod tests {
 
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 2]).unwrap();
-        let mut final_vm = vm(
-            &store,
-            &history,
-            &program(r#"{"any":true}"#, r#"{"all":true}"#, 1),
-        );
+        let mut final_vm = vm(&store, &history, &program(any_head(), RegexExpr::All, 1));
         let final_instance = lazy_instance(&final_vm);
         assert!(matches!(
             final_vm.execute_history_step(0).unwrap(),
@@ -974,11 +1002,14 @@ mod tests {
         assert_eq!(final_instance.lock().cursor_positions()[0].3, 2);
     }
 
-    const THREE_ACTIONS: &str = r#"{"concat":[
-        {"test":{"eq":{"path":["action"],"term":{"value":"a"}}}},
-        {"test":{"eq":{"path":["action"],"term":{"value":"b"}}}},
-        {"test":{"eq":{"path":["action"],"term":{"value":"c"}}}}
-    ]}"#;
+    fn three_actions<'a>() -> RegexExpr<SourceEvent<'a>> {
+        RegexExpr::concat(["a", "b", "c"].map(|action| {
+            RegexExpr::test(TestExpr::atom(
+                Comparison::Eq,
+                AtomPattern::Action(ComponentPattern::constant(action)),
+            ))
+        }))
+    }
 
     #[test]
     fn graph_replacement_keeps_two_old_continuations_valid() {
@@ -994,7 +1025,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let program = program(r#"{"any":true}"#, THREE_ACTIONS, 1);
+        let program = program(any_head(), three_actions(), 1);
         let mut first = vm(&store, &history, &program);
         let old = lazy_instance(&first);
         let mut second = vm(&store, &history, &program);
@@ -1100,7 +1131,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let program = program(r#"{"any":true}"#, THREE_ACTIONS, 1);
+        let program = program(any_head(), three_actions(), 1);
         let mut vm = vm(&store, &history, &program);
         let old = lazy_instance(&vm);
         old.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
@@ -1112,6 +1143,7 @@ mod tests {
         let table = Arc::clone(&vm.history_attachment.as_ref().unwrap().tables[0]);
         let slot = &table.rules[0];
         let losing = RuleRuntime::new(
+            &history_store::store::HistoryStore::global(),
             &slot.template,
             false,
             &mut RegorusLimits {
@@ -1125,6 +1157,8 @@ mod tests {
         let selected = slot.replace(&old, losing);
         assert!(Arc::ptr_eq(&selected, &winner));
         assert!(losing_weak.upgrade().is_none());
+        // Recovery rebinds the replacement to the exhausted runtime's numeric store.
+        assert!(Arc::ptr_eq(winner.lock().store(), old.lock().store()));
         winner.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
         let error = vm.execute_history_step(0).unwrap_err();
         assert!(matches!(
@@ -1147,7 +1181,7 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         let first = store
-            .table_runtime(&program(r#"{"any":true}"#, r#"{"all":true}"#, 1), 0)
+            .table_runtime(&program(any_head(), RegexExpr::All, 1), 0)
             .unwrap();
         let weak = Arc::downgrade(&first);
         let pinned = Arc::clone(&first.rules[0].current.lock());
@@ -1155,7 +1189,7 @@ mod tests {
         drop(first);
         for _ in 0..17 {
             store
-                .table_runtime(&program(r#"{"any":true}"#, r#"{"all":true}"#, 1), 0)
+                .table_runtime(&program(any_head(), RegexExpr::All, 1), 0)
                 .unwrap();
         }
         assert!(weak.upgrade().is_none());
@@ -1173,11 +1207,7 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 2]).unwrap();
-        let mut vm = vm(
-            &store,
-            &history,
-            &program(r#"{"any":true}"#, r#"{"all":true}"#, 1),
-        );
+        let mut vm = vm(&store, &history, &program(any_head(), RegexExpr::All, 1));
         let instance = lazy_instance(&vm);
         assert!(matches!(
             vm.execute_history_step(0).unwrap(),
@@ -1209,12 +1239,14 @@ mod tests {
     #[test]
     fn retained_cursor_lru_is_bounded_and_keeps_recent_histories() {
         let store = Arc::new(HistoryStore::new());
-        let program = program(r#"{"any":true}"#, r#"{"all":true}"#, 3);
+        let program = program(any_head(), RegexExpr::All, 3);
         let first = store.new_history().unwrap();
         let initial = vm(&store, &first, &program);
         let instance = lazy_instance(&initial);
+        let mut keys = Vec::new();
         for _ in 0..17 {
             let history = store.new_history().unwrap();
+            keys.push(history.index());
             let mut vm = vm(&store, &history, &program);
             assert!(matches!(
                 vm.execute_history_step(0).unwrap(),
@@ -1224,14 +1256,8 @@ mod tests {
         let runtime = instance.lock();
         let positions = runtime.cursor_positions();
         assert_eq!(positions.len(), 16);
-        assert_eq!(positions[0].0, 17);
-        assert_eq!(positions[15].0, 2);
-        let bindings = program.history_tables[0].rules[0]
-            .source
-            .head
-            .iter()
-            .all(|head| matches!(head, junco_core::flat::FlatHead::Any));
-        assert!(bindings);
+        assert_eq!(positions[0].0, keys[16]);
+        assert_eq!(positions[15].0, keys[1]);
         assert!(positions.iter().all(|cursor| cursor.1 == positions[0].1));
     }
 

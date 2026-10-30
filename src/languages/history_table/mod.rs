@@ -1,65 +1,85 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Ordered `{mode, request, history}` rules compiled to bounded `HistoryStep`
-//! instructions. Cold JSON policies describe exact principal/action/resource
-//! identities; execution accepts only a staged typed event and shared history.
+//! Ordered Rust-DSL rules compiled to bounded `HistoryStep` instructions.
+//! Rules borrow exact principal/action/resource strings; compiled programs own
+//! them. Execution accepts only a staged typed event and shared history.
 //! Each decision returns `null` (grant) or the first violated rule's index.
 
 pub(crate) mod limits;
-mod source;
 pub(crate) mod store;
 
-pub use junco_core::HistoryError;
+pub use history_syntax::{
+    AtomPattern, Comparison, ComponentPattern, Head, RegexExpr, Rule, RuleMode, TestExpr,
+};
+pub use junco_core::{CompileError, HistoryError};
 pub use store::{Action, Event, HistoryHandle, HistoryStore, Principal, Resource};
 
 use crate::rvm::instructions::HistoryStepParams;
 use crate::rvm::program::{HistoryTable, HistoryTableRule, Program};
 use crate::rvm::Instruction;
 use crate::utils::limits::ExecutionTimer;
-use crate::value::Value;
 use alloc::string::{String, ToString as _};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use history_syntax::RuleMode;
+use history_syntax::Component;
+use junco_core::flat::{FlatHead, FlatPair, FlatTerm, FlatTest};
+use junco_core::limits::Limits as _;
 use junco_core::observation::ObservationWorld;
+use junco_core::ComponentValue;
+
+/// Borrowed-string authoring event for portable history-table rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SourceEvent<'a> {
+    pub principal: &'a str,
+    pub action: &'a str,
+    pub resource: &'a str,
+}
+
+impl<'a> history_syntax::Event for SourceEvent<'a> {
+    type Principal = &'a str;
+    type Action = &'a str;
+    type Resource = &'a str;
+
+    fn principal(self) -> Self::Principal {
+        self.principal
+    }
+
+    fn action(self) -> Self::Action {
+        self.action
+    }
+
+    fn resource(self) -> Self::Resource {
+        self.resource
+    }
+}
 
 /// History table compilation failures.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HistoryTableError {
     #[error("history batch_size must be greater than zero")]
     InvalidBatchSize,
-    #[error("history table must be an object")]
-    NotAnObject,
-    #[error("history table must have a `rules` array")]
-    MissingRules,
-    #[error("history table rule {0} must be an object")]
-    RuleNotAnObject(usize),
-    #[error("history table rule {index} has invalid mode {found:?}")]
-    BadMode { index: usize, found: String },
-    #[error("history table rule {index} is missing `{member}`")]
-    MissingMember { index: usize, member: &'static str },
-    #[error("history table rule {index} is invalid: {message}")]
-    InvalidPair { index: usize, message: String },
+    #[error("history table rule {index} is invalid: {source}")]
+    InvalidRule {
+        index: usize,
+        #[source]
+        source: CompileError,
+    },
     #[error("history table has too many rules ({0})")]
     TooManyRules(usize),
+    #[error("invalid compiled history program: {0}")]
+    InvalidProgram(String),
 }
 
-/// Compile a portable typed history table with entry point `decide`.
-/// `batch_size` bounds the events consumed by each instruction dispatch.
-pub fn compile(table: &Value, batch_size: u32) -> Result<Arc<Program>, HistoryTableError> {
+/// Compile ordered borrowed Rust rules into a portable program with entry point
+/// `decide`. `batch_size` bounds the events consumed by each instruction dispatch.
+pub fn compile(
+    rules: &[Rule<SourceEvent<'_>>],
+    batch_size: u32,
+) -> Result<Arc<Program>, HistoryTableError> {
     if batch_size == 0 {
         return Err(HistoryTableError::InvalidBatchSize);
     }
-    let Value::Object(ref members) = *table else {
-        return Err(HistoryTableError::NotAnObject);
-    };
-    let Some(rules) = members
-        .get(&Value::from("rules"))
-        .and_then(|rules| rules.as_array().ok())
-    else {
-        return Err(HistoryTableError::MissingRules);
-    };
     if rules.len() > Program::MAX_INSTRUCTIONS.saturating_sub(2) {
         return Err(HistoryTableError::TooManyRules(rules.len()));
     }
@@ -67,53 +87,21 @@ pub fn compile(table: &Value, batch_size: u32) -> Result<Arc<Program>, HistoryTa
     let mut program = Program::new();
     let mut table_rules = Vec::with_capacity(rules.len());
     for (index, rule) in rules.iter().enumerate() {
-        let Value::Object(ref fields) = *rule else {
-            return Err(HistoryTableError::RuleNotAnObject(index));
-        };
-        if let Some(key) = fields.keys().find(|k| {
-            !matches!(
-                k.as_string().map(|s| s.as_ref()),
-                Ok("mode" | "request" | "history")
-            )
-        }) {
-            return Err(HistoryTableError::InvalidPair {
-                index,
-                message: alloc::format!("unknown member {key}"),
-            });
-        }
-        let member = |name: &'static str| {
-            fields
-                .get(&Value::from(name))
-                .ok_or(HistoryTableError::MissingMember {
-                    index,
-                    member: name,
-                })
-        };
-        let mode = match member("mode")?.as_string().map(|s| s.as_ref()) {
-            Ok("forbid") => RuleMode::Forbid,
-            Ok("require") => RuleMode::Require,
-            _ => {
-                return Err(HistoryTableError::BadMode {
-                    index,
-                    found: member("mode")?.to_string(),
-                })
-            }
-        };
-        let request = member("request")?;
-        let history = member("history")?;
         let mut timer = ExecutionTimer::new(None);
-        // Borrow the members instead of copying both policy trees into a wrapper.
-        let source = source::parse_pair(
-            request,
-            history,
-            &mut limits::RegorusLimits { timer: &mut timer },
-            &mut ObservationWorld,
-        )
-        .map_err(|e| HistoryTableError::InvalidPair {
-            index,
-            message: alloc::format!("{e}"),
+        let mut limits = limits::RegorusLimits { timer: &mut timer };
+        let mut world = ObservationWorld;
+        let flat = junco_core::flatten_rule(rule, &mut limits, &mut world)
+            .map_err(|source| HistoryTableError::InvalidRule { index, source })?;
+        let source = into_portable_source(flat.source, &mut limits, &mut world).map_err(|e| {
+            HistoryTableError::InvalidRule {
+                index,
+                source: CompileError::Runtime(e),
+            }
         })?;
-        table_rules.push(HistoryTableRule { mode, source });
+        table_rules.push(HistoryTableRule {
+            mode: flat.mode,
+            source,
+        });
     }
 
     let table_index = program.add_history_table(HistoryTable { rules: table_rules });
@@ -140,9 +128,84 @@ pub fn compile(table: &Value, batch_size: u32) -> Result<Arc<Program>, HistoryTa
     program
         .initialize_resolved_builtins()
         .and_then(|()| program.validate_limits().map_err(anyhow::Error::msg))
-        .map_err(|e| HistoryTableError::InvalidPair {
-            index: 0,
-            message: alloc::format!("{e}"),
-        })?;
+        .map_err(|e| HistoryTableError::InvalidProgram(e.to_string()))?;
     Ok(Arc::new(program))
+}
+
+/// Copy borrowed constants into a store-independent source, moving every other table unchanged.
+fn into_portable_source(
+    source: FlatPair<ComponentValue<SourceEvent<'_>>>,
+    limits: &mut limits::RegorusLimits<'_>,
+    world: &mut ObservationWorld,
+) -> Result<FlatPair<String>, HistoryError> {
+    let FlatPair {
+        head: [principal, action, resource],
+        tests,
+        regexes,
+        root,
+    } = source;
+    let mut own_head = |field, head| {
+        Ok::<_, HistoryError>(match head {
+            FlatHead::Any => FlatHead::Any,
+            FlatHead::Bind => FlatHead::Bind,
+            FlatHead::Constant(value) => FlatHead::Constant(own_constant(field, value, limits)?),
+        })
+    };
+    let head = [
+        own_head(Component::Principal, principal)?,
+        own_head(Component::Action, action)?,
+        own_head(Component::Resource, resource)?,
+    ];
+    let mut owned = Vec::new();
+    world
+        .try_reserve_vec_exact(&mut owned, tests.len())
+        .map_err(|_| HistoryError::AllocationFailed)?;
+    limits.enforce_memory()?;
+    for test in tests {
+        limits.checkpoint()?;
+        owned.push(match test {
+            FlatTest::Bool(value) => FlatTest::Bool(value),
+            FlatTest::Atom {
+                field,
+                term,
+                positive,
+            } => FlatTest::Atom {
+                field,
+                term: match term {
+                    FlatTerm::Constant(value) => {
+                        FlatTerm::Constant(own_constant(field, value, limits)?)
+                    }
+                    FlatTerm::Variable(variable) => FlatTerm::Variable(variable),
+                },
+                positive,
+            },
+            FlatTest::And(children) => FlatTest::And(children),
+            FlatTest::Or(children) => FlatTest::Or(children),
+        });
+    }
+    Ok(FlatPair {
+        head,
+        tests: owned,
+        regexes,
+        root,
+    })
+}
+
+/// Copy one coordinate-checked constant's exact bytes into an owned string.
+fn own_constant(
+    field: Component,
+    value: ComponentValue<SourceEvent<'_>>,
+    limits: &mut limits::RegorusLimits<'_>,
+) -> Result<String, HistoryError> {
+    junco_core::compile::validate_component(field, &value)?;
+    let (ComponentValue::Principal(text)
+    | ComponentValue::Action(text)
+    | ComponentValue::Resource(text)) = value;
+    let mut owned = String::new();
+    owned
+        .try_reserve_exact(text.len())
+        .map_err(|_| HistoryError::AllocationFailed)?;
+    limits.enforce_memory()?;
+    owned.push_str(text);
+    Ok(owned)
 }
