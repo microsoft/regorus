@@ -125,19 +125,20 @@ pub(super) fn match_count_prefix<'a>(
 /// text (ASCII case-insensitively).  Bindings without the counted `[*]` keep
 /// this legacy spelling; segment equivalence does not widen them.
 ///
-/// The one spelling difference ignored is a `.` (and any blanks after it)
+/// The spelling differences ignored are a `.` (and any blanks after it)
 /// before a `[`: nested count prefixes are built without it (`a[*]['b']`),
-/// while the legacy form spelled them with it (`a[*].['b']`).
+/// while the legacy form spelled them with it (`a[*].['b']`); and blanks
+/// between `[*]` and a `[`, which the parser skips too (`a[*] ['b']`).
 fn has_legacy_raw_prefix(prefix: &str, field_path: &str) -> bool {
     let p = prefix.as_bytes();
     let f = field_path.as_bytes();
     let (mut i, mut j) = (0_usize, 0_usize);
     loop {
-        i = skip_dot_before_bracket(prefix, i);
+        i = skip_separator_before_bracket(prefix, i);
         let Some(pc) = p.get(i) else {
             break;
         };
-        j = skip_dot_before_bracket(field_path, j);
+        j = skip_separator_before_bracket(field_path, j);
         match f.get(j) {
             Some(fc) if fc.eq_ignore_ascii_case(pc) => {}
             _ => return false,
@@ -149,13 +150,18 @@ fn has_legacy_raw_prefix(prefix: &str, field_path: &str) -> bool {
         .is_some_and(|tail| tail.is_empty() || tail.starts_with(b"."))
 }
 
-/// If `path[pos..]` is `.`, optional whitespace (as `str::trim_start`
-/// sees it), then `[`, return the offset of that `[`; otherwise `pos`.
-fn skip_dot_before_bracket(path: &str, pos: usize) -> usize {
-    if path.as_bytes().get(pos) != Some(&b'.') {
-        return pos;
-    }
-    let Some(after) = path.get(pos.saturating_add(1)..) else {
+/// If `path[pos..]` is `.` then optional whitespace (as `str::trim_start`
+/// sees it), or follows `[*]` and is whitespace, and then comes `[`, return
+/// the offset of that `[`; otherwise `pos`.
+fn skip_separator_before_bracket(path: &str, pos: usize) -> usize {
+    let after = if path.as_bytes().get(pos) == Some(&b'.') {
+        path.get(pos.saturating_add(1)..)
+    } else if path.get(..pos).is_some_and(|head| head.ends_with("[*]")) {
+        path.get(pos..)
+    } else {
+        None
+    };
+    let Some(after) = after else {
         return pos;
     };
     let trimmed = after.trim_start();
@@ -829,6 +835,22 @@ mod tests {
     }
 
     #[test]
+    fn legacy_prefix_ignores_blanks_after_wildcard_before_bracket() {
+        for (prefix, path) in [
+            ("a[*]['b']", "a[*] ['b'].c"),
+            ("a[*] ['b']", "a[*]['b'].c"),
+            ("a[*]['b']", "a[*]\u{2003}['b'].c"),
+        ] {
+            assert_eq!(
+                match_count_prefix(prefix, path),
+                Some(below("c", false, false)),
+                "{prefix} / {path:?}"
+            );
+        }
+        assert_eq!(match_count_prefix("a[*]['b']", "a[*] x['b'].c"), None);
+    }
+
+    #[test]
     fn malformed_below_prefix() {
         for (prefix, path) in [
             ("items", "items[*]..subs[*]"),
@@ -847,6 +869,8 @@ mod tests {
             ("items", "items[*] ['subs'][*]"),
             ("items", "items[0]..x[*]"),
             ("items", "other[*]..x"),
+            ("items[*]['subs']", "items[*].other[*]..v"),
+            ("items[*]['subs']", "items[*]..v"),
         ] {
             assert!(!is_malformed_below(prefix, path), "{prefix} / {path}");
         }

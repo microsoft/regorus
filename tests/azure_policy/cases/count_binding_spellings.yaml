@@ -626,3 +626,28 @@ cases:
     resource:
       items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
     want_compile_error_contains: "invalid field path below count binding"
+
+  # Blanks between `[*]` and the next bracket are skipped in the legacy
+  # form too, so the where field binds to the inner count's element.
+  - note: legacy_blank_after_wildcard_binds_inner_element
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*] ['b'].c","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: 1}]}]
+    want_effect: deny
+
+  - note: legacy_blank_after_wildcard_binds_inner_element_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*] ['b'].c","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: 2}]}]
+    want_undefined: true
+
+  # A legacy dotted nested count field is not below the binding's element,
+  # so it reads from the resource root.
+  - note: nested_count_legacy_dotted_reads_resource_root
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.x[*].y[*]","where":{"value":"a","equals":"a"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{x: [{y: [1]}]}]
+    want_undefined: true
