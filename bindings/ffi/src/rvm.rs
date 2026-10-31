@@ -1927,7 +1927,7 @@ pub extern "C" fn regorus_rvm_set_host_await_responses(
     })
 }
 
-/// Get the HostAwait argument as a JSON string.
+/// Get the HostAwait argument as a compact JSON string.
 ///
 /// Returns the argument value if the VM is suspended due to a HostAwait instruction,
 /// or None if the VM is not in a HostAwait-suspended state.
@@ -1939,7 +1939,7 @@ pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> Re
                 let vm = to_shared_ref(vm as *const RegorusRvm)?;
                 let guard = vm.try_read()?;
                 match guard.get_host_await_argument() {
-                    Some(arg) => Ok(Some(arg.to_json_str()?)),
+                    Some(arg) => Ok(Some(serde_json::to_string(arg)?)),
                     None => Ok(None),
                 }
             }();
@@ -2052,6 +2052,59 @@ mod host_await_tests {
 
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
+    }
+
+    #[test]
+    fn host_await_argument_returns_compact_json_preserving_values() {
+        let mut engine = regorus::Engine::new();
+        engine
+            .add_policy(
+                "test.rego".into(),
+                "package test\nresult := echo(input)".into(),
+            )
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&"data.test.result".into())
+            .expect("compile policy");
+        let program = Compiler::compile_from_policy_with_host_await(
+            &compiled,
+            &["data.test.result"],
+            &[("echo", 1)],
+        )
+        .expect("compile VM program");
+
+        for (input, expected) in [
+            (Value::from("abc"), r#"["abc"]"#),
+            (Value::from("\"\\\n\r\t\0"), r#"["\"\\\n\r\t\u0000"]"#),
+            (Value::from("  a  b \t\n "), r#"["  a  b \t\n "]"#),
+            (
+                Value::from_json_str(
+                    r#"{"items":[1,true,null,{"text":" a \"b\" "}],"name":"abc"}"#,
+                )
+                .expect("valid object input"),
+                r#"[{"items":[1,true,null,{"text":" a \"b\" "}],"name":"abc"}]"#,
+            ),
+        ] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(ExecutionMode::Suspendable);
+            vm.load_program(Arc::clone(&program));
+            vm.set_input(input.clone());
+            vm.execute().expect("suspend at host await");
+            let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+            let result = regorus_rvm_get_host_await_argument(vm);
+            assert_eq!(result.status, RegorusStatus::Ok);
+            assert!(!result.output.is_null());
+            let output = unsafe { CStr::from_ptr(result.output) }.to_bytes().to_vec();
+            regorus_result_drop(result);
+            regorus_rvm_drop(vm);
+
+            assert_eq!(output, expected.as_bytes());
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output).expect("valid argument JSON"),
+                Value::from(vec![input])
+            );
+        }
     }
 
     /// Simulates a *future* `RegorusHostAwaitBuiltin` that has grown a trailing
