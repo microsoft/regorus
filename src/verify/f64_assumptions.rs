@@ -77,6 +77,26 @@ pub open spec fn f64_has_fraction(f: f64) -> bool
         && f64_finite_significand(f) % (pow2((-f64_finite_exponent(f)) as nat) as int) != 0
 }
 
+// Specify the mantissa only for normal finite values; exponent and sign apply to all values.
+pub open spec fn f64_integer_decode_ensures(f: f64, decoded: (u64, i16, i8)) -> bool
+{
+    &&& 0 < f64_biased_exponent(f) < 2047 ==>
+        decoded.0 as int == f64_finite_significand(f)
+    &&& decoded.1 as int == f64_biased_exponent(f) - 1075
+    &&& decoded.2 == if f.is_sign_negative_spec() { -1i8 } else { 1i8 }
+}
+
+pub assume_specification[ <f64 as num_traits::float::FloatCore>::integer_decode ](f: f64)
+    -> (decoded: (u64, i16, i8))
+    ensures
+        f64_integer_decode_ensures(f, decoded),
+;
+
+pub assume_specification[ f64::is_sign_negative ](f: f64) -> (negative: bool)
+    ensures
+        negative == f.is_sign_negative_spec(),
+;
+
 pub axiom fn axiom_f64_order_zero(f: f64, exponent: int)
     requires
         !f.is_nan_spec(),

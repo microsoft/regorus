@@ -615,15 +615,14 @@ impl Number {
     // mantissa and compare it with the borrowed BigInt; fractional values compare their bounded
     // integer part first and use the fraction only as a tie-break. Neither operand is rounded
     // through f64, and the stored BigInt is never cloned or shifted.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n@), result),
     )]
-    // Pinned Verus cannot connect `integer_decode`, primitive f64 casts/comparisons, and
-    // BigInt construction/negation/shift to the bit-level scaled-integer model. Keeping the
-    // exact contract on this one executable helper avoids any global comparison axiom.
     fn cmp_float_int(f: f64, n: &BigInt) -> Ordering {
+        proof! {
+            lemma_cmp_float_int(f, n);
+        }
         if f.is_nan() {
             return Ordering::Greater;
         }

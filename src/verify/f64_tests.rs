@@ -9,9 +9,10 @@
     clippy::unseparated_literal_suffix
 )]
 
-use crate::number::Number;
+use crate::{number::Number, Rc};
 use core::cmp::Ordering;
 use num_bigint::BigInt;
+use num_traits::float::FloatCore as _;
 
 fn decode(f: f64) -> (u64, i32) {
     let bits = f.to_bits() & 0x7fff_ffff_ffff_ffff;
@@ -234,6 +235,78 @@ fn f64_scaled_order_and_i64_casts_match_runtime() {
                         != zero;
                 assert_eq!(f < back, f.is_sign_negative() && has_fraction);
                 assert_eq!(f > back, !f.is_sign_negative() && has_fraction);
+            }
+        }
+    }
+}
+
+#[test]
+fn f64_integer_decode_and_bigint_comparisons_match_runtime() {
+    let fixed_integers = [
+        BigInt::from(-1i8),
+        BigInt::from(0u8),
+        BigInt::from(1u8),
+        BigInt::from(i64::MIN),
+        BigInt::from(i64::MAX),
+        -(BigInt::from(1u8) << 64usize),
+        BigInt::from(1u8) << 64usize,
+        -(BigInt::from(1u8) << 2048usize),
+        BigInt::from(1u8) << 2048usize,
+    ];
+    for exponent_bits in 0u64..=0x7ff {
+        for fraction in [
+            0u64,
+            1,
+            0x0008_0000_0000_0000,
+            0x000f_ffff_ffff_fffe,
+            0x000f_ffff_ffff_ffff,
+        ] {
+            for sign in [0u64, 1u64 << 63] {
+                let f = f64::from_bits(sign | (exponent_bits << 52) | fraction);
+                let (mantissa, exp, decoded_sign) = f.integer_decode();
+                if exponent_bits != 0 && exponent_bits != 2047 {
+                    assert_eq!(mantissa, fraction + (1u64 << 52));
+                }
+                assert_eq!(i32::from(exp), exponent_bits as i32 - 1075);
+                assert_eq!(decoded_sign, if sign == 0 { 1 } else { -1 });
+                assert_eq!(f.is_sign_negative(), sign != 0);
+
+                let exponent = decode(f).1.min(0);
+                let value = scaled_value(f, exponent);
+                let unit = BigInt::from(1u8) << (-exponent) as usize;
+                let integer_part = scaled_value(f, 0);
+                if f.is_finite() && exp >= 0 {
+                    let signed_mantissa = if f.is_sign_negative() {
+                        -BigInt::from(mantissa)
+                    } else {
+                        BigInt::from(mantissa)
+                    };
+                    let multiplied = &signed_mantissa * BigInt::from(2u8).pow(exp as u32);
+                    assert_eq!(signed_mantissa << (exp as usize), multiplied);
+                    assert_eq!(multiplied, integer_part);
+                }
+                let neighbours = [
+                    &integer_part - 1u8,
+                    integer_part.clone(),
+                    &integer_part + 1u8,
+                ];
+                for n in fixed_integers.iter().chain(neighbours.iter()) {
+                    let expected = if f.is_nan() {
+                        Ordering::Greater
+                    } else if !f.is_finite() {
+                        if f.is_sign_negative() {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    } else {
+                        value.cmp(&(n * &unit))
+                    };
+                    let integer = Number::BigInt(Rc::new(n.clone()));
+                    let float = Number::Float(f);
+                    assert_eq!(float.cmp(&integer), expected, "{f:?} vs {n}");
+                    assert_eq!(integer.cmp(&float), expected.reverse(), "{n} vs {f:?}");
+                }
             }
         }
     }

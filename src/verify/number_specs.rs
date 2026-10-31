@@ -26,6 +26,15 @@ use vstd::arithmetic::power2::pow2;
 use vstd::float::*;
 use vstd::std_specs::cmp::PartialEqSpec;
 
+pub assume_specification[ Ordering::reverse ](ordering: Ordering) -> (result: Ordering)
+    ensures
+        result == match ordering {
+            Ordering::Less => Ordering::Greater,
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => Ordering::Less,
+        },
+;
+
 pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number)
     ensures
         res@ == n@,
