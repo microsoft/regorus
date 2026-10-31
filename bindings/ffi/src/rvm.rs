@@ -59,6 +59,13 @@ impl RegorusRvm {
     }
 }
 
+fn to_rvm_string_result(output: Result<String>) -> RegorusResult {
+    match output {
+        Ok(json) => RegorusResult::ok_string(json),
+        Err(err) => to_rvm_error_result(err),
+    }
+}
+
 fn to_rvm_error_result(err: anyhow::Error) -> RegorusResult {
     let status = match err.downcast_ref::<VmError>() {
         Some(VmError::MemoryBudgetExceeded { .. }) => RegorusStatus::MemoryBudgetExceeded,
@@ -176,6 +183,37 @@ fn compile_from_modules_inner(
     host_await_builtins_len: usize,
     host_await_builtin_size: usize,
 ) -> Result<*mut RegorusProgram> {
+    compile_from_modules_inner_v2(
+        data_json,
+        modules,
+        modules_len,
+        entry_points,
+        entry_points_len,
+        host_await_builtins,
+        host_await_builtins_len,
+        host_await_builtin_size,
+        core::ptr::null(),
+        0,
+        0,
+    )
+}
+
+/// Shared implementation for compiling from modules with explicit legacy
+/// raw-value and v2 packed-array registration descriptors.
+#[allow(clippy::too_many_arguments)]
+fn compile_from_modules_inner_v2(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    legacy_host_await_builtins: *const RegorusHostAwaitBuiltin,
+    legacy_host_await_builtins_len: usize,
+    legacy_host_await_builtin_size: usize,
+    host_await_builtins_v2: *const RegorusHostAwaitBuiltinV2,
+    host_await_builtins_v2_len: usize,
+    host_await_builtin_v2_size: usize,
+) -> Result<*mut RegorusProgram> {
     if entry_points_len == 0 {
         return Err(anyhow!("entry_points must contain at least one entry"));
     }
@@ -193,21 +231,32 @@ fn compile_from_modules_inner(
     let compiled_policy =
         regorus::compile_policy_with_entrypoint(data, &policy_modules, entry_rule.into())?;
 
-    // `Compiler::compile_from_policy_with_host_await` with an empty builtins
-    // slice is equivalent to `compile_from_policy`, so both FFI entry points
-    // route through this single path. A null `host_await_builtins` pointer
-    // with `len == 0` is the canonical "no builtins" shape.
-    let ha_builtins = convert_c_host_await_builtins(
-        host_await_builtins,
-        host_await_builtins_len,
-        host_await_builtin_size,
+    // The legacy descriptor is name-only, so its Rust contract is always one
+    // raw Value. V2 descriptors carry their fixed packed-array arity separately.
+    let legacy_builtins = convert_c_host_await_builtins(
+        legacy_host_await_builtins,
+        legacy_host_await_builtins_len,
+        legacy_host_await_builtin_size,
     )?;
-    let ha_ref: Vec<(&str, usize)> = ha_builtins.iter().map(|(n, a)| (n.as_str(), *a)).collect();
+    let legacy_ref: Vec<(&str, usize)> = legacy_builtins
+        .iter()
+        .map(|(name, arg_count)| (name.as_str(), *arg_count))
+        .collect();
+    let v2_builtins = convert_c_host_await_builtins_v2(
+        host_await_builtins_v2,
+        host_await_builtins_v2_len,
+        host_await_builtin_v2_size,
+    )?;
+    let v2_ref: Vec<(&str, usize)> = v2_builtins
+        .iter()
+        .map(|(name, arg_count)| (name.as_str(), *arg_count))
+        .collect();
 
-    let program = Compiler::compile_from_policy_with_host_await(
+    let program = Compiler::compile_from_policy_with_host_await_v2(
         &compiled_policy,
         &entry_points_ref,
-        &ha_ref,
+        &legacy_ref,
+        &v2_ref,
     )?;
     Ok(Box::into_raw(Box::new(RegorusProgram { program })))
 }
@@ -1708,11 +1757,18 @@ fn convert_c_modules_to_rust(
     Ok(policy_modules)
 }
 
-/// A registered host-awaitable builtin passed via FFI.
+/// A legacy registered host-awaitable builtin passed via FFI.
 ///
-/// The registered builtin's declared input arity.
+/// Legacy registrations always accept one raw input `Value`.
 #[repr(C)]
 pub struct RegorusHostAwaitBuiltin {
+    /// Null-terminated UTF-8 builtin name.
+    pub name: *const c_char,
+}
+
+/// A v2 host-awaitable builtin registration with fixed packed-array arity.
+#[repr(C)]
+pub struct RegorusHostAwaitBuiltinV2 {
     /// Null-terminated UTF-8 builtin name.
     pub name: *const c_char,
     /// Number of input arguments expected by the registered builtin.
@@ -1727,8 +1783,8 @@ pub struct RegorusHostAwaitBuiltin {
 /// * `entry_points` / `entry_points_len` - Entry point rule paths
 /// * `host_await_builtins` / `host_await_builtins_len` - Builtins that compile to HostAwait
 /// * `host_await_builtin_size` - caller's `sizeof(RegorusHostAwaitBuiltin)`, used as the
-///   array stride. For non-empty arrays it must include the full name-and-arity prefix;
-///   larger aligned caller layouts remain supported.
+///   array stride. For non-empty arrays it must include the name pointer; larger aligned
+///   caller layouts remain supported.
 #[allow(clippy::too_many_arguments)]
 #[no_mangle]
 pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
@@ -1751,6 +1807,42 @@ pub extern "C" fn regorus_program_compile_from_modules_with_host_await(
             host_await_builtins,
             host_await_builtins_len,
             host_await_builtin_size,
+        ))
+    })
+}
+
+/// Compile an RVM program from data/modules and entry points, with separate
+/// legacy raw-value and v2 packed-array host-await registrations.
+///
+/// The registration triples each use caller-reported element size as stride.
+#[allow(clippy::too_many_arguments)]
+#[no_mangle]
+pub extern "C" fn regorus_program_compile_from_modules_with_host_await_v2(
+    data_json: *const c_char,
+    modules: *const RegorusPolicyModule,
+    modules_len: usize,
+    entry_points: *const *const c_char,
+    entry_points_len: usize,
+    legacy_host_await_builtins: *const RegorusHostAwaitBuiltin,
+    legacy_host_await_builtins_len: usize,
+    legacy_host_await_builtin_size: usize,
+    host_await_builtins_v2: *const RegorusHostAwaitBuiltinV2,
+    host_await_builtins_v2_len: usize,
+    host_await_builtin_v2_size: usize,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        compile_from_modules_result(compile_from_modules_inner_v2(
+            data_json,
+            modules,
+            modules_len,
+            entry_points,
+            entry_points_len,
+            legacy_host_await_builtins,
+            legacy_host_await_builtins_len,
+            legacy_host_await_builtin_size,
+            host_await_builtins_v2,
+            host_await_builtins_v2_len,
+            host_await_builtin_v2_size,
         ))
     })
 }
@@ -2038,6 +2130,41 @@ pub(crate) fn convert_c_host_await_builtins(
         let b = unsafe { &*(base.add(offset) as *const RegorusHostAwaitBuiltin) };
         let name = from_c_str(b.name)
             .map_err(|e| anyhow!("invalid host-await builtin name at index {i}: {e}"))?;
+        result.push((name, 1));
+        check_memory_limit_if_needed()?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn convert_c_host_await_builtins_v2(
+    builtins: *const RegorusHostAwaitBuiltinV2,
+    len: usize,
+    struct_size: usize,
+) -> Result<Vec<(String, usize)>> {
+    if builtins.is_null() && len > 0 {
+        return Err(anyhow!("null host_await_builtins_v2 pointer"));
+    }
+    validate_array_stride(
+        builtins,
+        len,
+        struct_size,
+        "host_await_builtin_v2_size",
+        "RegorusHostAwaitBuiltinV2",
+    )?;
+    let mut result = Vec::new();
+    result
+        .try_reserve(len)
+        .map_err(|_| anyhow!("failed to reserve capacity for {len} v2 host-await builtins"))?;
+    let base = builtins as *const u8;
+    for i in 0..len {
+        let offset = i
+            .checked_mul(struct_size)
+            .ok_or_else(|| anyhow!("host-await v2 builtin array offset overflow at index {i}"))?;
+        // SAFETY: caller guarantees `len` elements each `struct_size` bytes wide
+        // starting at `builtins`, with valid C-string `name` pointers.
+        let b = unsafe { &*(base.add(offset) as *const RegorusHostAwaitBuiltinV2) };
+        let name = from_c_str(b.name)
+            .map_err(|e| anyhow!("invalid host-await v2 builtin name at index {i}: {e}"))?;
         result.push((name, b.arg_count));
         check_memory_limit_if_needed()?;
     }
@@ -2054,27 +2181,31 @@ mod host_await_tests {
         CString::new(s).expect("CString::new failed")
     }
 
-    /// Simulates a *future* `RegorusHostAwaitBuiltin` that has grown a trailing
-    /// field. It shares the same `name: *const c_char` at offset 0, so a caller
-    /// built against this wider layout must still be walked correctly as long as
-    /// it reports its own (larger) element size as the stride.
+    /// Simulates a *future* name-only legacy descriptor with a trailing field.
+    /// It shares the same `name: *const c_char` at offset 0, so the caller's
+    /// larger aligned element size remains the stride.
     #[repr(C)]
     struct WiderBuiltin {
+        name: *const c_char,
+        _appended: u64,
+    }
+
+    #[repr(C)]
+    struct WiderBuiltinV2 {
         name: *const c_char,
         arg_count: usize,
         _appended: u64,
     }
 
-    // A caller-supplied array laid out at the exact native element size preserves arities.
+    // A caller-supplied array laid out at the exact legacy element size maps to
+    // one raw-value argument per registration.
     #[test]
-    fn convert_builtins_native_size_parses_names_and_arities() {
+    fn convert_builtins_native_size_parses_legacy_names() {
         let names = [c("translate"), c("fetch")];
         let builtins: Vec<RegorusHostAwaitBuiltin> = names
             .iter()
-            .enumerate()
-            .map(|(index, n)| RegorusHostAwaitBuiltin {
-                name: n.as_ptr(),
-                arg_count: index,
+            .map(|name| RegorusHostAwaitBuiltin {
+                name: name.as_ptr(),
             })
             .collect();
         let size = core::mem::size_of::<RegorusHostAwaitBuiltin>();
@@ -2084,7 +2215,7 @@ mod host_await_tests {
 
         assert_eq!(
             result,
-            vec![("translate".to_string(), 0), ("fetch".to_string(), 1)]
+            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
         );
     }
 
@@ -2095,7 +2226,6 @@ mod host_await_tests {
         let name = c("translate");
         let builtins = [RegorusHostAwaitBuiltin {
             name: name.as_ptr(),
-            arg_count: 1,
         }];
         let too_small = core::mem::size_of::<RegorusHostAwaitBuiltin>() - 1;
 
@@ -2117,10 +2247,8 @@ mod host_await_tests {
         let names = [c("translate"), c("fetch")];
         let wide: Vec<WiderBuiltin> = names
             .iter()
-            .enumerate()
-            .map(|(index, n)| WiderBuiltin {
-                name: n.as_ptr(),
-                arg_count: index + 2,
+            .map(|name| WiderBuiltin {
+                name: name.as_ptr(),
                 _appended: 0,
             })
             .collect();
@@ -2139,43 +2267,104 @@ mod host_await_tests {
 
         assert_eq!(
             result,
-            vec![("translate".to_string(), 2), ("fetch".to_string(), 3)]
+            vec![("translate".to_string(), 1), ("fetch".to_string(), 1)]
         );
     }
 
-    // A pre-arity name-only caller must not be accepted using the new native
-    // layout: reading its trailing bytes as `arg_count` would be invalid.
+    // A caller using the exact pre-PR name-only layout remains valid.
     #[test]
-    fn convert_builtins_rejects_legacy_name_only_layout() {
-        #[repr(C)]
-        struct LegacyBuiltin {
-            name: *const c_char,
-        }
-
+    fn convert_builtins_accepts_legacy_name_only_layout() {
         let name = c("translate");
-        let legacy = [LegacyBuiltin {
+        let legacy = [RegorusHostAwaitBuiltin {
             name: name.as_ptr(),
         }];
-        let err = convert_c_host_await_builtins(
-            legacy.as_ptr() as *const RegorusHostAwaitBuiltin,
+        assert_eq!(
+            core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+            core::mem::size_of::<*const c_char>()
+        );
+        let result = convert_c_host_await_builtins(
+            legacy.as_ptr(),
             legacy.len(),
-            core::mem::size_of::<LegacyBuiltin>(),
+            core::mem::size_of::<RegorusHostAwaitBuiltin>(),
         )
-        .unwrap_err();
+        .unwrap();
+        assert_eq!(result, vec![("translate".to_string(), 1)]);
+    }
 
-        assert!(
-            err.to_string().contains("ABI mismatch"),
-            "expected an ABI mismatch error, got: {err}"
+    #[test]
+    fn convert_builtins_v2_preserves_arity_and_caller_stride() {
+        let names = [c("zero"), c("lookup")];
+        let builtins = [
+            RegorusHostAwaitBuiltinV2 {
+                name: names[0].as_ptr(),
+                arg_count: 0,
+            },
+            RegorusHostAwaitBuiltinV2 {
+                name: names[1].as_ptr(),
+                arg_count: 3,
+            },
+        ];
+        assert_eq!(
+            convert_c_host_await_builtins_v2(
+                builtins.as_ptr(),
+                builtins.len(),
+                core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+            )
+            .unwrap(),
+            vec![("zero".to_string(), 0), ("lookup".to_string(), 3)]
+        );
+
+        let padded = [
+            WiderBuiltinV2 {
+                name: names[0].as_ptr(),
+                arg_count: 0,
+                _appended: 0,
+            },
+            WiderBuiltinV2 {
+                name: names[1].as_ptr(),
+                arg_count: 3,
+                _appended: 0,
+            },
+        ];
+        assert_eq!(
+            convert_c_host_await_builtins_v2(
+                padded.as_ptr() as *const RegorusHostAwaitBuiltinV2,
+                padded.len(),
+                core::mem::size_of::<WiderBuiltinV2>(),
+            )
+            .unwrap(),
+            vec![("zero".to_string(), 0), ("lookup".to_string(), 3)]
         );
     }
 
     #[test]
-    fn exported_compile_rejects_legacy_and_malformed_host_await_layouts_without_poisoning() {
-        #[repr(C)]
-        struct LegacyBuiltin {
-            name: *const c_char,
-        }
+    fn convert_builtins_v2_rejects_null_and_undersized_descriptors() {
+        let null_error = convert_c_host_await_builtins_v2(
+            core::ptr::null(),
+            1,
+            core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+        )
+        .unwrap_err();
+        assert!(null_error
+            .to_string()
+            .contains("null host_await_builtins_v2"));
 
+        let name = c("lookup");
+        let builtins = [RegorusHostAwaitBuiltinV2 {
+            name: name.as_ptr(),
+            arg_count: 1,
+        }];
+        let undersized = convert_c_host_await_builtins_v2(
+            builtins.as_ptr(),
+            builtins.len(),
+            core::mem::size_of::<RegorusHostAwaitBuiltinV2>() - 1,
+        )
+        .unwrap_err();
+        assert!(undersized.to_string().contains("ABI mismatch"));
+    }
+
+    #[test]
+    fn exported_compile_preserves_legacy_and_rejects_malformed_v2_without_poisoning() {
         #[repr(align(8))]
         struct AlignedBytes([u8; 64]);
 
@@ -2192,6 +2381,13 @@ mod host_await_tests {
                 "expected error containing {expected_message:?}, got {message:?}"
             );
         }
+        fn expect_compile_success(result: RegorusResult) {
+            assert_eq!(result.status, RegorusStatus::Ok);
+            let program = result.pointer_value.cast::<RegorusProgram>();
+            assert!(!program.is_null());
+            regorus_result_drop(result);
+            regorus_program_drop(program);
+        }
 
         let data = c("{}");
         let module_id = c("test.rego");
@@ -2203,16 +2399,9 @@ mod host_await_tests {
         }];
         let entry_points = [entry_point.as_ptr()];
         let name = c("translate");
-        let native = [
-            RegorusHostAwaitBuiltin {
-                name: name.as_ptr(),
-                arg_count: 1,
-            },
-            RegorusHostAwaitBuiltin {
-                name: name.as_ptr(),
-                arg_count: 1,
-            },
-        ];
+        let native = [RegorusHostAwaitBuiltin {
+            name: name.as_ptr(),
+        }];
         let compile = |builtins, builtins_len, builtin_size| {
             regorus_program_compile_from_modules_with_host_await(
                 data.as_ptr(),
@@ -2225,18 +2414,11 @@ mod host_await_tests {
                 builtin_size,
             )
         };
-
-        let legacy = [LegacyBuiltin {
-            name: name.as_ptr(),
-        }];
-        expect_compile_failure(
-            compile(
-                legacy.as_ptr() as *const RegorusHostAwaitBuiltin,
-                legacy.len(),
-                core::mem::size_of::<LegacyBuiltin>(),
-            ),
-            "ABI mismatch",
-        );
+        expect_compile_success(compile(
+            native.as_ptr(),
+            native.len(),
+            core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+        ));
         expect_compile_failure(
             compile(
                 native.as_ptr(),
@@ -2263,10 +2445,12 @@ mod host_await_tests {
         );
 
         let misaligned_stride = core::mem::size_of::<RegorusHostAwaitBuiltin>() + 1;
-        expect_compile_failure(
-            compile(native.as_ptr(), 2, misaligned_stride),
-            "not a multiple",
-        );
+        if !misaligned_stride.is_multiple_of(core::mem::align_of::<RegorusHostAwaitBuiltin>()) {
+            expect_compile_failure(
+                compile(native.as_ptr(), 2, misaligned_stride),
+                "not a multiple",
+            );
+        }
 
         let huge_aligned_stride = (isize::MAX as usize) + 1;
         expect_compile_failure(
@@ -2278,12 +2462,75 @@ mod host_await_tests {
             "maximum addressable range",
         );
 
-        let healthy = compile(core::ptr::null(), 0, 0);
-        assert_eq!(healthy.status, RegorusStatus::Ok);
-        let program = healthy.pointer_value.cast::<RegorusProgram>();
-        assert!(!program.is_null());
-        regorus_result_drop(healthy);
-        regorus_program_drop(program);
+        let v2 = [RegorusHostAwaitBuiltinV2 {
+            name: name.as_ptr(),
+            arg_count: 1,
+        }];
+        let compile_v2 = |legacy_builtins,
+                          legacy_builtins_len,
+                          legacy_builtin_size,
+                          v2_builtins,
+                          v2_builtins_len,
+                          v2_builtin_size| {
+            regorus_program_compile_from_modules_with_host_await_v2(
+                data.as_ptr(),
+                modules.as_ptr(),
+                modules.len(),
+                entry_points.as_ptr(),
+                entry_points.len(),
+                legacy_builtins,
+                legacy_builtins_len,
+                legacy_builtin_size,
+                v2_builtins,
+                v2_builtins_len,
+                v2_builtin_size,
+            )
+        };
+
+        expect_compile_failure(
+            compile_v2(
+                core::ptr::null(),
+                0,
+                0,
+                core::ptr::null(),
+                1,
+                core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+            ),
+            "null host_await_builtins_v2 pointer",
+        );
+        expect_compile_failure(
+            compile_v2(
+                core::ptr::null(),
+                0,
+                0,
+                v2.as_ptr(),
+                v2.len(),
+                core::mem::size_of::<RegorusHostAwaitBuiltinV2>() - 1,
+            ),
+            "ABI mismatch",
+        );
+        expect_compile_failure(
+            compile_v2(
+                native.as_ptr(),
+                native.len(),
+                core::mem::size_of::<RegorusHostAwaitBuiltin>(),
+                v2.as_ptr(),
+                v2.len(),
+                core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+            ),
+            "already registered",
+        );
+        expect_compile_success(compile_v2(
+            core::ptr::null(),
+            0,
+            0,
+            v2.as_ptr(),
+            v2.len(),
+            core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+        ));
+        expect_compile_success(compile_v2(core::ptr::null(), 0, 0, core::ptr::null(), 0, 0));
+
+        expect_compile_success(compile(core::ptr::null(), 0, 0));
     }
 
     // The no-host-await path passes null/0; the size argument must be ignored
@@ -2337,7 +2584,6 @@ mod host_await_tests {
     fn validate_stride_accepts_native_layout() {
         let builtins = [RegorusHostAwaitBuiltin {
             name: core::ptr::null(),
-            arg_count: 0,
         }];
         validate_array_stride(
             builtins.as_ptr(),
@@ -2345,6 +2591,19 @@ mod host_await_tests {
             core::mem::size_of::<RegorusHostAwaitBuiltin>(),
             "host_await_builtin_size",
             "RegorusHostAwaitBuiltin",
+        )
+        .unwrap();
+
+        let builtins_v2 = [RegorusHostAwaitBuiltinV2 {
+            name: core::ptr::null(),
+            arg_count: 0,
+        }];
+        validate_array_stride(
+            builtins_v2.as_ptr(),
+            builtins_v2.len(),
+            core::mem::size_of::<RegorusHostAwaitBuiltinV2>(),
+            "host_await_builtin_v2_size",
+            "RegorusHostAwaitBuiltinV2",
         )
         .unwrap();
 
@@ -2369,7 +2628,6 @@ mod host_await_tests {
     fn validate_stride_accepts_aligned_oversized() {
         let wide = [WiderBuiltin {
             name: core::ptr::null(),
-            arg_count: 0,
             _appended: 0,
         }];
         validate_array_stride(

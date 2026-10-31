@@ -13,6 +13,19 @@ namespace Regorus.Tests;
 [TestClass]
 public sealed class RvmProgramTests
 {
+    private static Program CompileWithHostAwaitV2(
+        string dataJson,
+        IReadOnlyList<PolicyModule> modules,
+        IReadOnlyList<string> entryPoints,
+        IReadOnlyList<HostAwaitBuiltin> legacyHostAwaitBuiltins,
+        IReadOnlyList<HostAwaitBuiltinV2> hostAwaitBuiltinsV2) =>
+        Program.CompileFromModulesWithHostAwaitV2(
+            dataJson,
+            modules,
+            entryPoints,
+            legacyHostAwaitBuiltins,
+            hostAwaitBuiltinsV2);
+
     private const string Policy = """
 package demo
 default allow = false
@@ -168,11 +181,12 @@ result := __builtin_host_await(
     public void Program_get_builtin_names_excludes_registered_host_await_builtin_named_count()
     {
         var modules = new[] { new PolicyModule("builtin_names.rego", BuiltinNamesPolicy) };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("count", 1) };
-        using var program = Program.CompileFromModules(
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("count", 1) };
+        using var program = CompileWithHostAwaitV2(
             "{}",
             modules,
             new[] { "data.demo.allow" },
+            Array.Empty<HostAwaitBuiltin>(),
             hostAwaitBuiltins);
 
         Assert.AreEqual("contains", string.Join(",", program.GetBuiltinNames()));
@@ -194,16 +208,50 @@ allow if {
         var modules = new[] { new PolicyModule("builtin_names.rego", policy) };
         var hostAwaitBuiltins = new[]
         {
-            new HostAwaitBuiltin("current_context", 0),
-            new HostAwaitBuiltin("lookup_pair", 2),
+            new HostAwaitBuiltinV2("current_context", 0),
+            new HostAwaitBuiltinV2("lookup_pair", 2),
         };
-        using var program = Program.CompileFromModules(
+        using var program = CompileWithHostAwaitV2(
             "{}",
             modules,
             new[] { "data.demo.allow" },
+            Array.Empty<HostAwaitBuiltin>(),
             hostAwaitBuiltins);
 
         Assert.AreEqual("count", string.Join(",", program.GetBuiltinNames()));
+    }
+
+    [TestMethod]
+    public void HostAwait_legacy_contract_is_name_only_and_v2_is_explicit()
+    {
+        Assert.IsNotNull(
+            typeof(HostAwaitBuiltin).GetConstructor(new[] { typeof(string) }),
+            "the legacy managed registration constructor must remain name-only");
+
+        var assembly = typeof(Program).Assembly;
+        var v2Type = assembly.GetType("Regorus.HostAwaitBuiltinV2");
+        Assert.IsNotNull(v2Type, "the opt-in v2 registration type must be present");
+        Assert.IsNotNull(
+            v2Type!.GetConstructor(new[] { typeof(string), typeof(int) }),
+            "the v2 registration constructor must take a fixed arity");
+
+        var v2ListType = typeof(IReadOnlyList<>).MakeGenericType(v2Type);
+        var method = typeof(Program).GetMethod(
+            "CompileFromModulesWithHostAwaitV2",
+            new[]
+            {
+                typeof(string),
+                typeof(IReadOnlyList<PolicyModule>),
+                typeof(IReadOnlyList<string>),
+                typeof(IReadOnlyList<HostAwaitBuiltin>),
+                v2ListType,
+            });
+        Assert.IsNotNull(method, "the v2 compile entrypoint must remain distinct");
+
+        var legacyNativeType = assembly.GetType("Regorus.Internal.RegorusHostAwaitBuiltin");
+        Assert.IsNotNull(legacyNativeType);
+        Assert.AreEqual(IntPtr.Zero, Marshal.OffsetOf(legacyNativeType!, "name"));
+        Assert.AreEqual(IntPtr.Size, Marshal.SizeOf(legacyNativeType!));
     }
 
     [TestMethod]
@@ -380,12 +428,13 @@ allow if { get_account(input.account_id) == "allow" }
 """;
         var modules = new[] { new PolicyModule("registered_limits.rego", policy) };
         var entryPoints = new[] { "data.demo.allow" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("get_account", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("get_account", 1) };
 
-        using var program = Program.CompileFromModules(
+        using var program = CompileWithHostAwaitV2(
             "{}",
             modules,
             entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
             hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
@@ -434,11 +483,16 @@ allow if { get_account(input.account_id) == "allow" }
         var entryPoints = new[] { "data.demo.greeting" };
         var hostAwaitBuiltins = new[]
         {
-            new HostAwaitBuiltin("translate", 1),
-            new HostAwaitBuiltin("lookup_user", 1),
+            new HostAwaitBuiltinV2("translate", 1),
+            new HostAwaitBuiltinV2("lookup_user", 1),
         };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
         vm.SetMaxInstructions(1000);
@@ -624,9 +678,14 @@ allow if {
     {
         var modules = new[] { new PolicyModule("account.rego", GetAccountPolicy) };
         var entryPoints = new[] { "data.demo.allow" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("get_account", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("get_account", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
         vm.LoadProgram(program);
@@ -649,6 +708,141 @@ allow if {
     }
 
     [TestMethod]
+    public void RegisteredHostAwait_LegacyArrayInputIsPassedWithoutPacking()
+    {
+        const string policy = """
+package demo
+import rego.v1
+
+result := echo([1, 2])
+""";
+        var modules = new[] { new PolicyModule("legacy_echo.rego", policy) };
+        var entryPoints = new[] { "data.demo.result" };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("echo") };
+
+        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+
+        vm.Execute();
+
+        Assert.AreEqual("echo", vm.GetHostAwaitIdentifier());
+        using var argument = JsonDocument.Parse(vm.GetHostAwaitArgument()!);
+        Assert.AreEqual(JsonValueKind.Array, argument.RootElement.ValueKind);
+        Assert.AreEqual(2, argument.RootElement.GetArrayLength());
+        Assert.AreEqual(1, argument.RootElement[0].GetInt32());
+        Assert.AreEqual(2, argument.RootElement[1].GetInt32());
+        Assert.AreEqual("\"legacy-response\"", vm.Resume("\"legacy-response\""));
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_LegacyValuesRemainRaw()
+    {
+        const string policy = """
+package demo
+import rego.v1
+
+result := [
+  echo(7),
+  echo("text"),
+  echo(false),
+  echo(null),
+  echo([1, 2]),
+  echo({"id": "x"})
+]
+""";
+        var modules = new[] { new PolicyModule("legacy_values.rego", policy) };
+        var entryPoints = new[] { "data.demo.result" };
+        var legacyBuiltins = new[] { new HostAwaitBuiltin("echo") };
+        var expectedArguments = new[] { "7", "\"text\"", "false", "null", "[1,2]", "{\"id\":\"x\"}" };
+
+        using var program = Program.CompileFromModulesWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            legacyBuiltins,
+            Array.Empty<HostAwaitBuiltinV2>());
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.Execute();
+
+        string? finalResult = null;
+        foreach (var expectedArgument in expectedArguments)
+        {
+            Assert.AreEqual("echo", vm.GetHostAwaitIdentifier());
+            using var argument = JsonDocument.Parse(vm.GetHostAwaitArgument()!);
+            Assert.AreEqual(expectedArgument, JsonSerializer.Serialize(argument.RootElement));
+            finalResult = vm.Resume("\"host-response\"");
+        }
+
+        var finalResultJson = finalResult
+            ?? throw new InvalidOperationException(
+                "Expected the final HostAwait resume to return a result.");
+        using var results = JsonDocument.Parse(finalResultJson);
+        Assert.AreEqual(JsonValueKind.Array, results.RootElement.ValueKind);
+        Assert.AreEqual(expectedArguments.Length, results.RootElement.GetArrayLength());
+        foreach (var result in results.RootElement.EnumerateArray())
+        {
+            Assert.AreEqual("host-response", result.GetString());
+        }
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_V2CompileSupportsLegacyAndPackedRegistrationsTogether()
+    {
+        const string policy = """
+package demo
+import rego.v1
+
+legacy_value := echo(input.raw)
+packed_value := combine(input.first, input.second)
+result := {"legacy": legacy_value, "packed": packed_value}
+""";
+        var modules = new[] { new PolicyModule("mixed_host_await.rego", policy) };
+        var entryPoints = new[] { "data.demo.result" };
+
+        using var program = Program.CompileFromModulesWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            new[] { new HostAwaitBuiltin("echo") },
+            new[] { new HostAwaitBuiltinV2("combine", 2) });
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson("{\"raw\":[1,2],\"first\":\"left\",\"second\":\"right\"}");
+
+        vm.Execute();
+
+        Assert.AreEqual("echo", vm.GetHostAwaitIdentifier());
+        using (var legacyArgument = JsonDocument.Parse(vm.GetHostAwaitArgument()!))
+        {
+            Assert.AreEqual(JsonValueKind.Array, legacyArgument.RootElement.ValueKind);
+            Assert.AreEqual(2, legacyArgument.RootElement.GetArrayLength());
+            Assert.AreEqual(1, legacyArgument.RootElement[0].GetInt32());
+        }
+
+        vm.Resume("\"legacy-result\"");
+        Assert.AreEqual("combine", vm.GetHostAwaitIdentifier());
+        using (var packedArgument = JsonDocument.Parse(vm.GetHostAwaitArgument()!))
+        {
+            Assert.AreEqual(JsonValueKind.Array, packedArgument.RootElement.ValueKind);
+            Assert.AreEqual(2, packedArgument.RootElement.GetArrayLength());
+            Assert.AreEqual("left", packedArgument.RootElement[0].GetString());
+            Assert.AreEqual("right", packedArgument.RootElement[1].GetString());
+        }
+
+        var result = vm.Resume("\"packed-result\"");
+        var resultJsonText = result
+            ?? throw new InvalidOperationException("Expected HostAwait resume to return a result.");
+        using var resultJson = JsonDocument.Parse(resultJsonText);
+        Assert.AreEqual("legacy-result", resultJson.RootElement.GetProperty("legacy").GetString());
+        Assert.AreEqual("packed-result", resultJson.RootElement.GetProperty("packed").GetString());
+    }
+
+    [TestMethod]
     public void RegisteredHostAwait_MultipleInputs_ArePackedInOrder()
     {
         const string policy = """
@@ -658,12 +852,13 @@ import rego.v1
 result := combine(input.left, input.right)
 """;
         var modules = new[] { new PolicyModule("combine.rego", policy) };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("combine", 2) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("combine", 2) };
 
-        using var program = Program.CompileFromModules(
+        using var program = CompileWithHostAwaitV2(
             "{}",
             modules,
             new[] { "data.demo.result" },
+            Array.Empty<HostAwaitBuiltin>(),
             hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
@@ -692,12 +887,13 @@ import rego.v1
 result := current_context()
 """;
         var modules = new[] { new PolicyModule("context.rego", policy) };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("current_context", 0) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("current_context", 0) };
 
-        using var program = Program.CompileFromModules(
+        using var program = CompileWithHostAwaitV2(
             "{}",
             modules,
             new[] { "data.demo.result" },
+            Array.Empty<HostAwaitBuiltin>(),
             hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
@@ -729,9 +925,14 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
         var entryPoints = new[] { "data.demo.greeting" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.RunToCompletion);
         vm.LoadProgram(program);
@@ -756,28 +957,36 @@ greeting := msg if {
 
         foreach (var badName in new[] { "", "   ", "\t" })
         {
-            var builtins = new[] { new HostAwaitBuiltin(badName, 1) };
+            var builtins = new[] { new HostAwaitBuiltinV2(badName, 1) };
             Assert.ThrowsException<InvalidOperationException>(
-                () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
+                () => CompileWithHostAwaitV2(
+                    "{}",
+                    modules,
+                    entryPoints,
+                    Array.Empty<HostAwaitBuiltin>(),
+                    builtins),
                 $"expected compilation to reject empty/whitespace name '{badName}'");
         }
     }
 
     [TestMethod]
-    public void RegisteredHostAwait_ConstructorRejectsNegativeArgumentCount()
+    public void RegisteredHostAwaitV2_ConstructorRejectsNegativeArgumentCount()
     {
         Assert.ThrowsException<ArgumentOutOfRangeException>(
-            () => _ = new HostAwaitBuiltin("translate", -1));
+            () => _ = new HostAwaitBuiltinV2("translate", -1));
     }
 
     [TestMethod]
-    public void RegisteredHostAwait_NativeStructLayoutMatchesNameAndArityPrefix()
+    public void RegisteredHostAwait_NativeStructLayoutsPreserveLegacyAndV2Descriptors()
     {
-        var nativeType = typeof(Regorus.Internal.RegorusHostAwaitBuiltin);
+        var legacyType = typeof(Regorus.Internal.RegorusHostAwaitBuiltin);
+        Assert.AreEqual(IntPtr.Zero, Marshal.OffsetOf(legacyType, "name"));
+        Assert.AreEqual(IntPtr.Size, Marshal.SizeOf(legacyType));
 
-        Assert.AreEqual(IntPtr.Zero, Marshal.OffsetOf(nativeType, "name"));
-        Assert.AreEqual(IntPtr.Size, Marshal.OffsetOf(nativeType, "arg_count"));
-        Assert.AreEqual(2 * IntPtr.Size, Marshal.SizeOf(nativeType));
+        var v2Type = typeof(Regorus.Internal.RegorusHostAwaitBuiltinV2);
+        Assert.AreEqual(IntPtr.Zero, Marshal.OffsetOf(v2Type, "name"));
+        Assert.AreEqual(IntPtr.Size, Marshal.OffsetOf(v2Type, "arg_count"));
+        Assert.AreEqual(2 * IntPtr.Size, Marshal.SizeOf(v2Type));
     }
 
     [TestMethod]
@@ -787,13 +996,77 @@ greeting := msg if {
         var entryPoints = new[] { "data.demo.allow" };
         var builtins = new[]
         {
-            new HostAwaitBuiltin("translate", 1),
-            new HostAwaitBuiltin("translate", 1),
+            new HostAwaitBuiltinV2("translate", 1),
+            new HostAwaitBuiltinV2("translate", 1),
         };
 
         Assert.ThrowsException<InvalidOperationException>(
-            () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
+            () => CompileWithHostAwaitV2(
+                "{}",
+                modules,
+                entryPoints,
+                Array.Empty<HostAwaitBuiltin>(),
+                builtins),
             "expected compilation to reject duplicate registration");
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_V2CompileRejectsNullRegistrationLists()
+    {
+        var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        Assert.ThrowsException<ArgumentNullException>(
+            () => Program.CompileFromModulesWithHostAwaitV2(
+                "{}",
+                modules,
+                entryPoints,
+                null!,
+                Array.Empty<HostAwaitBuiltinV2>()));
+        Assert.ThrowsException<ArgumentNullException>(
+            () => Program.CompileFromModulesWithHostAwaitV2(
+                "{}",
+                modules,
+                entryPoints,
+                Array.Empty<HostAwaitBuiltin>(),
+                null!));
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_V2CompileRejectsDuplicateAcrossModes()
+    {
+        var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
+        var entryPoints = new[] { "data.demo.allow" };
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModulesWithHostAwaitV2(
+                "{}",
+                modules,
+                entryPoints,
+                new[] { new HostAwaitBuiltin("translate") },
+                new[] { new HostAwaitBuiltinV2("translate", 1) }),
+            "a name must not have both legacy and packed contracts");
+    }
+
+    [TestMethod]
+    public void RegisteredHostAwait_LegacyCompileRejectsNonOneArity()
+    {
+        const string policy = """
+package demo
+import rego.v1
+
+result := lookup()
+""";
+        var modules = new[] { new PolicyModule("legacy_arity.rego", policy) };
+        var entryPoints = new[] { "data.demo.result" };
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => Program.CompileFromModules(
+                "{}",
+                modules,
+                entryPoints,
+                new[] { new HostAwaitBuiltin("lookup") }),
+            "the legacy registration must reject zero-input calls");
     }
 
     [TestMethod]
@@ -801,7 +1074,7 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("noop.rego", "package demo\nallow := true\n") };
         var entryPoints = new[] { "data.demo.allow" };
-        var builtins = new[] { new HostAwaitBuiltin("__builtin_host_await", 1) };
+        var builtins = new[] { new HostAwaitBuiltin("__builtin_host_await") };
 
         Assert.ThrowsException<InvalidOperationException>(
             () => Program.CompileFromModules("{}", modules, entryPoints, builtins),
@@ -816,7 +1089,12 @@ greeting := msg if {
         yield return new object[]
         {
             "builtin name",
-            (Action)(() => _ = new HostAwaitBuiltin("bad\0name", 1)),
+            (Action)(() => _ = new HostAwaitBuiltin("bad\0name")),
+        };
+        yield return new object[]
+        {
+            "v2 builtin name",
+            (Action)(() => _ = new HostAwaitBuiltinV2("bad\0name", 1)),
         };
         yield return new object[]
         {
@@ -851,9 +1129,14 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
         var entryPoints = new[] { "data.demo.greeting" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.RunToCompletion);
         vm.LoadProgram(program);
@@ -876,9 +1159,14 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
         var entryPoints = new[] { "data.demo.greeting" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
         vm.LoadProgram(program);
@@ -902,9 +1190,14 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
         var entryPoints = new[] { "data.demo.greeting" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.Suspendable);
         vm.LoadProgram(program);
@@ -923,9 +1216,14 @@ greeting := msg if {
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslatePolicy) };
         var entryPoints = new[] { "data.demo.greeting" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.RunToCompletion);
         vm.LoadProgram(program);
@@ -955,9 +1253,14 @@ result := translate(input.lang)
     {
         var modules = new[] { new PolicyModule("translate.rego", TranslateNoDefaultPolicy) };
         var entryPoints = new[] { "data.demo.result" };
-        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("translate", 1) };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.RunToCompletion);
         vm.LoadProgram(program);
@@ -998,11 +1301,16 @@ greeting := combined if {
         var entryPoints = new[] { "data.demo.greeting" };
         var hostAwaitBuiltins = new[]
         {
-            new HostAwaitBuiltin("translate", 1),
-            new HostAwaitBuiltin("lookup_user", 1),
+            new HostAwaitBuiltinV2("translate", 1),
+            new HostAwaitBuiltinV2("lookup_user", 1),
         };
 
-        using var program = Program.CompileFromModules("{}", modules, entryPoints, hostAwaitBuiltins);
+        using var program = CompileWithHostAwaitV2(
+            "{}",
+            modules,
+            entryPoints,
+            Array.Empty<HostAwaitBuiltin>(),
+            hostAwaitBuiltins);
         using var vm = new Rvm();
         vm.SetExecutionMode(ExecutionMode.RunToCompletion);
         vm.LoadProgram(program);

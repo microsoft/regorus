@@ -47,7 +47,8 @@ enum CallTarget {
     /// A registered host-awaitable builtin invoked by its registered name.
     /// The identifier is the registered name itself and is baked into the
     /// bytecode as a string literal at compile time.
-    RegisteredHostAwait {
+    RegisteredHostAwaitLegacy { identifier: String },
+    RegisteredHostAwaitV2 {
         identifier: String,
         arg_count: usize,
     },
@@ -87,7 +88,8 @@ impl<'a> Compiler<'a> {
             // in the variant lets the rest of the compiler depend on the type
             // rather than re-matching on the magic name `__builtin_host_await`.
             CallTarget::ExplicitHostAwait => Some(2),
-            CallTarget::RegisteredHostAwait { arg_count, .. } => Some(*arg_count),
+            CallTarget::RegisteredHostAwaitLegacy { .. } => Some(1),
+            CallTarget::RegisteredHostAwaitV2 { arg_count, .. } => Some(*arg_count),
         };
 
         if expected_args.and_then(|expected| expected.checked_add(1)) == Some(params.len()) {
@@ -113,7 +115,18 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        if let CallTarget::RegisteredHostAwait {
+        if let CallTarget::RegisteredHostAwaitLegacy { identifier } = &call_target {
+            if params_to_compile != 1 {
+                return Err(CompilerError::General {
+                    message: format!(
+                        "legacy registered host-await builtin '{identifier}' expects 1 input argument, got {params_to_compile}"
+                    ),
+                }
+                .at(&span));
+            }
+        }
+
+        if let CallTarget::RegisteredHostAwaitV2 {
             identifier,
             arg_count,
         } = &call_target
@@ -127,11 +140,14 @@ impl<'a> Compiler<'a> {
                 .at(&span));
             }
 
-            self.ensure_register_capacity(3)?;
+            self.ensure_register_capacity(*arg_count)?;
         }
 
         let mut arg_regs = Vec::new();
-        if matches!(&call_target, CallTarget::RegisteredHostAwait { .. }) {
+        if matches!(
+            &call_target,
+            CallTarget::RegisteredHostAwaitLegacy { .. } | CallTarget::RegisteredHostAwaitV2 { .. }
+        ) {
             arg_regs.try_reserve(params_to_compile).map_err(|_| {
                 CompilerError::General {
                     message: format!(
@@ -145,7 +161,7 @@ impl<'a> Compiler<'a> {
             arg_regs.push(param_reg);
         }
 
-        if matches!(&call_target, CallTarget::RegisteredHostAwait { .. }) {
+        if matches!(&call_target, CallTarget::RegisteredHostAwaitV2 { .. }) {
             self.ensure_register_capacity(3)?;
         }
         let dest = self.alloc_register()?;
@@ -201,7 +217,33 @@ impl<'a> Compiler<'a> {
                     &span,
                 );
             }
-            CallTarget::RegisteredHostAwait {
+            CallTarget::RegisteredHostAwaitLegacy { identifier } => {
+                let argument = arg_regs.first().copied().ok_or_else(|| {
+                    CompilerError::General {
+                        message: format!(
+                            "legacy registered host-await builtin '{identifier}' has no compiled input"
+                        ),
+                    }
+                })?;
+                let identifier_register = self.alloc_register()?;
+                let identifier_literal = self.add_literal(Value::String(identifier.into()));
+                self.emit_instruction(
+                    Instruction::Load {
+                        dest: identifier_register,
+                        literal_idx: identifier_literal,
+                    },
+                    &span,
+                );
+                self.emit_instruction(
+                    Instruction::HostAwait {
+                        dest,
+                        arg: argument,
+                        id: identifier_register,
+                    },
+                    &span,
+                );
+            }
+            CallTarget::RegisteredHostAwaitV2 {
                 identifier,
                 arg_count,
             } => {
@@ -459,8 +501,14 @@ impl<'a> Compiler<'a> {
         // happen to expose a rule with the same identifier. This is
         // documented on `register_host_await_builtin`; the
         // `registered_host_await.yaml` suite pins the behavior.
-        if let Some(&arg_count) = self.host_await_builtins.get(original_fcn_path) {
-            return Ok(CallTarget::RegisteredHostAwait {
+        if self.host_await_builtins.contains_key(original_fcn_path) {
+            return Ok(CallTarget::RegisteredHostAwaitLegacy {
+                identifier: original_fcn_path.to_string(),
+            });
+        }
+
+        if let Some(&arg_count) = self.host_await_builtins_v2.get(original_fcn_path) {
+            return Ok(CallTarget::RegisteredHostAwaitV2 {
                 identifier: original_fcn_path.to_string(),
                 arg_count,
             });

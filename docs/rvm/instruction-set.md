@@ -184,7 +184,7 @@ to `HostAwait` instructions. This allows policy authors to write natural
 function calls (e.g. `lookup(input.account_id)`) instead of the raw
 `__builtin_host_await(payload, identifier)` builtin.
 
-Registration is done at compile time via `Compiler::compile_from_policy_with_host_await`:
+The legacy API remains a one-input, raw-value registration:
 
 ```rust
 let builtins = [("lookup", 1), ("persist", 1)];
@@ -193,11 +193,23 @@ let program = Compiler::compile_from_policy_with_host_await(
 )?;
 ```
 
-Each registered name is a `(name, arg_count)` pair. The count is the exact
-number of input arguments; the optional Rego output parameter is excluded.
-When the compiler encounters a registered call, it evaluates inputs once in
-order, packs their native values into an array, and skips the call and its
-output-binding epilogue if any input is undefined:
+Legacy registrations require `arg_count == 1`, pass the single Rego value
+unchanged (including arrays and objects), and do not add the packed-path
+`Undefined` guard. For a distinct fixed-arity contract with packed arrays, use
+the explicitly versioned v2 API:
+
+```rust
+let legacy = [("lookup", 1)];
+let packed = [("current_context", 0), ("combine", 2)];
+let program = Compiler::compile_from_policy_with_host_await_v2(
+    &compiled_policy, &entry_points, &legacy, &packed,
+)?;
+```
+
+The v2 count is the exact number of input arguments; the optional Rego output
+parameter is excluded. The compiler evaluates v2 inputs once in order and
+packs their native values into an array. If any v2 input is undefined, that
+invocation and its output-binding epilogue are skipped:
 
 | Registered policy call | `HostAwait` argument |
 | :--------------------- | :------------------ |
@@ -208,24 +220,22 @@ output-binding epilogue if any input is undefined:
 
 The optional Rego output parameter does not appear in these arrays. Host
 responses remain unwrapped: the value supplied by the host is the value
-returned or bound by the policy.
+returned or bound by the policy. One name cannot be registered in both lists.
 
-Both the explicit `__builtin_host_await(arg, id)` call and a registered
-builtin call converge on the same `HostAwait` bytecode instruction, but their
-payload construction differs. Explicit calls pass the supplied `arg` value
-and `id` register through unchanged. Registered calls create the ordered input
-array, guard against undefined inputs, and load the registered name as the
-identifier. Previously compiled programs retain their original raw
-registered-call payloads after deserialization. Since an old raw payload may
-itself be an array, payload shape cannot identify the program generation.
-Applications must deploy a matching program/handler/native/managed bundle or
-provide their own explicit legacy routing; no runtime format inference or
-compatibility handshake is provided.
+Both the explicit `__builtin_host_await(arg, id)` call and registered calls
+converge on the same `HostAwait` bytecode instruction. Explicit calls pass
+their supplied `arg` value and `id` register through unchanged. Legacy
+registrations likewise pass their one raw value unchanged; v2 registrations
+create the ordered input array and apply the `Undefined` guard. Previously
+compiled programs retain their original raw registered-call payloads after
+deserialization. Since a raw payload may itself be an array, payload shape
+cannot identify the registration contract; callers select it explicitly.
 
-The public low-level Rust method `Compiler::alloc_register` now returns
+The public low-level Rust method `Compiler::alloc_register` returns
 `Result<Register, SpannedCompilerError>` so callers must handle register-window
-overflow. This is a source-level API break; the
-`Compiler::register_host_await_builtin` signature is unchanged.
+overflow. This is the approved narrow Rust source break. The legacy
+`Compiler::register_host_await_builtin` signature remains unchanged; use
+`Compiler::register_host_await_builtin_v2` for packed-array registrations.
 
 **Resolution order** in `determine_call_target()`:
 1. `__builtin_host_await` (magic 2-argument form)
@@ -262,10 +272,11 @@ if a rule exists at that path it is called, otherwise compilation fails with
 all, so `data.pkg.count(x)` is always an `Unknown function` error, registered
 or not.)
 
-**Undefined handling**: Registered inputs are evaluated under normal Rego
-semantics. If any input is undefined, the registered host call is skipped and
-no response is consumed. Explicit `__builtin_host_await` calls retain their
-existing raw-payload behavior.
+**Undefined handling**: V2 packed inputs are evaluated under normal Rego
+semantics. If any v2 input is undefined, that registered call is skipped and
+no response is consumed. Legacy registered calls and explicit
+`__builtin_host_await` calls retain their raw-payload behavior; they do not
+inherit the v2 guard.
 
 ---
 
