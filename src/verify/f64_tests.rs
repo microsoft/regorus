@@ -9,6 +9,8 @@
     clippy::unseparated_literal_suffix
 )]
 
+use crate::number::Number;
+use core::cmp::Ordering;
 use num_bigint::BigInt;
 
 fn decode(f: f64) -> (u64, i32) {
@@ -142,6 +144,96 @@ fn f64_scaled_order_and_u64_casts_match_runtime() {
                             != zero;
                     assert_eq!(f > back, has_fraction);
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn f64_scaled_order_and_i64_casts_match_runtime() {
+    let lower = i64::MIN as f64;
+    let upper = i64::MAX as f64;
+    let zero = BigInt::from(0u8);
+    let min = BigInt::from(i64::MIN);
+    let max = BigInt::from(i64::MAX);
+    for (bound, negative) in [(lower, true), (upper, false)] {
+        assert!(bound.is_finite());
+        assert_eq!(bound.is_sign_negative(), negative);
+        assert_eq!((bound.to_bits() & 0x7fff_ffff_ffff_ffff) >> 52, 1086);
+        assert_eq!(bound.to_bits() & 0x000f_ffff_ffff_ffff, 0);
+    }
+    assert_eq!(scaled_value(lower, 0), min);
+    assert_eq!(scaled_value(upper, 0), &max + 1u8);
+
+    for exponent_bits in 0u64..=0x7ff {
+        for fraction in [
+            0u64,
+            1,
+            0x0008_0000_0000_0000,
+            0x000f_ffff_ffff_fffe,
+            0x000f_ffff_ffff_ffff,
+        ] {
+            for sign in [0u64, 1u64 << 63] {
+                let f = f64::from_bits(sign | (exponent_bits << 52) | fraction);
+                let exponent = decode(f).1.min(0);
+                let value = scaled_value(f, exponent);
+                let unit = BigInt::from(1u8) << (-exponent) as usize;
+                for n in [
+                    i64::MIN,
+                    i64::MIN + 1,
+                    -9_007_199_254_740_993,
+                    -1,
+                    0,
+                    1,
+                    9_007_199_254_740_993,
+                    i64::MAX - 1,
+                    i64::MAX,
+                ] {
+                    let expected = if f.is_nan() {
+                        Ordering::Greater
+                    } else if !f.is_finite() {
+                        if f.is_sign_negative() {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    } else {
+                        value.cmp(&(BigInt::from(n) * &unit))
+                    };
+                    assert_eq!(
+                        Number::Float(f).cmp(&Number::Int(n)),
+                        expected,
+                        "{f:?} vs {n}"
+                    );
+                }
+                if !f.is_finite() {
+                    continue;
+                }
+                if exponent_bits < 1023 {
+                    assert_eq!(f as i64, 0);
+                }
+                let integer_part = scaled_value(f, 0);
+                if integer_part < min || integer_part > max {
+                    continue;
+                }
+                let truncated = f as i64;
+                let back = truncated as f64;
+                let integer_value = BigInt::from(truncated) * &unit;
+                assert_eq!(BigInt::from(truncated), integer_part);
+                assert!(back.is_finite());
+                assert_eq!(scaled_value(back, exponent), integer_value);
+                if value >= zero {
+                    assert!(integer_value <= value && value < &integer_value + &unit);
+                } else {
+                    assert!(&integer_value - &unit < value && value <= integer_value);
+                }
+                let (significand, decoded_exponent) = decode(f);
+                let has_fraction = decoded_exponent < 0
+                    && BigInt::from(significand)
+                        % (BigInt::from(1u8) << (-decoded_exponent) as usize)
+                        != zero;
+                assert_eq!(f < back, f.is_sign_negative() && has_fraction);
+                assert_eq!(f > back, !f.is_sign_negative() && has_fraction);
             }
         }
     }

@@ -143,6 +143,50 @@ pub axiom fn axiom_f64_to_u64_backcast(f: f64)
             == f64_has_fraction(f),
 ;
 
+// i64::MIN is exactly -2^63; round-to-nearest, ties-to-even maps i64::MAX to +2^63.
+pub axiom fn axiom_f64_i64_limit_casts()
+    ensures
+        ieee_float_cast::<i64, f64>(i64::MIN).is_finite_spec(),
+        ieee_float_cast::<i64, f64>(i64::MIN).is_sign_negative_spec(),
+        f64_biased_exponent(ieee_float_cast::<i64, f64>(i64::MIN)) == 1086,
+        f64_fraction(ieee_float_cast::<i64, f64>(i64::MIN)) == 0,
+        ieee_float_cast::<i64, f64>(i64::MAX).is_finite_spec(),
+        !ieee_float_cast::<i64, f64>(i64::MAX).is_sign_negative_spec(),
+        f64_biased_exponent(ieee_float_cast::<i64, f64>(i64::MAX)) == 1086,
+        f64_fraction(ieee_float_cast::<i64, f64>(i64::MAX)) == 0,
+;
+
+// Both signs of |f| < 1 truncate to zero, including subnormals and signed zero.
+pub axiom fn axiom_f64_to_i64_below_one(f: f64)
+    requires
+        f.is_finite_spec(),
+        f64_biased_exponent(f) < 1023,
+    ensures
+        ieee_float_cast::<f64, i64>(f) == 0,
+;
+
+// At larger magnitudes, an in-range cast truncates toward zero (not toward -infinity).
+pub axiom fn axiom_f64_to_i64_in_range(f: f64)
+    requires
+        f.is_finite_spec(),
+        f64_biased_exponent(f) >= 1023,
+        i64::MIN <= f64_scaled_value(f, 0) <= i64::MAX,
+    ensures
+        ieee_float_cast::<f64, i64>(f) as int == f64_scaled_value(f, 0),
+;
+
+// The truncated integer is exactly representable; its back-cast lies toward zero.
+pub axiom fn axiom_f64_to_i64_backcast(f: f64)
+    requires
+        f.is_finite_spec(),
+        i64::MIN <= f64_scaled_value(f, 0) <= i64::MAX,
+    ensures
+        f.ieee_lt(ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(f)))
+            == (f.is_sign_negative_spec() && f64_has_fraction(f)),
+        f.ieee_gt(ieee_float_cast::<i64, f64>(ieee_float_cast::<f64, i64>(f)))
+            == (!f.is_sign_negative_spec() && f64_has_fraction(f)),
+;
+
 pub axiom fn axiom_f64_obeys_eq_spec()
     ensures
         <f64 as vstd::std_specs::cmp::PartialEqSpec>::obeys_eq_spec(),
