@@ -101,3 +101,85 @@ cases:
       - id: "nested-comp"
         value: "second"
     want_result: [["first", "second"]]
+
+  - note: raw_host_await_in_dynamic_default_rtc
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default value := [result |
+          result := __builtin_host_await("payload", "default-rtc")
+        ]
+    query: data.demo.value
+    host_await_responses:
+      - id: "default-rtc"
+        value: "rtc-response"
+    want_result: ["rtc-response"]
+
+  - note: raw_host_await_in_dynamic_default_suspendable_multiple_resume
+    data: {}
+    input:
+      items: ["first", "second"]
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default values := [result |
+          item := input.items[_]
+          result := __builtin_host_await(item, "default-suspendable")
+        ]
+    query: data.demo.values
+    host_await_responses_suspendable:
+      - id: "default-suspendable"
+        args: "first"
+        value: "response-1"
+      - id: "default-suspendable"
+        args: "second"
+        value: "response-2"
+    want_result: ["response-1", "response-2"]
+
+  - note: raw_host_await_dynamic_default_not_invoked_when_definition_succeeds
+    data: {}
+    input:
+      use_definition: true
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default value := [result |
+          result := __builtin_host_await("payload", "must-not-run")
+        ]
+        value := false if input.use_definition
+    query: data.demo.value
+    want_result: false
+
+  - note: raw_host_await_undefined_payload_in_dynamic_default_still_invokes
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default value := [response |
+          response := __builtin_host_await(input.missing, "default-undefined")
+        ]
+    query: data.demo.value
+    host_await_responses_suspendable:
+      - id: "default-undefined"
+        args: "#undefined"
+        value: "invoked-with-undefined"
+    want_result: ["invoked-with-undefined"]

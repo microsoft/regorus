@@ -90,6 +90,15 @@ pub struct RuleInfo {
     pub function_info: Option<FunctionInfo>,
     /// Index into the program's literal table for default value (only for Complete rules)
     pub default_literal_index: Option<u16>,
+    /// Entry point for a runtime-evaluated default value.
+    ///
+    /// This is mutually exclusive with `default_literal_index`.
+    #[serde(default)]
+    pub default_entry_point: Option<u32>,
+    /// Whether the default values are indexed object entries that merge into
+    /// an existing object without replacing keys already supplied by rules.
+    #[serde(default)]
+    pub default_is_indexed: bool,
     /// Register allocated for this rule's result accumulation
     pub result_reg: u8,
     /// Number of registers used by this rule (for register windowing)
@@ -127,6 +136,8 @@ impl RuleInfo {
             definitions,
             function_info: None,
             default_literal_index: None,
+            default_entry_point: None,
+            default_is_indexed: false,
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
@@ -159,6 +170,8 @@ impl RuleInfo {
                 num_params,
             }),
             default_literal_index: None,
+            default_entry_point: None,
+            default_is_indexed: false,
             result_reg,
             num_registers,
             destructuring_blocks: alloc::vec![None; num_definitions],
@@ -170,6 +183,18 @@ impl RuleInfo {
     /// Set the default literal index for this rule
     pub const fn set_default_literal_index(&mut self, default_literal_index: u16) {
         self.default_literal_index = Some(default_literal_index);
+        self.default_entry_point = None;
+    }
+
+    /// Set the entry point for a runtime-evaluated default.
+    pub const fn set_default_entry_point(&mut self, default_entry_point: u32) {
+        self.default_literal_index = None;
+        self.default_entry_point = Some(default_entry_point);
+    }
+
+    /// Mark this as a per-key indexed default whose values merge into objects.
+    pub const fn set_default_is_indexed(&mut self, default_is_indexed: bool) {
+        self.default_is_indexed = default_is_indexed;
     }
 }
 

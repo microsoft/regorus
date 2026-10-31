@@ -263,3 +263,151 @@ cases:
         }
     query: data.test.value
     want_result: 42
+
+  - note: default_only_dynamic_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        other := true
+        default value := [x | x := other]
+    query: data.test.value
+    want_result: [true]
+
+  - note: dynamic_default_nested_array_set_and_object_comprehensions
+    data: {}
+    modules:
+      - |
+        package test
+        default value := {
+          "array": [[item | item := [1, 2][_]]],
+          "set": {item | item := ["three", "four"][_]},
+          "object": {item: item | item := ["five", "six"][_]}
+        }
+    query: data.test.value
+    want_result:
+      array: [[1, 2]]
+      set:
+        set!:
+          - "three"
+          - "four"
+      object:
+        five: "five"
+        six: "six"
+
+  - note: dynamic_default_is_suppressed_by_false
+    data: {}
+    input:
+      use_definition: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := false if input.use_definition
+    query: data.test.value
+    want_result: false
+
+  - note: dynamic_default_is_suppressed_by_null
+    data: {}
+    input:
+      use_definition: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := null if input.use_definition
+    query: data.test.value
+    entry_points:
+      - data.test.value
+    want_results:
+      - null
+
+  - note: dynamic_default_is_suppressed_by_empty_array
+    data: {}
+    input:
+      use_definition: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := [] if input.use_definition
+    query: data.test.value
+    want_result: []
+
+  - note: dynamic_default_is_suppressed_by_empty_object
+    data: {}
+    input:
+      use_definition: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := {} if input.use_definition
+    query: data.test.value
+    want_result: {}
+
+  - note: dynamic_default_is_suppressed_by_empty_set
+    data: {}
+    input:
+      use_definition: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := set() if input.use_definition
+    query: data.test.value
+    want_result:
+      set!: []
+
+  - note: dynamic_default_is_not_used_after_inconsistent_definitions
+    data: {}
+    skip_interpreter: true
+    input:
+      conflict: true
+    modules:
+      - |
+        package test
+        default value := [x | x := true]
+        value := "first" if input.conflict
+        value := "second" if input.conflict
+    query: data.test.value
+    want_result: "#undefined"
+
+  - note: dynamic_default_function_fallback
+    data: {}
+    input:
+      include: true
+    modules:
+      - |
+        package test
+        default pick(_) := [x | x := input.include]
+        pick("defined") := "ordinary"
+        result := pick("missing")
+    query: data.test.result
+    want_result: [true]
+
+  - note: default_only_dynamic_function
+    data: {}
+    input:
+      values: ["second"]
+    modules:
+      - |
+        package test
+        default pick(value) := [item | item := input.values[_]]
+        result := pick("second")
+    query: data.test.result
+    want_result: ["second"]
+
+  - note: dynamic_default_after_else_chain_exhaustion
+    data: {}
+    input:
+      mode: "other"
+      fallback: "default"
+    modules:
+      - |
+        package test
+        default value := [item | item := input.fallback]
+        value := "first" if input.mode == "first"
+        else := "second" if input.mode == "second"
+    query: data.test.value
+    want_result: ["default"]

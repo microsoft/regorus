@@ -147,6 +147,10 @@ pub struct Compiler<'a> {
     /// When the compiler encounters a call to one of these names, it emits a
     /// `HostAwait` instruction instead of a regular function or builtin call.
     host_await_builtins: BTreeMap<String, usize>,
+    /// Literal fallback values for default rules, keyed by canonical rule path.
+    default_literal_indices: BTreeMap<String, u16>,
+    /// Runtime fallback entry points for default rules, keyed by canonical rule path.
+    default_entry_points: BTreeMap<String, u32>,
 }
 
 impl<'a> Compiler<'a> {
@@ -183,6 +187,8 @@ impl<'a> Compiler<'a> {
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
             host_await_builtins: BTreeMap::new(),
+            default_literal_indices: BTreeMap::new(),
+            default_entry_points: BTreeMap::new(),
         }
     }
 

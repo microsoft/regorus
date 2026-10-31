@@ -454,6 +454,78 @@ impl RegoVM {
                 continue;
             }
 
+            let is_virtual_lookup = self
+                .execution_stack
+                .last()
+                .is_some_and(|frame| matches!(frame.kind, FrameKind::VirtualDataLookup(_)));
+            if is_virtual_lookup {
+                let frame = self
+                    .execution_stack
+                    .pop()
+                    .ok_or(VmError::MissingExecutionFrame {
+                        context: "advancing virtual data lookup",
+                        pc: self.pc,
+                    })?;
+                let mut lookup = match frame.kind {
+                    FrameKind::VirtualDataLookup(lookup) => lookup,
+                    _ => {
+                        return Err(VmError::MissingExecutionFrame {
+                            context: "reading virtual data lookup",
+                            pc: frame.pc,
+                        });
+                    }
+                };
+                let lookup_pc = lookup.lookup_pc;
+                self.pc = lookup_pc;
+                let destination = lookup.dest_reg;
+                match self.advance_virtual_data_document_lookup(&mut lookup) {
+                    Ok(Some((child_dest, rule_index))) => {
+                        self.execution_stack.push(ExecutionFrame::new(
+                            lookup_pc,
+                            FrameKind::VirtualDataLookup(lookup),
+                        ));
+                        if let Err(err) =
+                            self.execute_call_rule_suspendable(child_dest, rule_index, None)
+                        {
+                            if self.execution_stack.last().is_some_and(|top_frame| {
+                                matches!(top_frame.kind, FrameKind::VirtualDataLookup(_))
+                            }) {
+                                self.execution_stack.pop();
+                            }
+                            self.pc = lookup_pc;
+                            if !self.handle_instruction_error(err.clone(), last_result)? {
+                                self.execution_stack.clear();
+                                return Err(err);
+                            }
+                            if self.execution_stack.is_empty() {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        if let Some(parent) = self.execution_stack.last_mut() {
+                            parent.pc = lookup_pc.saturating_add(1);
+                        } else {
+                            *last_result = self
+                                .registers
+                                .get(usize::from(destination))
+                                .cloned()
+                                .unwrap_or(Value::Undefined);
+                        }
+                    }
+                    Err(err) => {
+                        if !self.handle_instruction_error(err.clone(), last_result)? {
+                            self.execution_stack.clear();
+                            return Err(err);
+                        }
+                        if self.execution_stack.is_empty() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             let frame_pc = {
                 let frame = self
                     .execution_stack
@@ -619,7 +691,7 @@ impl RegoVM {
             FrameKind::Loop { .. } | FrameKind::Comprehension { .. } => {
                 *last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
             }
-            FrameKind::Rule(_) => {
+            FrameKind::Rule(_) | FrameKind::VirtualDataLookup(_) => {
                 *last_result = Value::Undefined;
             }
         }
@@ -676,6 +748,14 @@ impl RegoVM {
                     }
                     // Propagate the return value outward until we reach the owning frame
                 }
+                FrameKind::VirtualDataLookup(_) => {
+                    return Err(VmError::Internal {
+                        message: alloc::string::String::from(
+                            "return reached an inactive virtual data lookup frame",
+                        ),
+                        pc: self.pc,
+                    });
+                }
             }
         }
     }
@@ -716,6 +796,9 @@ impl RegoVM {
         if RegoVM::is_fatal_vm_error(&err) {
             return Ok(false);
         }
+        if self.strict_error_precedes_runtime_default(&err) {
+            return Ok(false);
+        }
 
         if let Some(frame) = self.execution_stack.pop() {
             match frame.kind {
@@ -743,6 +826,41 @@ impl RegoVM {
         Ok(false)
     }
 
+    fn strict_error_precedes_runtime_default(&self, err: &VmError) -> bool {
+        if !self.strict_builtin_errors || !RegoVM::is_strictly_surfaced_builtin_error(err) {
+            return false;
+        }
+
+        for frame_index in (0..self.execution_stack.len()).rev() {
+            let Some(&ExecutionFrame {
+                kind: FrameKind::Rule(ref data),
+                ..
+            }) = self.execution_stack.get(frame_index)
+            else {
+                continue;
+            };
+
+            // A strict builtin failure belongs to the active body whose
+            // runtime default would otherwise absorb it. Inner function/rule
+            // frames without defaults must not hide an outer default-bearing
+            // body; a failure while evaluating any default remains suppressed.
+            if !matches!(data.phase, RuleFramePhase::ExecutingBody) {
+                return false;
+            }
+
+            if self
+                .program
+                .rule_infos
+                .get(usize::from(data.rule_index))
+                .is_some_and(|rule_info| rule_info.default_entry_point.is_some())
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn handle_break_non_rule(&mut self, frame: ExecutionFrame, last_result: &mut Value) {
         match frame.kind {
             FrameKind::Main {
@@ -760,7 +878,7 @@ impl RegoVM {
                 }
                 *last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
             }
-            FrameKind::Rule(_) => {}
+            FrameKind::Rule(_) | FrameKind::VirtualDataLookup(_) => {}
         }
     }
 
@@ -984,7 +1102,7 @@ mod tests {
                 pc: 1,
             })
         );
-        assert_eq!(vm.get_registers().get(1), Some(&Value::Undefined));
+        assert_eq!(vm.executed_instructions, 1);
     }
 
     #[test]

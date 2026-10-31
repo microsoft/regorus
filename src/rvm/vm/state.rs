@@ -53,38 +53,19 @@ impl RegoVM {
         error
     }
 
-    /// Publish an initial suspendable execution error without discarding legacy unbudgeted state.
-    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    /// Publish a suspendable execution error and release state owned by the failed run.
     pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if self.active_memory_budget_config.is_some() {
-            return self.fail_suspendable_execution(error);
-        }
-
-        self.execution_state = ExecutionState::Error {
-            error: error.clone(),
-        };
-        error
+        self.fail_suspendable_execution(error)
     }
 
-    #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
-        self.execution_state = ExecutionState::Error {
-            error: error.clone(),
-        };
-        error
-    }
-
-    /// Release state after a failed budgeted suspendable execution.
-    ///
-    /// Unbudgeted executions preserve their legacy error state.
+    /// Release run state after a propagated suspendable execution error.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if self.active_memory_budget_config.is_none() {
-            return error;
-        }
-
+        let had_active_memory_budget = self.active_memory_budget_config.is_some();
         self.release_previous_execution_state();
-        self.finish_active_memory_budget_execution();
+        if had_active_memory_budget {
+            self.finish_active_memory_budget_execution();
+        }
         self.execution_state = ExecutionState::Error {
             error: error.clone(),
         };
@@ -92,8 +73,11 @@ impl RegoVM {
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    #[allow(clippy::unused_self)]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        self.release_previous_execution_state();
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
         error
     }
 
@@ -270,6 +254,13 @@ impl RegoVM {
 
     /// Validate VM state consistency for debugging
     pub(super) fn validate_vm_state(&self) -> Result<()> {
+        self.program
+            .validate_runtime_default_metadata()
+            .map_err(|message| VmError::Internal {
+                message,
+                pc: self.pc,
+            })?;
+
         // Check register bounds
         if self.registers.len() < self.base_register_count {
             return Err(VmError::RegisterCountBelowBase {

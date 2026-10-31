@@ -217,6 +217,67 @@ Rule destructuring relies on `CallRuleContext`,
 `RuleFramePhase::ExecutingDestructuring`, and the `DestructuringSuccess`
 instruction to detect when pattern matching succeeded before entering the body.
 
+### Runtime-evaluated defaults
+
+Static literal defaults continue to use `RuleInfo::default_literal_index`.
+When a complete rule or function has a non-literal default expression, the
+compiler emits fallback code and records its entry point in
+`RuleInfo::default_entry_point`. The runtime evaluates that code only after
+ordinary definitions and their `else` branches have not produced a value; an
+inconsistency between definitions does not trigger the default. The expression
+runs in normal policy context, so input, data, imports, builtins, and
+comprehensions are evaluated at runtime rather than folded while compiling.
+
+A default expression may call a registered HostAwait builtin. Register it at
+compile time as for other policy calls. In suspendable mode the default can
+yield a HostAwait request and continue through the ordinary resume path. In
+run-to-completion mode it consumes a response from the VM's configured queue.
+Runtime defaults do not change the existing HostAwait call or response contract.
+
+Strictly surfaced builtin errors from an ordinary definition are propagated
+before a runtime default can run. Normal guard failures and `Undefined` results
+still follow ordinary/`else` selection, and non-strict builtin errors retain
+their existing suppression-to-`Undefined` behavior.
+
+For indexed defaults such as `default values["key"] := value`, the compiler
+collects all defaults for the parent object. `RuleInfo::default_is_indexed`
+selects per-key merge behavior: the default object fills missing keys and does
+not overwrite an object returned by an ordinary rule. Runtime indexed defaults
+are evaluated in policy context like other dynamic defaults; static indexed
+defaults use the same v7 metadata so a serialized program retains merge
+semantics.
+
+Default-only functions remain in function metadata and can be called by
+qualified path or import alias, but they are not registered as data documents
+in the virtual namespace tree. Reading their package as a data object
+therefore does not expose a function name or its default result as a document.
+
+`RuleInfo::default_entry_point` is a new public Rust field. External code that
+constructs `RuleInfo` with a struct literal must initialize it. The
+`RuleInfo::new` and `RuleInfo::new_function` constructors set it to `None` and
+`default_is_indexed` to `false`.
+
+### Program artifact compatibility
+
+| Program contents | Binary serialization | JSON serialization |
+| :--------------- | :------------------ | :----------------- |
+| No runtime-evaluated or indexed defaults | Version 6, using the legacy program layout | Existing unversioned flat JSON |
+| At least one runtime-evaluated or indexed default | Version 7, including runtime entry points and indexed-merge metadata | Version 7 envelope containing the program and its default metadata |
+
+The current binary reader accepts versions 6 and 7. The JSON reader accepts
+legacy flat JSON and the version 7 envelope; older JSON that omits
+`default_entry_point` and `default_is_indexed` is read with those fields set to
+`None` and `false`, respectively. Older readers that
+do not support version 7 cannot load a binary or versioned JSON artifact that
+contains runtime defaults. Recompile policy source with a version-7-capable
+compiler to produce an artifact with the fallback code; an older artifact
+cannot acquire that code through deserialization alone.
+
+Binary versions 1–5 deserialize as partial programs. Automatic recompilation
+from a partial artifact is not implemented by `Program::compile_from_partial`;
+when a full program is needed, rebuild it from the retained policy sources using
+the normal compiler path.
+
 ---
 
 ## 6. Virtual data lookups

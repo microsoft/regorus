@@ -623,6 +623,301 @@ fn registered_host_await_legacy_program_keeps_raw_payload() {
 }
 
 #[test]
+fn programs_without_runtime_defaults_keep_v6_and_flat_json_compatibility() {
+    let program = compile_rule("package test\ndefault p := true");
+    assert!(program
+        .rule_infos
+        .iter()
+        .any(|rule_info| rule_info.default_literal_index.is_some()));
+    let binary = program
+        .serialize_binary()
+        .expect("failed to serialize legacy-compatible program");
+    assert_eq!(u32::from_le_bytes(binary[4..8].try_into().unwrap()), 6);
+    assert!(Program::can_deserialize(&binary).unwrap());
+    let binary_program = match Program::deserialize_binary(&binary).unwrap() {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => panic!("expected a complete v6 program"),
+    };
+
+    let json = program
+        .serialize_json()
+        .expect("failed to serialize legacy-compatible JSON");
+    let json_value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(json_value.get("version").is_none());
+    assert!(json_value.get("program").is_none());
+    assert!(json_value["rule_infos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|rule_info| rule_info.get("default_entry_point").is_none()));
+    let json_program = std::sync::Arc::new(
+        Program::deserialize_json(&json).expect("failed to deserialize flat legacy JSON"),
+    );
+    for program in [binary_program, json_program] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(program);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.test.p")
+                .expect("failed to execute serialized literal default"),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[test]
+fn e39_v6_frozen_dynamic_default_keeps_historical_value_after_reload() {
+    // Frozen by the actual e39 compiler from the Mark policy with compile data
+    // {"probe":{"other":false}}; e39 stored [] as a v6 literal instead of
+    // evaluating the default from runtime data.
+    let binary = include_bytes!("fixtures/e39-mark-frozen-dynamic-default-v6.bin");
+    assert_eq!(u32::from_le_bytes(binary[4..8].try_into().unwrap()), 6);
+    assert!(Program::can_deserialize(binary).unwrap());
+    let binary_program = match Program::deserialize_binary(binary).unwrap() {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => panic!("expected a complete e39 v6 program"),
+    };
+
+    let json = include_str!("fixtures/e39-mark-frozen-dynamic-default-v6.json");
+    let json_value: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert!(
+        json_value.get("version").is_none(),
+        "e39 JSON must remain flat"
+    );
+    let json_program = std::sync::Arc::new(
+        Program::deserialize_json(json).expect("failed to deserialize e39 flat JSON"),
+    );
+
+    for (format, program) in [("binary", binary_program), ("JSON", json_program)] {
+        let rule = program
+            .rule_infos
+            .iter()
+            .find(|rule| rule.name == "data.probe.value")
+            .expect("e39 artifact omitted the default rule");
+        assert!(
+            rule.default_literal_index.is_some(),
+            "e39 dynamic default must be frozen as a v6 literal"
+        );
+        assert_eq!(
+            program.literals[usize::from(rule.default_literal_index.unwrap())],
+            Value::from_json_str("[]").unwrap()
+        );
+        assert!(
+            rule.default_entry_point.is_none(),
+            "legacy v6 artifacts must not gain runtime-default metadata"
+        );
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            vm.set_data(Value::from_json_str("{}").unwrap()).unwrap();
+            vm.set_input(Value::from_json_str("{}").unwrap());
+            assert_eq!(
+                vm.execute_entry_point_by_name("data.probe.value").unwrap(),
+                Value::from_json_str("[]").unwrap(),
+                "reloaded e39 {format} artifact must retain its compile-time-frozen empty default"
+            );
+        }
+    }
+}
+
+#[test]
+fn runtime_default_artifacts_advertise_v7_and_reject_invalid_metadata() -> anyhow::Result<()> {
+    let program = compile_rule("package test\ndefault p := [x | x := input.values[_]]");
+    let binary = program
+        .serialize_binary()
+        .expect("failed to serialize runtime-default program");
+    assert_eq!(u32::from_le_bytes(binary[4..8].try_into().unwrap()), 7);
+    assert!(Program::can_deserialize(&binary).map_err(anyhow::Error::msg)?);
+
+    let json = program
+        .serialize_json()
+        .expect("failed to serialize runtime-default JSON");
+    let mut json_value: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(json_value["version"].as_u64(), Some(7));
+    assert!(json_value["program"].is_object());
+    Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+
+    let default_entry_point = json_value["program"]["rule_infos"][0]["default_entry_point"]
+        .as_u64()
+        .expect("compiled rule should have runtime default metadata");
+    json_value["program"]["rule_infos"][0]["default_entry_point"] =
+        serde_json::json!(default_entry_point + 100_000);
+    let malformed_json = serde_json::to_string(&json_value)?;
+    assert!(
+        Program::deserialize_json(&malformed_json)
+            .unwrap_err()
+            .contains("default entry point"),
+        "malformed runtime default entry point should be rejected"
+    );
+
+    let mut malformed_rule_infos = json_value.clone();
+    malformed_rule_infos["program"]["rule_infos"] = serde_json::json!("not a rule table");
+    assert!(
+        Program::deserialize_json(&serde_json::to_string(&malformed_rule_infos)?)
+            .unwrap_err()
+            .contains("Failed to deserialize rule_infos"),
+        "invalid executable rule metadata must not be silently replaced"
+    );
+
+    let mut future_version = binary.clone();
+    future_version[4..8].copy_from_slice(&8_u32.to_le_bytes());
+    assert!(!Program::can_deserialize(&future_version).map_err(anyhow::Error::msg)?);
+    assert!(Program::deserialize_binary(&future_version)
+        .unwrap_err()
+        .contains("Unsupported version 8"));
+    let mut truncated_binary = binary.clone();
+    truncated_binary.pop();
+    assert!(
+        Program::deserialize_binary(&truncated_binary).is_err(),
+        "truncated runtime-default artifact should be rejected"
+    );
+
+    let mut malformed_program = (*program).clone();
+    let runtime_rule = malformed_program
+        .rule_infos
+        .iter()
+        .position(|rule_info| rule_info.default_entry_point.is_some())
+        .expect("compiled rule should have runtime default metadata");
+    malformed_program.rule_infos[runtime_rule].default_entry_point =
+        Some(u32::try_from(malformed_program.instructions.len()).unwrap());
+    assert!(
+        malformed_program
+            .serialize_binary()
+            .unwrap_err()
+            .contains("default entry point"),
+        "serialization should reject an out-of-range runtime default entry point"
+    );
+
+    let mut bad_result_register = (*program).clone();
+    let rule_info = &mut bad_result_register.rule_infos[runtime_rule];
+    rule_info.result_reg = rule_info.num_registers;
+    assert!(
+        bad_result_register
+            .serialize_binary()
+            .unwrap_err()
+            .contains("result register"),
+        "serialization should reject a runtime default result outside its register window"
+    );
+
+    let mut conflicting_default_forms = (*program).clone();
+    conflicting_default_forms.rule_infos[runtime_rule].default_literal_index = Some(0);
+    assert!(
+        conflicting_default_forms
+            .serialize_json()
+            .unwrap_err()
+            .contains("both literal and runtime"),
+        "serialization should reject simultaneous literal and runtime defaults"
+    );
+
+    let mut entry_at_return = (*program).clone();
+    let return_pc = entry_at_return
+        .instructions
+        .iter()
+        .enumerate()
+        .find(|(_, instruction)| matches!(instruction, Instruction::RuleReturn {}))
+        .map(|(pc, _)| pc)
+        .expect("compiled program should contain RuleReturn");
+    entry_at_return.rule_infos[runtime_rule].default_entry_point =
+        Some(u32::try_from(return_pc).unwrap());
+    assert!(
+        entry_at_return
+            .serialize_binary()
+            .unwrap_err()
+            .contains("RuleReturn"),
+        "serialization should reject a runtime default entry at its terminator"
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_defaults_reject_direct_references_and_calls_with_source_diagnostics(
+) -> anyhow::Result<()> {
+    for (module, expected_error) in [
+        ("package test\ndefault p := input.value", "invalid `ref`"),
+        ("package test\ndefault p := count([1])", "invalid `call`"),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("test.rego".to_string(), module.to_string())?;
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let error = Compiler::compile_from_policy(&compiled, &["data.test.p"])
+            .expect_err("an invalid direct default expression should be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains(expected_error),
+            "unexpected default validation error: {message}"
+        );
+        assert!(
+            message.contains("test.rego"),
+            "default validation should preserve source diagnostics: {message}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dynamic_default_dependency_cycles_use_the_existing_recursion_check() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+        package test
+        default a := [x | x := data.test.b]
+        default b := [x | x := data.test.a]
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.a"))?;
+    let error = Compiler::compile_from_policy(&compiled, &["data.test.a"])
+        .expect_err("cyclic default dependencies should be rejected");
+    assert!(
+        error.to_string().contains("recursion"),
+        "unexpected cycle diagnostic: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn emitted_default_builtins_are_registered_before_fallback_execution() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "test.rego".to_string(),
+        r#"
+        package test
+        default p := [count(input.values) | input.use_default]
+        p := false if input.use_definition
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+    let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+    assert!(
+        program
+            .builtin_info_table
+            .iter()
+            .any(|builtin| builtin.name == "count"),
+        "builtin in emitted fallback code must be present before execution"
+    );
+
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(Value::from_json_str(
+            r#"{"use_default":true,"use_definition":true}"#,
+        )?);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.test.p")?,
+            Value::Bool(false),
+            "{mode:?} ordinary result should suppress the emitted default"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn registered_host_await_rejects_wrong_arity_before_compiling_inputs() {
     for (arg_count, call, actual_count) in [
         (2, "lookup(undefined_variable)", 1),
@@ -957,6 +1252,32 @@ fn registered_host_await_nested_arguments_report_register_overflow() {
         error.to_string().contains("register"),
         "expected a register-capacity error, got {error}"
     );
+}
+
+#[test]
+fn dynamic_default_nested_host_await_arguments_report_register_overflow() {
+    let nested_inputs = (0..40)
+        .map(|_| "[1 + 2, 3 + 4, 5 + 6]")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let module = format!("package test\ndefault p := [result | result := lookup({nested_inputs})]");
+    let error = compile_rule_with_host_await(&module, &[("lookup", 40)])
+        .expect_err("nested default inputs beyond the register window should fail compilation");
+
+    match error
+        .downcast_ref::<SpannedCompilerError>()
+        .map(|error| &error.error)
+    {
+        Some(CompilerError::General { message }) => {
+            let message = message.to_ascii_lowercase();
+            assert!(
+                message.contains("register overflow")
+                    && message.contains("within the 255-register window"),
+                "unexpected register-capacity diagnostic: {message}"
+            )
+        }
+        other => panic!("expected explicit register-overflow diagnostic, got {other:?}: {error}"),
+    }
 }
 
 #[test]

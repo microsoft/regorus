@@ -248,6 +248,53 @@ cases:
         value: false
     want_result: false
 
+  - note: registered_builtin_nary_packed_call_in_dynamic_default_suspendable
+    data: {}
+    input:
+      first: "alpha"
+      second:
+        nested: [1, true]
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: combine
+        arg_count: 2
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default result := [response |
+          response := combine(input.first, input.second)
+        ]
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "combine"
+        args:
+          - "alpha"
+          - nested: [1, true]
+        value: "combined"
+    want_result: ["combined"]
+
+  - note: registered_builtin_undefined_argument_skips_in_dynamic_default
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        default result := [response |
+          lookup(input.missing, response)
+        ]
+    query: data.demo.result
+    want_result: []
+
   - note: registered_builtin_nine_input_arguments_preserve_nested_values
     data: {}
     input: {}

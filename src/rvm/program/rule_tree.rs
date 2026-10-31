@@ -11,6 +11,31 @@ use crate::value::Value;
 use super::Program;
 
 impl Program {
+    /// Ensure a package path exists in the rule tree without registering a
+    /// rule at that path.
+    pub(crate) fn add_package_to_tree(&mut self, path: &[String]) -> AnyResult<()> {
+        if path.len() >= Program::MAX_PATH_DEPTH {
+            return Err(anyhow::anyhow!(
+                "Rule path depth exceeds maximum ({} >= {})",
+                path.len(),
+                Program::MAX_PATH_DEPTH
+            ));
+        }
+
+        let package_path = path.iter().map(|part| part.as_str()).collect::<Vec<_>>();
+        let target = self.rule_tree.make_or_get_value_mut(&package_path)?;
+        if *target == Value::Undefined {
+            *target = Value::new_object();
+        } else if !matches!(target, Value::Object(_)) {
+            return Err(anyhow::anyhow!(
+                "Package path conflicts with a rule value at '{}'",
+                path.join(".")
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Add a rule to the rule tree
     /// path: Package path components (e.g., ["p1", "p2"] for data.p1.p2.rule)
     /// rule_name: Rule name (e.g., "rule")

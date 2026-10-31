@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::metadata::ProgramMetadata;
-use super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
+use super::types::{BuiltinInfo, RuleInfo, RuleType, SourceFile, SpanInfo};
 use crate::builtins::BuiltinFcn;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
@@ -91,7 +91,7 @@ pub struct Program {
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 6;
+    pub const SERIALIZATION_VERSION: u32 = 7;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
@@ -213,6 +213,89 @@ impl Program {
                 let body_end = core::cmp::max(body_start, loop_end);
                 if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
                     return Err("LoopNext offsets exceed supported instruction range".to_string());
+                }
+            }
+        }
+
+        self.validate_runtime_default_metadata()?;
+
+        Ok(())
+    }
+
+    /// Validate default metadata before execution or artifact serialization.
+    pub fn validate_runtime_default_metadata(&self) -> Result<(), String> {
+        for (rule_index, rule_info) in self.rule_infos.iter().enumerate() {
+            if rule_info.default_literal_index.is_some() && rule_info.default_entry_point.is_some()
+            {
+                return Err(format!(
+                    "Rule {rule_index} has both literal and runtime default metadata"
+                ));
+            }
+
+            if rule_info.default_is_indexed
+                && rule_info.default_literal_index.is_none()
+                && rule_info.default_entry_point.is_none()
+            {
+                return Err(format!(
+                    "Rule {rule_index} has indexed-default metadata without a default value"
+                ));
+            }
+
+            if let Some(literal_index) = rule_info.default_literal_index {
+                let Some(default_value) = self.literals.get(usize::from(literal_index)) else {
+                    return Err(format!(
+                        "Rule {rule_index} default literal index {literal_index} is out of bounds"
+                    ));
+                };
+                if rule_info.default_is_indexed && !matches!(default_value, Value::Object(_)) {
+                    return Err(format!(
+                        "Rule {rule_index} indexed default literal is not an object"
+                    ));
+                }
+            }
+
+            if let Some(entry_point) = rule_info.default_entry_point {
+                if rule_info.rule_type != RuleType::Complete
+                    && !(rule_info.default_is_indexed
+                        && rule_info.rule_type == RuleType::PartialObject)
+                {
+                    return Err(format!(
+                        "Rule {rule_index} has a runtime default but is not a complete rule"
+                    ));
+                }
+                if usize::from(rule_info.result_reg) >= usize::from(rule_info.num_registers) {
+                    return Err(format!(
+                        "Rule {rule_index} runtime default result register {} is outside its {}-register window",
+                        rule_info.result_reg, rule_info.num_registers
+                    ));
+                }
+
+                let entry_point = usize::try_from(entry_point)
+                    .map_err(|_| format!("Rule {rule_index} default entry point exceeds usize"))?;
+                let main_entry_point = usize::try_from(self.main_entry_point)
+                    .map_err(|_| format!("Rule {rule_index} main entry point exceeds usize"))?;
+                if entry_point >= self.instructions.len() || entry_point <= main_entry_point {
+                    return Err(format!(
+                        "Rule {rule_index} default entry point {entry_point} is outside executable default code"
+                    ));
+                }
+                let Some(default_instructions) = self.instructions.get(entry_point..) else {
+                    return Err(format!(
+                        "Rule {rule_index} default entry point {entry_point} is outside executable default code"
+                    ));
+                };
+                let Some(return_offset) = default_instructions
+                    .iter()
+                    .position(|instruction| matches!(instruction, Instruction::RuleReturn {}))
+                else {
+                    return Err(format!(
+                        "Rule {rule_index} default entry point {entry_point} has no RuleReturn terminator"
+                    ));
+                };
+                if return_offset == 0 {
+                    return Err(format!(
+                        "Rule {rule_index} default entry point {entry_point} points at a RuleReturn terminator"
+                    ));
                 }
             }
         }

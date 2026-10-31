@@ -59,6 +59,13 @@ impl RegorusRvm {
     }
 }
 
+fn to_rvm_string_result(output: Result<String>) -> RegorusResult {
+    match output {
+        Ok(json) => RegorusResult::ok_string(json),
+        Err(err) => to_rvm_error_result(err),
+    }
+}
+
 fn to_rvm_error_result(err: anyhow::Error) -> RegorusResult {
     let status = match err.downcast_ref::<VmError>() {
         Some(VmError::MemoryBudgetExceeded { .. }) => RegorusStatus::MemoryBudgetExceeded,

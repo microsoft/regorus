@@ -8,7 +8,7 @@
 )]
 
 use super::{CompilationContext, Compiler, CompilerError, Register, Result, Scope};
-use crate::ast::ExprRef;
+use crate::ast::{ExprRef, Rule};
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -26,7 +26,42 @@ impl<'a> Compiler<'a> {
 
     /// Check if a function path is a user-defined function rule
     pub(super) fn is_user_defined_function(&self, rule_path: &str) -> bool {
-        self.policy.inner.rules.contains_key(rule_path)
+        self.policy.inner.rules.contains_key(rule_path) || self.is_default_function(rule_path)
+    }
+
+    pub(super) fn is_default_function(&self, rule_path: &str) -> bool {
+        self.policy.inner.rule_paths.contains(rule_path)
+            && self
+                .policy
+                .inner
+                .default_rules
+                .get(rule_path)
+                .is_some_and(|rules| {
+                    rules.iter().any(|entry| {
+                        entry.1.is_none()
+                            && matches!(
+                                *entry.0.as_ref(),
+                                Rule::Default { ref args, .. } if !args.is_empty()
+                            )
+                    })
+                })
+    }
+
+    pub(super) fn default_function_arity(&self, rule_path: &str) -> Option<usize> {
+        self.policy
+            .inner
+            .default_rules
+            .get(rule_path)?
+            .iter()
+            .find_map(|entry| {
+                if entry.1.is_some() {
+                    return None;
+                }
+                match *entry.0.as_ref() {
+                    Rule::Default { ref args, .. } if !args.is_empty() => Some(args.len()),
+                    _ => None,
+                }
+            })
     }
 
     /// Get builtin index for a builtin function

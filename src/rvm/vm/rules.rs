@@ -17,6 +17,51 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    fn merge_indexed_defaults(base: &mut Value, defaults: Value) {
+        if *base == Value::Undefined {
+            *base = defaults;
+            return;
+        }
+
+        let Ok(default_fields) = defaults.as_object() else {
+            return;
+        };
+        let Ok(base_fields) = base.as_object_mut() else {
+            return;
+        };
+        for (key, value) in default_fields {
+            if !base_fields.contains_key(key) {
+                base_fields.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    fn should_skip_default_function_for_undefined_argument(
+        &self,
+        rule_info: &RuleInfo,
+        function_call_params: Option<&FunctionCallParams>,
+    ) -> Result<bool> {
+        if rule_info.function_info.is_none()
+            || (rule_info.default_literal_index.is_none()
+                && rule_info.default_entry_point.is_none())
+        {
+            return Ok(false);
+        }
+
+        let Some(params) = function_call_params else {
+            // A default-only function is callable only through an invocation.
+            // A bare data reference does not supply an argument list and must
+            // not execute the function's default value.
+            return Ok(true);
+        };
+        for &arg_register in params.arg_registers() {
+            if self.get_register(arg_register)? == &Value::Undefined {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Returns true if the error represents a resource-limit violation that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
@@ -29,6 +74,49 @@ impl RegoVM {
                 | VmError::InstructionLimitExceeded { .. }
                 | VmError::NumericOverflow { .. }
         )
+    }
+
+    /// Returns true for errors that strict builtin handling intentionally
+    /// surfaces instead of converting to Undefined.
+    pub(super) fn is_strictly_surfaced_builtin_error(err: &VmError) -> bool {
+        matches!(
+            err,
+            VmError::InvalidAddition { .. }
+                | VmError::InvalidSubtraction { .. }
+                | VmError::InvalidMultiplication { .. }
+                | VmError::InvalidDivision { .. }
+                | VmError::InvalidModulo { .. }
+                | VmError::ModuloOnFloat { .. }
+        ) || matches!(
+            err,
+            VmError::ArithmeticError { message, pc }
+                if *pc == 0 || message.starts_with("#undefined:")
+        )
+    }
+
+    fn strict_error_precedes_runtime_default_common(&self, err: &VmError) -> bool {
+        if !self.strict_builtin_errors || !Self::is_strictly_surfaced_builtin_error(err) {
+            return false;
+        }
+
+        for context in self.call_rule_stack.iter().rev() {
+            let Some(rule_info) = self.program.rule_infos.get(usize::from(context.rule_index))
+            else {
+                continue;
+            };
+
+            // The active definition index is advanced to definitions.len()
+            // while executing this rule's default expression. Such errors
+            // retain the existing default-phase suppression behavior.
+            if context.current_definition_index >= rule_info.definitions.len() {
+                return false;
+            }
+            if rule_info.default_entry_point.is_some() {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -174,6 +262,16 @@ impl RegoVM {
                         );
                         return Err(e);
                     }
+                    Err(e) if self.strict_error_precedes_runtime_default_common(&e) => {
+                        // Strict errors from an ordinary definition must not be
+                        // mistaken for an undefined result that activates the
+                        // runtime default.
+                        self.restore_rule_state(
+                            &mut previous_loop_stack,
+                            &mut previous_comprehension_stack,
+                        );
+                        return Err(e);
+                    }
                     Err(_e) => {}
                 }
             }
@@ -183,13 +281,58 @@ impl RegoVM {
             }
         }
 
-        let final_result = if rule_failed_due_to_inconsistency {
+        let mut final_result = if rule_failed_due_to_inconsistency {
             Value::Undefined
         } else if let Some(successful_result) = first_successful_result {
             successful_result
         } else {
             self.get_register(result_reg)?.clone()
         };
+
+        let can_apply_indexed_default = rule_info.default_is_indexed
+            && !rule_failed_due_to_inconsistency
+            && matches!(final_result, Value::Undefined | Value::Object(_));
+        let can_apply_complete_default = !rule_info.default_is_indexed
+            && final_result == Value::Undefined
+            && !rule_failed_due_to_inconsistency
+            && matches!(rule_info.rule_type, RuleType::Complete);
+        if can_apply_indexed_default || can_apply_complete_default {
+            if let Some(default_entry_point) = rule_info.default_entry_point {
+                self.registers.resize(num_registers, Value::Undefined);
+                self.registers.fill(Value::Undefined);
+                if let Some(context) = self.call_rule_stack.last_mut() {
+                    context.current_definition_index = rule_definitions.len();
+                    context.current_body_index = 0;
+                }
+                match self.jump_to(default_entry_point) {
+                    Ok(value) if rule_info.default_is_indexed => {
+                        Self::merge_indexed_defaults(&mut final_result, value);
+                    }
+                    Ok(value) => final_result = value,
+                    Err(error) if Self::is_fatal_vm_error(&error) => {
+                        self.restore_rule_state(
+                            &mut previous_loop_stack,
+                            &mut previous_comprehension_stack,
+                        );
+                        return Err(error);
+                    }
+                    Err(_) => {}
+                }
+            } else if let Some(default_literal_index) = rule_info.default_literal_index {
+                if let Some(value) = self
+                    .program
+                    .literals
+                    .get(usize::from(default_literal_index))
+                    .cloned()
+                {
+                    if rule_info.default_is_indexed {
+                        Self::merge_indexed_defaults(&mut final_result, value);
+                    } else {
+                        final_result = value;
+                    }
+                }
+            }
+        }
 
         if let Some(restored_registers) = self.register_stack.pop() {
             let mut current_register_window = Vec::default();
@@ -233,6 +376,12 @@ impl RegoVM {
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
+        if self
+            .should_skip_default_function_for_undefined_argument(&rule_info, function_call_params)?
+        {
+            self.set_register(dest, Value::Undefined)?;
+            return Ok(());
+        }
 
         if !is_function_rule {
             let (ref computed, ref cached_result) =
@@ -253,7 +402,7 @@ impl RegoVM {
         let rule_type = rule_info.rule_type.clone();
         let rule_definitions = rule_info.definitions.clone();
 
-        if rule_definitions.is_empty() {
+        if rule_definitions.is_empty() && rule_info.default_entry_point.is_none() {
             // No compiled definitions — check for a default value before returning Undefined.
             // Default-only rules (e.g., `default deny := true`) have no body definitions
             // but their default value was evaluated at compile time and stored as a literal.
@@ -400,6 +549,12 @@ impl RegoVM {
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
+        if self
+            .should_skip_default_function_for_undefined_argument(&rule_info, function_call_params)?
+        {
+            self.set_register(dest, Value::Undefined)?;
+            return Ok(());
+        }
 
         if !is_function_rule {
             let (ref computed, ref cached_result) =
@@ -417,7 +572,7 @@ impl RegoVM {
             }
         }
 
-        if rule_info.definitions.is_empty() {
+        if rule_info.definitions.is_empty() && rule_info.default_entry_point.is_none() {
             // No compiled definitions — check for a default value before returning Undefined.
             let result = rule_info
                 .default_literal_index
@@ -505,6 +660,8 @@ impl RegoVM {
             accumulated_result: None,
             any_body_succeeded: false,
             rule_failed_due_to_inconsistency: false,
+            default_evaluated: false,
+            default_base_result: None,
             rule_type: rule_info.rule_type.clone(),
             result_reg: rule_info.result_reg,
             is_function_rule,
@@ -630,6 +787,53 @@ impl RegoVM {
                     "rule definition index",
                 )?;
                 frame_data.current_body_index = 0;
+            }
+        }
+
+        let has_defined_result = frame_data
+            .accumulated_result
+            .as_ref()
+            .is_some_and(|value| *value != Value::Undefined)
+            || self
+                .registers
+                .get(usize::from(frame_data.result_reg))
+                .is_some_and(|value| *value != Value::Undefined);
+        let current_result = frame_data
+            .accumulated_result
+            .clone()
+            .or_else(|| {
+                self.registers
+                    .get(usize::from(frame_data.result_reg))
+                    .cloned()
+            })
+            .unwrap_or(Value::Undefined);
+        let can_apply_indexed_default = rule_info.default_is_indexed
+            && !frame_data.rule_failed_due_to_inconsistency
+            && matches!(current_result, Value::Undefined | Value::Object(_));
+        let can_apply_complete_default = !rule_info.default_is_indexed
+            && !has_defined_result
+            && matches!(frame_data.rule_type, RuleType::Complete);
+        if !frame_data.default_evaluated
+            && !frame_data.rule_failed_due_to_inconsistency
+            && (can_apply_indexed_default || can_apply_complete_default)
+        {
+            if let Some(default_entry_point) = rule_info.default_entry_point {
+                frame_data.default_evaluated = true;
+                if rule_info.default_is_indexed {
+                    frame_data.default_base_result = Some(current_result);
+                }
+                let register_count = frame_data
+                    .num_registers
+                    .max(frame_data.num_retained_registers);
+                self.registers.resize(register_count, Value::Undefined);
+                self.registers.fill(Value::Undefined);
+                if let Some(ctx) = self.call_rule_stack.last_mut() {
+                    ctx.current_definition_index = frame_data.total_definitions;
+                    ctx.current_body_index = 0;
+                }
+                frame_data.phase = RuleFramePhase::ExecutingDefault;
+                let next_pc = self.convert_pc(default_entry_point, "default entry point")?;
+                return Ok(Some(next_pc));
             }
         }
 
@@ -837,6 +1041,27 @@ impl RegoVM {
             }
         }
 
+        if rule_info.default_is_indexed && !rule_failed_due_to_inconsistency {
+            if let Some(default_literal_index) = rule_info.default_literal_index {
+                if let Some(default_value) = self
+                    .program
+                    .literals
+                    .get(usize::from(default_literal_index))
+                    .cloned()
+                {
+                    let register_count = parent_registers.len();
+                    let slot = parent_registers.get_mut(dest_idx).ok_or(
+                        VmError::RegisterIndexOutOfBounds {
+                            index: dest_reg,
+                            pc: self.pc,
+                            register_count,
+                        },
+                    )?;
+                    Self::merge_indexed_defaults(slot, default_value);
+                }
+            }
+        }
+
         let register_count = parent_registers.len();
         let final_value =
             parent_registers
@@ -885,6 +1110,21 @@ impl RegoVM {
                 self.rule_frame_after_destructuring_success(frame_data, &rule_info)
             }
             RuleFramePhase::ExecutingBody => self.rule_frame_after_success(frame_data, &rule_info),
+            RuleFramePhase::ExecutingDefault => {
+                let result = self
+                    .registers
+                    .get(usize::from(frame_data.result_reg))
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                if let Some(mut base) = frame_data.default_base_result.take() {
+                    Self::merge_indexed_defaults(&mut base, result);
+                    frame_data.accumulated_result = Some(base);
+                } else {
+                    frame_data.accumulated_result = Some(result);
+                }
+                frame_data.phase = RuleFramePhase::Finalizing;
+                Ok(None)
+            }
             RuleFramePhase::Initializing | RuleFramePhase::Finalizing => Ok(None),
         }
     }
@@ -893,6 +1133,20 @@ impl RegoVM {
         &mut self,
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
+        if matches!(frame_data.phase, RuleFramePhase::ExecutingDefault) {
+            if let Some(result) = self.registers.get_mut(usize::from(frame_data.result_reg)) {
+                *result = Value::Undefined;
+            }
+            frame_data.accumulated_result = Some(
+                frame_data
+                    .default_base_result
+                    .take()
+                    .unwrap_or(Value::Undefined),
+            );
+            frame_data.phase = RuleFramePhase::Finalizing;
+            return Ok(None);
+        }
+
         let rule_info = self.get_rule_info(frame_data.rule_index)?;
         self.rule_frame_after_failure(frame_data, &rule_info)
     }

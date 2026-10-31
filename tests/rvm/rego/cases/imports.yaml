@@ -172,13 +172,15 @@ cases:
     want_result:
       from: lib
   - note: default_function_value_via_import
-    skip: true  # TODO: cross-package calls to functions with default values fail to compile ("not a valid rule path"), even with fully-qualified paths
+    skip_interpreter: true
+    input:
+      include: true
     modules:
       - |
         package lib
         import rego.v1
 
-        default pick(_) := "fallback"
+        default pick(_) := [x | x := input.include]
 
         pick(x) := x if x == "a"
       - |
@@ -186,12 +188,11 @@ cases:
         import rego.v1
         import data.lib
 
-        a := lib.pick("a")
-        b := lib.pick("z")
-    query: data.rules
+        result := {"defined": lib.pick("a"), "fallback": lib.pick("z")}
+    query: data.rules.result
     want_result:
-      a: a
-      b: fallback
+      defined: a
+      fallback: [true]
   - note: import_shadows_module_local_rule_for_function_calls
     modules:
       - |

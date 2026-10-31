@@ -1,0 +1,91 @@
+{
+  "builtin_info_table": [],
+  "entry_points": {
+    "data.probe.value": 0
+  },
+  "instruction_data": {
+    "array_create_params": [],
+    "builtin_call_params": [],
+    "chained_index_params": [],
+    "comprehension_begin_params": [],
+    "function_call_params": [],
+    "loop_params": [],
+    "object_create_params": [],
+    "set_create_params": [],
+    "virtual_data_document_lookup_params": []
+  },
+  "instruction_spans": [
+    {
+      "column": 0,
+      "length": 0,
+      "line": 0,
+      "source_index": 0
+    },
+    {
+      "column": 0,
+      "length": 0,
+      "line": 0,
+      "source_index": 0
+    }
+  ],
+  "instructions": [
+    {
+      "CallRule": {
+        "dest": 1,
+        "rule_index": 0
+      }
+    },
+    {
+      "Return": {
+        "value": 1
+      }
+    }
+  ],
+  "literals": [
+    []
+  ],
+  "metadata": {
+    "annotations": {},
+    "compiled_at": "unknown",
+    "compiler_version": "0.13.0",
+    "has_host_await": false,
+    "language": "",
+    "needs_recompilation": false,
+    "needs_runtime_recursion_check": false,
+    "optimization_level": 0,
+    "rego_v0": false,
+    "source_info": "unknown"
+  },
+  "program_structure": {
+    "dispatch_window_size": 2,
+    "main_entry_point": 0,
+    "max_rule_window_size": 0
+  },
+  "rule_infos": [
+    {
+      "default_literal_index": 0,
+      "definitions": [],
+      "destructuring_blocks": [],
+      "early_exit_on_first_success": false,
+      "else_bodies": [],
+      "function_info": null,
+      "name": "data.probe.value",
+      "num_registers": 0,
+      "result_reg": 0,
+      "rule_type": "Complete"
+    }
+  ],
+  "rule_tree": {
+    "data": {
+      "probe": {
+        "value": 0
+      }
+    }
+  },
+  "sources": [
+    {
+      "content": "package probe\nother := true\ndefault value := [x | x := other]\n",
+      "name": "frozen.rego"
+    }
+  ]
+}
