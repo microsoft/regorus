@@ -774,6 +774,35 @@ pub proof fn lemma_cmp_float_int(f: f64, n: &BigInt)
     }
 }
 
+pub proof fn lemma_cmp_non_nan_float(a: f64, b: f64)
+    requires
+        !a.is_nan_spec(),
+        !b.is_nan_spec(),
+    ensures
+        <f64 as PartialOrdSpec>::obeys_partial_cmp_spec(),
+        NumberView::Float(a).cmp_values(NumberView::Float(b)) ==
+            if a.is_lt(&b) { Ordering::Less }
+            else if a.is_gt(&b) { Ordering::Greater }
+            else { Ordering::Equal },
+{
+    axiom_f64_obeys_partial_cmp_spec();
+    axiom_f64_comparisons_match_ieee();
+    if a.is_finite_spec() && b.is_finite_spec() {
+        let exponent = if f64_finite_exponent(a) < f64_finite_exponent(b) {
+            f64_finite_exponent(a)
+        } else {
+            f64_finite_exponent(b)
+        };
+        axiom_f64_finite_order(a, b, exponent);
+    } else if !a.is_finite_spec() {
+        assert(a.is_infinite_spec());
+        axiom_f64_infinite_order(b, a);
+    } else {
+        assert(b.is_infinite_spec());
+        axiom_f64_infinite_order(a, b);
+    }
+}
+
 pub open spec fn reverse_ordering(ordering: Ordering) -> Ordering
 {
     match ordering {

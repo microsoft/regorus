@@ -658,7 +658,6 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         requires
             !a.is_nan_spec(),
@@ -666,9 +665,10 @@ impl Number {
         ensures
             NumberView::Float(a).cmp_ensures(NumberView::Float(b), result),
     )]
-    // Pinned Verus has no proved bridge from primitive f64 ordering to the bit-level float
-    // predicates used by `NumberView`; trust only this exact three-way executable helper.
     fn cmp_non_nan_float(a: f64, b: f64) -> Ordering {
+        proof! {
+            lemma_cmp_non_nan_float(a, b);
+        }
         if a < b {
             Ordering::Less
         } else if a > b {

@@ -67,6 +67,43 @@ fn f64_safe_integer_casts_match_runtime() {
 }
 
 #[test]
+fn f64_infinite_order_matches_runtime() {
+    for f in [
+        f64::NEG_INFINITY,
+        -f64::MAX,
+        -1.0,
+        -f64::from_bits(1),
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        1.0,
+        f64::MAX,
+        f64::INFINITY,
+    ] {
+        for infinity in [f64::NEG_INFINITY, f64::INFINITY] {
+            let less = !infinity.is_sign_negative() && (f.is_finite() || f.is_sign_negative());
+            let greater = infinity.is_sign_negative() && (f.is_finite() || !f.is_sign_negative());
+            assert_eq!(f < infinity, less);
+            assert_eq!(infinity < f, greater);
+            assert_eq!(f > infinity, greater);
+            assert_eq!(infinity > f, less);
+            let expected = if less {
+                Ordering::Less
+            } else if greater {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            };
+            assert_eq!(Number::Float(f).cmp(&Number::Float(infinity)), expected);
+            assert_eq!(
+                Number::Float(infinity).cmp(&Number::Float(f)),
+                expected.reverse()
+            );
+        }
+    }
+}
+
+#[test]
 fn f64_scaled_order_and_u64_casts_match_runtime() {
     let upper = u64::MAX as f64;
     let zero = BigInt::from(0u8);
@@ -125,6 +162,7 @@ fn f64_scaled_order_and_u64_casts_match_runtime() {
                     assert_eq!(f < g, lhs < rhs);
                     assert_eq!(f > g, lhs > rhs);
                     assert_eq!(f >= g, lhs >= rhs);
+                    assert_eq!(Number::Float(f).cmp(&Number::Float(g)), lhs.cmp(&rhs));
                 }
 
                 let unit = BigInt::from(1u8) << (-exponent) as usize;

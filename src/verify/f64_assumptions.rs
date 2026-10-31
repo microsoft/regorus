@@ -121,6 +121,20 @@ pub axiom fn axiom_f64_finite_order(f: f64, g: f64, exponent: int)
         f.ieee_ge(g) == (f64_scaled_value(f, exponent) >= f64_scaled_value(g, exponent)),
 ;
 
+// Non-NaN values lie between the infinities; equal infinities compare equal.
+pub axiom fn axiom_f64_infinite_order(f: f64, infinity: f64)
+    requires
+        !f.is_nan_spec(),
+        infinity.is_infinite_spec(),
+    ensures
+        f.ieee_lt(infinity) == (!infinity.is_sign_negative_spec()
+            && (f.is_finite_spec() || f.is_sign_negative_spec())),
+        infinity.ieee_lt(f) == (infinity.is_sign_negative_spec()
+            && (f.is_finite_spec() || !f.is_sign_negative_spec())),
+        f.ieee_gt(infinity) == infinity.ieee_lt(f),
+        infinity.ieee_gt(f) == f.ieee_lt(infinity),
+;
+
 // Round-to-nearest, ties-to-even maps u64::MAX to exactly 2^64.
 pub axiom fn axiom_f64_u64_max_cast(exponent: int)
     requires
