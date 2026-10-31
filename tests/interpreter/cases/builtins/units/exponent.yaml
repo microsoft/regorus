@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: parse-exponent-too-large
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse("1e9999999K")
+    query: data.test.x
+    error: "units.parse: exponent too large"
+
+  - note: parse-bytes-exponent-too-large
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse_bytes("1e9999999Ki")
+    query: data.test.x
+    error: "units.parse_bytes: exponent too large"
+
+  - note: parse-normal-exponent-ok
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse("1e6K")
+    query: data.test.x
+    want_result: 1e9
