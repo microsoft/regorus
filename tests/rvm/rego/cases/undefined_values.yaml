@@ -1,0 +1,163 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: undefined_assignments
+    data: {}
+    input:
+      values: [false, null, 0, "", [], {}]
+    modules:
+      - |
+        package test
+
+        default named := false
+        named := true if { x := input.missing }
+        default wildcard := false
+        wildcard := true if { _ := input.missing }
+        fallback := "missing" if { _ := input.missing } else := "fallback"
+
+        main := {
+          "named": named,
+          "wildcard": wildcard,
+          "fallback": fallback,
+          "array": [x | x := input.missing],
+          "set": {x | x := input.missing},
+          "object": {"key": x | x := input.missing},
+          "wildcard_array": [true | _ := input.missing],
+          "defined": [x | some i in [0, 1, 2, 3, 4, 5, 6]; x := input.values[i]],
+          "defined_wildcard": [i | some i in [0, 1, 2, 3, 4, 5, 6]; _ := input.values[i]],
+        }
+    query: data.test.main
+    want_result:
+      named: false
+      wildcard: false
+      fallback: fallback
+      array: []
+      set:
+        set!: []
+      object: {}
+      wildcard_array: []
+      defined: [false, null, 0, "", [], {}]
+      defined_wildcard: [0, 1, 2, 3, 4, 5]
+
+  - note: undefined_assignments_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      values: [false, null, 0, "", [], {}]
+    modules:
+      - |
+        package test
+
+        default named := false
+        named := true if { x := input.missing }
+        default wildcard := false
+        wildcard := true if { _ := input.missing }
+        fallback := "missing" if { _ := input.missing } else := "fallback"
+
+        main := {
+          "named": named,
+          "wildcard": wildcard,
+          "fallback": fallback,
+          "array": [x | x := input.missing],
+          "set": {x | x := input.missing},
+          "object": {"key": x | x := input.missing},
+          "wildcard_array": [true | _ := input.missing],
+          "defined": [x | some i in [0, 1, 2, 3, 4, 5, 6]; x := input.values[i]],
+          "defined_wildcard": [i | some i in [0, 1, 2, 3, 4, 5, 6]; _ := input.values[i]],
+        }
+    query: data.test.main
+    want_result:
+      named: false
+      wildcard: false
+      fallback: fallback
+      array: []
+      set:
+        set!: []
+      object: {}
+      wildcard_array: []
+      defined: [false, null, 0, "", [], {}]
+      defined_wildcard: [0, 1, 2, 3, 4, 5]
+
+  - note: undefined_comprehension_heads
+    data: {}
+    input:
+      items:
+        - {key: before, value: false}
+        - {}
+        - {key: no_value}
+        - {value: no_key}
+        - {key: after, value: null}
+        - {key: zero, value: 0}
+        - {key: empty_array, value: []}
+        - {key: empty_object, value: {}}
+        - {key: "", value: ""}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing_array": [input.missing | true],
+          "missing_set": {input.missing | true},
+          "missing_key": {input.missing: "value" | true},
+          "missing_value": {"key": input.missing | true},
+          "array": [item.value | some item in input.items],
+          "object": {item.key: item.value | some item in input.items},
+        }
+    query: data.test.main
+    want_result:
+      missing_array: []
+      missing_set:
+        set!: []
+      missing_key: {}
+      missing_value: {}
+      array: [false, no_key, null, 0, [], {}, ""]
+      object:
+        before: false
+        after: null
+        zero: 0
+        empty_array: []
+        empty_object: {}
+        "": ""
+
+  - note: undefined_comprehension_heads_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      items:
+        - {key: before, value: false}
+        - {}
+        - {key: no_value}
+        - {value: no_key}
+        - {key: after, value: null}
+        - {key: zero, value: 0}
+        - {key: empty_array, value: []}
+        - {key: empty_object, value: {}}
+        - {key: "", value: ""}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing_array": [input.missing | true],
+          "missing_set": {input.missing | true},
+          "missing_key": {input.missing: "value" | true},
+          "missing_value": {"key": input.missing | true},
+          "array": [item.value | some item in input.items],
+          "object": {item.key: item.value | some item in input.items},
+        }
+    query: data.test.main
+    want_result:
+      missing_array: []
+      missing_set:
+        set!: []
+      missing_key: {}
+      missing_value: {}
+      array: [false, no_key, null, 0, [], {}, ""]
+      object:
+        before: false
+        after: null
+        zero: 0
+        empty_array: []
+        empty_object: {}
+        "": ""
