@@ -24,12 +24,20 @@ pub struct BuildPythonCommand {
     pub target: Option<String>,
 
     /// Override the directory that receives built wheel files.
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", conflicts_with = "out")]
     pub target_dir: Option<PathBuf>,
 
-    /// Propagate --frozen to cargo invocations prior to packaging.
+    /// Place built wheel files directly into this directory.
+    #[arg(long, value_name = "PATH", conflicts_with = "target_dir")]
+    pub out: Option<PathBuf>,
+
+    /// Propagate --frozen to cargo and maturin invocations.
     #[arg(long)]
     pub frozen: bool,
+
+    /// Strip debug symbols from the built wheel.
+    #[arg(long)]
+    pub strip: bool,
 }
 
 impl BuildPythonCommand {
@@ -65,8 +73,19 @@ impl BuildPythonCommand {
             maturin.arg("--target");
             maturin.arg(target);
         }
-        maturin.arg("--target-dir");
-        maturin.arg(&wheel_dir);
+        if self.frozen {
+            maturin.arg("--frozen");
+        }
+        if self.strip {
+            maturin.arg("--strip");
+        }
+        if let Some(out) = &self.out {
+            maturin.arg("--out");
+            maturin.arg(out);
+        } else {
+            maturin.arg("--target-dir");
+            maturin.arg(&wheel_dir);
+        }
         run_command(maturin, "maturin build (bindings/python)")
     }
 }
@@ -84,6 +103,10 @@ pub struct TestPythonCommand {
     /// Python interpreter used to run the sample and tests.
     #[arg(long, value_name = "EXE", default_value = "python3")]
     pub python: String,
+
+    /// Pass --frozen to all cargo and maturin invocations.
+    #[arg(long)]
+    pub frozen: bool,
 }
 
 impl TestPythonCommand {
@@ -95,7 +118,13 @@ impl TestPythonCommand {
 
         install_testing_dependencies(&venv_python)?;
 
-        install_local_package(&python_dir, self.release, self.target.as_deref(), &venv_dir)?;
+        install_local_package(
+            &python_dir,
+            self.release,
+            self.target.as_deref(),
+            self.frozen,
+            &venv_dir,
+        )?;
 
         let mut sample = Command::new(&venv_python);
         sample.current_dir(&python_dir);
@@ -133,6 +162,7 @@ fn install_local_package(
     python_dir: &Path,
     release: bool,
     target: Option<&str>,
+    frozen: bool,
     venv_dir: &Path,
 ) -> Result<()> {
     let mut maturin = Command::new("maturin");
@@ -144,6 +174,9 @@ fn install_local_package(
     if let Some(target) = target {
         maturin.arg("--target");
         maturin.arg(target);
+    }
+    if frozen {
+        maturin.arg("--frozen");
     }
     maturin.env("VIRTUAL_ENV", venv_dir);
     let bin_dir = venv_bin_dir(venv_dir);
