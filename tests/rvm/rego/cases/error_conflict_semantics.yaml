@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: error_conflict_complete_negation
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p if not q
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_complete_negation_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p if not q
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_complete_multiple_yields
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 2]
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_object_comprehension
+    modules:
+      - |
+        package test
+        p := {"k": x | some x in [1, 2]}
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_partial_object
+    modules:
+      - |
+        package test
+        p[k] := x if { k := "k"; some x in [1, 2] }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_equal_complete_yields
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 1]
+    query: data.test.p
+    want_result: 1
+
+  - note: error_conflict_equal_object_comprehension
+    modules:
+      - |
+        package test
+        p := {"k": x | some x in [1, 1]}
+    query: data.test.p
+    want_result: {"k": 1}
+
+  - note: error_conflict_equal_partial_object
+    modules:
+      - |
+        package test
+        p[k] := 1 if k := "k"
+        p[k] := 1 if k := "k"
+    query: data.test.p
+    want_result: {"k": 1}
+
+  - note: error_conflict_undefined_function_negation_control
+    modules:
+      - |
+        package test
+        f(x) := x
+        p if not f(input.missing)
+    query: data.test.p
+    want_result: true

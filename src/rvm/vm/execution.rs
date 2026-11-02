@@ -709,11 +709,7 @@ impl RegoVM {
     }
 
     fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
-        // Resource-limit errors must never be absorbed by rule evaluation.
-        // They represent engine-level constraints, not rule-level failures.
-        // Returning Ok(false) causes the caller to clear execution_stack and
-        // propagate the error, terminating the evaluation entirely.
-        if RegoVM::is_fatal_vm_error(&err) {
+        if !RegoVM::is_rule_failure(&err) {
             return Ok(false);
         }
 
@@ -984,7 +980,8 @@ mod tests {
                 pc: 1,
             })
         );
-        assert_eq!(vm.get_registers().get(1), Some(&Value::Undefined));
+        assert!(vm.get_registers().is_empty());
+        assert_eq!(vm.executed_instructions, 1);
     }
 
     #[test]

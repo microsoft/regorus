@@ -56,7 +56,7 @@ cases:
     want_result: "default"
 
   - note: call_rule_inconsistency
-    description: Complete rule with inconsistent results returns undefined
+    description: Complete rule with inconsistent results raises an evaluation conflict
     literals:
       - 1
       - 2
@@ -74,7 +74,8 @@ cases:
       - "RuleInit { result_reg: 1, rule_index: 0 }"
       - "Load { dest: 1, literal_idx: 1 }"
       - "RuleReturn {}"
-    want_result: "#undefined"
+    want_error: "eval_conflict_error"
+    want_error_strict: "eval_conflict_error"
 
   - note: call_rule_else_short_circuit
     description: Rule definitions stop executing additional bodies once one succeeds

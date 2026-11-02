@@ -103,7 +103,7 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
 }
 
 #[test]
-fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn complete_rule_conflict_is_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         p := input.left if input.enabled
@@ -111,10 +111,10 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    assert!(run_rvm_policy(module, conflict_input)
+        .unwrap_err()
+        .to_string()
+        .contains("eval_conflict_error"));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -132,7 +132,7 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
 }
 
 #[test]
-fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn function_rule_conflict_is_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         f(x) := input.left if input.enabled
@@ -141,10 +141,10 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    assert!(run_rvm_policy(module, conflict_input)
+        .unwrap_err()
+        .to_string()
+        .contains("eval_conflict_error"));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -931,8 +931,8 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
         );
         assert_eq!(
             registered.0,
-            StrictProbeOutcome::Value(Value::Bool(false)),
-            "the default-false rule should absorb the output-expression failure"
+            StrictProbeOutcome::DivisionError,
+            "strict output-expression errors must propagate instead of selecting the default"
         );
         assert_eq!(
             registered.1,

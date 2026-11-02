@@ -368,4 +368,5 @@ cases:
       - "Load { dest: 4, literal_idx: 4 }"      # Load constant 2
       - "Add { dest: 0, left: 1, right: 4 }"   # x + 2 = 7 (result in register 0)
       - "RuleReturn {}"                         # Return result
-    want_result: "#undefined"
+    want_error: "eval_conflict_error"
+    want_error_strict: "eval_conflict_error"

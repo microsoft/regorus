@@ -244,6 +244,9 @@ impl core::fmt::Display for Instruction {
             Instruction::AssertEq { left, right } => {
                 format!("ASSERT_EQ R({}) R({})", left, right)
             }
+            Instruction::CheckConflict { left, right } => {
+                format!("CHECK_CONFLICT R({}) R({})", left, right)
+            }
             Instruction::Guard { register, mode } => {
                 let name = match mode {
                     GuardMode::Not => "ASSERT_NOT",

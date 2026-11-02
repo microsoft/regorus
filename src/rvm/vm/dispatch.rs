@@ -203,7 +203,10 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
+                if self.strict_builtin_errors
+                    && program.metadata.language != "rego"
+                    && mem::discriminant(a) != mem::discriminant(b)
+                {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
@@ -224,7 +227,10 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
+                if self.strict_builtin_errors
+                    && program.metadata.language != "rego"
+                    && mem::discriminant(a) != mem::discriminant(b)
+                {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
@@ -245,7 +251,10 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
+                if self.strict_builtin_errors
+                    && program.metadata.language != "rego"
+                    && mem::discriminant(a) != mem::discriminant(b)
+                {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
@@ -266,7 +275,10 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
+                if self.strict_builtin_errors
+                    && program.metadata.language != "rego"
+                    && mem::discriminant(a) != mem::discriminant(b)
+                {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
@@ -337,6 +349,10 @@ impl RegoVM {
                 let b = self.get_register(right)?;
                 let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
                 self.handle_condition(passed)?;
+                Ok(InstructionOutcome::Continue)
+            }
+            CheckConflict { left, right } => {
+                self.check_output_conflict(self.get_register(left)?, self.get_register(right)?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Guard { register, mode } => {

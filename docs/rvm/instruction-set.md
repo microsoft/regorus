@@ -57,9 +57,33 @@ must have been allocated by the current frame.
 | `Not`    | `dest, operand`         | Logical negation.                                             |
 | `AssertCondition` | `condition`    | Fails current loop/rule when the condition is falsey.         |
 | `AssertNotUndefined` | `register`  | Fails when register holds `Value::Undefined`.                 |
+| `CheckConflict` | `left, right` | Raises `VmError::EvaluationConflict` if both values are defined and unequal; does not modify registers. |
 
 `handle_condition` routes through `loops.rs` to propagate failures to loop and
 comprehension contexts. Outside loops it aborts the current rule.
+
+Only `VmError::AssertionFailed` represents an ordinary failed rule condition.
+Other errors, including conflicts, strict builtin errors and resource limits,
+propagate through callers, negation, comprehensions, defaults and `else` bodies
+in both execution modes. Non-strict builtin failures become undefined at the
+builtin call site, not at rule boundaries.
+For newly compiled Rego programs (`metadata.language = "rego"`), native
+arithmetic operand/type errors likewise return undefined in non-strict mode
+and retain their typed errors in strict mode; numeric/resource overflows remain
+errors regardless of strictness. Rego ordering comparisons accept values of
+different types in either mode. Other languages and untagged low-level programs
+retain their existing arithmetic and comparison behavior.
+
+Rego complete-rule yields use `CheckConflict` before copying a new result.
+Partial-object yields check the previous key value before `ObjectSet`, and
+object comprehensions reject unequal duplicate values while accepting equal
+ones. Generic `Move` and `ObjectSet` still overwrite. `CheckConflict` is appended
+to the serialized instruction enum so existing opcode discriminants stay stable.
+These compiler-emitted checks require recompiling existing Rego artifacts;
+loading an older program does not insert checks into its bytecode. Missing
+candidates are skipped before conflict-bearing accumulator writes, so they
+cannot erase an earlier defined answer. Object comprehensions skip missing keys
+and values locally rather than failing an enclosing loop.
 
 ---
 

@@ -259,7 +259,17 @@ impl RegoVM {
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        if let Some(previous) = obj.get(&key) {
+                            if let Err(error) = self.check_output_conflict(previous, &value_to_add)
+                            {
+                                self.set_register(result_reg, current_result)?;
+                                self.comprehension_stack.push(comprehension_context);
+                                return Err(error);
+                            }
+                        }
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
@@ -373,7 +383,16 @@ impl RegoVM {
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        if let Some(previous) = obj.get(&key) {
+                            if let Err(error) = self.check_output_conflict(previous, &value_to_add)
+                            {
+                                self.set_register(result_reg_idx, current_result)?;
+                                return Err(error);
+                            }
+                        }
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {

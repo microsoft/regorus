@@ -651,6 +651,14 @@ fn format_instruction_readable(
             );
             align_comment(&base, &comment, config.comment_column)
         }
+        Instruction::CheckConflict { left, right } => {
+            let base = format!("{}CheckConflict r{}, r{}", indent, left, right);
+            align_comment(
+                &base,
+                "Error if both outputs are defined and unequal",
+                config.comment_column,
+            )
+        }
         Instruction::Guard { register, mode } => {
             let (keyword, comment) = match mode {
                 crate::rvm::instructions::GuardMode::Not => (
@@ -1035,6 +1043,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::Contains { .. } => "CONTAINS",
         Instruction::Count { .. } => "COUNT",
         Instruction::AssertEq { .. } => "ASSERT_EQ",
+        Instruction::CheckConflict { .. } => "CHECK_CONFLICT",
         Instruction::Guard { mode, .. } => match mode {
             crate::rvm::instructions::GuardMode::Not => "ASSERT_NOT",
             crate::rvm::instructions::GuardMode::Condition => "ASSERT",

@@ -17,18 +17,16 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
-    pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
-        matches!(
-            err,
-            VmError::TimeLimitExceeded { .. }
-                | VmError::MemoryLimitExceeded { .. }
-                | VmError::MemoryBudgetExceeded { .. }
-                | VmError::RegexSizeLimitExceeded { .. }
-                | VmError::InstructionLimitExceeded { .. }
-                | VmError::NumericOverflow { .. }
-        )
+    /// Only failed conditions are undefined; runtime errors must propagate.
+    pub(super) const fn is_rule_failure(err: &VmError) -> bool {
+        matches!(err, VmError::AssertionFailed { .. })
+    }
+
+    pub(super) fn check_output_conflict(&self, left: &Value, right: &Value) -> Result<()> {
+        if left != &Value::Undefined && right != &Value::Undefined && left != right {
+            return Err(VmError::EvaluationConflict { pc: self.pc });
+        }
+        Ok(())
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -54,9 +52,8 @@ impl RegoVM {
         rule_definitions: &[Vec<u32>],
         rule_info: &RuleInfo,
         function_call_params: Option<&FunctionCallParams>,
-    ) -> Result<(Value, bool)> {
+    ) -> Result<Value> {
         let mut first_successful_result: Option<Value> = None;
-        let mut rule_failed_due_to_inconsistency = false;
         let is_function_call = rule_info.function_info.is_some();
         let result_reg = rule_info.result_reg;
 
@@ -111,7 +108,7 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
-                        Err(e) if Self::is_fatal_vm_error(&e) => {
+                        Err(e) if !Self::is_rule_failure(&e) => {
                             self.restore_rule_state(
                                 &mut previous_loop_stack,
                                 &mut previous_comprehension_stack,
@@ -131,9 +128,12 @@ impl RegoVM {
                             if current_result != Value::Undefined {
                                 if let Some(ref expected) = first_successful_result {
                                     if *expected != current_result {
-                                        rule_failed_due_to_inconsistency = true;
-                                        self.set_register(result_reg, Value::Undefined)?;
-                                        break;
+                                        let error = VmError::EvaluationConflict { pc: self.pc };
+                                        self.restore_rule_state(
+                                            &mut previous_loop_stack,
+                                            &mut previous_comprehension_stack,
+                                        );
+                                        return Err(error);
                                     }
                                 } else {
                                     first_successful_result = Some(current_result.clone());
@@ -167,7 +167,7 @@ impl RegoVM {
                             break;
                         }
                     }
-                    Err(e) if Self::is_fatal_vm_error(&e) => {
+                    Err(e) if !Self::is_rule_failure(&e) => {
                         self.restore_rule_state(
                             &mut previous_loop_stack,
                             &mut previous_comprehension_stack,
@@ -177,15 +177,9 @@ impl RegoVM {
                     Err(_e) => {}
                 }
             }
-
-            if rule_failed_due_to_inconsistency {
-                break;
-            }
         }
 
-        let final_result = if rule_failed_due_to_inconsistency {
-            Value::Undefined
-        } else if let Some(successful_result) = first_successful_result {
+        let final_result = if let Some(successful_result) = first_successful_result {
             successful_result
         } else {
             self.get_register(result_reg)?.clone()
@@ -202,7 +196,7 @@ impl RegoVM {
         self.loop_stack = previous_loop_stack;
         self.comprehension_stack = previous_comprehension_stack;
 
-        Ok((final_result, rule_failed_due_to_inconsistency))
+        Ok(final_result)
     }
 
     pub(super) fn execute_call_rule_common(
@@ -287,10 +281,11 @@ impl RegoVM {
             current_body_index: 0,
         });
 
-        let (final_result, rule_failed_due_to_inconsistency) = self
-            .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
-
-        self.set_register(dest, Value::Undefined)?;
+        let result = self.execute_rule_definitions_common(
+            &rule_definitions,
+            &rule_info,
+            function_call_params,
+        );
 
         let call_context = self
             .call_rule_stack
@@ -311,15 +306,9 @@ impl RegoVM {
         }
         self.pc = call_context.return_pc;
 
-        let result_from_rule = if !rule_failed_due_to_inconsistency {
-            final_result
-        } else {
-            Value::Undefined
-        };
+        self.set_register(dest, result?)?;
 
-        self.set_register(dest, result_from_rule.clone())?;
-
-        if self.get_register(dest)? == &Value::Undefined && !rule_failed_due_to_inconsistency {
+        if self.get_register(dest)? == &Value::Undefined {
             match call_context.rule_type {
                 RuleType::PartialSet => {
                     self.set_register(dest, Value::new_set())?;
@@ -504,7 +493,6 @@ impl RegoVM {
             phase: RuleFramePhase::Initializing,
             accumulated_result: None,
             any_body_succeeded: false,
-            rule_failed_due_to_inconsistency: false,
             rule_type: rule_info.rule_type.clone(),
             result_reg: rule_info.result_reg,
             is_function_rule,
@@ -572,11 +560,6 @@ impl RegoVM {
         frame_data: &mut RuleFrameData,
         rule_info: &RuleInfo,
     ) -> Result<Option<usize>> {
-        if frame_data.rule_failed_due_to_inconsistency {
-            frame_data.phase = RuleFramePhase::Finalizing;
-            return Ok(None);
-        }
-
         while frame_data.current_definition_index < frame_data.total_definitions {
             let definition_bodies = match rule_info
                 .definitions
@@ -689,12 +672,7 @@ impl RegoVM {
             if current_result != Value::Undefined {
                 if let Some(ref expected) = frame_data.accumulated_result {
                     if *expected != current_result {
-                        frame_data.rule_failed_due_to_inconsistency = true;
-                        if let Some(result_slot) =
-                            self.registers.get_mut(usize::from(frame_data.result_reg))
-                        {
-                            *result_slot = Value::Undefined;
-                        }
+                        return Err(VmError::EvaluationConflict { pc: self.pc });
                     }
                 } else {
                     frame_data.accumulated_result = Some(current_result);
@@ -726,7 +704,6 @@ impl RegoVM {
             dest_reg,
             rule_index,
             accumulated_result,
-            rule_failed_due_to_inconsistency,
             rule_type,
             result_reg,
             is_function_rule,
@@ -748,9 +725,7 @@ impl RegoVM {
             })?
             .clone();
 
-        let result_from_rule = if rule_failed_due_to_inconsistency {
-            Value::Undefined
-        } else if let Some(value) = accumulated_result {
+        let result_from_rule = if let Some(value) = accumulated_result {
             value
         } else {
             self.registers
@@ -790,7 +765,7 @@ impl RegoVM {
             .get(dest_idx)
             .is_some_and(|value| *value == Value::Undefined);
 
-        if needs_default && !rule_failed_due_to_inconsistency {
+        if needs_default {
             match rule_type {
                 RuleType::PartialSet => {
                     let register_count = parent_registers.len();

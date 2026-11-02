@@ -67,6 +67,7 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "Contains" => parse_contains(params_text),
             "Count" => parse_count(params_text),
             "AssertEq" => parse_assert_eq(params_text),
+            "CheckConflict" => parse_check_conflict(params_text),
             "AssertNot" => parse_guard(params_text, GuardMode::Not),
             "AssertCondition" => parse_guard(params_text, GuardMode::Condition),
             "AssertNotUndefined" => parse_guard(params_text, GuardMode::NotUndefined),
@@ -521,6 +522,13 @@ fn parse_assert_eq(params_text: &str) -> Result<Instruction> {
     let left: u8 = get_param_u16(&params, "left")?.try_into().unwrap();
     let right: u8 = get_param_u16(&params, "right")?.try_into().unwrap();
     Ok(Instruction::AssertEq { left, right })
+}
+
+fn parse_check_conflict(params_text: &str) -> Result<Instruction> {
+    let params = parse_params(params_text)?;
+    let left: u8 = get_param_u16(&params, "left")?.try_into()?;
+    let right: u8 = get_param_u16(&params, "right")?.try_into()?;
+    Ok(Instruction::CheckConflict { left, right })
 }
 
 fn parse_guard(params_text: &str, mode: GuardMode) -> Result<Instruction> {
