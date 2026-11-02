@@ -554,6 +554,7 @@ impl RegoVM {
             let ExecutionFrame {
                 pc: frame_pc,
                 kind: frame_kind,
+                ..
             } = frame;
 
             match frame_kind {

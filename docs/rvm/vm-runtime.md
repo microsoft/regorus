@@ -103,6 +103,12 @@ fields to responsibilities.
 - `RuleFrameData` carries scheduling cursors, register window sizing, and saved
   copies of the caller's registers and stacks so finalisation can restore the
   original context.
+- Dynamic virtual-document lookups retain a continuation on their owning frame.
+  Selected rules run on the explicit stack, including rules needed to assemble a
+  package object. Host awaits can suspend repeatedly or inside nested lookups;
+  remaining indexing and object assembly run only after the selected rule
+  completes. Lookup keys are captured before switching register windows, and
+  incomplete rule results are never cached as defaults.
 - Suspension: `InstructionOutcome::Suspend` records a `SuspendReason` (host
   await, breakpoint, step) and stores the last result snapshot. Host code calls
   `resume(resume_value)` to continue.

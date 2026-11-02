@@ -429,6 +429,14 @@ impl RegoVM {
             self.assert_vm_invariants();
             self.memory_check()?;
             self.frame_pc_overridden = false;
+            if self
+                .execution_stack
+                .last()
+                .is_some_and(|frame| frame.virtual_lookup.is_some())
+            {
+                self.continue_virtual_data_lookup()?;
+                continue;
+            }
             let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
                 matches!(
                     frame.kind,

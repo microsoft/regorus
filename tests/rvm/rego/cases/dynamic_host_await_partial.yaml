@@ -1,0 +1,66 @@
+cases:
+  - note: dynamic_partial_literal_rtc_control
+    rego_v0: true
+    strict: false
+    input: &input {namespace: target, subject: dummy}
+    modules: &literal_modules
+      - |
+        package framework
+        result = data.config[input.namespace].records
+      - |
+        package config.target
+        records[k] = v {
+          k := "first"
+          v := 1
+        } {
+          k := "second"
+          v := 2
+        }
+    query: data.framework.result
+    want_result: &result {first: 1, second: 2}
+
+  - note: dynamic_partial_literal_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    input: *input
+    modules: *literal_modules
+    query: data.framework.result
+    want_result: *result
+
+  - note: dynamic_partial_host_rtc_control
+    rego_v0: true
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: &host_modules
+      - |
+        package framework
+        result = data.config[input.namespace].records
+      - |
+        package config.target
+        records[k] = v {
+          k := "first"
+          v := __builtin_host_await(input.subject, "first")
+        } {
+          k := "second"
+          v := __builtin_host_await(input.subject, "second")
+        }
+    query: data.framework.result
+    host_await_responses:
+      - {id: first, value: 1}
+      - {id: second, value: 2}
+    want_result: *result
+
+  - note: dynamic_partial_host_suspendable
+    rego_v0: true
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: *host_modules
+    query: data.framework.result
+    host_await_responses_suspendable:
+      - {id: first, args: dummy, value: 1}
+      - {id: second, args: dummy, value: 2}
+    want_result: *result
