@@ -1,0 +1,99 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: urlquery-decode-components
+    strict: false
+    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520"]
+    modules: &components
+      - |
+        package test
+        main := [urlquery.decode(s) | s := input[_]]
+    query: data.test.main
+    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20"]
+
+  - note: urlquery-decode-components-suspendable
+    strict: false
+    execution_mode: suspendable
+    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520"]
+    modules: *components
+    query: data.test.main
+    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20"]
+
+  - note: urlquery-decode-object-grouping
+    strict: false
+    input: ["", "&&a=1&a=2&b=&bare&=empty&&", "a%26b=x%3Dy%26z&%61%26b=%23frag", "a=1#frag&b=\tline\n", "x=+%2B&%e2%82%ac=%00"]
+    modules: &objects
+      - |
+        package test
+        main := [urlquery.decode_object(s) | s := input[_]]
+    query: data.test.main
+    want_result: [{}, {"a": ["1", "2"], "b": [""], "bare": [""], "": ["empty"]}, {"a&b": ["x=y&z", "#frag"]}, {"a": ["1#frag"], "b": ["\tline\n"]}, {"x": [" +"], "\u20ac": ["\0"]}]
+
+  - note: urlquery-decode-object-grouping-suspendable
+    strict: false
+    execution_mode: suspendable
+    input: ["", "&&a=1&a=2&b=&bare&=empty&&", "a%26b=x%3Dy%26z&%61%26b=%23frag", "a=1#frag&b=\tline\n", "x=+%2B&%e2%82%ac=%00"]
+    modules: *objects
+    query: data.test.main
+    want_result: [{}, {"a": ["1", "2"], "b": [""], "bare": [""], "": ["empty"]}, {"a&b": ["x=y&z", "#frag"]}, {"a": ["1#frag"], "b": ["\tline\n"]}, {"x": [" +"], "\u20ac": ["\0"]}]
+
+  # This runner currently leaves VM builtin errors non-strict and interpreter
+  # builtin errors strict regardless of case.strict. Invalid-input cases target
+  # the non-strict VM only; valid-input cases above still compare both engines.
+  - note: urlquery-decode-malformed-root-is-undefined
+    strict: false
+    skip_interpreter: true
+    input: "%"
+    modules: ["package test\nmain := urlquery.decode(input)"]
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: urlquery-decode-object-invalid-root-is-undefined
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: "ok=1&bad=%FF"
+    modules: ["package test\nmain := urlquery.decode_object(input)"]
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: urlquery-decode-invalid-is-undefined
+    strict: false
+    skip_interpreter: true
+    input: ["%", "%A", "%zz", "%FF", "%C0%AF", "%E2%82", "%ED%A0%80", "%F4%90%80%80"]
+    modules: &invalid_components
+      - |
+        package test
+        main := [s | s := input[_]; is_string(urlquery.decode(s))]
+    query: data.test.main
+    want_result: []
+
+  - note: urlquery-decode-invalid-is-undefined-suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: ["%", "%A", "%zz", "%FF", "%C0%AF", "%E2%82", "%ED%A0%80", "%F4%90%80%80"]
+    modules: *invalid_components
+    query: data.test.main
+    want_result: []
+
+  - note: urlquery-decode-object-invalid-is-undefined
+    strict: false
+    skip_interpreter: true
+    input: ["ok=1&bad=%", "%A=1", "ok=1&bad=%zz", "%FF=1", "ok=1&bad=%C0%AF", "bad=%E2%82", "bad=%ED%A0%80", "bad=%F4%90%80%80", "a=1;b=2"]
+    modules: &invalid_objects
+      - |
+        package test
+        main := [s | s := input[_]; is_object(urlquery.decode_object(s))]
+    query: data.test.main
+    want_result: []
+
+  - note: urlquery-decode-object-invalid-is-undefined-suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: ["ok=1&bad=%", "%A=1", "ok=1&bad=%zz", "%FF=1", "ok=1&bad=%C0%AF", "bad=%E2%82", "bad=%ED%A0%80", "bad=%F4%90%80%80", "a=1;b=2"]
+    modules: *invalid_objects
+    query: data.test.main
+    want_result: []

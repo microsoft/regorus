@@ -208,6 +208,29 @@ fn hex_encode(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
 }
 
 #[cfg(feature = "urlquery")]
+fn decode_query_component(string: &str, span: &Span) -> Result<String> {
+    let mut decoded = Vec::new();
+    let mut bytes = string.bytes();
+    while let Some(byte) = bytes.next() {
+        decoded.push(match byte {
+            b'+' => b' ',
+            b'%' => {
+                let high = bytes.next().and_then(|b| char::from(b).to_digit(16));
+                let low = bytes.next().and_then(|b| char::from(b).to_digit(16));
+                match (high, low) {
+                    (Some(high), Some(low)) => u8::try_from((high << 4) | low)?,
+                    _ => bail!(span.error("not a valid url query: malformed percent escape")),
+                }
+            }
+            _ => byte,
+        });
+        enforce_limit()?;
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| span.error("not a valid url query: decoded string is not valid UTF-8"))
+}
+
+#[cfg(feature = "urlquery")]
 fn urlquery_decode(
     span: &Span,
     params: &[Ref<Expr>],
@@ -218,21 +241,9 @@ fn urlquery_decode(
     ensure_args_count(span, name, params, args, 1)?;
 
     let string = ensure_string(name, &params[0], &args[0])?;
-    let url_string = "https://non-existent?".to_owned() + string.as_ref();
-    let url = match url::Url::parse(&url_string) {
-        Ok(v) => v,
-        Err(_) => bail!(params[0].span().error("not a valid url query")),
-    };
-
-    let mut query_str = "".to_owned();
-    for (k, v) in url.query_pairs() {
-        query_str += &k;
-        if !v.is_empty() {
-            query_str += "=";
-            query_str += &v;
-        }
-    }
-    Ok(Value::String(query_str.into()))
+    Ok(Value::String(
+        decode_query_component(&string, params[0].span())?.into(),
+    ))
 }
 
 #[cfg(feature = "urlquery")]
@@ -246,21 +257,25 @@ fn urlquery_decode_object(
     ensure_args_count(span, name, params, args, 1)?;
 
     let string = ensure_string(name, &params[0], &args[0])?;
-    let url_string = "https://non-existent?".to_owned() + string.as_ref();
-    let url = match url::Url::parse(&url_string) {
-        Ok(v) => v,
-        Err(_) => bail!(params[0].span().error("not a valid url query")),
-    };
-
     let mut map = alloc::collections::BTreeMap::new();
-    for (k, v) in url.query_pairs() {
-        let key = Value::String(k.clone().into());
-        let value = Value::String(v.clone().into());
-        if let Ok(a) = map.entry(key).or_insert(Value::new_array()).as_array_mut() {
-            a.push(value);
-            // Guard decoded parameter accumulation while grouping duplicate keys.
-            enforce_limit()?;
+    for parameter in string.split('&') {
+        enforce_limit()?;
+        if parameter.is_empty() {
+            continue;
         }
+        if parameter.contains(';') {
+            bail!(params[0]
+                .span()
+                .error("not a valid url query: invalid semicolon separator"));
+        }
+        let (key, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+        let key = decode_query_component(key, params[0].span())?;
+        let value = decode_query_component(value, params[0].span())?;
+        map.entry(Value::String(key.into()))
+            .or_insert(Value::new_array())
+            .as_array_mut()?
+            .push(Value::String(value.into()));
+        enforce_limit()?;
     }
     Ok(Value::from_map(map))
 }
