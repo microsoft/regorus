@@ -60,6 +60,7 @@ impl RegoVM {
             return self.fail_suspendable_execution(error);
         }
 
+        let error = self.fail_suspendable_execution(error);
         self.execution_state = ExecutionState::Error {
             error: error.clone(),
         };
@@ -68,6 +69,7 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
+        let error = self.fail_suspendable_execution(error);
         self.execution_state = ExecutionState::Error {
             error: error.clone(),
         };
@@ -79,6 +81,12 @@ impl RegoVM {
     /// Unbudgeted executions preserve their legacy error state.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        if matches!(
+            error,
+            VmError::RecursiveRuleEvaluation { .. } | VmError::RuleCallDepthExceeded { .. }
+        ) {
+            return self.fail_run_to_completion(error);
+        }
         if self.active_memory_budget_config.is_none() {
             return error;
         }
@@ -92,8 +100,13 @@ impl RegoVM {
     }
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
-    #[allow(clippy::unused_self)]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        if matches!(
+            error,
+            VmError::RecursiveRuleEvaluation { .. } | VmError::RuleCallDepthExceeded { .. }
+        ) {
+            return self.fail_run_to_completion(error);
+        }
         error
     }
 

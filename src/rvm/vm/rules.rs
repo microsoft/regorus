@@ -17,12 +17,28 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    fn check_rule_call(&self, rule_index: u16) -> Result<()> {
+        if self
+            .call_rule_stack
+            .iter()
+            .any(|context| context.rule_index == rule_index)
+        {
+            return Err(VmError::RecursiveRuleEvaluation {
+                rule_index,
+                pc: self.pc,
+            });
+        }
+        Ok(())
+    }
+
     /// Returns true if the error represents a resource-limit violation that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
             err,
             VmError::TimeLimitExceeded { .. }
+                | VmError::RecursiveRuleEvaluation { .. }
+                | VmError::RuleCallDepthExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
@@ -277,6 +293,15 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
+        // Only synchronous calls retain native dispatch frames.
+        const MAX_NATIVE_RULE_CALL_DEPTH: usize = 16;
+        if self.register_stack.len() >= MAX_NATIVE_RULE_CALL_DEPTH {
+            return Err(VmError::RuleCallDepthExceeded {
+                limit: MAX_NATIVE_RULE_CALL_DEPTH,
+                pc: self.pc,
+            });
+        }
         self.call_rule_stack.push(CallRuleContext {
             return_pc: self.pc,
             dest_reg: dest,
@@ -287,10 +312,11 @@ impl RegoVM {
             current_body_index: 0,
         });
 
-        let (final_result, rule_failed_due_to_inconsistency) = self
-            .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
-
-        self.set_register(dest, Value::Undefined)?;
+        let execution_result = self.execute_rule_definitions_common(
+            &rule_definitions,
+            &rule_info,
+            function_call_params,
+        );
 
         let call_context = self
             .call_rule_stack
@@ -310,6 +336,9 @@ impl RegoVM {
             });
         }
         self.pc = call_context.return_pc;
+        let (final_result, rule_failed_due_to_inconsistency) = execution_result?;
+
+        self.set_register(dest, Value::Undefined)?;
 
         let result_from_rule = if !rule_failed_due_to_inconsistency {
             final_result
@@ -445,6 +474,7 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
         let num_registers = usize::from(rule_info.num_registers);
 
         let num_retained_registers = match function_call_params {

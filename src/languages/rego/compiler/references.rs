@@ -211,6 +211,16 @@ impl<'a> Compiler<'a> {
         if !matching_rules.is_empty() {
             // This path is a prefix of some rules - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
+                if chain
+                    .components
+                    .iter()
+                    .any(|component| matches!(component, AccessComponent::Expression(_)))
+                {
+                    // Candidates are not proven calls. Queue new rules only;
+                    // the VM guards recursion when a candidate is selected.
+                    self.get_or_assign_rule_index(rule_path)?;
+                    continue;
+                }
                 if !self
                     .rule_worklist
                     .iter()

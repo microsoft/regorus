@@ -2,6 +2,29 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: virtual_reference_same_namespace_static_suffix
+    skip_interpreter: true
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        p := {"a": {"b": 7}}
+        result := data.probe[input.key].a.b
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_same_namespace_missing_key
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: {key: missing}
+    modules:
+      - |
+        package probe
+        p := {"a": {"b": 7}}
+        result := data.probe[input.key].a.b
+    query: data.probe.result
+    want_result: "#undefined"
+
   - note: virtual_reference_static_suffix
     input: {key: p}
     modules:

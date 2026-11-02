@@ -52,11 +52,16 @@ suffixes remain undefined; namespace lookups merge virtual descendants with base
 data. Candidate selection compares every shared path component, so a lookup
 under a nested namespace does not include unrelated sibling rules.
 
-Same-namespace dynamic references that include the active rule among their
-candidates still encounter the existing compile-time recursion check, even when
-the input selects a different rule. Supporting those references safely requires
-distinguishing candidate scheduling from proven dependencies and guarding actual
-recursive calls at runtime; this lookup change does not relax recursion checks.
+Dynamic candidates are scheduled without treating them as proven recursive calls.
+For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in
+`package probe` returns `7` for `{"key":"p"}` in the RVM. The interpreter's
+existing undefined result for this same-namespace form is unchanged. Selecting
+an active rule instead produces `VmError::RecursiveRuleEvaluation`, in either VM
+mode, rather than undefined or unbounded recursion. Synchronous native rule
+calls are additionally limited to 16 retained register windows and report
+`VmError::RuleCallDepthExceeded`; explicit suspendable rule frames are not subject
+to that native-stack limit. These errors are fatal to rule evaluation, including
+rules with defaults, and failed execution state is released before reuse.
 
 A successful compilation produces a `Program` (`src/rvm/program/core.rs`). The
 layout is deliberately split:
