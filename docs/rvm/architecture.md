@@ -45,6 +45,19 @@ The Rego VM uses a register-based architecture with the following traits:
 
 ## 1. Compilation Outputs
 
+Rego data references resolve actual rule-head paths, not the intermediate
+namespace entries recorded by the shared compiler. A dynamic selector can select
+a virtual rule whose value is then indexed by a static or dynamic suffix. Missing
+suffixes remain undefined; namespace lookups merge virtual descendants with base
+data. Candidate selection compares every shared path component, so a lookup
+under a nested namespace does not include unrelated sibling rules.
+
+Same-namespace dynamic references that include the active rule among their
+candidates still encounter the existing compile-time recursion check, even when
+the input selects a different rule. Supporting those references safely requires
+distinguishing candidate scheduling from proven dependencies and guarding actual
+recursive calls at runtime; this lookup change does not relax recursion checks.
+
 A successful compilation produces a `Program` (`src/rvm/program/core.rs`). The
 layout is deliberately split:
 

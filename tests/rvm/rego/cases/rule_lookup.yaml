@@ -1,0 +1,100 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: virtual_reference_static_suffix
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": {"b": 7}}
+        result := data.probe.nested[input.key].a.b
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_rule_path_suffix
+    execution_mode: suspendable
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p.value := 7
+        result := data.probe.nested[input.key].value
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_missing_suffix_is_undefined
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": {"b": 7}}
+        result := data.probe.nested[input.key].a.missing
+    query: data.probe.result
+    want_result: "#undefined"
+
+  - note: virtual_reference_missing_rule_uses_base_data
+    data: {probe: {nested: {base: {a: {b: 8}}}}}
+    input: {key: base}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": {"b": 7}}
+        result := data.probe.nested[input.key].a.b
+    query: data.probe.result
+    want_result: 8
+
+  - note: virtual_reference_namespace_merges_base_data
+    data: {probe: {nested: {p: {base: 8}}}}
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p.value := 7
+        result := data.probe.nested[input.key]
+    query: data.probe.result
+    want_result: {base: 8, value: 7}
+
+  - note: virtual_reference_invalid_index_is_undefined
+    input: {key: p, index: {}}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": [7]}
+        result := data.probe.nested[input.key].a[input.index]
+    query: data.probe.result
+    want_result: "#undefined"
+
+  - note: virtual_reference_empty_set_and_negation
+    execution_mode: suspendable
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": set()}
+        result := data.probe.nested[input.key].a if {
+          not data.probe.nested[input.key].missing
+        }
+    query: data.probe.result
+    want_result: {"set!": []}
+
+  - note: virtual_reference_default_only_rule
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        default nested.p := {"a": {"b": 7}}
+        result := data.probe.nested[input.key].a.b
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_excludes_recursive_sibling
+    input: {key: p}
+    modules:
+      - |
+        package probe
+        nested.p := {"a": {"b": 7}}
+        recursive := data.probe.recursive
+        result := data.probe.nested[input.key].a.b
+    query: data.probe.result
+    want_result: 7

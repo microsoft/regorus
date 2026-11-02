@@ -169,6 +169,11 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            // The shared rule table also contains namespace prefixes of rule heads.
+            if !self.policy.inner.rule_paths.contains(&rule_candidate) {
+                continue;
+            }
+
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
                 let rule_result_reg = self.alloc_register()?;
@@ -197,9 +202,8 @@ impl<'a> Compiler<'a> {
         let matching_rules: BTreeSet<String> = self
             .policy
             .inner
-            .rules
-            .keys()
-            .chain(self.policy.inner.default_rules.keys())
+            .rule_paths
+            .iter()
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -266,11 +270,9 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        // Rule matches if either:
-        // 1. It's at least as long as the pattern, OR
-        // 2. It matches all available components and the remaining pattern parts are wildcards
-        rule_parts.len() >= pattern.len()
-            || (match_length > 0 && pattern[match_length..].iter().all(Option::is_none))
+        // A shorter rule path supplies the value indexed by the remaining suffix;
+        // a longer rule path contributes to the requested virtual namespace.
+        match_length > 0
     }
 
     /// Compile local variable access chain
