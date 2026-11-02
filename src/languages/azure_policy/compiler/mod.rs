@@ -5,6 +5,8 @@
 //! Azure Policy AST → RVM compiler.
 //!
 //! The compiler is split across several files:
+//! - [`binding_path`]: segment-wise matching of field paths against count
+//!   binding prefixes
 //! - [`core`]: `Compiler` struct, main pipeline, register/emit helpers
 //! - [`conditions`]: constraint / condition / LHS compilation
 //! - [`conditions_wildcard`]: implicit allOf for unbound `[*]` fields
@@ -18,6 +20,7 @@
 //! - [`metadata`]: annotation accumulation and population
 //! - [`utils`]: pure helper functions (path splitting, JSON conversion)
 
+mod binding_path;
 mod conditions;
 mod conditions_wildcard;
 mod core;

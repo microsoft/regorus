@@ -1,0 +1,653 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Preserve legacy no-wildcard spellings; only counted wildcard references
+# gain dotted/bracket equivalence. These expectations pin local compatibility,
+# not Azure service parity.  Bound suffixes are navigated with the same
+# quoted-key grammar the binder uses, and only an exact `[*]` is a wildcard.
+# As in count_bracket_suffix.yaml, every `_no_match` twin flips to deny
+# under the wrong binding.
+cases:
+  - note: bare_bracket_prefix_stays_outer_array
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*]","where":{"field":"items[*]['subs']","equals":"x"}},"greater":0}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: ["x", "y"]}]
+    want_undefined: true
+
+  - note: bare_bracket_prefix_array_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*]","where":{"field":"items[*]['subs']","equals":["x","y"]}},"greater":0}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: ["x", "y"]}]
+    want_effect: deny
+
+  - note: bare_dotted_prefix_keeps_legacy_binding
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*]","where":{"field":"items[*].subs","equals":"x"}},"greater":0}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: ["x", "y"]}]
+    want_effect: deny
+
+  - note: bare_dotted_prefix_legacy_array_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*]","where":{"field":"items[*].subs","equals":["x","y"]}},"greater":0}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: ["x", "y"]}]
+    want_undefined: true
+
+  - note: no_wildcard_bracket_prefix_reads_resource
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"value":"[length(field('props[''rules'']'))]","equals":2}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{a: 1, b: 2}, {a: 3}]
+    want_effect: deny
+
+  - note: no_wildcard_bracket_prefix_resource_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"value":"[length(field('props[''rules'']'))]","equals":2}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{a: 1, b: 2}, {a: 3}]
+    want_undefined: true
+
+  - note: no_wildcard_dotted_prefix_keeps_legacy_binding
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"value":"[length(field('props.rules'))]","equals":2}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{a: 1, b: 2}, {a: 3}]
+    want_effect: deny
+
+  - note: no_wildcard_dotted_prefix_legacy_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"value":"[length(field('props.rules'))]","equals":2}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{a: 1, b: 2}, {a: 3}]
+    want_undefined: true
+
+  - note: quoted_delimiters_read_one_key
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a][b']","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "x", "'a": {"b'": "y"}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_do_not_read_split_decoy
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a][b']","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "y", "'a": {"b'": "x"}}]
+    want_undefined: true
+
+  - note: padded_star_is_literal
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[ * ].state","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  - note: padded_star_is_literal_reads_nothing
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[ * ].state","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  # `items[*][*]` is left unbound and rejected.  Binding it below the element
+  # is rejected the same way, so the unit tests pin the unbound result; this
+  # case pins the rejection, which also fails if the path were read as the
+  # current element (the array-of-array data would then compile and run).
+  - note: consecutive_wildcards_rejected
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*][*]","equals":"x"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [["x"], ["x", "y"]]
+    want_compile_error: true
+    want_compile_error_contains: non-empty prefix
+
+  - note: any_bracket_prefix_dotted_where
+    policy_rule: |
+      {"if":{"count":{"field":"props['rules'][*]","where":{"field":"props.rules[*].state","equals":"on"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: any_bracket_prefix_dotted_where_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"props['rules'][*]","where":{"not":{"anyOf":[{"field":"props.rules[*].state","equals":"on"},{"field":"props.rules[*].gate","equals":"yes"}]}}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{state: "on", gate: "no"}, {state: "off", gate: "yes"}]
+    want_undefined: true
+
+  - note: any_dotted_prefix_bracket_where
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"field":"props['rules'][*]['state']","equals":"on"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: any_dotted_prefix_bracket_where_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"props.rules[*]","where":{"not":{"anyOf":[{"field":"props['rules'][*]['state']","equals":"on"},{"field":"props['rules'][*]['gate']","equals":"yes"}]}}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{state: "on", gate: "no"}, {state: "off", gate: "yes"}]
+    want_undefined: true
+
+  - note: nested_index_suffix_count
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*][0][*]","where":{"field":"items[*][0][*]","equals":"x"}},"equals":1}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [[["x", "y"], ["x", "x"]], [["y", "x"], ["y", "y"]]]
+    want_effect: deny
+
+  - note: nested_index_suffix_count_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*][0][*]","where":{"field":"items[*][0][*]","equals":"x"}},"equals":1}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [[["x", "x"], ["x", "y"]], [["y", "x"], ["x", "y"]]]
+    want_undefined: true
+
+  # The twin above catches a wrong index; this one catches an inner count
+  # that does not bind to the outer element at all.
+  - note: nested_index_suffix_count_target_zero_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*][0][*]","where":{"field":"items[*][0][*]","equals":"x"}},"equals":1}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [[["x", "y"], ["x", "x"]], [["y", "x"], ["y", "y"]]]
+    want_undefined: true
+
+  - note: inner_allof
+    policy_rule: |
+      {"if":{"count":{"field":"props['rules'][*]","where":{"field":"props.rules[*]['subs'][*]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{subs: ["x", "x"]}, {subs: ["x", "y"]}]
+    want_effect: deny
+
+  - note: inner_allof_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"props['rules'][*]","where":{"field":"props.rules[*]['subs'][*]","equals":"x"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      props:
+        rules: [{subs: ["x", "x"]}, {subs: ["x", "y"]}]
+    want_undefined: true
+
+  - note: quoted_delimiters_inner_allof
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x", "x"], "'a": {"b'": ["y"]}}, {"a][b": ["x", "y"], "'a": {"b'": ["y"]}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_inner_allof_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x", "y"], "'a": {"b'": ["x"]}}]
+    want_undefined: true
+
+  # Quoted wildcard collection prefixes require the independent quote-aware
+  # wildcard path splitting, which is not yet supported. These cases are
+  # skipped until it lands.
+  - note: quoted_wildcard_key_prefix_pending_splitter
+    skip: true
+    policy_rule: |
+      {"if":{"count":{"field":"m['a[*]'][*]","where":{"field":"m[\"a[*]\"][*].state","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      m: {"a[*]": [{state: "on"}, {state: "off"}]}
+    want_effect: deny
+
+  - note: quoted_wildcard_key_prefix_pending_splitter_no_match
+    skip: true
+    policy_rule: |
+      {"if":{"count":{"field":"m['a[*]'][*]","where":{"field":"m[\"a[*]\"][*].state","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      m: {"a[*]": [{state: "on"}, {state: "off"}, {state: "on"}]}
+    want_undefined: true
+
+  # The legacy dotted form also reaches an index of the current element:
+  # `items.[0]` reads element `[0]`, while `items[0]` stays a resource read.
+  - note: legacy_dotted_index_binds_current_element
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.[0]","equals":"a"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [["a", "x"], ["b", "x"]]
+    want_effect: deny
+
+  - note: legacy_dotted_index_binds_current_element_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.[0]","equals":"a"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [["a", "x"], ["b", "x"]]
+    want_undefined: true
+
+  # The legacy prefix is matched ASCII case-insensitively.
+  - note: legacy_dotted_prefix_ignores_case
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"ITEMS.State","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: legacy_dotted_prefix_ignores_case_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"ITEMS.State","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  # A blank segment before a bracket is skipped, as by the plain splitter.
+  - note: blank_before_bracket_suffix_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]. ['b']","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{b: "x"}, {b: "y"}]
+    want_effect: deny
+
+  - note: blank_before_bracket_suffix_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]. ['b']","equals":"x"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{b: "x"}, {b: "y"}]
+    want_undefined: true
+
+  - note: blank_before_bracket_in_prefix_binds
+    policy_rule: |
+      {"if":{"count":{"field":"a. ['b'][*]","where":{"field":"a. ['b'][*].c","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: {b: [{c: "on"}, {c: "off"}]}
+    want_effect: deny
+
+  - note: blank_before_bracket_in_prefix_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a. ['b'][*]","where":{"field":"a. ['b'][*].c","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      a: {b: [{c: "on"}, {c: "off"}]}
+    want_undefined: true
+
+  # The inner prefix of a multi-wildcard count accepts the legacy
+  # `outer[*].['key'].x` form with or without the dot before the bracket.
+  - note: nested_prefix_dot_before_bracket_legacy_where_binds
+    policy_rule: |
+      {"if":{"count":{"field":"a[*].['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "on"}, {c: "off"}]}]
+    want_effect: deny
+
+  - note: nested_prefix_dot_before_bracket_legacy_where_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a[*].['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "on"}, {c: "off"}]}]
+    want_undefined: true
+
+  - note: nested_prefix_bracket_count_dotted_legacy_where_binds
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "on"}, {c: "off"}]}]
+    want_effect: deny
+
+  - note: nested_prefix_bracket_count_dotted_legacy_where_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "on"}, {c: "off"}]}]
+    want_undefined: true
+
+  - note: nested_any_prefix_dot_before_bracket_legacy_where_binds
+    policy_rule: |
+      {"if":{"count":{"field":"a[*].['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "off"}, {c: "on"}]}]
+    want_effect: deny
+
+  - note: nested_any_prefix_dot_before_bracket_legacy_where_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a[*].['b'][*]","where":{"field":"a[*].['b'].c","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: "off"}, {c: "on"}]}]
+    want_undefined: true
+
+  # An index too large for u64 is out of range; it never reads element [0].
+  - note: overflowing_index_suffix_is_out_of_range
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*][99999999999999999999]","equals":"a"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [["a"], ["a", "b"]]
+    want_effect: deny
+
+  - note: overflowing_index_suffix_is_out_of_range_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*][99999999999999999999]","equals":"a"}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [["a"], ["a", "b"]]
+    want_undefined: true
+
+  - note: padded_quoted_key_suffix_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*][ 'state' ]","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: padded_quoted_key_suffix_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*][ 'state' ]","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  # A quoted `[*]` below the bound element is one literal key, for both
+  # field() and current().
+  - note: quoted_wildcard_key_below_element_field
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a[*]']","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a[*]": "x", a: ["x"]}, {"a[*]": "y", a: ["x"]}]
+    want_effect: deny
+
+  - note: quoted_wildcard_key_below_element_field_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]['a[*]']","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a[*]": "y", a: ["x"]}, {"a[*]": "y", a: ["x"]}]
+    want_undefined: true
+
+  - note: quoted_wildcard_key_below_element_current
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[current('items[*][''a[*]'']')]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a[*]": "x", a: ["x"]}, {"a[*]": "y", a: ["x"]}]
+    want_effect: deny
+
+  - note: quoted_wildcard_key_below_element_current_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[current('items[*][''a[*]'']')]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a[*]": "y", a: ["x"]}, {"a[*]": "y", a: ["x"]}]
+    want_undefined: true
+
+  # Quoted keys containing `]` are one key at every navigation site; the
+  # `'a` / `b'` entries are what a quote-unaware split would read instead.
+  - note: quoted_delimiters_nested_count_collection
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]['a][b'][*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x", "y"], "'a": {"b'": ["x", "x"]}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_nested_count_collection_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]['a][b'][*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x", "y"], "'a": {"b'": ["x", "x"]}}]
+    want_undefined: true
+
+  - note: quoted_delimiters_nested_any_collection
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]['a][b'][*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x"], "'a": {"b'": ["y"]}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_nested_any_collection_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]['a][b'][*]","where":{"field":"items[*]['a][b'][*]","equals":"x"}},"greater":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["y"], "'a": {"b'": ["x"]}}]
+    want_undefined: true
+
+  - note: quoted_delimiters_allof_suffix
+    policy_rule: |
+      {"if":{"field":"items[*]['a][b']","equals":"x"},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "x", "'a": {"b'": "y"}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_allof_suffix_no_match
+    policy_rule: |
+      {"if":{"field":"items[*]['a][b']","equals":"x"},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "y", "'a": {"b'": "x"}}]
+    want_undefined: true
+
+  - note: quoted_delimiters_allof_inner_collection
+    policy_rule: |
+      {"if":{"field":"items[*]['a][b'][*]","equals":"x"},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x"], "'a": {"b'": ["y"]}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_allof_inner_collection_no_match
+    policy_rule: |
+      {"if":{"field":"items[*]['a][b'][*]","equals":"x"},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["y"], "'a": {"b'": ["x"]}}]
+    want_undefined: true
+
+  - note: quoted_delimiters_field_fn_suffix
+    policy_rule: |
+      {"if":{"value":"[field('items[*][''a][b'']')]","equals":["x"]},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "x", "'a": {"b'": "y"}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_field_fn_suffix_no_match
+    policy_rule: |
+      {"if":{"value":"[field('items[*][''a][b'']')]","equals":["x"]},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": "y", "'a": {"b'": "x"}}]
+    want_undefined: true
+
+  - note: quoted_delimiters_field_fn_inner_collection
+    policy_rule: |
+      {"if":{"value":"[field('items[*][''a][b''][*]')]","equals":["x"]},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["x"], "'a": {"b'": ["y"]}}]
+    want_effect: deny
+
+  - note: quoted_delimiters_field_fn_inner_collection_no_match
+    policy_rule: |
+      {"if":{"value":"[field('items[*][''a][b''][*]')]","equals":["x"]},"then":{"effect":"deny"}}
+    resource:
+      items: [{"a][b": ["y"], "'a": {"b'": ["x"]}}]
+    want_undefined: true
+
+  # A blank final segment is dropped, as by the plain path splitter.
+  - note: trailing_blank_segment_legacy_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.state. ","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: trailing_blank_segment_legacy_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items.state. ","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  - note: trailing_blank_segment_wildcard_binds
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*].state. ","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_effect: deny
+
+  - note: trailing_blank_segment_wildcard_binds_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*].state. ","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{state: "on"}, {state: "off"}]
+    want_undefined: true
+
+  # Trailing blanks after the final `]` of a nested count field are ignored,
+  # so the inner count still runs over the current item.
+  - note: nested_count_trailing_blank_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_effect: deny
+
+  - note: nested_count_trailing_blank_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_any_trailing_blank_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "y"}]}]
+    want_effect: deny
+
+  - note: nested_count_any_trailing_blank_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*].subs[*] ","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":2},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "y"}]}]
+    want_undefined: true
+
+  # An inner count path under the bound prefix that cannot be parsed is an
+  # error rather than a count from the resource root.
+  - note: nested_count_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_any_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"greater":0}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # Blanks between `[*]` and the next bracket are skipped, as the wildcard
+  # splitters read the text after `[*]` as a fresh path.
+  - note: nested_count_blank_before_bracket_binds_current_item
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*] ['subs'][*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_effect: deny
+
+  - note: nested_count_blank_before_bracket_binds_current_item_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*] ['subs'][*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":0},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_key_glued_to_wildcard_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items[*]subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # A legacy dotted nested count field parses, so it is not rejected.
+  - note: nested_count_legacy_dotted_compiles
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.x[*].y[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  # Malformed paths under the binding are errors whatever the spelling of
+  # the bound prefix; a different prefix is not under the binding.
+  - note: nested_count_legacy_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.a[*]..b[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_case_insensitive_prefix_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"Items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: field_function_quoted_prefix_empty_segment_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[length(field('[''items''][*]..subs[*]'))]","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: nested_count_other_prefix_empty_segment_compiles
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"itemsX[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_undefined: true
+
+  - note: nested_count_empty_segment_under_outer_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"others[*]","where":{"count":{"field":"items[*]..subs[*]","where":{"field":"items[*].subs[*].v","equals":"x"}},"equals":1}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # Field conditions and field() under the binding report malformed paths
+  # instead of reading them from the resource root.
+  - note: where_field_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]..subs","exists":true}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: where_wildcard_field_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"field":"items[*]..subs[*]","exists":true}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  - note: field_function_empty_segment_under_binding_is_error
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"value":"[length(field('items[*]..subs[*]'))]","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{subs: [{v: "x"}]}, {subs: [{v: "x"}, {v: "x"}]}]
+    want_compile_error_contains: "invalid field path below count binding"
+
+  # Blanks between `[*]` and the next bracket are skipped in the legacy
+  # form too, so the where field binds to the inner count's element.
+  - note: legacy_blank_after_wildcard_binds_inner_element
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*] ['b'].c","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: 1}]}]
+    want_effect: deny
+
+  - note: legacy_blank_after_wildcard_binds_inner_element_no_match
+    policy_rule: |
+      {"if":{"count":{"field":"a[*]['b'][*]","where":{"field":"a[*] ['b'].c","equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      a: [{b: [{c: 2}]}]
+    want_undefined: true
+
+  # A legacy dotted nested count field is not below the binding's element,
+  # so it reads from the resource root.
+  - note: nested_count_legacy_dotted_reads_resource_root
+    policy_rule: |
+      {"if":{"count":{"field":"items[*]","where":{"count":{"field":"items.x[*].y[*]","where":{"value":"a","equals":"a"}},"equals":1}},"equals":1},"then":{"effect":"deny"}}
+    resource:
+      items: [{x: [{y: [1]}]}]
+    want_undefined: true

@@ -15,6 +15,7 @@ use crate::languages::azure_policy::tag::{classify_tag_field, TagField};
 use crate::rvm::instructions::{LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 
+use super::binding_path::split_bound_path;
 use super::core::Compiler;
 use super::utils::{
     has_unquoted_wildcard, split_count_wildcard_path, split_path_without_wildcards, PathSegment,
@@ -167,6 +168,7 @@ impl Compiler {
             return self.compile_from_binding(&binding, field_path, span);
         }
         if has_unquoted_wildcard(field_path) {
+            self.ensure_not_malformed_below_binding(field_path, span)?;
             return self.compile_field_wildcard_collect(None, field_path, span);
         }
         self.compile_resource_path_value(field_path, span)
@@ -243,7 +245,7 @@ impl Compiler {
         let collection_reg = match base_reg {
             Some(base) if prefix_lower.is_empty() => base,
             Some(base) => {
-                let parts = split_path_without_wildcards(&prefix_lower)?;
+                let parts = split_bound_path(&prefix_lower)?;
                 self.emit_chained_index_segments(base, &parts, span)?
             }
             None if prefix_lower.is_empty() => self.compile_resource_root(span)?,
@@ -275,7 +277,7 @@ impl Compiler {
             }
             Some(ref s) => {
                 let s_lower = s.to_ascii_lowercase();
-                let parts = split_path_without_wildcards(&s_lower)?;
+                let parts = split_bound_path(&s_lower)?;
                 let val_reg = self.emit_chained_index_segments(current_reg, &parts, span)?;
                 self.emit(
                     Instruction::ArrayPushDefined {
