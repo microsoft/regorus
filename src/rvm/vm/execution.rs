@@ -709,7 +709,10 @@ impl RegoVM {
     }
 
     fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
-        if !RegoVM::is_rule_failure(&err) {
+        // Conflicts and resource-limit errors must never be absorbed by rule evaluation.
+        // Returning Ok(false) causes the caller to clear execution_stack and
+        // propagate the error, terminating the evaluation entirely.
+        if RegoVM::is_fatal_vm_error(&err) {
             return Ok(false);
         }
 
@@ -980,8 +983,7 @@ mod tests {
                 pc: 1,
             })
         );
-        assert!(vm.get_registers().is_empty());
-        assert_eq!(vm.executed_instructions, 1);
+        assert_eq!(vm.get_registers().get(1), Some(&Value::Undefined));
     }
 
     #[test]

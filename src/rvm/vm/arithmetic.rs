@@ -13,15 +13,10 @@ use super::errors::{Result, VmError};
 use super::machine::RegoVM;
 
 impl RegoVM {
-    fn suppress_rego_arithmetic_error(&self) -> bool {
-        !self.strict_builtin_errors && self.program.metadata.language == "rego"
-    }
-
     /// Add two values using interpreter's arithmetic logic
     pub(super) fn add_values(&self, a: &Value, b: &Value) -> Result<Value> {
         match (a, b) {
             (&Value::Number(ref x), &Value::Number(ref y)) => Ok(Value::from(x.add(y)?)),
-            _ if self.suppress_rego_arithmetic_error() => Ok(Value::Undefined),
             _ => Err(VmError::InvalidAddition {
                 left: a.clone(),
                 right: b.clone(),
@@ -37,7 +32,6 @@ impl RegoVM {
             (&Value::Set(ref left), &Value::Set(ref right)) => {
                 Ok(Value::from(left.difference(right)))
             }
-            _ if self.suppress_rego_arithmetic_error() => Ok(Value::Undefined),
             _ => Err(VmError::InvalidSubtraction {
                 left: a.clone(),
                 right: b.clone(),
@@ -50,7 +44,6 @@ impl RegoVM {
     pub(super) fn mul_values(&self, a: &Value, b: &Value) -> Result<Value> {
         match (a, b) {
             (&Value::Number(ref x), &Value::Number(ref y)) => Ok(Value::from(x.mul(y)?)),
-            _ if self.suppress_rego_arithmetic_error() => Ok(Value::Undefined),
             _ => Err(VmError::InvalidMultiplication {
                 left: a.clone(),
                 right: b.clone(),
@@ -76,7 +69,6 @@ impl RegoVM {
 
                 Ok(Value::from(x.clone().divide(y)?))
             }
-            _ if self.suppress_rego_arithmetic_error() => Ok(Value::Undefined),
             _ => Err(VmError::InvalidDivision {
                 left: a.clone(),
                 right: b.clone(),
@@ -101,9 +93,6 @@ impl RegoVM {
                 }
 
                 if !x.is_integer() || !y.is_integer() {
-                    if self.suppress_rego_arithmetic_error() {
-                        return Ok(Value::Undefined);
-                    }
                     return Err(VmError::ModuloOnFloat {
                         left: a.clone(),
                         right: b.clone(),
@@ -113,7 +102,6 @@ impl RegoVM {
 
                 Ok(Value::from(x.clone().modulo(y)?))
             }
-            _ if self.suppress_rego_arithmetic_error() => Ok(Value::Undefined),
             _ => Err(VmError::InvalidModulo {
                 left: a.clone(),
                 right: b.clone(),

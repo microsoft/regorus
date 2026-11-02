@@ -152,7 +152,6 @@ pub struct Compiler<'a> {
 impl<'a> Compiler<'a> {
     pub fn with_policy(policy: &'a CompiledPolicy) -> Self {
         let mut program = Program::new();
-        program.metadata.language = "rego".to_string();
         program.rego_v0 = policy.is_rego_v0();
         Self {
             program,

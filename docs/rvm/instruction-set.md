@@ -62,17 +62,13 @@ must have been allocated by the current frame.
 `handle_condition` routes through `loops.rs` to propagate failures to loop and
 comprehension contexts. Outside loops it aborts the current rule.
 
-Only `VmError::AssertionFailed` represents an ordinary failed rule condition.
-Other errors, including conflicts, strict builtin errors and resource limits,
-propagate through callers, negation, comprehensions, defaults and `else` bodies
-in both execution modes. Non-strict builtin failures become undefined at the
-builtin call site, not at rule boundaries.
-For newly compiled Rego programs (`metadata.language = "rego"`), native
-arithmetic operand/type errors likewise return undefined in non-strict mode
-and retain their typed errors in strict mode; numeric/resource overflows remain
-errors regardless of strictness. Rego ordering comparisons accept values of
-different types in either mode. Other languages and untagged low-level programs
-retain their existing arithmetic and comparison behavior.
+Evaluation conflicts propagate through callers, negation, comprehensions,
+defaults and `else` bodies in both execution modes, regardless of builtin
+strictness. A conflicting answer is an error, not an undefined result that
+negation or a default can turn into a successful answer. Existing arithmetic,
+comparison and unrelated error-handling behavior is unchanged.
+In particular, this does not repair strict builtin errors being absorbed at
+rule boundaries; that is separate from conflict handling.
 
 Rego complete-rule yields use `CheckConflict` before copying a new result.
 Partial-object yields check the previous key value before `ObjectSet`, and

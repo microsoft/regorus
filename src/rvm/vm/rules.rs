@@ -17,9 +17,18 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Only failed conditions are undefined; runtime errors must propagate.
-    pub(super) const fn is_rule_failure(err: &VmError) -> bool {
-        matches!(err, VmError::AssertionFailed { .. })
+    /// Conflicts and resource-limit errors must not become undefined rule results.
+    pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
+        matches!(
+            err,
+            VmError::EvaluationConflict { .. }
+                | VmError::TimeLimitExceeded { .. }
+                | VmError::MemoryLimitExceeded { .. }
+                | VmError::MemoryBudgetExceeded { .. }
+                | VmError::RegexSizeLimitExceeded { .. }
+                | VmError::InstructionLimitExceeded { .. }
+                | VmError::NumericOverflow { .. }
+        )
     }
 
     pub(super) fn check_output_conflict(&self, left: &Value, right: &Value) -> Result<()> {
@@ -108,7 +117,7 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
-                        Err(e) if !Self::is_rule_failure(&e) => {
+                        Err(e) if Self::is_fatal_vm_error(&e) => {
                             self.restore_rule_state(
                                 &mut previous_loop_stack,
                                 &mut previous_comprehension_stack,
@@ -167,7 +176,7 @@ impl RegoVM {
                             break;
                         }
                     }
-                    Err(e) if !Self::is_rule_failure(&e) => {
+                    Err(e) if Self::is_fatal_vm_error(&e) => {
                         self.restore_rule_state(
                             &mut previous_loop_stack,
                             &mut previous_comprehension_stack,
