@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(azure_policy)* collect nested wildcards below a count-bound prefix ([#871](https://github.com/microsoft/regorus/pull/871))
 - *(azure_policy)* index only all-digit subscripts and saturate overflow ([#869](https://github.com/microsoft/regorus/pull/869))
 
+### Security
+
+- Updated the build-tool-only `zip` dependency from 9.0.4 to 9.1.3 to address [CVE-2026-115905 / GHSA-m665-v7pm-7grj](https://github.com/advisories/GHSA-m665-v7pm-7grj) ([#881](https://github.com/microsoft/regorus/pull/881)). Regorus's policy evaluation runtime is unaffected; its build tooling does not use the affected streaming-extraction workflow.
+
 ### Other
 
 - add shared explanation corpus ([#885](https://github.com/microsoft/regorus/pull/885))
