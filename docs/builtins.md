@@ -180,6 +180,11 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
+  `urlquery.encode` and `urlquery.encode_object` use query-component escaping:
+  letters, digits, and `-_.~` stay literal, spaces become `+`, and other UTF-8
+  bytes use uppercase percent escapes. For example, `urlquery.encode("~* ")`
+  returns `"~%2A+"`. Object keys use the same escaping as values.
+
 - [Time](https://www.openpolicyagent.org/docs/latest/policy-reference/#time)
    | Builtin                                                                                                                    | Feature |
    |----------------------------------------------------------------------------------------------------------------------------|---------|
