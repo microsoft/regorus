@@ -1,0 +1,119 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: independent_partial_object_bodies_rtc
+    rego_v0: true
+    strict: false
+    input: {blocked: true}
+    modules: &blocked_policy
+      - |
+        package test
+        default allow := false
+        parts[k] = true { k := "a" } { input.blocked; k := "b" }
+        allow { parts.a; not parts.b }
+    query: data.test.parts
+    want_result: {a: true, b: true}
+
+  - note: independent_partial_object_bodies_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    input: {blocked: true}
+    modules: *blocked_policy
+    query: data.test.parts
+    want_result: {a: true, b: true}
+
+  - note: independent_partial_object_blocked_decision_rtc
+    rego_v0: true
+    strict: false
+    input: {blocked: true}
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: false
+
+  - note: independent_partial_object_blocked_decision_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    input: {blocked: true}
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: false
+
+  - note: independent_partial_object_unblocked_decision_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    input: {blocked: false}
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: true
+
+  - note: independent_partial_object_missing_condition_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    input: {}
+    modules: *blocked_policy
+    query: data.test.parts
+    want_result: {a: true}
+
+  - note: independent_partial_object_equal_contributions_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        parts[k] = v { k := "a"; v := 1 } { k := "a"; v := 1 }
+    query: data.test.parts
+    want_result: {a: 1}
+
+  - note: partial_object_else_short_circuit_rtc
+    rego_v0: true
+    strict: false
+    modules: &else_policy
+      - |
+        package test
+        parts[k] = v { input.primary; k := "a"; v := 1 } else = 2 { k := "b" }
+    input: {primary: true}
+    query: data.test.parts
+    want_result: {a: 1}
+
+  - note: partial_object_else_short_circuit_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    modules: *else_policy
+    input: {primary: true}
+    query: data.test.parts
+    want_result: {a: 1}
+
+  - note: partial_object_else_fallback_rtc
+    rego_v0: true
+    strict: false
+    modules: *else_policy
+    input: {primary: false}
+    query: data.test.parts
+    want_result: {b: 2}
+
+  - note: partial_object_else_fallback_suspendable
+    rego_v0: true
+    strict: false
+    execution_mode: suspendable
+    modules: *else_policy
+    input: {primary: false}
+    query: data.test.parts
+    want_result: {b: 2}
+
+  - note: separate_v1_partial_object_definitions_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        parts[k] := 1 if k := "a"
+        parts[k] := 2 if k := "b"
+    query: data.test.parts
+    want_result: {a: 1, b: 2}
