@@ -75,6 +75,24 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Native rule-call depth limit
+
+Synchronous rule evaluation permits at most 16 simultaneously active native rule
+calls. A deeper call raises `VmError::RuleCallDepthExceeded`, which propagates as
+an execution error rather than undefined or a rule default. This applies to
+run-to-completion execution and synchronous virtual-document lookups in either
+mode, including after suspension and resume. Purely explicit suspendable rule
+frames do not consume this allowance. A failed evaluation releases its execution
+state so the VM can evaluate another entrypoint.
+
+This is a temporary, intentional safety/resource restriction: valid policies
+with deep native rule nesting may now error. It is not a Rego or Rust language
+requirement, nor a portable stack-safety guarantee for arbitrary host stack sizes
+or other native nesting. The conservative limit of 16 was checked in debug and
+release on Windows with a 2 MiB test-thread stack; this does not imply that depth
+17 is intrinsically unsafe. Existing instruction, time, and memory limits remain
+unchanged.
+
 ### Run-to-completion
 
 - Entry path: `execute()` or `execute_entry_point_by_*` when
