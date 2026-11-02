@@ -75,6 +75,22 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Rule recursion safety
+
+The Rego-to-RVM compiler rejects cycles in statically resolved dependencies
+reachable from the requested entrypoints, including function calls and package
+materialization. An unused recursive sibling does not invalidate an otherwise
+valid entrypoint. Dynamic package lookup is not itself proof of a dependency:
+nonrecursive selections remain supported, even when other candidates recurse.
+
+The VM independently checks active rule and function calls, including virtual
+document evaluation. Re-entering an active rule raises
+`VmError::RecursiveRuleEvaluation`, rather than returning undefined or a default.
+This backstop also applies to loaded serialized programs in both execution modes.
+Active calls survive suspension and resume. Sequential calls after a rule returns
+are allowed; a new evaluation resets active calls, including after failure.
+This check detects reentry, not excessive depth in an acyclic call graph.
+
 ### Run-to-completion
 
 - Entry path: `execute()` or `execute_entry_point_by_*` when

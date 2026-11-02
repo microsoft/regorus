@@ -1,0 +1,37 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: recursion_dynamic_nonrecursive_selection
+    modules:
+      - |
+        package probe
+        safe := 42
+        unused := unused
+        result := data.probe[input.key]
+    query: data.probe.result
+    input: {key: safe}
+    skip_interpreter: true
+    want_result: 42
+
+  - note: recursion_dynamic_run_to_completion_backstop
+    modules:
+      - |
+        package probe
+        result := data.probe[input.key]
+    query: data.probe.result
+    input: {key: result}
+    skip_interpreter: true
+    want_error: "Recursive evaluation of rule"
+    execution_mode: run-to-completion
+
+  - note: recursion_dynamic_suspendable_backstop
+    modules:
+      - |
+        package probe
+        result := data.probe[input.key]
+    query: data.probe.result
+    input: {key: result}
+    skip_interpreter: true
+    want_error: "Recursive evaluation of rule"
+    execution_mode: suspendable

@@ -1,0 +1,32 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: recursion_direct_source_rejected
+    modules:
+      - |
+        package probe
+        result := result
+    query: data.probe.result
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_indirect_source_rejected
+    modules:
+      - |
+        package probe
+        p := p
+        result := p
+    query: data.probe.result
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_unreachable_source_allowed
+    modules:
+      - |
+        package probe
+        p := p
+        result := 42
+    query: data.probe.result
+    skip_interpreter: true
+    want_result: 42
