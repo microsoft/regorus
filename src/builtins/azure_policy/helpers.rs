@@ -17,6 +17,7 @@
 )]
 
 use crate::languages::azure_policy::strings;
+use crate::languages::azure_policy::tag::{classify_tag_field, normalize_bracket_tag, TagField};
 use crate::value::Value;
 
 use alloc::string::{String, ToString as _};
@@ -311,6 +312,14 @@ pub fn match_question_hash_pattern(input: &str, pattern: &str) -> bool {
 // ── Path resolution ───────────────────────────────────────────────────
 
 pub fn resolve_path(root: &Value, path: &str) -> Value {
+    if let Some(tag_field) = classify_tag_field(path) {
+        match tag_field {
+            TagField::Key(tag) => return resolve_tag(root, &tag),
+            TagField::Empty | TagField::Wildcard => return Value::Undefined,
+            TagField::Collection => {}
+        }
+    }
+
     // An empty or unclosed bracket (e.g. `tags[ ]`, `tags[env`) names no
     // property; it must not collapse onto the parent object.
     let Some(segments) = tokenize_path(path) else {
@@ -355,21 +364,23 @@ pub fn resolve_path(root: &Value, path: &str) -> Value {
     current
 }
 
-/// The key named by the contents of a `[...]` path segment, using the same
-/// rule as the Azure Policy parser: trim surrounding whitespace (as
-/// `str::trim` does), then strip one matching pair of outer `'` or `"`
-/// quotes. Whitespace inside the quotes is kept.
-fn bracket_key(contents: &str) -> &str {
-    let trimmed = contents.trim();
-    trimmed
-        .strip_prefix('\'')
-        .and_then(|inner| inner.strip_suffix('\''))
-        .or_else(|| {
-            trimmed
-                .strip_prefix('"')
-                .and_then(|inner| inner.strip_suffix('"'))
-        })
-        .unwrap_or(trimmed)
+fn resolve_tag(root: &Value, tag: &str) -> Value {
+    let tags = resolve_path(root, "tags");
+    #[allow(clippy::pattern_type_mismatch)]
+    let Value::Object(map) = tags
+    else {
+        return Value::Undefined;
+    };
+
+    for (key, value) in map.iter_sorted() {
+        if let Value::String(ref key) = *key {
+            if strings::keys::eq(key, tag) {
+                return value.clone();
+            }
+        }
+    }
+
+    Value::Undefined
 }
 
 fn tokenize_path(path: &str) -> Option<Vec<String>> {
@@ -395,7 +406,7 @@ fn tokenize_path(path: &str) -> Option<Vec<String>> {
             }
             ']' => {
                 in_bracket = false;
-                let cleaned = bracket_key(&bracket);
+                let cleaned = normalize_bracket_tag(&bracket).name;
                 if cleaned.is_empty() {
                     return None;
                 }
@@ -488,5 +499,22 @@ mod tests {
                 "{path:?}"
             );
         }
+    }
+
+    #[test]
+    fn resolve_path_tags_wildcard_is_undefined() {
+        let resource = Value::from_json_str(
+            r#"{"tags":{"owner":"ops","env":"production","*":"x","env][*":"y"}}"#,
+        )
+        .expect("valid resource");
+        for path in ["tags[*]", "tags[env][*]"] {
+            assert_eq!(resolve_path(&resource, path), Value::Undefined, "{path}");
+        }
+    }
+
+    #[test]
+    fn resolve_path_padded_star_bracket_names_star_tag() {
+        let resource = Value::from_json_str(r#"{"tags":{"*":"x"}}"#).expect("valid resource");
+        assert_eq!(resolve_path(&resource, "Tags[ * ]"), Value::from("x"));
     }
 }

@@ -378,6 +378,139 @@ cases:
         environment: "prod"
     want_effect: "deny"
 
+  - note: value_count_dynamic_bracket_tag_with_closing_bracket
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Department]Name"
+    resource:
+      tags:
+        "department]name": "production"
+    want_effect: "deny"
+
+  - note: value_count_dynamic_bracket_tag_closing_bracket_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Department]Name"
+    resource:
+      tags:
+        department:
+          name: "production"
+    want_undefined: true
+
+  - note: value_count_tag_star_name_matches_literal_tag
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.a[*]",
+            "where": {
+              "value": "[field('tags.a[*]')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a[*]": "production"
+    want_effect: "deny"
+
+  - note: value_count_tag_star_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.a[*]",
+            "where": {
+              "value": "[field('tags.a[*]')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a[*]": "staging"
+    want_undefined: true
+
+  - note: field_tag_path_takes_precedence_over_value_count_name
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.env",
+            "where": {
+              "value": "[field('tags.env')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        env: "production"
+    want_effect: "deny"
+
+  - note: field_tag_path_takes_precedence_over_value_count_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.env",
+            "where": {
+              "value": "[field('tags.env')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        env: "staging"
+    want_undefined: true
+
   # =========================================================================
   # Alias field refs inside count resolve to current loop element
   # =========================================================================
@@ -1964,3 +2097,86 @@ cases:
       }
     resource: {"type": "any", "location": "eastus"}
     want_undefined: true
+
+  - note: field_count_where_field_function_reads_dotted_tag_flat_key
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.rules[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules: [{ name: a }, { name: b }]
+      tags:
+        "department.name": "production"
+    want_effect: "deny"
+
+  - note: field_count_where_field_function_dotted_tag_ignores_nested_tag_object
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.rules[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules: [{ name: a }, { name: b }]
+      tags:
+        department:
+          name: "production"
+    want_undefined: true
+
+  - note: field_count_over_tags_array_field_function_reads_resource_tag_not_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "tags[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: [{ department: { name: "production" } }]
+    want_undefined: true
+
+  - note: field_count_over_tags_array_where_field_reads_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "tags[*]",
+            "where": {
+              "field": "tags[*].Department.Name",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: [{ department: { name: "production" } }]
+    want_effect: "deny"
