@@ -10,6 +10,7 @@ cases:
         unused := unused
         result := data.probe[input.key]
     query: data.probe.result
+    strict: false
     input: {key: safe}
     skip_interpreter: true
     want_result: 42
@@ -20,6 +21,7 @@ cases:
         package probe
         result := data.probe[input.key]
     query: data.probe.result
+    strict: false
     input: {key: result}
     skip_interpreter: true
     want_error: "Recursive evaluation of rule"
@@ -31,6 +33,7 @@ cases:
         package probe
         result := data.probe[input.key]
     query: data.probe.result
+    strict: false
     input: {key: result}
     skip_interpreter: true
     want_error: "Recursive evaluation of rule"

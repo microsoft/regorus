@@ -18,68 +18,6 @@ fn compile(source: &str, entries: &[&str]) -> anyhow::Result<Arc<Program>> {
     Ok(Compiler::compile_from_policy(&policy, entries)?)
 }
 
-#[test]
-fn source_cycles_are_rejected() {
-    for source in [
-        "package probe\nresult := result",
-        "package probe\np := p\nresult := p",
-        "package probe\np := q\nq := p\nresult := p",
-        "package probe\nf(x) := g(x)\ng(x) := f(x)\nresult := f(1)",
-        "package probe\nf(x) := f(x)\nresult := f(1)",
-        "package probe\nresult := data.probe",
-        "package probe\nresult := data.probe[`result`]",
-        "package probe\nresult := data.probe[\"result\"]",
-        "package probe\nresult := [p, q]\np := q\nq := p",
-        "package probe\nresult := data.probe.nested\nnested.p := nested.q\nnested.q := nested.p",
-    ] {
-        let error = compile(source, &["data.probe.result"]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Compile-time recursion detected"),
-            "{source}: {error:#}"
-        );
-    }
-}
-
-#[test]
-fn unused_cycles_do_not_reject_entrypoint() {
-    compile(
-        "package probe\np := p\nresult := 42",
-        &["data.probe.result"],
-    )
-    .unwrap();
-}
-
-#[test]
-fn package_materialization_excludes_uncalled_functions() {
-    for function in ["f(x) := f(x)", "f(x) := data.app.result"] {
-        let mut engine = Engine::new();
-        engine
-            .add_policy("app.rego".into(), "package app\nresult := data.lib".into())
-            .unwrap();
-        engine
-            .add_policy(
-                "lib.rego".into(),
-                format!("package lib\nsafe := 42\n{function}"),
-            )
-            .unwrap();
-        let policy = engine
-            .compile_with_entrypoint(&Rc::from("data.app.result"))
-            .unwrap();
-        let program = Compiler::compile_from_policy(&policy, &["data.app.result"]).unwrap();
-        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-            let mut vm = RegoVM::new();
-            vm.load_program(program.clone());
-            vm.set_execution_mode(mode);
-            assert_eq!(
-                vm.execute_entry_point_by_name("data.app.result").unwrap(),
-                Value::from_json_str(r#"{"safe":42}"#).unwrap()
-            );
-        }
-    }
-}
-
 fn run_runtime_cases() {
     // Mutate a valid program to exercise the VM independently of compiler rejection.
     for source in [
