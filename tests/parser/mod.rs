@@ -87,7 +87,8 @@ fn match_object(s: &Span, fields: &[(Span, Ref<Expr>, Ref<Expr>)], v: &Value) ->
     match &v["fields"].as_array() {
         Ok(a) => {
             my_assert_eq!(fields.len(), a.len(), "field length mismatch");
-            for (idx, (_, k, v)) in fields.iter().enumerate() {
+            for (idx, (span, k, v)) in fields.iter().enumerate() {
+                match_span_opt(span, &a[idx]["span"])?;
                 match_expr(k, &a[idx]["key"])?;
                 match_expr(v, &a[idx]["value"])?;
             }

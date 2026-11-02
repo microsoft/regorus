@@ -217,3 +217,41 @@ cases:
                           eidx: 52
                   eidx: 53
           bodies: []
+
+  - note: object and field spans start at their first token
+    rego: |
+      package test
+
+      x = {1: 2, 3: 4}
+    num_expressions: 7
+    num_statements: 0
+    num_queries: 0
+    policy:
+      - spec:
+          head:
+            compr:
+              refr:
+                var: x
+                eidx: 1
+              assign:
+                op: =
+                value:
+                  object:
+                    span: '{1: 2, 3: 4}'
+                    fields:
+                      - span: '1: 2'
+                        key:
+                          number: 1
+                          eidx: 2
+                        value:
+                          number: 2
+                          eidx: 3
+                      - span: '3: 4'
+                        key:
+                          number: 3
+                          eidx: 4
+                        value:
+                          number: 4
+                          eidx: 5
+                  eidx: 6
+          bodies: []

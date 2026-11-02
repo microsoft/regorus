@@ -863,7 +863,7 @@ impl<'source> Parser<'source> {
             };
 
             let mut item_span = self.tok.1.clone();
-            span.start = item_start;
+            item_span.start = item_start;
             self.expect(":", "while parsing object item")?;
             let value = self.parse_in_expr()?;
             item_span.end = self.end;
