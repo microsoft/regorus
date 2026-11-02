@@ -218,7 +218,10 @@ impl<'a> Compiler<'a> {
                 {
                     // Candidates are not proven calls. Queue new rules only;
                     // the VM guards recursion when a candidate is selected.
-                    self.get_or_assign_rule_index(rule_path)?;
+                    let saved_call_stack = core::mem::take(&mut self.current_call_stack);
+                    let candidate_result = self.get_or_assign_rule_index(rule_path);
+                    self.current_call_stack = saved_call_stack;
+                    candidate_result?;
                     continue;
                 }
                 if !self

@@ -52,6 +52,14 @@ suffixes remain undefined; namespace lookups merge virtual descendants with base
 data. Candidate selection compares every shared path component, so a lookup
 under a nested namespace does not include unrelated sibling rules.
 
+For example, with `package tenant; a := {"deny": true}`, the reference
+`data.tenant[input.tenant].deny` must read the value of rule `data.tenant.a`
+before indexing `deny`. For input `{"tenant":"a"}`, negating that reference
+must fail, just as negating `data.tenant.a.deny` does. Treating the shorter
+rule head as absent incorrectly makes `not` succeed and can grant access.
+The RVM compiler retains that actual head and leaves the suffix for the VM,
+including when the selected rule suspends for a host response.
+
 Dynamic candidates are scheduled without treating them as proven recursive calls.
 For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in
 `package probe` returns `7` for `{"key":"p"}` in the RVM. The interpreter's
@@ -62,6 +70,9 @@ calls are additionally limited to 16 retained register windows and report
 `VmError::RuleCallDepthExceeded`; explicit suspendable rule frames are not subject
 to that native-stack limit. These errors are fatal to rule evaluation, including
 rules with defaults, and failed execution state is released before reuse.
+Interpreter fixes for that same-namespace drift and strict-only behavior
+remain separate follow-up work; the lookup regressions exercise non-strict
+evaluation without changing existing expected results.
 
 A successful compilation produces a `Program` (`src/rvm/program/core.rs`). The
 layout is deliberately split:

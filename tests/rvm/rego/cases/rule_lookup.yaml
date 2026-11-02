@@ -3,6 +3,7 @@
 
 cases:
   - note: virtual_reference_same_namespace_static_suffix
+    strict: false
     skip_interpreter: true
     input: {key: p}
     modules:
@@ -14,6 +15,7 @@ cases:
     want_result: 7
 
   - note: virtual_reference_same_namespace_missing_key
+    strict: false
     skip_interpreter: true
     execution_mode: suspendable
     input: {key: missing}
@@ -26,8 +28,9 @@ cases:
     want_result: "#undefined"
 
   - note: virtual_reference_static_suffix
+    strict: false
     input: {key: p}
-    modules:
+    modules: &object_suffix_modules
       - |
         package probe
         nested.p := {"a": {"b": 7}}
@@ -36,9 +39,10 @@ cases:
     want_result: 7
 
   - note: virtual_reference_rule_path_suffix
+    strict: false
     execution_mode: suspendable
     input: {key: p}
-    modules:
+    modules: &rule_suffix_modules
       - |
         package probe
         nested.p.value := 7
@@ -46,7 +50,53 @@ cases:
     query: data.probe.result
     want_result: 7
 
+  - note: virtual_reference_static_suffix_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: {key: p}
+    modules: *object_suffix_modules
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_rule_path_suffix_rtc
+    strict: false
+    input: {key: p}
+    modules: *rule_suffix_modules
+    query: data.probe.result
+    want_result: 7
+
+  - note: virtual_reference_missing_object_rule_rtc
+    strict: false
+    input: {key: missing}
+    modules: *object_suffix_modules
+    query: data.probe.result
+    want_result: "#undefined"
+
+  - note: virtual_reference_missing_object_rule_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: {key: missing}
+    modules: *object_suffix_modules
+    query: data.probe.result
+    want_result: "#undefined"
+
+  - note: virtual_reference_missing_dotted_rule_rtc
+    strict: false
+    input: {key: missing}
+    modules: *rule_suffix_modules
+    query: data.probe.result
+    want_result: "#undefined"
+
+  - note: virtual_reference_missing_dotted_rule_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: {key: missing}
+    modules: *rule_suffix_modules
+    query: data.probe.result
+    want_result: "#undefined"
+
   - note: virtual_reference_missing_suffix_is_undefined
+    strict: false
     input: {key: p}
     modules:
       - |
@@ -57,6 +107,7 @@ cases:
     want_result: "#undefined"
 
   - note: virtual_reference_missing_rule_uses_base_data
+    strict: false
     data: {probe: {nested: {base: {a: {b: 8}}}}}
     input: {key: base}
     modules:
@@ -68,6 +119,7 @@ cases:
     want_result: 8
 
   - note: virtual_reference_namespace_merges_base_data
+    strict: false
     data: {probe: {nested: {p: {base: 8}}}}
     input: {key: p}
     modules:
@@ -79,6 +131,7 @@ cases:
     want_result: {base: 8, value: 7}
 
   - note: virtual_reference_invalid_index_is_undefined
+    strict: false
     input: {key: p, index: {}}
     modules:
       - |
@@ -89,6 +142,7 @@ cases:
     want_result: "#undefined"
 
   - note: virtual_reference_empty_set_and_negation
+    strict: false
     execution_mode: suspendable
     input: {key: p}
     modules:
@@ -102,6 +156,7 @@ cases:
     want_result: {"set!": []}
 
   - note: virtual_reference_default_only_rule
+    strict: false
     input: {key: p}
     modules:
       - |
@@ -112,6 +167,7 @@ cases:
     want_result: 7
 
   - note: virtual_reference_excludes_recursive_sibling
+    strict: false
     input: {key: p}
     modules:
       - |
@@ -119,5 +175,213 @@ cases:
         nested.p := {"a": {"b": 7}}
         recursive := data.probe.recursive
         result := data.probe.nested[input.key].a.b
+    query: data.probe.result
+    want_result: 7
+
+  - note: dynamic_tenant_deny_true_rtc
+    strict: false
+    data: {}
+    input: {tenant: a}
+    modules: &tenant_deny_modules
+      - |
+        package tenant
+        a := {"deny": true}
+      - |
+        package auth
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+        default static_allow := false
+        static_allow if { not data.tenant.a.deny }
+    query: data.auth.allow
+    want_result: false
+
+  - note: dynamic_tenant_deny_true_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *tenant_deny_modules
+    query: data.auth.allow
+    want_result: false
+
+  - note: static_tenant_deny_true_rtc
+    strict: false
+    data: {}
+    input: {tenant: a}
+    modules: *tenant_deny_modules
+    query: data.auth.static_allow
+    want_result: false
+
+  - note: static_tenant_deny_true_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *tenant_deny_modules
+    query: data.auth.static_allow
+    want_result: false
+
+  - note: dynamic_tenant_deny_false_rtc
+    strict: false
+    data: {}
+    input: {tenant: a}
+    modules: &tenant_false_modules
+      - |
+        package tenant
+        a := {"deny": false}
+      - |
+        package auth
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+    query: data.auth.allow
+    want_result: true
+
+  - note: dynamic_tenant_deny_false_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *tenant_false_modules
+    query: data.auth.allow
+    want_result: true
+
+  - note: dynamic_tenant_missing_rtc
+    strict: false
+    data: {}
+    input: {tenant: missing}
+    modules: *tenant_deny_modules
+    query: data.auth.allow
+    want_result: true
+
+  - note: dynamic_tenant_missing_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: missing}
+    modules: *tenant_deny_modules
+    query: data.auth.allow
+    want_result: true
+
+  - note: dynamic_host_direct_rule_suffix_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: &host_input {namespace: target, subject: dummy, key: blocked}
+    modules: &suffix_modules
+      - |
+        package framework
+        default result := 99
+        result := data.config[input.namespace].record.a.b
+      - |
+        package config.target
+        record := __builtin_host_await(input.subject, "selected")
+    query: data.framework.result
+    host_await_responses_suspendable:
+      - {id: selected, args: dummy, value: {a: {b: 7}}}
+    want_result: 7
+
+  - note: dynamic_host_direct_rule_suffix_rtc
+    strict: false
+    skip_interpreter: true
+    input: *host_input
+    modules: *suffix_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: selected, value: {a: {b: 7}}}
+    want_result: 7
+
+  - note: dynamic_nested_resumes_remainder_and_cached_reference
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *host_input
+    modules: &nested_modules
+      - |
+        package framework
+        import rego.v1
+        result := [data.config[input.namespace].record[input.key],
+                   data.config[input.namespace].record.blocked]
+      - |
+        package config.target
+        import rego.v1
+        record := {"blocked": nested}
+        nested := [data.config[input.namespace].first,
+                   __builtin_host_await(input.subject, "second")]
+        first := __builtin_host_await(input.subject, "first")
+    query: data.framework.result
+    host_await_responses_suspendable:
+      - {id: first, args: dummy, value: true}
+      - {id: second, args: dummy, value: false}
+    want_result: [[true, false], [true, false]]
+
+  - note: dynamic_nested_rtc_control
+    strict: false
+    skip_interpreter: true
+    input: *host_input
+    modules: *nested_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: first, value: true}
+      - {id: second, value: false}
+    want_result: [[true, false], [true, false]]
+
+  - note: native_rule_depth_is_bounded
+    strict: false
+    skip_interpreter: true
+    modules: &deep_rules
+      - |
+        package probe
+        r0 := data.probe.r1
+        r1 := data.probe.r2
+        r2 := data.probe.r3
+        r3 := data.probe.r4
+        r4 := data.probe.r5
+        r5 := data.probe.r6
+        r6 := data.probe.r7
+        r7 := data.probe.r8
+        r8 := data.probe.r9
+        r9 := data.probe.r10
+        r10 := data.probe.r11
+        r11 := data.probe.r12
+        r12 := data.probe.r13
+        r13 := data.probe.r14
+        r14 := data.probe.r15
+        r15 := data.probe.r16
+        r16 := data.probe.r17
+        r17 := data.probe.r18
+        r18 := data.probe.r19
+        r19 := data.probe.r20
+        r20 := 7
+    query: data.probe.r0
+    want_error: "Rule call depth exceeded safety limit 16"
+
+  - note: suspendable_rule_depth_uses_explicit_frames
+    strict: false
+    execution_mode: suspendable
+    modules: *deep_rules
+    query: data.probe.r0
+    want_result: 7
+
+  - note: dynamic_unselected_candidate_references_caller_namespace_rtc
+    strict: false
+    skip_interpreter: true
+    input: {key: p}
+    modules: &candidate_namespace_modules
+      - |
+        package probe
+        result := data.catalog[input.key].a.b
+      - |
+        package catalog
+        p := {"a": {"b": 7}}
+        unused := data.probe
+    query: data.probe.result
+    want_result: 7
+
+  - note: dynamic_unselected_candidate_references_caller_namespace_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: {key: p}
+    modules: *candidate_namespace_modules
     query: data.probe.result
     want_result: 7
