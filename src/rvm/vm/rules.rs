@@ -105,6 +105,10 @@ impl RegoVM {
                 self.registers
                     .resize(num_retained_registers, Value::Undefined);
                 self.registers.resize(num_registers, Value::Undefined);
+                // A body that failed with an error inside a loop or
+                // comprehension leaves its entries behind.
+                self.loop_stack.clear();
+                self.comprehension_stack.clear();
 
                 if let Some(destructuring_entry_point) =
                     rule_info.destructuring_blocks.get(def_idx).and_then(|x| *x)
