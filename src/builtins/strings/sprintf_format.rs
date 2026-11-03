@@ -101,7 +101,11 @@ pub(super) fn parse(
 
     if bytes.get(cursor) == Some(&b'*') {
         cursor += 1;
-        let width = take_integer(args, args_idx, args_span)?;
+        let width = if spec.bad_index && *args_idx >= args.len() {
+            None
+        } else {
+            take_integer(args, args_idx, args_span)?
+        };
         if width.is_none() {
             spec.bad_width = true;
         }
@@ -129,7 +133,11 @@ pub(super) fn parse(
         }
         if bytes.get(cursor) == Some(&b'*') {
             cursor += 1;
-            let precision = take_integer(args, args_idx, args_span)?;
+            let precision = if spec.bad_index && *args_idx >= args.len() {
+                None
+            } else {
+                take_integer(args, args_idx, args_span)?
+            };
             if let Some(precision) = precision.filter(|n| *n >= 0) {
                 spec.precision = Some(checked_dynamic_value(precision as u64, args_span)?);
             } else {

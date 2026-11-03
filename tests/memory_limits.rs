@@ -508,6 +508,24 @@ fn sprintf_float_precision_propagates_memory_limit_errors() {
 }
 
 #[test]
+fn sprintf_float_precision_checks_memory_during_formatting() {
+    std::thread::spawn(|| {
+        let mut guard = LimitGuard::lock();
+        let mut engine = new_engine_with_module(r#"package limit
+            quoted := sprintf("%#.60000q", [input])"#);
+        engine.set_input(Value::from(1.5));
+        let before = mimalloc::current_thread_allocation_stats();
+        guard.set_with_additional_budget(16 * 1024);
+        let err = engine.eval_rule("data.limit.quoted".to_string())
+            .expect_err("float formatting must respect the limit");
+        assert_memory_limit_error(&err);
+        let after = mimalloc::current_thread_allocation_stats();
+        assert!(after.peak - before.allocated < 48 * 1024,
+            "large formatting allocation occurred before the limit check: before={before:?}, after={after:?}");
+    }).join().expect("memory test thread");
+}
+
+#[test]
 fn range_step_interpreter_propagates_memory_limit_errors() {
     let mut guard = LimitGuard::lock();
     let mut engine = new_engine_with_module(RANGE_STEP_MODULE);

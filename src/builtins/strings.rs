@@ -467,12 +467,56 @@ fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Res
     if !spec.flags.minus && padding_char == '0' {
         append_padding(out, padding, '0')?;
     }
-    out.push_str(value);
-    enforce_limit()?;
+    append_float_checked(out, value)?;
     if spec.flags.minus {
         append_padding(out, padding, ' ')?;
     }
     Ok(())
+}
+
+// The formatter can emit long runs of zeroes in a single write. Split those
+// writes so the allocator limit is observed before the entire output exists.
+fn append_float_checked(out: &mut String, text: &str) -> Result<()> {
+    const CHUNK: usize = 256;
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = core::cmp::min(start + CHUNK, text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&text[start..end]);
+        enforce_limit()?;
+        start = end;
+    }
+    Ok(())
+}
+
+fn format_float_checked(args: core::fmt::Arguments<'_>) -> Result<String> {
+    struct CheckedWriter {
+        output: String,
+        error: Option<anyhow::Error>,
+    }
+    impl core::fmt::Write for CheckedWriter {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            match append_float_checked(&mut self.output, s) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.error = Some(error);
+                    Err(core::fmt::Error)
+                }
+            }
+        }
+    }
+    let mut writer = CheckedWriter {
+        output: String::new(),
+        error: None,
+    };
+    if core::fmt::write(&mut writer, args).is_err() {
+        return Err(writer
+            .error
+            .unwrap_or_else(|| anyhow::anyhow!("float formatting failed")));
+    }
+    Ok(writer.output)
 }
 
 // Go's %v precision for floats is the number of significant digits, using the
@@ -523,8 +567,7 @@ fn format_go_float_v(value: f64, precision: Option<usize>, alternate: bool) -> R
         return Ok(format!("{mantissa}e{:+03}", exponent.parse::<i32>()?));
     }
     // Determine the exponent after rounding to significant digits.
-    let rounded = format!("{value:.digits$e}", digits = p - 1);
-    enforce_limit()?;
+    let rounded = format_float_checked(format_args!("{value:.digits$e}", digits = p - 1))?;
     let (mantissa, exp) = rounded.split_once('e').expect("scientific exponent");
     let exponent: i32 = exp.parse()?;
     let scientific = exponent >= if precision.is_none() { 6 } else { p as i32 } || exponent < -4;
@@ -539,11 +582,10 @@ fn format_go_float_v(value: f64, precision: Option<usize>, alternate: bool) -> R
         } else {
             ""
         };
-        format!("{mantissa}{dot}e{exponent:+03}")
+        format_float_checked(format_args!("{mantissa}{dot}e{exponent:+03}"))?
     } else {
         let fraction_digits = (p as i32 - exponent - 1).max(0) as usize;
-        let mut fixed = format!("{value:.fraction_digits$}");
-        enforce_limit()?;
+        let mut fixed = format_float_checked(format_args!("{value:.fraction_digits$}"))?;
         if alternate && !fixed.contains('.') {
             fixed.push('.');
         }
@@ -1227,6 +1269,16 @@ mod tests {
         assert_eq!(format_go_float_v(1e20, Some(6), false).unwrap(), "1e+20");
         assert_eq!(decimal_exponent(f64::MIN_POSITIVE), -308);
         assert_eq!(decimal_exponent(f64::from_bits(1)), -324);
+    }
+
+    #[test]
+    fn float_large_precision_preserves_output() {
+        let ordinary = format_go_float_v(1.5, Some(60_000), false).unwrap();
+        assert_eq!(ordinary, "1.5");
+        let alternate = format_go_float_v(1.5, Some(60_000), true).unwrap();
+        assert_eq!(alternate.len(), 60_001);
+        assert!(alternate.starts_with("1.5"));
+        assert!(alternate[3..].bytes().all(|b| b == b'0'));
     }
 
     #[test]

@@ -1799,6 +1799,12 @@ fn sprintf_copilot_regressions() -> Result<()> {
         (r#"sprintf("%#.1q", [1.5])"#, "%!q(float64=2.)"),
         (r#"sprintf("%q", [set()])"#, "\"set()\""),
         (r#"sprintf("%q", [["\u0007"]])"#, "\"[\\\"\\\\a\\\"]\""),
+        (r#"sprintf("%[3]*q", [])"#, "%!(BADWIDTH)%!q(BADINDEX)"),
+        (r#"sprintf("%.[3]*q", [])"#, "%!(BADPREC)%!q(BADINDEX)"),
+        (
+            r#"sprintf("%[3]*.[4]*q", [])"#,
+            "%!(BADWIDTH)%!(BADPREC)%!q(BADINDEX)",
+        ),
         (r#"sprintf("%[0]q %q", ["x"])"#, "%!q(BADINDEX) \"x\""),
         (r#"sprintf("%[2]q %q", ["x"])"#, "%!q(BADINDEX) \"x\""),
         (r#"sprintf("%*q", ["wide", "x"])"#, "%!(BADWIDTH)\"x\""),
