@@ -17,6 +17,9 @@ use std::fs;
 use std::sync::Arc;
 use test_generator::test_resources;
 
+mod comprehension_failure_differential;
+mod every_binding_differential;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,
