@@ -1,0 +1,96 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: default function before sibling does not enter namespace document
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.f(x) := 7
+        default nested.value := 3
+        result := nested
+    query: data.test.result
+    want_result: {value: 3}
+
+  - note: default function after sibling does not enter namespace document
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.value := 3
+        default nested.f(x) := 7
+        result := [nested, nested.f(1)]
+    query: data.test.result
+    want_result: [{value: 3}, 7]
+
+  - note: default function does not enter computed namespace default
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.f(x) := 7
+        default nested.value := [x | x := 3]
+        result := [nested, nested.f(1)]
+    query: data.test.result
+    want_result: [{value: [3]}, 7]
+
+  - note: default-only empty argument list retains document semantics
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.f() := 7
+        default nested.value := 3
+        result := nested
+    query: data.test.result
+    want_result: {f: 7, value: 3}
+
+  - note: registered zero argument function keeps its callable default
+    strict: false
+    modules:
+      - |
+        package test
+        default f() := 7
+        f() := 9 if false
+      - |
+        package consumer
+        result := data.test.f()
+    query: data.consumer.result
+    want_result: 7
+
+  - note: namespace containing only a default function stays undefined
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.f(x) := 7
+        result := nested
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: registered zero argument function retains namespace default semantics
+    strict: false
+    modules:
+      - |
+        package test
+        default nested.f() := 7
+        nested.f() := 9 if false
+        result := nested
+    query: data.test.result
+    want_result: {f: 7}
+
+  - note: bracket named default function does not enter package document
+    strict: false
+    modules:
+      - |
+        package test
+        default nested["f"](x) := 7
+        default mixed["f"](x) := 9
+        default mixed.value := 3
+        sentinel := 1
+      - |
+        package consumer
+        result := data.test
+    query: data.consumer.result
+    want_result: {mixed: {value: 3}, sentinel: 1}

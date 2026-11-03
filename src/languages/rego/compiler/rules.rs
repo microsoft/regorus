@@ -768,17 +768,19 @@ impl<'a> Compiler<'a> {
                     self.rule_num_registers.push(0);
                 }
 
-                let is_function = self
+                let is_function = self.policy.inner.functions.contains_key(rule_path);
+                let has_document_defaults = self
                     .policy
                     .inner
                     .default_rules
                     .get(rule_path)
-                    .and_then(|defaults| defaults.first())
-                    .is_some_and(|(rule, _)| {
-                        matches!(rule.as_ref(), Rule::Default { args, .. } if !args.is_empty())
+                    .is_some_and(|defaults| {
+                        defaults.iter().any(|(rule, _)| {
+                            matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
+                        })
                     });
                 // Functions are callable but are not virtual data documents.
-                if !is_function {
+                if !is_function && has_document_defaults {
                     let components = self
                         .policy
                         .inner
@@ -825,7 +827,7 @@ impl<'a> Compiler<'a> {
         };
         let rule_index = self.rule_index_map[rule_path];
         let idx = usize::from(rule_index);
-        let is_function = !args.is_empty() || self.policy.inner.functions.contains_key(rule_path);
+        let is_function = self.policy.inner.functions.contains_key(rule_path);
         if is_function {
             if self.rule_function_param_count[idx].is_some_and(|count| count != args.len()) {
                 return Err(CompilerError::General {
@@ -847,7 +849,10 @@ impl<'a> Compiler<'a> {
         let mut values = Vec::new();
         let mut paths_seen = BTreeSet::new();
         for (default, _) in &defaults {
-            if let Rule::Default { refr, value, .. } = default.as_ref() {
+            if let Rule::Default {
+                refr, args, value, ..
+            } = default.as_ref()
+            {
                 let module_index = self.find_module_index_for_rule(default)?;
                 let module = &self.policy.get_modules()[module_index as usize];
                 let package = get_path_string(&module.package.refr, Some("data"))
@@ -858,6 +863,9 @@ impl<'a> Compiler<'a> {
                 };
                 let full_path =
                     get_path_string(base, Some(&package)).map_err(CompilerError::from)?;
+                if !args.is_empty() && (full_path != rule_path || index.is_some()) {
+                    continue;
+                }
                 let full_components = self
                     .policy
                     .inner
