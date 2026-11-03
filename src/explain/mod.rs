@@ -76,7 +76,7 @@ pub(crate) mod fixtures;
 mod tests;
 
 pub use error::ExplainError;
-pub use provenance::{CheckSite, ConditionOwner, Provenance, RuleOwner, SiteId};
+pub use provenance::{CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
 pub use report::{
     ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,
     DefinitionExplanation, Derivation, DistinctElements, EmissionExplanation, ExplanationReport,
