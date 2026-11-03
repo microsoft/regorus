@@ -248,6 +248,7 @@ struct FormatSpec {
     width: Option<usize>,
     precision: Option<usize>,
     bad_precision: bool,
+    bad_width: bool,
     bad_index: bool,
 }
 
@@ -431,7 +432,7 @@ fn append_go_quoted_value(out: &mut String, value: &Value, spec: FormatSpec) -> 
         }
         value => {
             let mut rendered = String::new();
-            append_value_string(&mut rendered, value, false)?;
+            append_value_string(&mut rendered, value, false, 0)?;
             append_go_quoted(out, &rendered, spec)
         }
     }
@@ -440,21 +441,33 @@ fn append_go_quoted_value(out: &mut String, value: &Value, spec: FormatSpec) -> 
 // Go renders an invalid %q float operand using the supplied flags, width, and
 // precision as a nested %v conversion.
 fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Result<()> {
-    let value = if let Some(precision) = spec.precision {
-        format_go_float_v(*value, precision, spec.flags.alternate)
+    let value = format_go_float_v(*value, spec.precision, spec.flags.alternate)?;
+    let (sign, value) = if let Some(rest) = value.strip_prefix('-') {
+        ("-", rest)
+    } else if spec.flags.plus {
+        ("+", value.as_str())
+    } else if spec.flags.space {
+        (" ", value.as_str())
     } else {
-        format_go_float_v(*value, 6, spec.flags.alternate)
+        ("", value.as_str())
     };
-    let padding = spec.width.unwrap_or_default().saturating_sub(value.len());
+    let padding = spec
+        .width
+        .unwrap_or_default()
+        .saturating_sub(value.len() + sign.len());
     let padding_char = if spec.flags.zero && !spec.flags.minus {
         '0'
     } else {
         ' '
     };
-    if !spec.flags.minus {
-        append_padding(out, padding, padding_char)?;
+    if !spec.flags.minus && padding_char == ' ' {
+        append_padding(out, padding, ' ')?;
     }
-    out.push_str(&value);
+    out.push_str(sign);
+    if !spec.flags.minus && padding_char == '0' {
+        append_padding(out, padding, '0')?;
+    }
+    out.push_str(value);
     enforce_limit()?;
     if spec.flags.minus {
         append_padding(out, padding, ' ')?;
@@ -465,34 +478,81 @@ fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Res
 // Go's %v precision for floats is the number of significant digits, using the
 // same general-format threshold as %g. The alternate form retains trailing
 // zeroes up to that precision.
-fn format_go_float_v(value: f64, precision: usize, alternate: bool) -> String {
-    if !value.is_finite() || value == 0.0 {
-        return value.to_string();
+fn format_go_float_v(value: f64, precision: Option<usize>, alternate: bool) -> Result<String> {
+    if !value.is_finite() {
+        return Ok(value.to_string());
     }
-    let precision = precision.max(1);
-    let exponent = decimal_exponent(value);
-    let scientific = exponent >= precision as i32 || exponent < -4;
-    let mut rendered = if scientific {
-        let fraction_digits = precision - 1;
-        let rendered = format!("{value:.fraction_digits$e}");
-        let (mantissa, exponent) = rendered
-            .split_once('e')
-            .expect("scientific format has exponent");
-        let mantissa = if alternate {
-            mantissa.to_owned()
-        } else {
-            trim_fraction_zeros(mantissa).to_owned()
-        };
-        let exponent = exponent.parse::<i32>().expect("Rust exponent is numeric");
-        format!("{mantissa}e{exponent:+03}")
+    // Rust's formatter stores its precision in u16. Fixed notation can need
+    // three more fractional places than the requested significant digits.
+    if precision.unwrap_or(0) > u16::MAX as usize - 3 {
+        bail!("sprintf float precision is outside the supported range");
+    }
+    let requested = precision
+        .unwrap_or_else(|| {
+            if alternate && value != 0.0 {
+                let shortest = format!("{value:e}");
+                shortest
+                    .split('e')
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .count()
+                    .max(6)
+            } else {
+                6
+            }
+        })
+        .max(1);
+    let p = if !alternate {
+        requested.min(1100)
     } else {
-        let fraction_digits = (precision as i32 - exponent - 1).max(0) as usize;
-        format!("{value:.fraction_digits$}")
+        requested
     };
-    if !alternate && !scientific {
-        rendered = trim_fraction_zeros(&rendered).to_owned();
+    if precision.is_none() && !alternate {
+        let exponent = if value == 0.0 {
+            0
+        } else {
+            decimal_exponent(value)
+        };
+        if (-4..6).contains(&exponent) {
+            return Ok(value.to_string());
+        }
+        let rendered = format!("{value:e}");
+        let (mantissa, exponent) = rendered.split_once('e').expect("scientific exponent");
+        return Ok(format!("{mantissa}e{:+03}", exponent.parse::<i32>()?));
     }
-    rendered
+    // Determine the exponent after rounding to significant digits.
+    let rounded = format!("{value:.digits$e}", digits = p - 1);
+    enforce_limit()?;
+    let (mantissa, exp) = rounded.split_once('e').expect("scientific exponent");
+    let exponent: i32 = exp.parse()?;
+    let scientific = exponent >= if precision.is_none() { 6 } else { p as i32 } || exponent < -4;
+    let rendered = if scientific {
+        let mantissa = if alternate {
+            mantissa
+        } else {
+            trim_fraction_zeros(mantissa)
+        };
+        let dot = if alternate && !mantissa.contains('.') {
+            "."
+        } else {
+            ""
+        };
+        format!("{mantissa}{dot}e{exponent:+03}")
+    } else {
+        let fraction_digits = (p as i32 - exponent - 1).max(0) as usize;
+        let mut fixed = format!("{value:.fraction_digits$}");
+        enforce_limit()?;
+        if alternate && !fixed.contains('.') {
+            fixed.push('.');
+        }
+        if !alternate {
+            fixed = trim_fraction_zeros(&fixed).to_owned();
+        }
+        fixed
+    };
+    Ok(rendered)
 }
 
 // `f64::log10` requires libm in genuine no_std builds. Rust's core formatter
@@ -513,13 +573,19 @@ fn trim_fraction_zeros(value: &str) -> &str {
     }
 }
 
-fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Result<()> {
+fn append_value_string(
+    out: &mut String,
+    value: &Value,
+    unescape: bool,
+    depth: usize,
+) -> Result<()> {
+    if depth > 128 {
+        bail!("sprintf value nesting limit exceeded");
+    }
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(value) => out.push_str(&value.to_string()),
-        Value::String(value) if unescape => out.push_str(
-            &serde_json::to_string(value.as_ref()).unwrap_or_else(|_| value.as_ref().to_string()),
-        ),
+        Value::String(value) if unescape => append_go_quoted_body(out, value.as_ref(), false, '"')?,
         Value::String(value) => out.push_str(value.as_ref()),
         Value::Number(value) => out.push_str(&value.format_decimal()),
         Value::Array(values) => {
@@ -528,18 +594,22 @@ fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Resul
                 if index > 0 {
                     out.push_str(", ");
                 }
-                append_value_string(out, value, true)?;
+                append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
             out.push(']');
         }
         Value::Set(values) => {
+            if values.is_empty() {
+                out.push_str("set()");
+                return enforce_limit();
+            }
             out.push('{');
             for (index, value) in values.iter().enumerate() {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                append_value_string(out, value, true)?;
+                append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
             out.push('}');
@@ -550,9 +620,9 @@ fn append_value_string(out: &mut String, value: &Value, unescape: bool) -> Resul
                 if index > 0 {
                     out.push_str(", ");
                 }
-                append_value_string(out, key, true)?;
+                append_value_string(out, key, true, depth + 1)?;
                 out.push_str(": ");
-                append_value_string(out, value, true)?;
+                append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
             out.push('}');
@@ -610,6 +680,14 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             continue;
         }
 
+        if spec.bad_width {
+            s.push_str("%!(BADWIDTH)");
+            enforce_limit()?;
+        }
+        if spec.bad_precision {
+            s.push_str("%!(BADPREC)");
+            enforce_limit()?;
+        }
         if spec.bad_index {
             s.push_str("%!");
             s.push(verb);
@@ -637,10 +715,6 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         }
         let arg = &args[args_idx];
         args_idx += 1;
-        if spec.bad_precision {
-            s.push_str("%!(BADPREC)");
-            enforce_limit()?;
-        }
         let width = spec.legacy_width();
 
         // Handle Golang flags.
@@ -1145,14 +1219,25 @@ mod tests {
 
     #[test]
     fn float_diagnostics_use_no_std_general_formatting() {
-        assert_eq!(format_go_float_v(10.0, 6, false), "10");
-        assert_eq!(format_go_float_v(100.0, 6, false), "100");
-        assert_eq!(format_go_float_v(9.99, 2, false), "10");
-        assert_eq!(format_go_float_v(0.0001, 2, false), "0.0001");
-        assert_eq!(format_go_float_v(0.00001, 2, false), "1e-05");
-        assert_eq!(format_go_float_v(1e20, 6, false), "1e+20");
+        assert_eq!(format_go_float_v(10.0, Some(6), false).unwrap(), "10");
+        assert_eq!(format_go_float_v(100.0, Some(6), false).unwrap(), "100");
+        assert_eq!(format_go_float_v(9.99, Some(2), false).unwrap(), "10");
+        assert_eq!(format_go_float_v(0.0001, Some(2), false).unwrap(), "0.0001");
+        assert_eq!(format_go_float_v(0.00001, Some(2), false).unwrap(), "1e-05");
+        assert_eq!(format_go_float_v(1e20, Some(6), false).unwrap(), "1e+20");
         assert_eq!(decimal_exponent(f64::MIN_POSITIVE), -308);
         assert_eq!(decimal_exponent(f64::from_bits(1)), -324);
+    }
+
+    #[test]
+    fn deeply_nested_quote_returns_error() {
+        let mut value = Value::Null;
+        for _ in 0..140 {
+            value = Value::from(alloc::vec![value]);
+        }
+        let err = append_go_quoted_value(&mut String::new(), &value, FormatSpec::default())
+            .expect_err("deep values must return an error");
+        assert!(err.to_string().contains("nesting limit"));
     }
 
     #[test]

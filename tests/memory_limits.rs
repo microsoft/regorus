@@ -234,6 +234,35 @@ fn sprintf_quote_propagates_memory_limit_errors() {
     assert_memory_limit_error(&err);
 }
 
+#[test]
+fn sprintf_nested_quote_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SPRINTF_QUOTE_MODULE);
+    engine.set_input(Value::from(vec![Value::String(
+        "\0".repeat(100_000).into(),
+    )]));
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("nested quoting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_float_precision_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(
+        r#"package limit
+        quoted := sprintf("%#.60000q", [input])"#,
+    );
+    engine.set_input(Value::from(1.5));
+    guard.set_with_additional_budget(16 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("float formatting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
 #[cfg(feature = "jsonpatch")]
 #[test]
 fn json_patch_propagates_memory_limit_errors() {

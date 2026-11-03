@@ -31,24 +31,26 @@ fn parse_index(bytes: &[u8], cursor: &mut usize) -> Result<Option<usize>> {
     let Some(index) = parse_usize(bytes, &mut end)? else {
         bail!("sprintf argument index must contain a decimal number");
     };
-    if bytes.get(end) != Some(&b']') || index == 0 {
+    if bytes.get(end) != Some(&b']') {
         bail!("invalid sprintf argument index");
     }
     *cursor = end + 1;
-    Ok(Some(index - 1))
+    Ok(Some(index.checked_sub(1).unwrap_or(usize::MAX)))
 }
 
-fn take_integer(args: &Array, args_idx: &mut usize, args_span: &Span) -> Result<i64> {
+fn take_integer(args: &Array, args_idx: &mut usize, args_span: &Span) -> Result<Option<i64>> {
     let index = *args_idx;
     let Some(value) = args.get(index) else {
         bail!(args_span.error(format!("no argument specified for format verb {index}").as_str()));
     };
     *args_idx += 1;
     match value {
-        Value::Number(number) if number.is_integer() => number.as_i64().ok_or_else(|| {
-            args_span.error("sprintf width or precision is outside the supported range")
-        }),
-        _ => bail!(args_span.error("sprintf width or precision must be an integer")),
+        Value::Number(number) if number.is_integer() => {
+            number.as_i64().map(Some).ok_or_else(|| {
+                args_span.error("sprintf width or precision is outside the supported range")
+            })
+        }
+        _ => Ok(None),
     }
 }
 
@@ -84,22 +86,26 @@ pub(super) fn parse(
         cursor += 1;
     }
 
-    let args_idx_before_index = *args_idx;
     if let Some(index) = parse_index(bytes, &mut cursor)? {
-        *args_idx = index;
+        if index < args.len() {
+            *args_idx = index;
+        } else {
+            spec.bad_index = true;
+        }
         *reordered = true;
         if matches!(bytes.get(cursor), Some(b'0'..=b'9' | b'.')) {
             spec.bad_index = true;
-            *args_idx = args_idx_before_index;
-            // A malformed explicit index neither consumes nor reorders an
-            // argument, but it suppresses the legacy extra-argument check.
-            *reordered = true;
+            // A valid index remains selected even when the directive is invalid.
         }
     }
 
     if bytes.get(cursor) == Some(&b'*') {
         cursor += 1;
         let width = take_integer(args, args_idx, args_span)?;
+        if width.is_none() {
+            spec.bad_width = true;
+        }
+        let width = width.unwrap_or(0);
         if width < 0 {
             spec.flags.minus = true;
             spec.flags.zero = false;
@@ -114,13 +120,17 @@ pub(super) fn parse(
     if bytes.get(cursor) == Some(&b'.') {
         cursor += 1;
         if let Some(index) = parse_index(bytes, &mut cursor)? {
-            *args_idx = index;
+            if index < args.len() {
+                *args_idx = index;
+            } else {
+                spec.bad_index = true;
+            }
             *reordered = true;
         }
         if bytes.get(cursor) == Some(&b'*') {
             cursor += 1;
             let precision = take_integer(args, args_idx, args_span)?;
-            if precision >= 0 {
+            if let Some(precision) = precision.filter(|n| *n >= 0) {
                 spec.precision = Some(checked_dynamic_value(precision as u64, args_span)?);
             } else {
                 spec.bad_precision = true;
@@ -131,7 +141,11 @@ pub(super) fn parse(
     }
 
     if let Some(index) = parse_index(bytes, &mut cursor)? {
-        *args_idx = index;
+        if index < args.len() {
+            *args_idx = index;
+        } else {
+            spec.bad_index = true;
+        }
         *reordered = true;
     }
 
