@@ -218,6 +218,12 @@ fn run_interpreter(case: &Case, example: &Example) -> Result<Value> {
     new_engine(case, example)?.eval_rule(case.query.clone())
 }
 
+#[cfg(feature = "explanations")]
+struct IgnoreEvents;
+
+#[cfg(feature = "explanations")]
+impl regorus::explain::ExplanationRecorder for IgnoreEvents {}
+
 fn run_rvm(case: &Case, example: &Example, mode: ExecutionMode) -> Result<Value> {
     let mut engine = new_engine(case, example)?;
     let entrypoint: Rc<str> = case.query.as_str().into();
@@ -230,6 +236,9 @@ fn run_rvm(case: &Case, example: &Example, mode: ExecutionMode) -> Result<Value>
     // The VM's default input is null; an absent input must be Undefined.
     vm.set_input(example.input.clone().unwrap_or(Value::Undefined));
     vm.set_execution_mode(mode);
+    // Recording must not change any result.
+    #[cfg(feature = "explanations")]
+    vm.set_explanation_recorder(Box::new(IgnoreEvents));
     let result = vm.execute()?;
     if mode == ExecutionMode::RunToCompletion {
         return Ok(result);

@@ -8,6 +8,8 @@ mod dispatch;
 mod errors;
 mod execution;
 mod execution_model;
+#[cfg(feature = "explanations")]
+mod explain;
 mod functions;
 mod loops;
 mod machine;

@@ -103,8 +103,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.add_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.add_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("plus", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Sub { dest, left, right } => {
@@ -116,8 +120,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.sub_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.sub_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("minus", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mul { dest, left, right } => {
@@ -129,8 +137,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.mul_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.mul_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("mul", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Div { dest, left, right } => {
@@ -142,8 +154,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.div_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.div_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("div", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mod { dest, left, right } => {
@@ -155,8 +171,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.mod_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.mod_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("rem", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_comparison_instruction(program, other),
@@ -336,6 +356,10 @@ impl RegoVM {
                 let a = self.get_register(left)?;
                 let b = self.get_register(right)?;
                 let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_assert_eq(left, right, passed);
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -354,6 +378,10 @@ impl RegoVM {
                     },
                     GuardMode::NotUndefined => !matches!(value, Value::Undefined),
                 };
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_guard(program, register, mode, passed);
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -445,6 +473,10 @@ impl RegoVM {
         use Instruction::*;
         match instruction {
             ObjectSet { obj, key, value } => {
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_emission(Some(key), value);
+                }
                 let key_value = self.get_register(key)?.clone();
                 let value_value = self.get_register(value)?.clone();
 
@@ -673,6 +705,10 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             SetAdd { set, value } => {
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_emission(None, value);
+                }
                 let value_to_add = self.get_register(value)?.clone();
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
@@ -1157,6 +1193,10 @@ impl RegoVM {
                         available: program.instruction_data.comprehension_begin_params.len(),
                     })?
                     .clone();
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_comprehension();
+                }
                 self.execute_comprehension_begin(&params)?;
                 Ok(InstructionOutcome::Continue)
             }

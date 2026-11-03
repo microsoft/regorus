@@ -130,9 +130,17 @@ impl RegoVM {
                     self.cached_builtin_args = args;
                     return Err(e.into());
                 }
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_builtin_error(params.builtin_index, &args, &e);
+                }
                 Value::Undefined
             }
             Err(err) => {
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_builtin_error(params.builtin_index, &args, &err);
+                }
                 self.dummy_exprs = dummy_exprs;
                 self.cached_builtin_args = args;
                 return Err(err.into());
