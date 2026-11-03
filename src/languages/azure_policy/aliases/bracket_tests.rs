@@ -215,6 +215,7 @@ fn bracket_rendered_leaves_are_not_remapped() {
         [("rules[*]['a.b']", "properties.rules[*].xy")],
         [("rules[*].xy", "properties.rules[*]['a.b']")],
         [("rules[*]['a[b]']", "properties.rules[*].xy")],
+        [("rules[*].xs[0]", "properties.rules[*].ys[0]")],
     ] {
         assert_eq!(
             registry(&aliases)
@@ -225,13 +226,14 @@ fn bracket_rendered_leaves_are_not_remapped() {
             "{aliases:?}"
         );
     }
-    let aliases = [("rules[*]['a.b']", "properties.rules[*].xy")];
+    let bracket_short = [("rules[*]['a.b']", "properties.rules[*].xy")];
     assert_eq!(
-        normalized(&aliases, json!({"rules": [{"xy": 1}]})),
+        normalized(&bracket_short, json!({"rules": [{"xy": 1}]})),
         Value::from(json!({"type": "Test/widgets", "rules": [{"xy": 1}]}))
     );
+    let bracket_arm = [("rules[*].xy", "properties.rules[*]['a.b']")];
     assert_eq!(
-        denormalized(&aliases, json!({"rules": [{"xy": 1}]})),
+        denormalized(&bracket_arm, json!({"rules": [{"xy": 1}]})),
         Value::from(json!({"properties": {"rules": [{"xy": 1}]}}))
     );
 }
@@ -282,15 +284,55 @@ fn flattened_array_quoted_properties_is_the_wrapper() {
             json!({"properties": {"rules": [{"name": "n", "properties": {"x": 1, "y": 2}}]}})
         )
     );
-    // Without `x` in the element, `y` alone is still re-wrapped.
-    let with_name = [
-        ("rules[*].x", "properties.rules[*].properties.x"),
-        ("rules[*].y", "properties.rules[*]['properties'].y"),
-        ("rules[*].name", "properties.rules[*].name"),
-    ];
+    // An element with only `y` is still re-wrapped.
     assert_eq!(
-        denormalized(&with_name, json!({"rules": [{"name": "n", "y": 2}]})),
+        denormalized(&aliases, json!({"rules": [{"name": "n", "y": 2}]})),
         Value::from(json!({"properties": {"rules": [{"name": "n", "properties": {"y": 2}}]}}))
+    );
+}
+
+#[test]
+fn flattened_wrapper_lookup_uses_the_full_array_name() {
+    // The flattened array is named by every key in the chain: `x.y` for a
+    // nested array and `a.rules` behind an object prefix.
+    let nested = [
+        (
+            "x[*].y[*].z",
+            "properties.x[*].properties.y[*].properties.z",
+        ),
+        (
+            "x[*].y[*].w",
+            "properties.x[*].properties.y[*]['properties'].w",
+        ),
+    ];
+    let prefixed = [
+        ("a.rules[*].x", "properties.a.rules[*].properties.x"),
+        ("a.rules[*].y", "properties.a.rules[*]['properties'].y"),
+    ];
+    assert_eq!(sub_resource_arrays(&nested), vec!["x", "x.y"]);
+    assert_eq!(sub_resource_arrays(&prefixed), vec!["a.rules"]);
+    for aliases in [nested, prefixed] {
+        assert_eq!(
+            registry(&aliases)
+                .get("Test/widgets")
+                .unwrap()
+                .default_aggregates,
+            VersionedAggregates::default(),
+            "{aliases:?}"
+        );
+    }
+    assert_eq!(
+        denormalized(&nested, json!({"x": [{"y": [{"z": 1, "w": 2}]}]})),
+        Value::from(
+            json!({"properties": {"x": [{"properties": {"y": [{"properties": {"z": 1, "w": 2}}]}}]}})
+        )
+    );
+    assert_eq!(
+        normalized(
+            &prefixed,
+            json!({"a": {"rules": [{"properties": {"x": 1, "y": 2}}]}})
+        ),
+        Value::from(json!({"type": "Test/widgets", "a": {"rules": [{"x": 1, "y": 2}]}}))
     );
 }
 
