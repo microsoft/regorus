@@ -1,0 +1,128 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: ascending
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 1)
+    query: data.test.x
+    want_result: [1, 2, 3, 4, 5]
+
+  - note: step-2
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(0, 10, 2)
+    query: data.test.x
+    want_result: [0, 2, 4, 6, 8, 10]
+
+  - note: descending
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(5, 1, 1)
+    query: data.test.x
+    want_result: [5, 4, 3, 2, 1]
+
+  - note: single-element
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(3, 3, 1)
+    query: data.test.x
+    want_result: [3]
+
+  - note: non-integer-step-undefined
+    strict: false
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 0.5)
+    query: data.test.x
+    no_result: true
+
+  - note: zero-step-undefined
+    strict: false
+    data: {}
+    modules:
+      - |
+        package test
+        x = numbers.range_step(1, 5, 0)
+    query: data.test.x
+    no_result: true
+
+  - note: negative-step-undefined
+    strict: false
+    modules: []
+    query: 'x := numbers.range_step(1, 5, -1)'
+    no_result: true
+
+  - note: zero-step-strict-error
+    modules: []
+    query: 'x := numbers.range_step(1, 5, 0)'
+    error: "step must be a positive integer"
+
+  - note: negative-step-strict-error
+    modules: []
+    query: 'x := numbers.range_step(1, 5, -1)'
+    error: "step must be a positive integer"
+
+  - note: fractional-step-strict-error
+    modules: []
+    query: 'x := numbers.range_step(1, 5, 0.5)'
+    error: "step must be a positive integer"
+
+  - note: ascending non-aligned stop
+    modules: []
+    query: 'x := numbers.range_step(1, 8, 3)'
+    want_result:
+      x: [1, 4, 7]
+
+  - note: descending non-aligned stop
+    modules: []
+    query: 'x := numbers.range_step(6, 1, 2)'
+    want_result:
+      x: [6, 4, 2]
+
+  - note: signed integer distance exceeds i64
+    modules: []
+    query: 'x := numbers.range_step(-9223372036854775808, 9223372036854775807, 9223372036854775807)'
+    want_result:
+      x: [-9223372036854775808, -1, 9223372036854775806]
+
+  - note: descending bigint step and endpoints
+    modules: []
+    query: 'x := numbers.range_step(18446744073709551616, -18446744073709551616, 18446744073709551616)'
+    want_result:
+      x: [18446744073709551616, 0, -18446744073709551616]
+
+  - note: large integral float singleton advances exactly
+    modules: []
+    query: 'x := numbers.range_step(1e20, 1e20, 1)'
+    want_result:
+      x: [100000000000000000000]
+
+  - note: integral float step preserves bigint arithmetic
+    modules: []
+    query: 'x := numbers.range_step(-100000000000000000000, 100000000000000000000, 1e20)'
+    want_result:
+      x: [-100000000000000000000, 0, 100000000000000000000]
+
+  - note: small steps from large integral float preserve every integer
+    modules: []
+    query: 'x := numbers.range_step(1e20, 100000000000000000003, 1)'
+    want_result:
+      x: [100000000000000000000, 100000000000000000001, 100000000000000000002, 100000000000000000003]
+
+  - note: fractional endpoint remains undefined in non-strict mode
+    strict: false
+    modules: []
+    query: 'x := numbers.range_step(1.5, 5, 1)'
+    no_result: true

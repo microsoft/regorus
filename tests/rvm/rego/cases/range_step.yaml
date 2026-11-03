@@ -1,0 +1,70 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: range_step_runtime_boundaries_and_exact_integers
+    input:
+      start: 1
+      stop: 8
+      step: 3
+      min: -9223372036854775808
+      max: 9223372036854775807
+      big: 18446744073709551616
+      negative_big: -18446744073709551616
+      float_big: 1e20
+      float_end: 100000000000000000003
+    modules:
+      - |
+        package test
+
+        result := {
+          "ascending": numbers.range_step(input.start, input.stop, input.step),
+          "descending": numbers.range_step(input.stop, input.start, input.step),
+          "singleton": numbers.range_step(input.start, input.start, input.step),
+          "oversized_step": numbers.range_step(input.start, input.stop, input.big),
+          "signed_distance": numbers.range_step(input.min, input.max, input.max),
+          "bigint": numbers.range_step(input.big, input.negative_big, input.big),
+          "float_singleton": numbers.range_step(input.float_big, input.float_big, 1),
+          "float_sequence": numbers.range_step(input.float_big, input.float_end, 1),
+        }
+    query: data.test.result
+    want_result:
+      ascending: [1, 4, 7]
+      descending: [8, 5, 2]
+      singleton: [1]
+      oversized_step: [1]
+      signed_distance: [-9223372036854775808, -1, 9223372036854775806]
+      bigint: [18446744073709551616, 0, -18446744073709551616]
+      float_singleton: [100000000000000000000]
+      float_sequence: [100000000000000000000, 100000000000000000001, 100000000000000000002, 100000000000000000003]
+
+  - note: range_step_invalid_inputs_remain_undefined
+    input:
+      start: 1
+      stop: 5
+      zero: 0
+      negative: -1
+      fractional: 0.5
+    modules:
+      - |
+        package test
+
+        default result := true
+        result := false if {
+          some step in [input.zero, input.negative, input.fractional]
+          numbers.range_step(input.start, input.stop, step)
+        }
+    query: data.test.result
+    want_result: true
+    # RVM uses non-strict builtin errors; the differential harness's interpreter is strict.
+    skip_interpreter: true
+
+  - note: range_step_missing_input_is_undefined
+    input: {}
+    modules:
+      - |
+        package test
+
+        result := numbers.range_step(input.start, 5, 1)
+    query: data.test.result
+    want_result: "#undefined"
