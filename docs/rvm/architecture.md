@@ -60,6 +60,12 @@ rule head as absent incorrectly makes `not` succeed and can grant access.
 The RVM compiler retains that actual head and leaves the suffix for the VM,
 including when the selected rule suspends for a host response.
 
+When `default allow := false; allow if { not data.tenant[input.tenant].deny }`
+is defined in that same `tenant` package, the RVM returns `false` in both modes.
+The interpreter currently returns `true` for this same-package case; its
+`false` result for an equivalent rule in a separate `auth` package does not
+establish same-package parity. This interpreter drift remains deferred.
+
 Dynamic candidates are scheduled without treating them as proven recursive calls.
 For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in
 `package probe` returns `7` for `{"key":"p"}` in the RVM. The interpreter's

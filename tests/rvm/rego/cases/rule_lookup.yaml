@@ -385,3 +385,118 @@ cases:
     modules: *candidate_namespace_modules
     query: data.probe.result
     want_result: 7
+
+  - note: same_package_tenant_deny_true_rtc
+    strict: false
+    allow_interpreter_incorrect_behavior: true
+    data: {}
+    input: {tenant: a}
+    modules: &same_package_tenant_modules
+      - |
+        package tenant
+        import rego.v1
+        a := {"deny": true}
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+    query: data.tenant.allow
+    want_result: false
+
+  - note: same_package_tenant_deny_true_suspendable
+    strict: false
+    allow_interpreter_incorrect_behavior: true
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *same_package_tenant_modules
+    query: data.tenant.allow
+    want_result: false
+
+  - note: same_package_tenant_deny_false_rtc
+    strict: false
+    data: {}
+    input: {tenant: a}
+    modules: &same_package_false_modules
+      - |
+        package tenant
+        import rego.v1
+        a := {"deny": false}
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_deny_false_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *same_package_false_modules
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_missing_rtc
+    strict: false
+    data: {}
+    input: {tenant: missing}
+    modules: *same_package_tenant_modules
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_missing_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: missing}
+    modules: *same_package_tenant_modules
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_missing_field_rtc
+    strict: false
+    data: {}
+    input: {tenant: a}
+    modules: &same_package_missing_field_modules
+      - |
+        package tenant
+        import rego.v1
+        a := {}
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_missing_field_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *same_package_missing_field_modules
+    query: data.tenant.allow
+    want_result: true
+
+  - note: same_package_tenant_ignores_host_sibling_rtc
+    strict: false
+    skip_interpreter: true
+    data: {}
+    input: {tenant: a}
+    modules: &same_package_host_sibling_modules
+      - |
+        package tenant
+        import rego.v1
+        a := {"deny": true}
+        unrelated := __builtin_host_await(null, "must_not_be_called")
+        unrelated_recursive := data.tenant.unrelated_recursive
+        default allow := false
+        allow if { not data.tenant[input.tenant].deny }
+    query: data.tenant.allow
+    want_result: false
+
+  - note: same_package_tenant_ignores_host_sibling_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    data: {}
+    input: {tenant: a}
+    modules: *same_package_host_sibling_modules
+    query: data.tenant.allow
+    want_result: false
