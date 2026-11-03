@@ -4,21 +4,21 @@
 cases:
   - note: urlquery-decode-components
     strict: false
-    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520"]
+    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520", "a=1&b=2", "%EF%BF%BD", "\uFFFD"]
     modules: &components
       - |
         package test
         main := [urlquery.decode(s) | s := input[_]]
     query: data.test.main
-    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20"]
+    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20", "a=1&b=2", "\uFFFD", "\uFFFD"]
 
   - note: urlquery-decode-components-suspendable
     strict: false
     execution_mode: suspendable
-    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520"]
+    input: ["", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%e2%82%ac", "%00", "%2520", "a=1&b=2", "%EF%BF%BD", "\uFFFD"]
     modules: *components
     query: data.test.main
-    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20"]
+    want_result: ["", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "\u20ac", "\0", "%20", "a=1&b=2", "\uFFFD", "\uFFFD"]
 
   - note: urlquery-decode-object-grouping
     strict: false
