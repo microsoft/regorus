@@ -96,9 +96,11 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [startswith](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-startswith)                            | _       |
   | [strings.any_prefix_match](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsany_prefix_match) | _       |
   | [strings.any_suffix_match](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsany_suffix_match) | _       |
+  | [strings.count](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringscount)                       | _       |
   | [strings.render_template](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsrender_template)   | _       |
   | [strings.replace_n](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsreplace_n)               | _       |
   | [strings.reverse](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsreverse)                   | _       |
+  | [strings.split_n](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringssplit_n)                   | _       |
   | [substring](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-substring)                              | _       |
   | [trim](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-trim)                                        | _       |
   | [trim_left](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-trim_left)                              | _       |
