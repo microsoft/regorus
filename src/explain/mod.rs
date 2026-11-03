@@ -27,13 +27,39 @@
 //!
 //! Runtime values use the crate's usual [`Value`](crate::Value)
 //! serialization, except that an undefined value is omitted, which keeps it
-//! distinct from `false`, `null` and the string `"<undefined>"`. An absent
-//! `query_result` always means undefined; an absent rule `result` means
-//! undefined unless a `result_redacted: true` flag says it was withheld
+//! distinct from `false`, `null` and the string `"<undefined>"`. In a report
+//! for a successful evaluation, an absent `query_result` means undefined.
+//! A report can also accompany a failed evaluation, such as one that
+//! failed on a [`RuleOutcome::Conflict`]: the evaluation error is then
+//! authoritative, an absent `query_result` means there is no result rather
+//! than undefined, and the conflicting rule's outcome identifies the cause.
+//! Such a report covers rules only up to the error. No API returns one yet;
+//! the producer API is later work.
+//! An absent rule `result` means
+//! undefined unless a `result_redacted: true` or `result_elided: true` flag
+//! says it was withheld or not stored due to capture limits
 //! (see [`ReportedValue`]). Sets serialize as arrays, and non-string object
 //! keys as JSON strings.
 //!
-//! A report is complete: it explains every rule within the selected scope.
+//! A serialized report starts with `schema_version`
+//! ([`ExplanationReport::SCHEMA_VERSION`]) and identifies what was queried
+//! in [`QueryTarget`]. Each [`RuleExplanation`] says whether the rule
+//! matched, matched nothing or conflicted ([`RuleOutcome`]).
+//!
+//! [`ConditionSite`] stores policy text once per site. Evaluated conditions
+//! in definitions and proofs reference it by site ID and identify their
+//! owning rule invocation. [`ResultExplanation`] groups attribution by Rego
+//! result equality, with bounded proofs, each with the loop iterations that
+//! produced it ([`IterationBinding`]), and unit-named counts that are exact
+//! or, when evaluation stopped early, lower bounds ([`Count`]). Distinct
+//! elements are identified by loop site, iterated collection and key
+//! ([`DistinctElements`]). Concrete operand paths are independently opt-in;
+//! [`ConcretePath`] distinguishes not captured, unrepresentable, and a
+//! captured absence of a direct path.
+//!
+//! A report for a successful evaluation is complete: it explains every rule
+//! within the selected scope. A report accompanying a failed evaluation
+//! covers rules only up to the error.
 //! Signalling a report that was cut short will come with bounded tracing.
 
 mod error;
@@ -48,9 +74,10 @@ mod tests;
 
 pub use error::ExplainError;
 pub use report::{
-    ConditionExplanation, ConditionKind, DefinitionExplanation, EmissionExplanation,
-    ExplanationReport, LoopWitness, Operand, Operator, Outcome, PartialEvalResult, ReportedValue,
-    ResidualCondition, ResidualKind, ResidualQuery, ResidualStatus, RuleExplanation, RuleKind,
-    SourceLocation,
+    ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,
+    DefinitionExplanation, Derivation, DistinctElements, EmissionExplanation, ExplanationReport,
+    IterationBinding, LoopWitness, Operand, Operator, Outcome, PartialEvalResult, PathRoot,
+    PathSegment, QueryTarget, ReportedValue, ResidualCondition, ResidualKind, ResidualQuery,
+    ResidualStatus, ResultExplanation, RuleExplanation, RuleKind, RuleOutcome, SourceLocation,
 };
 pub use settings::{ConditionMode, ExplanationScope, ExplanationSettings, ValueMode};
