@@ -249,6 +249,39 @@ cases:
           "123": "enabled"
     want_effect: "audit"
 
+  # An unquoted numeric subscript on an object is not a key lookup: the field
+  # reads as missing, even when the object has a matching digit key. Quote
+  # the key (`config['1']`) to read it.
+  - note: field_numeric_index_on_object_is_missing
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config[1]",
+          "equals": "enabled"
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "1": "enabled"
+    want_undefined: true
+
+  - note: field_numeric_index_on_object_does_not_exist
+    policy_rule: |
+      {
+        "if": {
+          "field": "properties.config[1]",
+          "exists": false
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        config:
+          "1": "enabled"
+    want_effect: "audit"
+
   - note: field_quoted_key_preserves_literal_inner_apostrophes
     policy_rule: |
       {
