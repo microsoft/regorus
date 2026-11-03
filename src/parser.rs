@@ -855,15 +855,13 @@ impl<'source> Parser<'source> {
 
         while self.token_text() == "," {
             self.next_token()?;
-            let item_start = self.tok.1.start;
+            let mut item_span = self.tok.1.clone();
             let key = match self.token_text() {
                 "}" => break,
                 "" if self.tok.0 == TokenKind::Eof => break,
                 _ => self.parse_in_expr()?,
             };
 
-            let mut item_span = self.tok.1.clone();
-            item_span.start = item_start;
             self.expect(":", "while parsing object item")?;
             let value = self.parse_in_expr()?;
             item_span.end = self.end;

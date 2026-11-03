@@ -813,6 +813,44 @@ fn run(path: &str) {
 }
 
 #[test]
+fn object_field_spans_start_at_their_key() -> Result<()> {
+    // Fields on the first line, on later lines, with the colon on a
+    // different line from the key, and with string and compound keys.
+    let rego = "{1: 2, x: 3,\n  4: 5,\n  6\n  : 7,\n  \"s\": 8, a.b: 9}";
+    let source = Source::from_contents("object.rego".to_string(), rego.to_string())?;
+    let mut parser = Parser::new(&source)?;
+    let expr = parser.parse_expr()?;
+    let Expr::Object { fields, .. } = &expr else {
+        bail!("expected an object, got {expr:?}");
+    };
+
+    let expected = [
+        (1, 2, "1: 2"),
+        (1, 8, "x: 3"),
+        (2, 3, "4: 5"),
+        (3, 3, "6\n  : 7"),
+        // String spans exclude the quotes.
+        (5, 4, "s\": 8"),
+        (5, 11, "a.b: 9"),
+    ];
+    assert_eq!(fields.len(), expected.len());
+    for ((span, key, _), (line, col, text)) in fields.iter().zip(expected) {
+        assert_eq!(
+            (span.line, span.col, span.text()),
+            (line, col, text),
+            "field span"
+        );
+        assert_eq!(
+            span.start,
+            key.span().start,
+            "field span must start at its key"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn path_ref_component_count_is_bounded_before_ast_growth() -> Result<()> {
     for path in [
         format!("package {}", ["segment"; 32].join(".")),
