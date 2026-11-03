@@ -77,7 +77,7 @@ pub fn build_nuget_package(config: &BuildNugetConfig) -> Result<BuildNugetResult
         dir.clone()
     } else {
         let targets = ffi::resolve_targets(config.targets.clone())?;
-        ffi::build_targets(&workspace_root, &targets, config.release)?;
+        ffi::build_targets(&workspace_root, &targets, config.release, false)?;
 
         workspace_root.join("bindings/ffi/target")
     };
