@@ -7,7 +7,7 @@
 
 use super::{
     denormalizer, normalizer, path,
-    types::{PrecomputedRemap, PrecomputedReverseRemap, ResolvedEntry, VersionedAggregates},
+    types::{ResolvedEntry, VersionedAggregates},
     AliasRegistry,
 };
 use crate::Value;
@@ -87,6 +87,8 @@ fn render_round_trips_keys() {
         "a[\"it's]\"]",
         "a[' b ']",
         "['[*]'].x",
+        "rules[*].it's",
+        "a[\"'b'\"]",
     ] {
         let segments = path::parse(text).unwrap().segments;
         assert_eq!(
@@ -205,27 +207,91 @@ fn bracket_alias_wildcard_classification() {
 }
 
 #[test]
-fn quoted_element_leaf_is_remapped() {
-    let registry = registry(&[("rules[*]['a.b']", "properties.rules[*]['X.y']")]);
-    let aggregates = &registry.get("Test/widgets").unwrap().default_aggregates;
+fn bracket_rendered_leaves_are_not_remapped() {
+    // Element remaps are navigated by splitting on dots, so a leaf that needs
+    // a bracket subscript would be written as a garbled key.
+    for aliases in [
+        [("rules[*]['a.b']", "properties.rules[*]['X.y']")],
+        [("rules[*]['a.b']", "properties.rules[*].xy")],
+        [("rules[*].xy", "properties.rules[*]['a.b']")],
+        [("rules[*]['a[b]']", "properties.rules[*].xy")],
+    ] {
+        assert_eq!(
+            registry(&aliases)
+                .get("Test/widgets")
+                .unwrap()
+                .default_aggregates,
+            VersionedAggregates::default(),
+            "{aliases:?}"
+        );
+    }
+    let aliases = [("rules[*]['a.b']", "properties.rules[*].xy")];
     assert_eq!(
-        aggregates.element_remaps,
-        vec![PrecomputedRemap {
-            array_chain: vec![vec!["rules".into()]],
-            source_field: "['x.y']".into(),
-            target_field: "['a.b']".into(),
-        }]
+        normalized(&aliases, json!({"rules": [{"xy": 1}]})),
+        Value::from(json!({"type": "Test/widgets", "rules": [{"xy": 1}]}))
     );
     assert_eq!(
-        aggregates.reverse_element_remaps,
-        vec![PrecomputedReverseRemap {
-            array_chain: vec![vec!["rules".into()]],
-            source_field: "['a.b']".into(),
-            target_field: "['X.y']".into(),
-            cleanup_field: "['a.b']".into(),
-        }]
+        denormalized(&aliases, json!({"rules": [{"xy": 1}]})),
+        Value::from(json!({"properties": {"rules": [{"xy": 1}]}}))
     );
-    assert!(aggregates.array_renames_normalize.is_empty());
+}
+
+#[test]
+fn quote_characters_stay_dotted() {
+    assert_eq!(
+        path::render(&path::parse("rules.it's.say\"hi\"").unwrap().segments),
+        "rules.it's.say\"hi\""
+    );
+    let aliases = [("rules[*].x", "properties.rules[*].it's")];
+    assert_eq!(
+        normalized(&aliases, json!({"rules": [{"it's": 1}]})),
+        Value::from(json!({"type": "Test/widgets", "rules": [{"x": 1}]}))
+    );
+    assert_eq!(
+        denormalized(&aliases, json!({"rules": [{"x": 1}]})),
+        Value::from(json!({"properties": {"rules": [{"it's": 1}]}}))
+    );
+}
+
+#[test]
+fn flattened_array_quoted_properties_is_the_wrapper() {
+    // `x` makes `rules` a flattened sub-resource array, so the quoted
+    // `['properties']` in `y` names the same wrapper that normalization lifts.
+    let aliases = [
+        ("rules[*].x", "properties.rules[*].properties.x"),
+        ("rules[*].y", "properties.rules[*]['properties'].y"),
+    ];
+    assert_eq!(sub_resource_arrays(&aliases), vec!["rules"]);
+    assert_eq!(
+        registry(&aliases)
+            .get("Test/widgets")
+            .unwrap()
+            .default_aggregates,
+        VersionedAggregates::default()
+    );
+    assert_eq!(
+        normalized(
+            &aliases,
+            json!({"rules": [{"name": "n", "properties": {"x": 1, "y": 2}}]})
+        ),
+        Value::from(json!({"type": "Test/widgets", "rules": [{"name": "n", "x": 1, "y": 2}]}))
+    );
+    assert_eq!(
+        denormalized(&aliases, json!({"rules": [{"name": "n", "x": 1, "y": 2}]})),
+        Value::from(
+            json!({"properties": {"rules": [{"name": "n", "properties": {"x": 1, "y": 2}}]}})
+        )
+    );
+    // Without `x` in the element, `y` alone is still re-wrapped.
+    let with_name = [
+        ("rules[*].x", "properties.rules[*].properties.x"),
+        ("rules[*].y", "properties.rules[*]['properties'].y"),
+        ("rules[*].name", "properties.rules[*].name"),
+    ];
+    assert_eq!(
+        denormalized(&with_name, json!({"rules": [{"name": "n", "y": 2}]})),
+        Value::from(json!({"properties": {"rules": [{"name": "n", "properties": {"y": 2}}]}}))
+    );
 }
 
 #[test]
