@@ -514,45 +514,62 @@ fn compute_aggregates_for_version(
         let arm_parts = arm_path.parts();
 
         if short_parts.len() >= 2 && arm_parts.len() >= 2 {
-            if let (Some(short_leaf), Some(arm_leaf_raw)) = (short_parts.last(), arm_parts.last()) {
-                let arm_leaf = arm_leaf_raw.without_properties();
+            let array_chain: Option<Vec<Vec<String>>> = short_parts
+                .get(..short_parts.len().saturating_sub(1))
+                .unwrap_or_default()
+                .iter()
+                .map(|part| {
+                    if part.is_empty() {
+                        return None;
+                    }
+                    part.iter()
+                        .map(|segment| match segment {
+                            path::Segment::Key(key) => Some(key.to_ascii_lowercase()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .collect();
+            if let (Some(array_chain), Some(short_leaf), Some(arm_leaf_raw)) =
+                (array_chain, short_parts.last(), arm_parts.last())
+            {
+                // Elements of a flattened sub-resource array lose their
+                // `properties` object however this alias spells it.
+                let array_name = array_chain
+                    .iter()
+                    .flatten()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let flattened = sub_resource_arrays.contains(&array_name);
+                let arm_leaf = if flattened {
+                    arm_leaf_raw.without_flattened_wrapper()
+                } else {
+                    arm_leaf_raw.without_properties()
+                };
+                // Remaps are applied by splitting on dots, so leaves that
+                // need a bracket subscript are left unaliased.
                 if !short_leaf.is_empty()
                     && !arm_leaf.is_empty()
+                    && path::renders_dotted(short_leaf)
+                    && path::renders_dotted(arm_leaf)
                     && !path::equivalent(short_leaf, arm_leaf)
                 {
-                    let array_chain: Option<Vec<Vec<String>>> = short_parts
-                        .get(..short_parts.len().saturating_sub(1))
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|part| {
-                            if part.is_empty() {
-                                return None;
-                            }
-                            part.iter()
-                                .map(|segment| match segment {
-                                    path::Segment::Key(key) => Some(key.to_ascii_lowercase()),
-                                    _ => None,
-                                })
-                                .collect()
-                        })
-                        .collect();
-                    if let Some(array_chain) = array_chain {
-                        let arm_leaf = path::render(arm_leaf);
-                        let source_lc = arm_leaf.to_ascii_lowercase();
-                        let target_lc = path::render(short_leaf).to_ascii_lowercase();
-                        element_remaps.push(PrecomputedRemap {
-                            array_chain: array_chain.clone(),
-                            source_field: source_lc.clone(),
-                            target_field: target_lc.clone(),
-                        });
+                    let arm_leaf = path::render(arm_leaf);
+                    let source_lc = arm_leaf.to_ascii_lowercase();
+                    let target_lc = path::render(short_leaf).to_ascii_lowercase();
+                    element_remaps.push(PrecomputedRemap {
+                        array_chain: array_chain.clone(),
+                        source_field: source_lc.clone(),
+                        target_field: target_lc.clone(),
+                    });
 
-                        reverse_element_remaps.push(PrecomputedReverseRemap {
-                            array_chain: array_chain.clone(),
-                            source_field: target_lc.clone(),
-                            target_field: arm_leaf,
-                            cleanup_field: target_lc,
-                        });
-                    }
+                    reverse_element_remaps.push(PrecomputedReverseRemap {
+                        array_chain,
+                        source_field: target_lc.clone(),
+                        target_field: arm_leaf,
+                        cleanup_field: target_lc,
+                    });
                 }
             }
         }

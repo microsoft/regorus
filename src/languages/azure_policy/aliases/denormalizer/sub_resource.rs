@@ -93,11 +93,12 @@ fn classify_envelope_fields(
             continue;
         };
         // Classify by the ARM part at this array's element level, not by the
-        // deepest part of a nested field.
+        // deepest part of a nested field. The array is flattened, so a quoted
+        // `['properties']` there is the same wrapper.
         let wrapped = arm_path
             .parts()
             .get(array_keys.len())
-            .is_some_and(path::Part::has_wrapper);
+            .is_some_and(path::Part::has_flattened_wrapper);
 
         if !wrapped {
             envelope.insert(first_segment.to_ascii_lowercase());

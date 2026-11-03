@@ -80,8 +80,15 @@ impl<'a> Part<'a> {
     /// ASCII case) followed by a key; a standalone or indexed `properties` is
     /// an ordinary field.
     pub fn has_wrapper(&self) -> bool {
-        self.quoted.first() == Some(&false)
-            && matches!(self.segments.first(), Some(Segment::Key(key)) if key.eq_ignore_ascii_case("properties"))
+        self.quoted.first() == Some(&false) && self.has_flattened_wrapper()
+    }
+
+    /// Whether this part starts with a `properties` key (any ASCII case,
+    /// quoted or not) followed by a key. Normalization lifts that object out
+    /// of every element of a flattened sub-resource array, however the alias
+    /// spells it.
+    pub fn has_flattened_wrapper(&self) -> bool {
+        matches!(self.segments.first(), Some(Segment::Key(key)) if key.eq_ignore_ascii_case("properties"))
             && matches!(self.segments.get(1), Some(Segment::Key(_)))
     }
 
@@ -95,6 +102,15 @@ impl<'a> Part<'a> {
     /// Strip a leading `properties` wrapper (see [`Part::has_wrapper`]).
     pub fn without_properties(&self) -> &'a [Segment] {
         if self.has_wrapper() {
+            self.segments.get(1..).unwrap_or_default()
+        } else {
+            self.segments
+        }
+    }
+
+    /// Strip a leading flattened wrapper (see [`Part::has_flattened_wrapper`]).
+    pub fn without_flattened_wrapper(&self) -> &'a [Segment] {
+        if self.has_flattened_wrapper() {
             self.segments.get(1..).unwrap_or_default()
         } else {
             self.segments
@@ -225,12 +241,26 @@ pub fn equivalent(left: &[Segment], right: &[Segment]) -> bool {
             })
 }
 
+/// Whether [`render`] must spell this key as a quoted subscript. Quote
+/// characters alone do not need one: they only open a quote after `[`.
+fn needs_subscript(key: &str) -> bool {
+    key.contains(['.', '[', ']']) || key.trim() != key
+}
+
+/// Whether [`render`] spells these segments as plain dotted keys, the only
+/// form that dot-split runtime navigation (element remaps) can follow.
+pub fn renders_dotted(segments: &[Segment]) -> bool {
+    segments
+        .iter()
+        .all(|segment| matches!(segment, Segment::Key(key) if !needs_subscript(key)))
+}
+
 pub fn render(segments: &[Segment]) -> String {
     let mut result = String::new();
     for segment in segments {
         match segment {
             Segment::Key(key) => {
-                if !key.contains(['.', '[', ']', '\'', '"']) && key.trim() == key.as_ref() {
+                if !needs_subscript(key) {
                     if !result.is_empty() {
                         result.push('.');
                     }
