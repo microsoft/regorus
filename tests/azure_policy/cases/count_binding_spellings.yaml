@@ -193,23 +193,20 @@ cases:
       items: [{"a][b": ["x", "y"], "'a": {"b'": ["x"]}}]
     want_undefined: true
 
-  # Quoted wildcard collection prefixes require the independent quote-aware
-  # wildcard path splitting, which is not yet supported. These cases are
-  # skipped until it lands.
-  - note: quoted_wildcard_key_prefix_pending_splitter
-    skip: true
+  # A quoted key containing `[*]` in the count prefix is one literal key, and
+  # a where field with the other quote style binds to the current element.
+  - note: quoted_wildcard_key_prefix_binds
     policy_rule: |
       {"if":{"count":{"field":"m['a[*]'][*]","where":{"field":"m[\"a[*]\"][*].state","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
     resource:
       m: {"a[*]": [{state: "on"}, {state: "off"}]}
     want_effect: deny
 
-  - note: quoted_wildcard_key_prefix_pending_splitter_no_match
-    skip: true
+  - note: quoted_wildcard_key_prefix_binds_no_match
     policy_rule: |
-      {"if":{"count":{"field":"m['a[*]'][*]","where":{"field":"m[\"a[*]\"][*].state","equals":"on"}},"equals":1},"then":{"effect":"deny"}}
+      {"if":{"count":{"field":"m['a[*]'][*]","where":{"field":"m[\"a[*]\"][*].state","equals":"on"}},"equals":0},"then":{"effect":"deny"}}
     resource:
-      m: {"a[*]": [{state: "on"}, {state: "off"}, {state: "on"}]}
+      m: {"a[*]": [{state: "on"}, {state: "off"}]}
     want_undefined: true
 
   # The legacy dotted form also reaches an index of the current element:
