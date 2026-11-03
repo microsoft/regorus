@@ -32,7 +32,7 @@ pub struct SiteId(pub u32);
 /// The rule body or function definition that a check belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct ConditionOwner {
+pub struct SiteOwner {
     /// Index of the rule; see [`Provenance::rule`].
     pub rule: usize,
     /// Index of the rule definition.
@@ -61,7 +61,7 @@ pub struct CheckSite {
     /// Program counter of the checking instruction.
     pub pc: usize,
     /// Rule body that the check belongs to.
-    pub owner: ConditionOwner,
+    pub owner: SiteOwner,
     /// Position of the check among the checks of its owner body, from 0.
     /// With the owner's rule name, definition and body, this identifies
     /// the check independently of the other rules in the program.
@@ -176,7 +176,7 @@ impl Provenance {
     }
 
     /// The rule or function with index `index`, as used by
-    /// [`ConditionOwner::rule`].
+    /// [`SiteOwner::rule`].
     pub fn rule(&self, index: usize) -> Option<&RuleOwner> {
         self.rules.get(index)
     }
@@ -275,7 +275,7 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
 /// Start of each rule body and argument-matching block, sorted by pc. The
 /// compiler emits each rule's code contiguously, so a body runs from its
 /// start to the next start.
-fn owner_starts(program: &Program) -> Vec<(usize, ConditionOwner)> {
+fn owner_starts(program: &Program) -> Vec<(usize, SiteOwner)> {
     let mut starts = Vec::new();
     for (rule, info) in program.rule_infos.iter().enumerate() {
         for (definition, bodies) in info.definitions.iter().enumerate() {
@@ -288,7 +288,7 @@ fn owner_starts(program: &Program) -> Vec<(usize, ConditionOwner)> {
             );
             for (pc, body) in entries {
                 if let Ok(pc) = usize::try_from(pc) {
-                    let owner = ConditionOwner {
+                    let owner = SiteOwner {
                         rule,
                         definition,
                         body,
