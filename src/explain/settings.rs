@@ -16,12 +16,14 @@ pub enum ValueMode {
     /// [`results`](super::RuleExplanation::results) keys and values of the
     /// rules the query depends on.
     ///
-    /// Never redacted, because evaluation returns them to the caller anyway:
-    /// the query result, and for the top-level evaluation of the rule the
-    /// query names (see [`QueryTarget`](super::QueryTarget)) its result, the
-    /// keys and values of its emissions, and the `key` and `value` of each
-    /// of its [`ResultExplanation`](super::ResultExplanation)s. Condition
-    /// text and
+    /// Never redacted after a successful evaluation, because evaluation
+    /// returns them to the caller anyway: the query result, and for the
+    /// top-level evaluation of the rule the query names (see
+    /// [`QueryTarget`](super::QueryTarget)) its result, the keys and values
+    /// of its emissions, and the `key` and `value` of each of its
+    /// [`ResultExplanation`](super::ResultExplanation)s. A failed evaluation
+    /// returns no result, so values retained before the failure, including
+    /// these, remain subject to redaction. Condition text and
     /// source-template operand paths are policy source and are reported as
     /// written. Opted-in concrete paths can contain runtime-derived keys:
     /// sensitive paths are withheld in their entirety and marked
