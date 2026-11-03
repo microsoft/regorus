@@ -4,7 +4,7 @@
 
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::{DeserializationResult, Program};
-use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
 use regorus::{Engine, Rc, Value};
 use std::sync::Arc;
 
@@ -363,10 +363,22 @@ fn default_bytecode_metadata_is_validated() {
     assert!(program.serialize_binary().is_err());
     assert!(program.serialize_json().is_err());
     for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-        let mut vm = RegoVM::new();
-        vm.load_program(Arc::new(program.clone()));
-        vm.set_execution_mode(mode);
-        assert!(vm.execute_entry_point_by_name(ENTRY).is_err());
+        for by_name in [true, false] {
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::new(program.clone()));
+            vm.set_execution_mode(mode);
+            let result = if by_name {
+                vm.execute_entry_point_by_name(ENTRY)
+            } else {
+                vm.execute()
+            };
+            assert!(
+                matches!(result, Err(VmError::Internal { ref message, .. })
+                    if message == "Invalid default bytecode for rule 'data.defaults.result'"),
+                "{mode:?}, by_name={by_name}: {result:?}"
+            );
+            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+        }
     }
 }
 
@@ -387,6 +399,14 @@ fn malformed_serialized_default_metadata_is_rejected() {
 #[test]
 fn legacy_json_defaults_require_recompilation_before_execution() {
     let program = compile("package defaults\ndefault result := 7", &[]);
+    for current in round_trips(program.clone()) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(current.clone());
+            vm.set_execution_mode(mode);
+            assert_eq!(vm.execute().unwrap(), Value::from(7));
+        }
+    }
     let mut json: serde_json::Value =
         serde_json::from_str(&program.serialize_json().unwrap()).unwrap();
     json["rule_infos"][0]
@@ -397,10 +417,22 @@ fn legacy_json_defaults_require_recompilation_before_execution() {
     assert!(legacy.needs_recompilation);
     assert_eq!(legacy.sources.len(), program.sources.len());
     for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-        let mut vm = RegoVM::new();
-        vm.load_program(legacy.clone());
-        vm.set_execution_mode(mode);
-        assert!(vm.execute_entry_point_by_name(ENTRY).is_err());
+        for by_name in [true, false] {
+            let mut vm = RegoVM::new();
+            vm.load_program(legacy.clone());
+            vm.set_execution_mode(mode);
+            let result = if by_name {
+                vm.execute_entry_point_by_name(ENTRY)
+            } else {
+                vm.execute()
+            };
+            assert!(
+                matches!(result, Err(VmError::Internal { ref message, .. })
+                    if message == "program requires recompilation"),
+                "{mode:?}, by_name={by_name}: {result:?}"
+            );
+            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+        }
     }
 }
 

@@ -268,8 +268,7 @@ impl RegoVM {
         self.register_window_pool.push(window);
     }
 
-    /// Validate VM state consistency for debugging
-    pub(super) fn validate_vm_state(&self) -> Result<()> {
+    pub(super) fn validate_program_for_execution(&self) -> Result<()> {
         if self.program.needs_recompilation {
             return Err(VmError::Internal {
                 message: alloc::string::String::from("program requires recompilation"),
@@ -281,7 +280,12 @@ impl RegoVM {
             .map_err(|message| VmError::Internal {
                 message,
                 pc: self.pc,
-            })?;
+            })
+    }
+
+    /// Validate VM state consistency for debugging
+    pub(super) fn validate_vm_state(&self) -> Result<()> {
+        self.validate_program_for_execution()?;
         // Check register bounds
         if self.registers.len() < self.base_register_count {
             return Err(VmError::RegisterCountBelowBase {

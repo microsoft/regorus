@@ -193,6 +193,7 @@ impl RegoVM {
             self.reset_run_to_completion_state()?;
             self.reset_execution_timer_state();
             self.execution_state = ExecutionState::Running;
+            self.validate_program_for_execution()?;
             self.check_initial_memory_limit()?;
             self.jump_to(0_u32)
                 .map_err(|err| self.apply_memory_budget_precedence(err))
@@ -240,6 +241,8 @@ impl RegoVM {
             let result = (|| {
                 if validate_vm_state {
                     vm.validate_vm_state()?;
+                } else {
+                    vm.validate_program_for_execution()?;
                 }
                 vm.check_initial_memory_limit()
             })()
@@ -835,6 +838,16 @@ mod tests {
             assert_eq!(vm.execute().expect("execution succeeds"), Value::Bool(true));
             assert_eq!(vm.executed_instructions, 2);
             assert_eq!(vm.memory_check_count, vm.executed_instructions);
+        }
+    }
+
+    #[test]
+    fn empty_program_execution_remains_undefined_in_both_modes() {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(Arc::new(Program::new()));
+            assert_eq!(vm.execute(), Ok(Value::Undefined));
         }
     }
 

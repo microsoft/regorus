@@ -123,6 +123,9 @@ without defaults migrate directly; those with folded defaults retain their
 sources and entry points but require recompilation to avoid frozen input/data.
 Legacy JSON defaults without the new metadata also set `needs_recompilation`;
 the VM rejects flagged programs rather than executing potentially frozen values.
+Both `execute()` and named/indexed entry-point execution check this flag and
+default metadata before dispatch in either execution mode; `resume()` continues
+the already-validated execution without restarting it.
 
 ---
 
