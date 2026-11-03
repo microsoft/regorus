@@ -52,6 +52,7 @@ In future, each builtin will be associated with a feature (many builtins could b
   | Builtin                                                                                                   | Feature |
   |-----------------------------------------------------------------------------------------------------------|---------|
   | [array.concat](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayconcat)   | _       |
+  | [array.flatten](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayflatten) | _       |
   | [array.reverse](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayreverse) | _       |
   | [array.slice](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayslice)     | _       |
 

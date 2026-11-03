@@ -1,0 +1,67 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: shallow
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([[1, 2], [3, 4]])
+    query: data.test.x
+    want_result: [1, 2, 3, 4]
+
+  - note: mixed-depth
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([[1, [2, 3]], 4, [5]])
+    query: data.test.x
+    want_result: [1, [2, 3], 4, 5]
+
+  - note: empty
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([])
+    query: data.test.x
+    want_result: []
+
+  - note: all-scalars
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([1, 2, 3])
+    query: data.test.x
+    want_result: [1, 2, 3]
+
+  - note: undefined-element-propagates
+    data: {}
+    modules:
+      - |
+        package test
+        r { false }
+        x = array.flatten([r])
+    query: data.test.x
+    no_result: true
+
+  - note: wrong-type
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten("not-an-array")
+    query: data.test.x
+    error: "`array.flatten` expects array argument."
+
+  - note: too-many-args
+    data: {}
+    modules:
+      - |
+        package test
+        x = array.flatten([1], [2])
+    query: data.test.x
+    error: "`array.flatten` expects 1 argument"
