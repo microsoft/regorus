@@ -6,7 +6,6 @@
 
 use alloc::format;
 use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
 
 use anyhow::{anyhow, bail, Result};
 
@@ -17,8 +16,27 @@ use crate::rvm::instructions::{GuardMode, LoopMode, LoopStartParams, PolicyOp};
 use crate::rvm::Instruction;
 use crate::Value;
 
+use super::binding_path::{
+    is_malformed_below, join_count_prefix, match_count_prefix, split_bound_path, CountPrefixMatch,
+};
 use super::core::{Compiler, CountBinding};
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards};
+use super::utils::{
+    ensure_count_field_path, has_unquoted_wildcard, split_count_wildcard_path,
+    split_path_without_wildcards,
+};
+
+/// A field path that continues below the current element of a count binding;
+/// see [`Compiler::resolve_path_below_bound_element`].
+pub(super) struct PathBelowBoundElement {
+    pub(super) binding: CountBinding,
+    /// The binding's wildcard prefix (as spelled when the binding was made).
+    pub(super) outer_prefix: String,
+    /// The lowercased path below the bound element (e.g. `subs[*]`,
+    /// `['subs'][*]`, `['state']`).
+    pub(super) rest: String,
+    /// Whether `rest` contains an unquoted `[*]`.
+    pub(super) rest_has_wildcard: bool,
+}
 
 impl Compiler {
     pub(super) fn compile_count(&mut self, count_node: &CountNode) -> Result<u8> {
@@ -51,25 +69,17 @@ impl Compiler {
                 // Multi-level wildcard (e.g. `A[*].B[*]`) → emit nested loops.
                 // If an outer count binding covers part of the path, start
                 // from the bound element instead of the resource root.
-                if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
-                    if let Some(binding) = self.resolve_count_binding(&field_path)? {
-                        if let Some(outer_prefix) = &binding.field_wildcard_prefix {
-                            let lc_prefix = outer_prefix.to_ascii_lowercase();
-                            let wildcard_dot = format!("{}[*].", lc_prefix);
-                            if let Some(inner_path) =
-                                field_path.to_ascii_lowercase().strip_prefix(&wildcard_dot)
-                            {
-                                let inner_path = inner_path.to_string();
-                                return self.compile_count_nested(
-                                    Some(binding.current_reg),
-                                    &inner_path,
-                                    where_.as_deref(),
-                                    outer_prefix,
-                                    span,
-                                );
-                            }
-                        }
+                if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
+                    if let Some(nested) = self.resolve_path_below_bound_element(&field_path)? {
+                        return self.compile_count_nested(
+                            Some(nested.binding.current_reg),
+                            &nested.rest,
+                            where_.as_deref(),
+                            &nested.outer_prefix,
+                            span,
+                        );
                     }
+                    self.ensure_not_malformed_below_binding(&field_path, span)?;
                     return self.compile_count_nested(
                         None,
                         &field_path,
@@ -86,8 +96,8 @@ impl Compiler {
         }
     }
 
-    /// Resolve the collection register and wildcard prefix for a field-based
-    /// count node, handling nested count bindings.
+    /// Resolve the collection register and wildcard prefix for a
+    /// single-wildcard field-based count node.
     fn resolve_count_field_collection(
         &mut self,
         field: &crate::languages::azure_policy::ast::FieldNode,
@@ -97,33 +107,10 @@ impl Compiler {
         let (collection_prefix, suffix) =
             split_count_wildcard_path(&field_path).map_err(|e| span.error(&e.to_string()))?;
 
-        // Check if this field path is relative to an outer count binding.
-        if let Some(binding) = self.resolve_count_binding(&field_path)? {
-            if let Some(outer_prefix) = &binding.field_wildcard_prefix {
-                let lc_prefix = outer_prefix.to_ascii_lowercase();
-                let wildcard_dot = format!("{}[*].", lc_prefix);
-                if let Some(inner_path) =
-                    field_path.to_ascii_lowercase().strip_prefix(&wildcard_dot)
-                {
-                    let inner_path = inner_path.to_string();
-                    if inner_path.contains("[*]") {
-                        let (inner_collection, _) = split_count_wildcard_path(&inner_path)
-                            .map_err(|e| span.error(&e.to_string()))?;
-                        let inner_collection = inner_collection.to_ascii_lowercase();
-                        let parts = split_path_without_wildcards(&inner_collection)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                        let collection_reg =
-                            self.emit_chained_index_literal_path(binding.current_reg, &refs, span)?;
-                        let inner_prefix = format!("{}[*].{}", lc_prefix, inner_collection);
-                        return Ok((collection_reg, inner_prefix));
-                    }
-                }
-            }
-        }
-
-        // Multi-level wildcard: now handled by compile_count_nested in compile_count.
-        // (Single-wildcard paths fall through to here.)
-        if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
+        // Multi-level wildcard paths, including those that continue below an
+        // outer count binding's element, are handled by compile_count_nested
+        // in compile_count.  Only single-wildcard paths reach here.
+        if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
             bail!(span.error(&format!(
                 "multi-wildcard path should have been handled before resolve_count_field_collection: {}",
                 field_path
@@ -157,13 +144,13 @@ impl Compiler {
     ) -> Result<u8> {
         let (collection_part, suffix) =
             split_count_wildcard_path(remaining_path).map_err(|e| span.error(&e.to_string()))?;
-        let has_more_wildcards = suffix.as_ref().is_some_and(|s| s.contains("[*]"));
+        let has_more_wildcards = suffix.as_deref().is_some_and(has_unquoted_wildcard);
 
         // Build the binding prefix for this level.
         let binding_prefix = if accumulated_prefix.is_empty() {
             collection_part.clone()
         } else {
-            format!("{}[*].{}", accumulated_prefix, collection_part)
+            join_count_prefix(accumulated_prefix, &collection_part)
         };
 
         // Lowercase the collection path to match normalized resource keys.
@@ -173,9 +160,8 @@ impl Compiler {
         // the collection segment before `[*]` is non-empty.
         let collection_reg = match base_reg {
             Some(base) => {
-                let parts = split_path_without_wildcards(&collection_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                let parts = split_bound_path(&collection_lower)?;
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None => self.compile_resource_path_value(&collection_lower, span)?,
         };
@@ -235,6 +221,7 @@ impl Compiler {
             name: None,
             field_wildcard_prefix: Some(binding_prefix.clone()),
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Recurse for the inner level(s).
@@ -313,12 +300,12 @@ impl Compiler {
     ) -> Result<Option<u8>> {
         let (collection_part, suffix) =
             split_count_wildcard_path(remaining_path).map_err(|e| span.error(&e.to_string()))?;
-        let has_more_wildcards = suffix.as_ref().is_some_and(|s| s.contains("[*]"));
+        let has_more_wildcards = suffix.as_deref().is_some_and(has_unquoted_wildcard);
 
         let binding_prefix = if accumulated_prefix.is_empty() {
             collection_part.clone()
         } else {
-            format!("{}[*].{}", accumulated_prefix, collection_part)
+            join_count_prefix(accumulated_prefix, &collection_part)
         };
 
         // Lowercase the collection path to match normalized resource keys.
@@ -328,9 +315,8 @@ impl Compiler {
         // the collection segment before `[*]` is non-empty.
         let collection_reg = match base_reg {
             Some(base) => {
-                let parts = split_path_without_wildcards(&collection_lower)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                let parts = split_bound_path(&collection_lower)?;
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None => self.compile_resource_path_value(&collection_lower, span)?,
         };
@@ -386,6 +372,7 @@ impl Compiler {
             name: None,
             field_wildcard_prefix: Some(binding_prefix.clone()),
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Recurse — the inner call returns Some(result_reg) with the final
@@ -461,7 +448,22 @@ impl Compiler {
     /// resolution.  Built-in field kinds (`type`, `id`, …) are returned
     /// as-is; aliases go through [`resolve_alias_path`] which normalises
     /// and lowercases when the alias catalog is loaded.
+    ///
+    /// The path must end with an unquoted `[*]`, optionally followed by
+    /// whitespace (see [`ensure_count_field_path`]).  So any suffix that
+    /// [`split_count_wildcard_path`] returns for it is either whitespace-only
+    /// (`items[*] `) or contains another unquoted `[*]`.
     fn extract_field_count_path(
+        &self,
+        field: &crate::languages::azure_policy::ast::FieldNode,
+        span: &crate::lexer::Span,
+    ) -> Result<String> {
+        let path = self.field_count_path(field, span)?;
+        ensure_count_field_path(&path).map_err(|e| span.error(&e.to_string()))?;
+        Ok(path)
+    }
+
+    fn field_count_path(
         &self,
         field: &crate::languages::azure_policy::ast::FieldNode,
         span: &crate::lexer::Span,
@@ -479,7 +481,12 @@ impl Compiler {
             }
             FieldKind::ApiVersion => Ok("apiVersion".to_string()),
             FieldKind::Tags => Ok("tags".to_string()),
-            FieldKind::Tag(tag) => Ok(format!("tags.{}", tag)),
+            // A tag value is a string, never an array.  `tags.{tag}` would
+            // also turn a tag named `a[*]` into a real wildcard.
+            FieldKind::Tag(tag) => bail!(span.error(&format!(
+                "count over a tag field is not supported (tag values are not arrays): tags['{}']",
+                tag
+            ))),
             FieldKind::Alias(path) => self.resolve_alias_path(path, span),
             FieldKind::Expr(_) => {
                 bail!(span.error("count over expression field is not supported in core subset",))
@@ -529,6 +536,7 @@ impl Compiler {
             name: binding_name,
             field_wildcard_prefix,
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         // Compile where clause body (if present) as a conditional increment.
@@ -623,7 +631,7 @@ impl Compiler {
                 let field_path = self.extract_field_count_path(field, span)?;
                 let (_, suffix) = split_count_wildcard_path(&field_path)
                     .map_err(|e| span.error(&e.to_string()))?;
-                if suffix.as_ref().is_some_and(|s| s.contains("[*]")) {
+                if suffix.as_deref().is_some_and(has_unquoted_wildcard) {
                     // Skip the nested Any optimization when there is no where
                     // clause.  The non-optimized path in `compile_count_nested`
                     // uses `Instruction::Count` for the innermost level, which
@@ -637,26 +645,17 @@ impl Compiler {
                         return Ok(None);
                     };
 
-                    if let Some(binding) = self.resolve_count_binding(&field_path)? {
-                        if let Some(outer_prefix) = &binding.field_wildcard_prefix {
-                            let lc_prefix = outer_prefix.to_ascii_lowercase();
-                            let expected_prefix = format!("{}[*].", lc_prefix);
-                            if let Some(inner_path) = field_path
-                                .to_ascii_lowercase()
-                                .strip_prefix(&expected_prefix)
-                            {
-                                let inner_path = inner_path.to_string();
-                                return self.compile_count_nested_any(
-                                    Some(binding.current_reg),
-                                    &inner_path,
-                                    wc,
-                                    outer_prefix,
-                                    exists,
-                                    span,
-                                );
-                            }
-                        }
+                    if let Some(nested) = self.resolve_path_below_bound_element(&field_path)? {
+                        return self.compile_count_nested_any(
+                            Some(nested.binding.current_reg),
+                            &nested.rest,
+                            wc,
+                            &nested.outer_prefix,
+                            exists,
+                            span,
+                        );
                     }
+                    self.ensure_not_malformed_below_binding(&field_path, span)?;
                     return self.compile_count_nested_any(None, &field_path, wc, "", exists, span);
                 }
 
@@ -743,6 +742,7 @@ impl Compiler {
             name: binding_name,
             field_wildcard_prefix,
             current_reg,
+            resource_override_reg: self.resource_override_reg,
         });
 
         if let Some(wc) = where_constraint {
@@ -783,34 +783,86 @@ impl Compiler {
         Ok(result_reg)
     }
 
-    /// Find the innermost active count binding that covers `field_path`.
+    /// Resolve `field_path` against the innermost covering count binding and,
+    /// when it continues below that binding's current element through the
+    /// counted wildcard (`prefix[*]<rest>`, e.g. `prefix[*].subs[*]` or
+    /// `prefix[*]['subs'][*]`), return the binding together with `rest`
+    /// (lowercased) relative to the bound element.
     ///
-    /// Matching rules (all case-insensitive):
-    /// 1. **Named binding** — `field_path` equals the binding's `name`.
-    /// 2. **Wildcard prefix** — `field_path` matches the binding's prefix,
-    ///    its `prefix[*]` form, or starts with `prefix.` / `prefix[*].`.
+    /// Shared by nested counts and inner-wildcard field conditions so every
+    /// site agrees with [`Self::resolve_count_binding`] on what is bound.
+    pub(super) fn resolve_path_below_bound_element(
+        &self,
+        field_path: &str,
+    ) -> Result<Option<PathBelowBoundElement>> {
+        let Some(binding) = self.resolve_count_binding(field_path)? else {
+            return Ok(None);
+        };
+        let Some(outer_prefix) = binding.field_wildcard_prefix.clone() else {
+            return Ok(None);
+        };
+        let lc_path = field_path.to_ascii_lowercase();
+        match match_count_prefix(&outer_prefix, &lc_path) {
+            Some(CountPrefixMatch::BelowElement {
+                rest,
+                rest_has_wildcard,
+                via_wildcard: true,
+            }) => Ok(Some(PathBelowBoundElement {
+                rest: rest.to_string(),
+                rest_has_wildcard,
+                outer_prefix,
+                binding,
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    /// Reject a field path that is spelled under an active count binding's
+    /// prefix but cannot be parsed (see [`is_malformed_below`]), so it is
+    /// not silently read from the resource root instead.  Call this wherever
+    /// an unbound wildcard path falls back to the root.
+    pub(super) fn ensure_not_malformed_below_binding(
+        &self,
+        field_path: &str,
+        span: &crate::lexer::Span,
+    ) -> Result<()> {
+        for binding in self.count_bindings.iter().rev() {
+            if binding.resource_override_reg != self.resource_override_reg {
+                continue;
+            }
+            let Some(prefix) = &binding.field_wildcard_prefix else {
+                continue;
+            };
+            if is_malformed_below(prefix, field_path) {
+                bail!(span.error(&format!(
+                    "invalid field path below count binding '{}': {}",
+                    prefix, field_path
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Find the innermost active field-count binding for the current resource
+    /// that covers `field_path`.
+    ///
+    /// A binding matches (case-insensitively) when `field_path` selects from
+    /// its current element per [`match_count_prefix`]: `prefix`, `prefix[*]`,
+    /// `prefix[*]` followed by a key or index (`.state`, `['state']`, `[0]`,
+    /// …), or the legacy `prefix.key` form. Paths are compared as parsed
+    /// segments, so dotted and quoted-bracket spellings match. A value
+    /// count's `name` never matches: it is reachable only through
+    /// `current()`, while field paths always read the resource.
     ///
     /// Bindings are searched innermost-first (reverse stack order) so a
     /// nested count's binding shadows an outer one for the same prefix.
     pub(super) fn resolve_count_binding(&self, field_path: &str) -> Result<Option<CountBinding>> {
-        let fp = field_path.to_ascii_lowercase();
         for binding in self.count_bindings.iter().rev() {
-            if let Some(name) = &binding.name {
-                if fp.eq_ignore_ascii_case(name) {
-                    return Ok(Some(binding.clone()));
-                }
+            if binding.resource_override_reg != self.resource_override_reg {
+                continue;
             }
-
             if let Some(prefix) = &binding.field_wildcard_prefix {
-                let lc_prefix = prefix.to_ascii_lowercase();
-                let wildcard_prefix = format!("{}[*]", lc_prefix);
-                let prefix_dot = format!("{}.", lc_prefix);
-                let wildcard_dot = format!("{}.", wildcard_prefix);
-                if fp == lc_prefix
-                    || fp.starts_with(&prefix_dot)
-                    || fp == wildcard_prefix
-                    || fp.starts_with(&wildcard_dot)
-                {
+                if match_count_prefix(prefix, field_path).is_some() {
                     return Ok(Some(binding.clone()));
                 }
             }
@@ -819,9 +871,9 @@ impl Compiler {
         Ok(None)
     }
 
-    /// Compile a field reference relative to an active count binding.
+    /// Compile a field reference relative to an active field-count binding.
     ///
-    /// If `field_path` matches the binding exactly (name or prefix),
+    /// If `field_path` matches the binding's prefix exactly,
     /// emits a `Move` from the binding's current-element register.
     /// If `field_path` extends past the binding (e.g. `prefix.sub.key`),
     /// navigates the suffix via chained index lookups.  All comparisons
@@ -834,44 +886,32 @@ impl Compiler {
     ) -> Result<u8> {
         let fp = field_path.to_ascii_lowercase();
 
-        if let Some(name) = &binding.name {
-            if fp.eq_ignore_ascii_case(name) {
-                let dest = self.alloc_register()?;
-                self.emit(
-                    Instruction::Move {
-                        dest,
-                        src: binding.current_reg,
-                    },
-                    span,
-                );
-                return Ok(dest);
-            }
-        }
-
         if let Some(prefix) = &binding.field_wildcard_prefix {
-            let lc_prefix = prefix.to_ascii_lowercase();
-            let wildcard_prefix = format!("{}[*]", lc_prefix);
-
-            if fp == lc_prefix || fp == wildcard_prefix {
-                let dest = self.alloc_register()?;
-                self.emit(
-                    Instruction::Move {
-                        dest,
-                        src: binding.current_reg,
-                    },
-                    span,
-                );
-                return Ok(dest);
-            }
-
-            let prefix_dot = format!("{}.", lc_prefix);
-            if let Some(suffix) = fp.strip_prefix(&prefix_dot) {
-                return self.compile_suffix_from_binding(binding.current_reg, suffix, span);
-            }
-
-            let wildcard_dot = format!("{}[*].", lc_prefix);
-            if let Some(suffix) = fp.strip_prefix(&wildcard_dot) {
-                return self.compile_suffix_from_binding(binding.current_reg, suffix, span);
+            match match_count_prefix(prefix, &fp) {
+                Some(CountPrefixMatch::CurrentElement) => {
+                    let dest = self.alloc_register()?;
+                    self.emit(
+                        Instruction::Move {
+                            dest,
+                            src: binding.current_reg,
+                        },
+                        span,
+                    );
+                    return Ok(dest);
+                }
+                Some(CountPrefixMatch::BelowElement {
+                    rest,
+                    rest_has_wildcard,
+                    ..
+                }) => {
+                    return self.compile_suffix_from_binding(
+                        binding.current_reg,
+                        rest,
+                        rest_has_wildcard,
+                        span,
+                    );
+                }
+                None => {}
             }
         }
 
@@ -883,25 +923,42 @@ impl Compiler {
 
     /// Compile a suffix path from a binding's current register.
     ///
-    /// If the suffix contains `[*]` (from a nested count context), only the
-    /// portion before the first `[*]` is used for navigation.  The inner
-    /// count's loop will handle the iteration.
+    /// If the suffix contains further `[*]` levels (`has_wildcard`, as
+    /// reported by [`match_count_prefix`]), the values they select under the
+    /// current element are collected into a flat array (the same shape an
+    /// unbound wildcard `field()` produces).  Otherwise the suffix is
+    /// navigated to a single value.  The suffix may start with a bracket
+    /// (`['key']`, `[0]`).
     fn compile_suffix_from_binding(
         &mut self,
         base_reg: u8,
         suffix: &str,
+        has_wildcard: bool,
         span: &crate::lexer::Span,
     ) -> Result<u8> {
-        // Strip any trailing [*] or [*].suffix — we only navigate to the
-        // array itself; the count loop iterates its elements.
-        let nav_path = suffix
-            .split_once("[*]")
-            .map_or(suffix, |(prefix, _)| prefix);
+        if has_wildcard {
+            return self.compile_field_wildcard_collect(Some(base_reg), suffix, span);
+        }
         // Lowercase to match normalizer-lowercased keys.
-        let nav_path = nav_path.to_ascii_lowercase();
-        let parts = split_path_without_wildcards(&nav_path)?;
-        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-        self.emit_chained_index_literal_path(base_reg, &refs, span)
+        let nav_path = suffix.to_ascii_lowercase();
+        let parts = split_bound_path(&nav_path)?;
+        self.emit_chained_index_segments(base_reg, &parts, span)
+    }
+
+    /// Whether `field_path` selects a single value from the current element
+    /// of `binding` (no `[*]` beyond the bound prefix).
+    pub(super) fn binding_selects_single_value(binding: &CountBinding, field_path: &str) -> bool {
+        let fp = field_path.to_ascii_lowercase();
+        let Some(prefix) = &binding.field_wildcard_prefix else {
+            return true;
+        };
+        match match_count_prefix(prefix, &fp) {
+            Some(CountPrefixMatch::CurrentElement) => true,
+            Some(CountPrefixMatch::BelowElement {
+                rest_has_wildcard, ..
+            }) => !rest_has_wildcard,
+            None => !has_unquoted_wildcard(&fp),
+        }
     }
 
     /// Compile a `current('key')` reference inside a count's where clause.
@@ -943,40 +1000,42 @@ impl Compiler {
                     let name_dot = format!("{}.", lc_name);
                     if let Some(suffix) = lc_candidate.strip_prefix(&name_dot) {
                         let parts = split_path_without_wildcards(suffix)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
                         return compiler
-                            .emit_chained_index_literal_path(binding.current_reg, &refs, span)
+                            .emit_chained_index_segments(binding.current_reg, &parts, span)
                             .map(Some);
                     }
                 }
 
                 if let Some(prefix) = &binding.field_wildcard_prefix {
-                    let lc_prefix = prefix.to_ascii_lowercase();
-                    if lc_candidate == lc_prefix || lc_candidate == format!("{}[*]", lc_prefix) {
-                        let current_reg = binding.current_reg;
-                        let dest = compiler.alloc_register()?;
-                        compiler.emit(
-                            Instruction::Move {
-                                dest,
-                                src: current_reg,
-                            },
-                            span,
-                        );
-                        return Ok(Some(dest));
-                    }
-
-                    let prefix_dot = format!("{}.", lc_prefix);
-                    if let Some(suffix) = lc_candidate.strip_prefix(&prefix_dot) {
-                        return compiler
-                            .compile_suffix_from_binding(binding.current_reg, suffix, span)
-                            .map(Some);
-                    }
-
-                    let prefix_wildcard_dot = format!("{}[*].", lc_prefix);
-                    if let Some(suffix) = lc_candidate.strip_prefix(&prefix_wildcard_dot) {
-                        return compiler
-                            .compile_suffix_from_binding(binding.current_reg, suffix, span)
-                            .map(Some);
+                    match match_count_prefix(prefix, &lc_candidate) {
+                        Some(CountPrefixMatch::CurrentElement) => {
+                            let current_reg = binding.current_reg;
+                            let dest = compiler.alloc_register()?;
+                            compiler.emit(
+                                Instruction::Move {
+                                    dest,
+                                    src: current_reg,
+                                },
+                                span,
+                            );
+                            return Ok(Some(dest));
+                        }
+                        Some(CountPrefixMatch::BelowElement {
+                            rest,
+                            rest_has_wildcard,
+                            ..
+                        }) => {
+                            let current_reg = binding.current_reg;
+                            return compiler
+                                .compile_suffix_from_binding(
+                                    current_reg,
+                                    rest,
+                                    rest_has_wildcard,
+                                    span,
+                                )
+                                .map(Some);
+                        }
+                        None => {}
                     }
                 }
             }
@@ -1065,6 +1124,7 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("a".to_string()),
             current_reg: 5,
+            resource_override_reg: None,
         });
         let binding = c.resolve_count_binding("a[*].b").unwrap().unwrap();
         assert_eq!(binding.current_reg, 5);
@@ -1072,31 +1132,38 @@ mod tests {
     }
 
     #[test]
-    fn resolve_binding_by_name() {
+    fn resolve_binding_ignores_value_count_name() {
+        // A value count's name is reachable only through current(); field
+        // paths always read the resource.
         let mut c = Compiler::new();
         c.count_bindings.push(CountBinding {
-            name: Some("myCollection".to_string()),
+            name: Some("location".to_string()),
             field_wildcard_prefix: None,
             current_reg: 3,
+            resource_override_reg: None,
         });
-        let binding = c.resolve_count_binding("myCollection").unwrap().unwrap();
-        assert_eq!(binding.current_reg, 3);
+        assert!(c.resolve_count_binding("location").unwrap().is_none());
+        assert!(c.resolve_count_binding("LOCATION").unwrap().is_none());
+        assert!(c.resolve_count_binding("location.sub").unwrap().is_none());
     }
 
     #[test]
-    fn resolve_binding_case_insensitive() {
+    fn resolve_binding_value_count_name_does_not_shadow_field_prefix() {
         let mut c = Compiler::new();
         c.count_bindings.push(CountBinding {
-            name: Some("MyCollection".to_string()),
-            field_wildcard_prefix: None,
-            current_reg: 4,
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 5,
+            resource_override_reg: None,
         });
-        // Lookup with different casing should still match.
-        let binding = c.resolve_count_binding("mycollection").unwrap().unwrap();
-        assert_eq!(binding.current_reg, 4);
-
-        let binding_upper = c.resolve_count_binding("MYCOLLECTION").unwrap().unwrap();
-        assert_eq!(binding_upper.current_reg, 4);
+        c.count_bindings.push(CountBinding {
+            name: Some("a[*].b".to_string()),
+            field_wildcard_prefix: None,
+            current_reg: 6,
+            resource_override_reg: None,
+        });
+        let binding = c.resolve_count_binding("a[*].b").unwrap().unwrap();
+        assert_eq!(binding.current_reg, 5);
     }
 
     #[test]
@@ -1106,6 +1173,7 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("Microsoft.Test/resource".to_string()),
             current_reg: 6,
+            resource_override_reg: None,
         });
         // Mixed-case lookup against the prefix.
         let binding = c
@@ -1122,11 +1190,13 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("a".to_string()),
             current_reg: 1,
+            resource_override_reg: None,
         });
         c.count_bindings.push(CountBinding {
             name: None,
             field_wildcard_prefix: Some("a[*].b".to_string()),
             current_reg: 2,
+            resource_override_reg: None,
         });
         // The inner binding (a[*].b) matches a[*].b[*].c, and since we
         // iterate in reverse, it wins.
@@ -1141,8 +1211,235 @@ mod tests {
             name: None,
             field_wildcard_prefix: Some("x".to_string()),
             current_reg: 1,
+            resource_override_reg: None,
         });
         assert!(c.resolve_count_binding("y[*].z").unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_binding_matches_resource_scope() {
+        let mut c = Compiler::new();
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 1,
+            resource_override_reg: None,
+        });
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("a".to_string()),
+            current_reg: 2,
+            resource_override_reg: Some(7),
+        });
+        assert_eq!(
+            c.resolve_count_binding("a[*].x")
+                .unwrap()
+                .unwrap()
+                .current_reg,
+            1
+        );
+        c.resource_override_reg = Some(7);
+        assert_eq!(
+            c.resolve_count_binding("a[*].x")
+                .unwrap()
+                .unwrap()
+                .current_reg,
+            2
+        );
+        c.resource_override_reg = Some(8);
+        assert!(c.resolve_count_binding("a[*].x").unwrap().is_none());
+    }
+
+    fn push_prefix_binding(c: &mut Compiler, prefix: &str, current_reg: u8) {
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some(prefix.to_string()),
+            current_reg,
+            resource_override_reg: None,
+        });
+    }
+
+    #[test]
+    fn resolve_binding_bracket_suffix_forms() {
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 5);
+        for path in [
+            "items[*]['state']",
+            "items[*][\"state\"]",
+            "items[*][0]",
+            "items[*]['subs'][*]",
+            "ITEMS[*]['State']",
+        ] {
+            assert_eq!(
+                c.resolve_count_binding(path)
+                    .unwrap()
+                    .map(|b| b.current_reg),
+                Some(5),
+                "{path}"
+            );
+        }
+        for path in ["items[0]['state']", "itemsold[*]['state']", "other[*][0]"] {
+            assert!(c.resolve_count_binding(path).unwrap().is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn resolve_binding_compares_parsed_segments() {
+        let mut bracket = Compiler::new();
+        push_prefix_binding(&mut bracket, "a['b']", 1);
+        assert!(bracket.resolve_count_binding("a.b[*].c").unwrap().is_some());
+        let mut dotted = Compiler::new();
+        push_prefix_binding(&mut dotted, "a.b", 1);
+        assert!(dotted
+            .resolve_count_binding("a['b'][*]['c']")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn resolve_binding_quoted_keys_are_literal_segments() {
+        let mut quoted_wildcard = Compiler::new();
+        push_prefix_binding(&mut quoted_wildcard, "m['a[*]']", 1);
+        assert!(quoted_wildcard
+            .resolve_count_binding("m[\"a[*]\"][*].x")
+            .unwrap()
+            .is_some());
+        assert!(quoted_wildcard
+            .resolve_count_binding("m.a[*].x")
+            .unwrap()
+            .is_none());
+
+        let mut key_a = Compiler::new();
+        push_prefix_binding(&mut key_a, "m['a']", 1);
+        assert!(key_a
+            .resolve_count_binding("m['b'][*].x")
+            .unwrap()
+            .is_none());
+
+        let mut dotted_key = Compiler::new();
+        push_prefix_binding(&mut dotted_key, "m['a.b']", 1);
+        assert!(dotted_key
+            .resolve_count_binding("m.a.b[*].x")
+            .unwrap()
+            .is_none());
+        assert!(dotted_key
+            .resolve_count_binding("m['a.b'][*].x")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn resolve_binding_legacy_and_unbound_index_forms() {
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 5);
+        // Consecutive wildcards and a fixed index straight after the prefix
+        // stay unbound; the legacy dotted index binds.
+        for path in ["items[*][*]", "items[*][*].x", "items[0]", "items[0][0]"] {
+            assert!(c.resolve_count_binding(path).unwrap().is_none(), "{path}");
+        }
+        for path in ["items.[0]", "ITEMS.[0].x", "Items.State"] {
+            assert!(c.resolve_count_binding(path).unwrap().is_some(), "{path}");
+        }
+    }
+
+    #[test]
+    fn path_below_bound_element_bracket_suffix() {
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 1);
+        push_prefix_binding(&mut c, "items[*]['subs']", 2);
+
+        let inner = c
+            .resolve_path_below_bound_element("items[*].subs[*].V[*]")
+            .unwrap()
+            .unwrap();
+        assert_eq!(inner.binding.current_reg, 2);
+        assert_eq!(inner.rest, "v[*]");
+        assert!(inner.rest_has_wildcard);
+
+        c.count_bindings.pop();
+        let outer = c
+            .resolve_path_below_bound_element("items[*]['Subs'][*]")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outer.binding.current_reg, 1);
+        assert_eq!(outer.rest, "['subs'][*]");
+        assert!(outer.rest_has_wildcard);
+
+        // The legacy `prefix.key` form does not continue through `[*]`.
+        assert!(c
+            .resolve_path_below_bound_element("items.subs[*]")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn malformed_path_below_any_active_binding_is_rejected() {
+        let span = dummy_span();
+        let mut c = Compiler::new();
+        push_prefix_binding(&mut c, "items", 1);
+        for path in ["items.x[*].y[*]", "items[*][*]", "itemsX[*]..subs[*]"] {
+            c.ensure_not_malformed_below_binding(path, &span).unwrap();
+        }
+        assert!(c
+            .ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .is_err());
+
+        // The outer binding is checked, not only the innermost one.
+        push_prefix_binding(&mut c, "others", 2);
+        assert!(c
+            .ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .is_err());
+
+        // Bindings over another resource do not apply.
+        c.count_bindings.clear();
+        c.count_bindings.push(CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("items".to_string()),
+            current_reg: 1,
+            resource_override_reg: Some(7),
+        });
+        c.ensure_not_malformed_below_binding("items[*]..subs[*]", &span)
+            .unwrap();
+    }
+
+    #[test]
+    fn binding_selects_single_value_bracket_suffix() {
+        let binding = CountBinding {
+            name: None,
+            field_wildcard_prefix: Some("items".to_string()),
+            current_reg: 1,
+            resource_override_reg: None,
+        };
+        assert!(Compiler::binding_selects_single_value(
+            &binding,
+            "items[*]['state']"
+        ));
+        assert!(Compiler::binding_selects_single_value(
+            &binding,
+            "items[*][0]"
+        ));
+        assert!(!Compiler::binding_selects_single_value(
+            &binding,
+            "items[*]['subs'][*]"
+        ));
+        assert!(Compiler::binding_selects_single_value(
+            &binding,
+            "items[*]['a[*]']"
+        ));
+
+        // Paths outside the binding fall back to quote-aware detection.
+        assert!(Compiler::binding_selects_single_value(
+            &binding,
+            "other['a[*]']"
+        ));
+        assert!(!Compiler::binding_selects_single_value(
+            &binding, "other[*]"
+        ));
+        let unbound = CountBinding {
+            field_wildcard_prefix: None,
+            ..binding
+        };
+        assert!(Compiler::binding_selects_single_value(&unbound, "a[*]"));
     }
 
     // -----------------------------------------------------------------------

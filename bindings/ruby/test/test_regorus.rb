@@ -71,6 +71,12 @@ class TestRegorus < Minitest::Test
     assert_silent { @engine.add_data(example_data) }
   end
 
+  def test_native_data_rejects_non_finite_numbers
+    [Float::NAN, Float::INFINITY, -Float::INFINITY].each do |value|
+      assert_raises(RuntimeError) { @engine.add_data({ "value" => value }) }
+    end
+  end
+
   def test_data_addition_as_json
     assert_silent { @engine.add_data_json(example_data.to_json) }
   end
@@ -79,6 +85,12 @@ class TestRegorus < Minitest::Test
     @engine.set_input(input_for(ALICE))
 
     assert_equal alice_results, @engine.eval_query("data.regorus_test")
+  end
+
+  def test_native_input_rejects_non_finite_numbers
+    [Float::NAN, Float::INFINITY, -Float::INFINITY].each do |value|
+      assert_raises(RuntimeError) { @engine.set_input({ "value" => value }) }
+    end
   end
 
   def test_query_evaluation_for_bob

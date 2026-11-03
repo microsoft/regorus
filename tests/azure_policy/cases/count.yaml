@@ -378,6 +378,139 @@ cases:
         environment: "prod"
     want_effect: "deny"
 
+  - note: value_count_dynamic_bracket_tag_with_closing_bracket
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Department]Name"
+    resource:
+      tags:
+        "department]name": "production"
+    want_effect: "deny"
+
+  - note: value_count_dynamic_bracket_tag_closing_bracket_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('requiredTags')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      requiredTags:
+        - "Department]Name"
+    resource:
+      tags:
+        department:
+          name: "production"
+    want_undefined: true
+
+  - note: value_count_tag_star_name_matches_literal_tag
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.a[*]",
+            "where": {
+              "value": "[field('tags.a[*]')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a[*]": "production"
+    want_effect: "deny"
+
+  - note: value_count_tag_star_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.a[*]",
+            "where": {
+              "value": "[field('tags.a[*]')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a[*]": "staging"
+    want_undefined: true
+
+  - note: field_tag_path_takes_precedence_over_value_count_name
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.env",
+            "where": {
+              "value": "[field('tags.env')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        env: "production"
+    want_effect: "deny"
+
+  - note: field_tag_path_takes_precedence_over_value_count_name_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[createArray('unrelated')]",
+            "name": "tags.env",
+            "where": {
+              "value": "[field('tags.env')]",
+              "equals": "production"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        env: "staging"
+    want_undefined: true
+
   # =========================================================================
   # Alias field refs inside count resolve to current loop element
   # =========================================================================
@@ -614,4 +747,1436 @@ cases:
       }
     resource:
       type: "any"
+    want_effect: "deny"
+
+  - note: field_count_quoted_numeric_key_collection
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.groups['123'][*]",
+            "where": {
+              "field": "properties.groups['123'][*].name",
+              "equals": "web"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        groups:
+          "123":
+            - name: "web"
+            - name: "db"
+    want_effect: "audit"
+
+  - note: field_count_quoted_numeric_key_collection_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.groups['123'][*]",
+            "where": {
+              "field": "properties.groups['123'][*].name",
+              "equals": "web"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "audit" }
+      }
+    resource:
+      properties:
+        groups:
+          "123":
+            - name: "db"
+    want_undefined: true
+
+  # field() inside a count `where` whose path has further `[*]` levels below
+  # the counted array collects the values selected under the current member.
+  - note: field_fn_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].v')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - v: "x"
+              - v: "y"
+    want_effect: "deny"
+
+  - note: field_fn_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].v')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - v: "x"
+              - v: "z"
+    want_undefined: true
+
+  - note: field_fn_two_level_nested_wildcard_under_bound_prefix_flattens
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].vals[*]')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+          - subs:
+              - vals: [4]
+    want_effect: "deny"
+
+  - note: field_fn_two_level_nested_wildcard_under_bound_prefix_flattens_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs[*].vals[*]')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [4]
+          - subs:
+              - vals: [3]
+    want_undefined: true
+
+  - note: field_fn_property_of_bound_member_is_single_member_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].subs')]",
+              "equals": [["x", "y"]]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "y"]
+          - subs: ["z"]
+    want_effect: "deny"
+
+  # Sibling: a field condition with a nested wildcard below the counted
+  # array keeps its implicit allOf over the inner members.
+  - note: field_condition_nested_wildcard_under_bound_prefix_is_allof
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "properties.items[*].subs[*]",
+              "equals": "x"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "x"]
+          - subs: ["x", "y"]
+    want_effect: "deny"
+
+  # Sibling: current() with further `[*]` levels below the counted array
+  # collects the selected values (missing values are skipped).
+  - note: current_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*].id'))]",
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - id: "a"
+              - other: "b"
+    want_effect: "deny"
+
+  - note: current_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*].id'))]",
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - id: "a"
+              - id: "b"
+    want_undefined: true
+
+  - note: current_property_of_bound_member_is_single_value
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[current('properties.items[*].subs')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x", "y"]
+          - subs: ["z"]
+    want_effect: "deny"
+
+  - note: current_property_of_bound_member_is_single_value_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[current('properties.items[*].subs')]",
+              "equals": ["x", "y"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x"]
+          - subs: ["z"]
+    want_undefined: true
+
+  # current() with a nested wildcard over a missing inner array collects
+  # nothing (empty collection) rather than being undefined.
+  - note: current_nested_wildcard_over_missing_inner_array_is_empty
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*]'))]",
+              "equals": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - name: "a"
+    want_effect: "deny"
+
+  - note: current_nested_wildcard_over_missing_inner_array_is_empty_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[length(current('properties.items[*].subs[*]'))]",
+              "equals": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs: ["x"]
+    want_undefined: true
+
+  # Sibling: dynamic if() field inside a count `where` also collects the
+  # nested wildcard values relative to the current member.
+  - note: dynamic_if_field_nested_wildcard_under_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "[if(true(), 'properties.items[*].subs[*].vals[*]', 'properties.other')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+          - subs:
+              - vals: [4]
+    want_effect: "deny"
+
+  - note: dynamic_if_field_nested_wildcard_under_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "field": "[if(true(), 'properties.items[*].subs[*].vals[*]', 'properties.other')]",
+              "equals": [1, 2, 3]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [4]
+          - subs:
+              - vals: [3]
+    want_undefined: true
+
+  # Nested counts: inside an inner count over `items[*].subs[*]`, field()
+  # with a further `[*]` collects relative to the current inner member.
+  - note: nested_count_field_fn_wildcard_under_inner_bound_prefix_collects
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "field": "properties.items[*].subs[*]",
+                "where": {
+                  "value": "[field('properties.items[*].subs[*].vals[*]')]",
+                  "equals": [1, 2]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1, 2]
+              - vals: [3]
+    want_effect: "deny"
+
+  - note: nested_count_field_fn_wildcard_under_inner_bound_prefix_collects_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "field": "properties.items[*].subs[*]",
+                "where": {
+                  "value": "[field('properties.items[*].subs[*].vals[*]')]",
+                  "equals": [1, 2]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        items:
+          - subs:
+              - vals: [1]
+              - vals: [2]
+    want_undefined: true
+
+  # =========================================================================
+  # A value count's `name` is reachable only through current(); field() and
+  # field conditions always read the resource, even when the name matches.
+  # =========================================================================
+  - note: value_count_name_location_field_fn_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus",
+              "centralus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[field('location')]",
+              "equals": "eastus"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "eastus"
+    want_effect: "audit"
+
+    # Discriminating twin: the pre-fix bind (field() -> loop element) matches here.
+  - note: value_count_name_location_field_fn_reads_resource_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "eastus",
+              "eastus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[field('location')]",
+              "equals": "eastus"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "northeurope"
+    want_undefined: true
+
+  - note: value_count_name_location_field_fn_vs_current
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus",
+              "centralus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[equals(field('location'), current('location'))]",
+              "equals": true
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "westus"
+    want_effect: "audit"
+
+    # Discriminating twin: the pre-fix bind (field() -> loop element) matches here.
+  - note: value_count_name_location_field_fn_vs_current_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[equals(field('location'), current('location'))]",
+              "equals": true
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "northeurope"
+    want_undefined: true
+
+  - note: value_count_name_matching_alias_field_condition_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "on",
+              "off",
+              "on"
+            ],
+            "name": "properties.mode",
+            "where": {
+              "field": "properties.mode",
+              "equals": "on"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      properties:
+        mode: "on"
+    want_effect: "audit"
+
+    # Discriminating twin: the pre-fix bind (field() -> loop element) matches here.
+  - note: value_count_name_matching_alias_field_condition_reads_resource_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "on",
+              "on",
+              "on"
+            ],
+            "name": "properties.mode",
+            "where": {
+              "field": "properties.mode",
+              "equals": "on"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      properties:
+        mode: "off"
+    want_undefined: true
+
+  # Guard: current() resolution is unchanged by the fix. The positive case
+  # rejects current() reading the resource instead of the element; the twin
+  # only pins the non-matching element.
+  - note: value_count_name_location_current_reads_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus",
+              "centralus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[current('location')]",
+              "equals": "eastus"
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "westus"
+    want_effect: "audit"
+
+  - note: value_count_name_location_current_reads_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "westus",
+              "centralus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[current('location')]",
+              "equals": "eastus"
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "eastus"
+    want_undefined: true
+
+  # Guard: field-count prefix binding is unchanged by the fix.
+  - note: field_count_field_fn_still_binds_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].v')]",
+              "equals": ["a"]
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      properties:
+        items:
+          - {"v": "a"}
+          - {"v": "b"}
+    want_effect: "audit"
+
+  - note: field_count_field_fn_still_binds_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "value": "[field('properties.items[*].v')]",
+              "equals": ["a"]
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      properties:
+        items:
+          - {"v": "b"}
+          - {"v": "c"}
+    want_undefined: true
+
+  - note: value_count_in_field_count_name_location_field_fn_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "value": [
+                  "a",
+                  "b"
+                ],
+                "name": "location",
+                "where": {
+                  "allOf": [
+                    {
+                      "value": "[field('properties.items[*].v')]",
+                      "contains": "[current('location')]"
+                    },
+                    {
+                      "value": "[field('location')]",
+                      "equals": "eastus"
+                    }
+                  ]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "eastus"
+      properties:
+        items:
+          - {"v": "a"}
+          - {"v": "c"}
+    want_effect: "audit"
+
+    # Discriminating twin: the pre-fix bind (field() -> loop element) matches here.
+  - note: value_count_in_field_count_name_location_field_fn_reads_resource_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "value": [
+                  "eastus",
+                  "b"
+                ],
+                "name": "location",
+                "where": {
+                  "allOf": [
+                    {
+                      "value": "[field('properties.items[*].v')]",
+                      "contains": "[current('location')]"
+                    },
+                    {
+                      "value": "[field('location')]",
+                      "equals": "eastus"
+                    }
+                  ]
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "westus"
+      properties:
+        items:
+          - {"v": "eastus"}
+          - {"v": "c"}
+    want_undefined: true
+
+  - note: field_count_in_value_count_name_location_field_fn_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus"
+            ],
+            "name": "location",
+            "where": {
+              "count": {
+                "field": "properties.items[*]",
+                "where": {
+                  "allOf": [
+                    {
+                      "value": "[field('properties.items[*].loc')]",
+                      "contains": "[current('location')]"
+                    },
+                    {
+                      "value": "[field('location')]",
+                      "equals": "westus"
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "westus"
+      properties:
+        items:
+          - {"loc": "eastus"}
+    want_effect: "audit"
+
+    # Discriminating twin: the pre-fix bind (field() -> loop element) matches here.
+  - note: field_count_in_value_count_name_location_field_fn_reads_resource_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus"
+            ],
+            "name": "location",
+            "where": {
+              "count": {
+                "field": "properties.items[*]",
+                "where": {
+                  "allOf": [
+                    {
+                      "value": "[field('properties.items[*].loc')]",
+                      "contains": "[current('location')]"
+                    },
+                    {
+                      "value": "[field('location')]",
+                      "equals": "westus"
+                    }
+                  ]
+                }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource:
+      type: "any"
+      location: "centralus"
+      properties:
+        items:
+          - {"loc": "westus"}
+    want_undefined: true
+
+  # A7-R1-1: inside existenceCondition, an alias field condition named like the value count reads the related resource (mode on -> count 2 -> compliant).
+  - note: existence_value_count_name_matching_alias_field_reads_related_resource
+    policy_rule: |
+      {
+        "if": {
+          "value": true,
+          "equals": true
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "value": [
+                  "off",
+                  "off"
+                ],
+                "name": "properties.mode",
+                "where": {
+                  "field": "properties.mode",
+                  "equals": "on"
+                }
+              },
+              "equals": 2
+            }
+          }
+        }
+      }
+    resource: {"type": "any"}
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            mode: "on"
+    want_undefined: true
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: existence_value_count_name_matching_alias_field_reads_related_resource_twin
+    policy_rule: |
+      {
+        "if": {
+          "value": true,
+          "equals": true
+        },
+        "then": {
+          "effect": "auditIfNotExists",
+          "details": {
+            "type": "Contoso.Child/widgets",
+            "existenceCondition": {
+              "count": {
+                "value": [
+                  "on",
+                  "on"
+                ],
+                "name": "properties.mode",
+                "where": {
+                  "field": "properties.mode",
+                  "equals": "on"
+                }
+              },
+              "equals": 2
+            }
+          }
+        }
+      }
+    resource: {"type": "any"}
+    host_await:
+      - response:
+          type: Contoso.Child/widgets
+          properties:
+            mode: "off"
+    want_effect: "auditIfNotExists"
+
+  # A7-R1-2: a value-count name containing [*] does not capture the matching field path.
+  - note: value_count_wildcard_name_field_condition_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "b",
+              "c",
+              "d"
+            ],
+            "name": "properties.items[*].v",
+            "where": {
+              "field": "properties.items[*].v",
+              "equals": "a"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "a"}, {"v": "a"}]}}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: value_count_wildcard_name_field_condition_reads_resource_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "a",
+              "a",
+              "a"
+            ],
+            "name": "properties.items[*].v",
+            "where": {
+              "field": "properties.items[*].v",
+              "equals": "a"
+            }
+          },
+          "equals": 3
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "a"}, {"v": "b"}]}}
+    want_undefined: true
+
+  - note: value_count_wildcard_name_field_fn_collects_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "p",
+              "q"
+            ],
+            "name": "properties.items[*].v",
+            "where": {
+              "value": "[field('properties.items[*].v')]",
+              "equals": [
+                "a"
+              ]
+            }
+          },
+          "equals": 2
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "a"}]}}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: value_count_wildcard_name_field_fn_collects_resource_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "a",
+              "a"
+            ],
+            "name": "properties.items[*].v",
+            "where": {
+              "value": "[field('properties.items[*].v')]",
+              "equals": [
+                "a"
+              ]
+            }
+          },
+          "equals": 2
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "b"}]}}
+    want_undefined: true
+
+  - note: value_count_wildcard_name_in_field_count_field_fn_binds_field_count
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "value": [
+                  "x"
+                ],
+                "name": "properties.items[*].v",
+                "where": {
+                  "value": "[field('properties.items[*].v')]",
+                  "contains": "a"
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "a"}, {"v": "b"}]}}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: value_count_wildcard_name_in_field_count_field_fn_binds_field_count_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.items[*]",
+            "where": {
+              "count": {
+                "value": [
+                  "a"
+                ],
+                "name": "properties.items[*].v",
+                "where": {
+                  "value": "[field('properties.items[*].v')]",
+                  "contains": "a"
+                }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"items": [{"v": "b"}]}}
+    want_undefined: true
+
+  # A7-R1-5: the early-exit (greater 0) loop also reads the resource.
+  - note: value_count_name_location_field_fn_early_exit_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "westus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[field('location')]",
+              "equals": "eastus"
+            }
+          },
+          "greater": 0
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "location": "eastus"}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: value_count_name_location_field_fn_early_exit_reads_resource_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus"
+            ],
+            "name": "location",
+            "where": {
+              "value": "[field('location')]",
+              "equals": "eastus"
+            }
+          },
+          "greater": 0
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "location": "westus"}
+    want_undefined: true
+
+  # A7-R1-6: a dynamic [if(...)] field path inside a value count reads the resource.
+  - note: value_count_name_matching_dynamic_if_field_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "off",
+              "off"
+            ],
+            "name": "properties.mode",
+            "where": {
+              "field": "[if(true(), 'properties.mode', 'properties.other')]",
+              "equals": "on"
+            }
+          },
+          "equals": 2
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"mode": "on"}}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: value_count_name_matching_dynamic_if_field_reads_resource_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "on",
+              "on"
+            ],
+            "name": "properties.mode",
+            "where": {
+              "field": "[if(true(), 'properties.mode', 'properties.other')]",
+              "equals": "on"
+            }
+          },
+          "equals": 2
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"mode": "off"}}
+    want_undefined: true
+
+  # A7-R1-3: an inner count's value: [field('x')] under an outer value count named x reads the resource.
+  - note: nested_value_count_value_field_fn_reads_resource
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              [
+                "x"
+              ]
+            ],
+            "name": "properties.list",
+            "where": {
+              "count": {
+                "value": "[field('properties.list')]"
+              },
+              "equals": 3
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"list": [1, 2, 3]}}
+    want_effect: "audit"
+
+  # Discriminating twin: the pre-fix bind (loop element) matches here.
+  - note: nested_value_count_value_field_fn_reads_resource_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              [
+                "x",
+                "y",
+                "z"
+              ]
+            ],
+            "name": "properties.list",
+            "where": {
+              "count": {
+                "value": "[field('properties.list')]"
+              },
+              "equals": 3
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "properties": {"list": [1]}}
+    want_undefined: true
+
+  # A7-R1-7: current() matches the count name case-insensitively; field() still reads the resource.
+  - note: value_count_name_case_insensitive_current_and_field_fn
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus"
+            ],
+            "name": "Location",
+            "where": {
+              "allOf": [
+                {
+                  "value": "[current('LOCATION')]",
+                  "equals": "eastus"
+                },
+                {
+                  "value": "[field('location')]",
+                  "equals": "westus"
+                }
+              ]
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "location": "westus"}
+    want_effect: "audit"
+
+  # Guard twin: field() reads the resource (eastus), so nothing matches.
+  - note: value_count_name_case_insensitive_current_and_field_fn_twin_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": [
+              "eastus",
+              "westus"
+            ],
+            "name": "Location",
+            "where": {
+              "allOf": [
+                {
+                  "value": "[current('LOCATION')]",
+                  "equals": "eastus"
+                },
+                {
+                  "value": "[field('location')]",
+                  "equals": "westus"
+                }
+              ]
+            }
+          },
+          "equals": 1
+        },
+        "then": {
+          "effect": "audit"
+        }
+      }
+    resource: {"type": "any", "location": "eastus"}
+    want_undefined: true
+
+  - note: field_count_where_field_function_reads_dotted_tag_flat_key
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.rules[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules: [{ name: a }, { name: b }]
+      tags:
+        "department.name": "production"
+    want_effect: "deny"
+
+  - note: field_count_where_field_function_dotted_tag_ignores_nested_tag_object
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "properties.rules[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      properties:
+        rules: [{ name: a }, { name: b }]
+      tags:
+        department:
+          name: "production"
+    want_undefined: true
+
+  - note: field_count_over_tags_array_field_function_reads_resource_tag_not_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "tags[*]",
+            "where": {
+              "value": "[field('tags.Department.Name')]",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: [{ department: { name: "production" } }]
+    want_undefined: true
+
+  - note: field_count_over_tags_array_where_field_reads_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "tags[*]",
+            "where": {
+              "field": "tags[*].Department.Name",
+              "equals": "production"
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags: [{ department: { name: "production" } }]
     want_effect: "deny"

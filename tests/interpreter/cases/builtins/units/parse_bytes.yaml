@@ -67,10 +67,12 @@ cases:
         - 1048576
         - 1024
       p2:
-        - 1e30
-        - 1e27
-        - 1e24
-        - 1e21
+        # Keep values above f64's exact integer range as decimal integers so the expected
+        # results retain their exact values.
+        - 1000000000000000000000000000000
+        - 1000000000000000000000000000
+        - 1000000000000000000000000
+        - 1000000000000000000000
         - 1e18
         - 1e15
         - 1e12

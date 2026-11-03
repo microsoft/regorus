@@ -136,6 +136,9 @@ mod compile;
 mod compiled_policy;
 mod compiler;
 mod engine;
+#[cfg(feature = "explanations")]
+#[cfg_attr(docsrs, doc(cfg(feature = "explanations")))]
+pub mod explain;
 mod indexchecker;
 mod interpreter;
 #[cfg(any(verus_keep_ghost, test))]
@@ -181,7 +184,7 @@ pub use {
 
 pub use compile::{compile_policy_with_entrypoint, PolicyModule};
 pub use compiled_policy::CompiledPolicy;
-pub use engine::Engine;
+pub use engine::{Engine, InvalidRuleRootError, PolicyPackageComponents};
 pub use lexer::Source;
 pub use policy_info::PolicyInfo;
 pub use utils::limits::LimitError;

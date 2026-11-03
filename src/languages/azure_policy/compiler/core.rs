@@ -21,6 +21,8 @@ use crate::{Rc, Value};
 use crate::languages::azure_policy::aliases::AliasRegistry;
 use crate::languages::azure_policy::ast::PolicyRule;
 
+use super::utils::has_unquoted_wildcard;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -30,6 +32,7 @@ pub(super) struct CountBinding {
     pub(super) name: Option<String>,
     pub(super) field_wildcard_prefix: Option<String>,
     pub(super) current_reg: u8,
+    pub(super) resource_override_reg: Option<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -70,6 +73,9 @@ pub(super) struct Compiler {
 
     /// When `true`, unknown aliases are silently treated as raw property paths.
     pub(super) alias_fallback_to_raw: bool,
+
+    /// ARM function currently being compiled, used for author-facing errors.
+    pub(super) current_arm_function: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +209,12 @@ impl Compiler {
         // coalesce, union).  If >8 args are needed, consider packing into an
         // array or folding/chaining associative calls.
         if args.len() > 8 {
-            bail!(span.error(&format!("builtin call {} exceeds max 8 args", name)));
+            let reported = self.current_arm_function.as_deref().unwrap_or(name);
+            bail!(span.error(&format!(
+                "{}() does not support more than 8 arguments (got {})",
+                reported,
+                args.len()
+            )));
         }
 
         let dest = self.alloc_register()?;
@@ -234,19 +245,28 @@ impl Compiler {
         path: &[&str],
         span: &crate::lexer::Span,
     ) -> Result<u8> {
+        let segments: Vec<super::utils::PathSegment> = path
+            .iter()
+            .map(|segment| super::utils::PathSegment::Key((*segment).to_string()))
+            .collect();
+        self.emit_chained_index_segments(root, &segments, span)
+    }
+
+    pub(super) fn emit_chained_index_segments(
+        &mut self,
+        root: u8,
+        path: &[super::utils::PathSegment],
+        span: &crate::lexer::Span,
+    ) -> Result<u8> {
         let dest = self.alloc_register()?;
 
-        // TODO: Auto-parsing numeric-looking segments as u64 can mis-index
-        // object keys that happen to be digits (e.g. a tag named "123" would
-        // become numeric index 123).  Consider carrying type metadata from
-        // `split_path_without_wildcards` or adding a string-only variant of
-        // this helper for object key lookups like tags.
         let path_components = path
             .iter()
             .map(|segment| {
-                let value = segment
-                    .parse::<u64>()
-                    .map_or_else(|_| Value::from((*segment).to_string()), Value::from);
+                let value = match segment {
+                    super::utils::PathSegment::Key(key) => Value::from(key.clone()),
+                    super::utils::PathSegment::Index(index) => Value::from(*index),
+                };
                 self.add_literal_u16(value).map(LiteralOrRegister::Literal)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -351,7 +371,7 @@ impl Compiler {
         }
 
         // Fallback: derive array path from a corresponding `[*]` alias.
-        if !lc.contains("[*]") {
+        if !has_unquoted_wildcard(&lc) {
             let wildcard_key = alloc::format!("{}[*]", lc);
             if let Some(short) = alias_map.get(&wildcard_key) {
                 let resolved = Self::strip_fq_prefix(short).to_ascii_lowercase();
@@ -378,11 +398,59 @@ impl Compiler {
 
     /// Strip any resource-type prefix segments from a resolved alias short
     /// name, keeping only the trailing property path.
+    ///
+    /// Resource-type segments never contain `[`, so only a `/` before the
+    /// first `[` can end the prefix; one inside a subscript (`labels['a/b']`)
+    /// belongs to the property path.
     pub(super) fn strip_fq_prefix(resolved: &str) -> String {
-        resolved
-            .rfind('/')
+        let head = resolved
+            .find('[')
+            .map_or(resolved, |idx| resolved.get(..idx).unwrap_or(resolved));
+        head.rfind('/')
             .and_then(|idx| resolved.get(idx.saturating_add(1)..))
             .unwrap_or(resolved)
             .to_string()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use crate::Rc;
+
+    use super::Compiler;
+    use crate::languages::azure_policy::aliases::AliasRegistry;
+    use crate::lexer::{Source, Span};
+
+    #[test]
+    fn raw_fallback_keeps_slash_inside_quoted_key() {
+        let mut registry = AliasRegistry::new();
+        registry
+            .load_from_json(
+                r#"[{"namespace":"Microsoft.Test","resourceTypes":[{"resourceType":"t",
+                "aliases":[{"name":"Microsoft.Test/t/x","defaultPath":"properties.x","paths":[]}]}]}]"#,
+            )
+            .unwrap();
+        let mut c = Compiler::new();
+        c.alias_registry = Some(Rc::new(registry));
+        c.alias_fallback_to_raw = true;
+        let source = Source::from_contents("test".into(), " ".into()).unwrap();
+        let span = Span {
+            source,
+            line: 1,
+            col: 1,
+            start: 0,
+            end: 0,
+        };
+        assert_eq!(
+            c.resolve_alias_path("Microsoft.Other/u/labels['a/b']", &span)
+                .unwrap(),
+            "labels['a/b']"
+        );
+        assert_eq!(
+            c.resolve_alias_path("Microsoft.Other/u/labels.c", &span)
+                .unwrap(),
+            "labels.c"
+        );
     }
 }

@@ -237,56 +237,6 @@ impl HoistedLoopsLookup {
     ) -> LookupResult<Option<&BindingPlan>> {
         self.expr_binding_plans.get_checked(module_idx, expr_idx)
     }
-
-    /// Merge another loop hoisting table into this one
-    /// This is used to add query module loops to the existing table
-    pub fn merge_query_loops(&mut self, mut other: HoistedLoopsLookup, module_idx: usize) {
-        while self.statement_loops.module_len() < module_idx {
-            self.statement_loops.push_module(Vec::new());
-        }
-
-        while self.expr_loops.module_len() < module_idx {
-            self.expr_loops.push_module(Vec::new());
-        }
-
-        while self.expr_binding_plans.module_len() < module_idx {
-            self.expr_binding_plans.push_module(Vec::new());
-        }
-
-        while self.query_contexts.module_len() < module_idx {
-            self.query_contexts.push_module(Vec::new());
-        }
-
-        let query_module_idx = other.statement_loops.module_len().saturating_sub(1);
-
-        if let Some(module) = other.statement_loops.remove_module(query_module_idx) {
-            self.statement_loops.push_module(module);
-        }
-
-        if let Some(module) = other.expr_loops.remove_module(query_module_idx) {
-            self.expr_loops.push_module(module);
-        }
-
-        if let Some(module) = other.expr_binding_plans.remove_module(query_module_idx) {
-            self.expr_binding_plans.push_module(module);
-        }
-
-        if let Some(module) = other.query_contexts.remove_module(query_module_idx) {
-            self.query_contexts.push_module(module);
-        }
-    }
-
-    pub fn truncate_modules(&mut self, module_count: usize) {
-        self.statement_loops.truncate_modules(module_count);
-        self.expr_loops.truncate_modules(module_count);
-        self.expr_binding_plans.truncate_modules(module_count);
-        self.query_contexts.truncate_modules(module_count);
-    }
-
-    #[cfg(debug_assertions)]
-    pub const fn module_len(&self) -> usize {
-        self.statement_loops.module_len()
-    }
 }
 
 // Note: ScopeContext is now defined in src/compiler/context.rs
@@ -650,8 +600,21 @@ impl LoopHoister {
                 collection,
                 ..
             } => {
+                // `some .. in` may redeclare a variable bound by an enclosing
+                // `every` unless that binding is in the current scope.
+                let mut shadowing = None;
+                for var in &context.quantifier_vars {
+                    if !context.current_scope_bound_vars.contains(var) {
+                        shadowing
+                            .get_or_insert_with(|| context.clone())
+                            .add_unbound_variable(var);
+                    }
+                }
                 let binding_plan = super::destructuring_planner::create_some_in_binding_plan(
-                    key, value, collection, context,
+                    key,
+                    value,
+                    collection,
+                    shadowing.as_ref().unwrap_or(context),
                 )
                 .map_err(map_binding_error)?;
 
@@ -670,10 +633,28 @@ impl LoopHoister {
             Expr { expr, .. } => {
                 self.analyze_expr(module_idx, expr, context, loops)?;
             }
-            Every { domain, query, .. } => {
+            Every {
+                key,
+                value,
+                domain,
+                query,
+                ..
+            } => {
                 self.analyze_expr(module_idx, domain, context, loops)?;
 
-                let every_context = context.child_with_output_exprs(ContextType::Every, None, None);
+                // The key and value variables are bound to the current element
+                // throughout the body, so references such as `m[k]` must index
+                // with them rather than hoist a new iteration.
+                let mut every_context =
+                    context.child_with_output_exprs(ContextType::Every, None, None);
+                if let Some(key) = key {
+                    every_context.bind_variable(key.text());
+                    every_context.quantifier_vars.insert(key.text().to_string());
+                }
+                every_context.bind_variable(value.text());
+                every_context
+                    .quantifier_vars
+                    .insert(value.text().to_string());
                 let populated_context =
                     self.populate_query(module_idx, query.as_ref(), &every_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);

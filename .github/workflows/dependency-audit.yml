@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  checks: write
+  issues: write
 
 jobs:
   cargo-audit:
@@ -18,13 +20,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lockfile:
-          - Cargo.lock
-          - bindings/ffi/Cargo.lock
-          - bindings/java/Cargo.lock
-          - bindings/python/Cargo.lock
-          - bindings/ruby/Cargo.lock
-          - bindings/wasm/Cargo.lock
+        include:
+          - lockfile: Cargo.lock
+            working-directory: .
+          - lockfile: bindings/ffi/Cargo.lock
+            working-directory: bindings/ffi
+          - lockfile: bindings/java/Cargo.lock
+            working-directory: bindings/java
+          - lockfile: bindings/python/Cargo.lock
+            working-directory: bindings/python
+          - lockfile: bindings/ruby/Cargo.lock
+            working-directory: bindings/ruby
+          - lockfile: bindings/wasm/Cargo.lock
+            working-directory: bindings/wasm
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,7 +41,7 @@ jobs:
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          lockfile: ${{ matrix.lockfile }}
+          working-directory: ${{ matrix.working-directory }}
 
   cargo-deny:
     name: Cargo Deny (${{ matrix.manifest }})

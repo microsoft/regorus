@@ -14,7 +14,7 @@ use crate::rvm::Instruction;
 use crate::Value;
 
 use super::core::Compiler;
-use super::utils::{extract_string_literal, json_value_to_runtime};
+use super::utils::{extract_string_literal, has_unquoted_wildcard, json_value_to_runtime};
 
 /// Maximum nesting depth for recursive JSON value compilation.
 const MAX_JSON_DEPTH: usize = 32;
@@ -291,18 +291,22 @@ impl Compiler {
                 // The field() template function always reads from the primary
                 // resource, even inside existenceCondition.
                 let saved_override = self.resource_override_reg.take();
-                let reg = self.compile_field_path_expression(&resolved, span)?;
+                let reg = self.compile_field_path_expression(&resolved, span);
+                let binding = self.resolve_count_binding(&resolved);
                 self.resource_override_reg = saved_override;
+                let reg = reg?;
 
-                let reg = if resolved.contains("[*]") {
-                    if self.resolve_count_binding(&resolved)?.is_some() {
-                        let arr = self.alloc_register()?;
-                        self.emit(Instruction::ArrayNew { dest: arr }, span);
-                        self.emit(Instruction::ArrayPush { arr, value: reg }, span);
-                        arr
-                    } else {
-                        reg
-                    }
+                // A wildcard path that selects only the bound element (or a
+                // property of it) still yields a one-member array; paths with
+                // further `[*]` levels are already collected into an array.
+                // Use the binding resolved in primary-resource scope above.
+                let wrap_single = has_unquoted_wildcard(&resolved)
+                    && binding?.is_some_and(|b| Self::binding_selects_single_value(&b, &resolved));
+                let reg = if wrap_single {
+                    let arr = self.alloc_register()?;
+                    self.emit(Instruction::ArrayNew { dest: arr }, span);
+                    self.emit(Instruction::ArrayPush { arr, value: reg }, span);
+                    arr
                 } else {
                     reg
                 };

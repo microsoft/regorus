@@ -20,6 +20,7 @@ use crate::languages::azure_policy::ast::{
 use crate::Value;
 
 use super::core::Compiler;
+use super::utils::has_unquoted_wildcard;
 
 impl Compiler {
     // -- recording helpers --------------------------------------------------
@@ -30,10 +31,10 @@ impl Compiler {
     }
 
     /// Record an alias path reference.  Also sets the wildcard flag when the
-    /// alias contains `[*]`.
+    /// alias contains an unquoted `[*]`.
     pub(super) fn record_alias(&mut self, path: &str) {
         self.observed_aliases.insert(path.to_string());
-        if path.contains("[*]") {
+        if has_unquoted_wildcard(path) {
             self.observed_has_wildcard_aliases = true;
         }
     }
@@ -280,5 +281,19 @@ fn insert_string_set_annotation(
             .map(|s| Value::String(s.as_str().into()))
             .collect();
         annot.insert(key.to_string(), Value::from_set(set));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Compiler;
+
+    #[test]
+    fn record_alias_flags_only_unquoted_wildcards() {
+        let mut c = Compiler::new();
+        c.record_alias("Microsoft.Test/t/labels['a[*]']");
+        assert!(!c.observed_has_wildcard_aliases);
+        c.record_alias("Microsoft.Test/t/items[*]['a[*]']");
+        assert!(c.observed_has_wildcard_aliases);
     }
 }

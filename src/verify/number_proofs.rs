@@ -10,6 +10,7 @@ use crate::number::Number;
 use num_bigint::BigInt;
 use super::bigint_assumptions::*;
 use super::number_specs::NumberView;
+use vstd::arithmetic::power2::pow2;
 use vstd::arithmetic::div_mod::{
     lemma_div_of0,
     lemma_fundamental_div_mod,
@@ -22,10 +23,10 @@ use vstd::arithmetic::mul::{
     lemma_mul_strictly_increases,
     lemma_mul_unary_negation,
 };
-use vstd::float::*;
 use vstd::std_specs::cmp::*;
 use vstd::std_specs::convert::*;
 use vstd::std_specs::ops::*;
+use vstd::float::*;
 
 /// Spec trait implementations
 
@@ -153,6 +154,67 @@ impl View for Number
 
 /// Helpful lemmas
 
+pub open spec fn reverse_ordering(ordering: Ordering) -> Ordering
+{
+    match ordering {
+        Ordering::Less => Ordering::Greater,
+        Ordering::Equal => Ordering::Equal,
+        Ordering::Greater => Ordering::Less,
+    }
+}
+
+pub proof fn lemma_integer_cmp_values(lhs: int, rhs: int)
+    ensures
+        NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) ==
+            if lhs < rhs {
+                Ordering::Less
+            } else if lhs > rhs {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            },
+{
+    vstd::arithmetic::power::lemma_pow0(2);
+    assert(NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)) ==
+        if lhs < rhs {
+            Ordering::Less
+        } else if lhs > rhs {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }) by (nonlinear_arith)
+        requires pow2(0) == 1;
+}
+
+pub proof fn lemma_integer_cmp_values_reverse(lhs: int, rhs: int)
+    ensures
+        reverse_ordering(
+            NumberView::Integer(lhs).cmp_values(NumberView::Integer(rhs)),
+        ) == NumberView::Integer(rhs).cmp_values(NumberView::Integer(lhs)),
+{
+    lemma_integer_cmp_values(lhs, rhs);
+    lemma_integer_cmp_values(rhs, lhs);
+}
+
+pub proof fn lemma_mixed_cmp_values_reverse(f: f64, n: int)
+    ensures
+        reverse_ordering(
+            NumberView::Float(f).cmp_values(NumberView::Integer(n)),
+        ) == NumberView::Integer(n).cmp_values(NumberView::Float(f)),
+        reverse_ordering(
+            NumberView::Integer(n).cmp_values(NumberView::Float(f)),
+        ) == NumberView::Float(f).cmp_values(NumberView::Integer(n)),
+{
+    reveal(pow2);
+}
+
+pub proof fn lemma_eq_values_iff_cmp_equal(lhs: NumberView, rhs: NumberView)
+    ensures
+        lhs.eq_values(rhs) <==> lhs.cmp_values(rhs) == Ordering::Equal,
+{
+    reveal(pow2);
+}
+
 pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
     ensures
         match (lhs, rhs) {
@@ -170,12 +232,14 @@ pub proof fn lemma_div_ensures_cases(lhs: NumberView, rhs: NumberView)
                 lhs->Integer_0,
                 rhs->Integer_0,
             ) != 0 && lhs.to_f64_lossy_ensures(lhs_float) && rhs.to_f64_lossy_ensures(rhs_float)
+                && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
         forall|lhs_float: f64, rhs_float: f64|
             (lhs is Float || rhs is Float) && !rhs.is_zero() && lhs.to_f64_lossy_ensures(lhs_float)
-                && rhs.to_f64_lossy_ensures(rhs_float)
+                && rhs.to_f64_lossy_ensures(rhs_float) && (lhs_float / rhs_float).is_finite_spec()
             ==> #[trigger] lhs.div_ensures(rhs, NumberView::Float(lhs_float / rhs_float)),
 {
+    reveal(NumberView::is_finite);
     reveal(NumberView::is_zero);
     reveal(NumberView::div_ensures);
 }

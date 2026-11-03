@@ -21,11 +21,31 @@ cases:
     host_await_responses_suspendable:
       - id: "get_account"
         args:
-          id: "acct-42"
+          - id: "acct-42"
         value:
           status: "active"
           name: "Alice"
     want_result: true
+
+  - note: registered_builtin_zero_arguments
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: current_context
+        arg_count: 0
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := output if { current_context(output) }
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "current_context"
+        args: []
+        value: "empty"
+    want_result: "empty"
 
   - note: registered_builtin_run_to_completion
     data: {}
@@ -75,7 +95,7 @@ cases:
     query: data.demo.greeting
     host_await_responses:
       - id: "translate"
-        args: "es"
+        args: ["es"]
         value: "hola"
     want_error: "not supported in run-to-completion mode"
 
@@ -102,13 +122,13 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "lookup"
-        args: "user-7"
+        args: ["user-7"]
         value:
           name: "Charlie"
       - id: "persist"
         args:
-          id: "user-7"
-          action: "audit"
+          - id: "user-7"
+            action: "audit"
         value: true
     want_result:
       data:
@@ -136,13 +156,13 @@ cases:
     query: data.demo.results
     host_await_responses_suspendable:
       - id: "enrich"
-        args: "alpha"
+        args: ["alpha"]
         value: "enriched-alpha"
       - id: "enrich"
-        args: "beta"
+        args: ["beta"]
         value: "enriched-beta"
       - id: "enrich"
-        args: "gamma"
+        args: ["gamma"]
         value: "enriched-gamma"
     want_result: ["enriched-alpha", "enriched-beta", "enriched-gamma"]
 
@@ -167,7 +187,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "resolve"
-        args: "test-key"
+        args: ["test-key"]
         value: "from-host"
     # The registered builtin takes precedence — result is the host response, not the user function
     want_result: "from-host"
@@ -187,7 +207,7 @@ cases:
         package demo
         import rego.v1
 
-        # Multi-value calls pack arguments into a single object
+        # An object input remains typed inside the host argument array.
         allowed if {
           result := check_access({"user": input.user, "resource": input.resource})
           result.granted == true
@@ -196,14 +216,14 @@ cases:
     host_await_responses_suspendable:
       - id: "check_access"
         args:
-          user: "alice"
-          resource: "/api/data"
+          - user: "alice"
+            resource: "/api/data"
         value:
           granted: true
           reason: "admin"
     want_result: true
 
-  - note: registered_builtin_rejects_arg_count_greater_than_one
+  - note: registered_builtin_two_input_arguments
     data: {}
     input:
       key: "k1"
@@ -218,11 +238,54 @@ cases:
         package demo
         import rego.v1
 
-        result := kv_store(input.key, input.value)
+        result := output if {
+          kv_store(input.key, input.value, output)
+        }
     query: data.demo.result
-    # Registration fails with an error because arg_count must be 1.
-    # Use object packing instead: kv_store({"key": input.key, "value": input.value})
-    want_error: "arg_count == 1"
+    host_await_responses_suspendable:
+      - id: "kv_store"
+        args: ["k1", "v1"]
+        value: false
+    want_result: false
+
+  - note: registered_builtin_nine_input_arguments_preserve_nested_values
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 9
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := echo(
+          1,
+          [2, {"nested": true}],
+          {"key": "value"},
+          {3, 4},
+          false,
+          null,
+          "seven",
+          {"nested": [8]},
+          9,
+        )
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args:
+          - 1
+          - [2, {nested: true}]
+          - {key: "value"}
+          - set!: [3, 4]
+          - false
+          - null
+          - "seven"
+          - {nested: [8]}
+          - 9
+        value: ["array-response"]
+    want_result: ["array-response"]
 
   - note: registered_builtin_overrides_standard_builtin
     data: {}
@@ -244,7 +307,7 @@ cases:
     query: data.demo.duration_ns
     host_await_responses_suspendable:
       - id: "time.parse_duration_ns"
-        args: "2h30m"
+        args: ["2h30m"]
         value: 9000000000000
     # Host returns 9000000000000 (custom value) instead of the real parse result.
     # This proves the registered builtin shadows the standard one.
@@ -419,7 +482,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "lookup"
-        args: "ping"
+        args: ["ping"]
         value: "pong"
     want_result: "pong"
 
@@ -449,7 +512,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "lookup"
-        args: "alpha"
+        args: ["alpha"]
         value: "from_registered"
       - id: "kv_get"
         args: "beta"
@@ -494,7 +557,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "resolve"
-        args: "alpha"
+        args: ["alpha"]
         value: "from_host"
     want_result:
       intercepted: "from_host"
@@ -530,7 +593,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "resolve"
-        args: "alpha"
+        args: ["alpha"]
         value: "from_host"
     want_result:
       intercepted: "from_host"
@@ -559,7 +622,7 @@ cases:
     query: data.demo.result
     host_await_responses_suspendable:
       - id: "count"
-        args: [10, 20, 30]
+        args: [[10, 20, 30]]
         value: "from_host"
     want_result: "from_host"
 
@@ -627,6 +690,364 @@ cases:
     host_await_responses_suspendable:
       - id: "lookup"
         args:
-          set!: [1, 2, 3]
+          - set!: [1, 2, 3]
         value: "found"
     want_result: "found"
+
+  - note: registered_builtin_single_argument_array_payload
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := echo("ping")
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: ["ping"]
+        value: "pong"
+    want_result: "pong"
+
+  - note: registered_builtin_undefined_argument_skips_host
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := echo(input.missing)
+    query: data.demo.result
+    want_result: "#undefined"
+
+  - note: registered_builtin_undefined_argument_in_negation
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        allow if { not echo(input.missing) }
+    query: data.demo.allow
+    want_result: true
+
+  - note: registered_builtin_undefined_argument_with_output_parameter
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := output if { echo(input.missing, output) }
+    query: data.demo.result
+    want_result: "#undefined"
+
+  - note: registered_builtin_undefined_argument_in_output_negation
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        allow if {
+          expected := "expected"
+          not echo(input.missing, expected)
+        }
+    query: data.demo.allow
+    want_result: true
+
+  - note: registered_builtin_undefined_argument_in_wildcard_negation
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        allow if { not echo(input.missing, _) }
+    query: data.demo.allow
+    want_result: true
+
+  - note: registered_builtin_undefined_argument_in_structured_output_negation
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        allow if { not echo(input.missing, ["expected"]) }
+    query: data.demo.allow
+    want_result: true
+
+  - note: registered_builtin_multi_input_reentry_conserves_responses_run_to_completion
+    data: {}
+    input:
+      items:
+        - {a: "first-a", b: "first-b", c: "first-c"}
+        - {b: "missing-first-a-b", c: "missing-first-a-c"}
+        - {a: "third-a", b: "third-b", c: "third-c"}
+        - {a: "missing-second-a", c: "missing-second-c"}
+        - {a: "fifth-a", b: "fifth-b", c: "fifth-c"}
+        - {a: "missing-third-a", b: "missing-third-b"}
+        - {a: "seventh-a", b: "seventh-b", c: "seventh-c"}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - name: echo
+        arg_count: 3
+    modules:
+      - |
+        package demo
+        import rego.v1
+        results := [output | some item in input.items; echo(item.a, item.b, item.c, output)]
+    query: data.demo.results
+    host_await_responses:
+      - id: "echo"
+        value: "response-1"
+      - id: "echo"
+        value: "response-2"
+      - id: "echo"
+        value: "response-3"
+      - id: "echo"
+        value: "response-4"
+    want_result: ["response-1", "response-2", "response-3", "response-4"]
+
+  - note: registered_builtin_multi_input_reentry_conserves_responses_suspendable
+    data: {}
+    input:
+      items:
+        - {a: "first-a", b: "first-b", c: "first-c"}
+        - {b: "missing-first-a-b", c: "missing-first-a-c"}
+        - {a: "third-a", b: "third-b", c: "third-c"}
+        - {a: "missing-second-a", c: "missing-second-c"}
+        - {a: "fifth-a", b: "fifth-b", c: "fifth-c"}
+        - {a: "missing-third-a", b: "missing-third-b"}
+        - {a: "seventh-a", b: "seventh-b", c: "seventh-c"}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 3
+    modules:
+      - |
+        package demo
+        import rego.v1
+        results := [output | some item in input.items; echo(item.a, item.b, item.c, output)]
+    query: data.demo.results
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: ["first-a", "first-b", "first-c"]
+        value: "response-1"
+      - id: "echo"
+        args: ["third-a", "third-b", "third-c"]
+        value: "response-2"
+      - id: "echo"
+        args: ["fifth-a", "fifth-b", "fifth-c"]
+        value: "response-3"
+      - id: "echo"
+        args: ["seventh-a", "seventh-b", "seventh-c"]
+        value: "response-4"
+    want_result: ["response-1", "response-2", "response-3", "response-4"]
+
+  - note: registered_builtin_later_nested_host_input_is_eager
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: nested
+        arg_count: 0
+      - name: outer
+        arg_count: 2
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := outer(input.missing, nested())
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "nested"
+        args: []
+        value: "nested-result"
+    want_result: "#undefined"
+
+  - note: registered_builtin_output_mismatch_consumes_one_response
+    data: {}
+    input:
+      items: ["first", "second"]
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        allow if {
+          some item in input.items
+          echo(item, "expected")
+        }
+    query: data.demo.allow
+    host_await_responses:
+      - id: "echo"
+        value: "mismatch"
+      - id: "echo"
+        value: "expected"
+    want_result: true
+
+  - note: registered_builtin_strict_output_expression_error_run_to_completion
+    data: {}
+    input:
+      zero: 0
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        default allow := false
+        allow if { echo(1, 1 / input.zero) }
+    query: data.demo.allow
+    host_await_responses:
+      - id: "echo"
+        value: "host-response"
+    want_result: false
+
+  - note: registered_builtin_strict_output_expression_error_suspendable
+    data: {}
+    input:
+      zero: 0
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        default allow := false
+        allow if { echo(1, 1 / input.zero) }
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: [1]
+        value: "host-response"
+    want_result: false
+
+  - note: explicit_host_await_strict_output_expression_error_run_to_completion
+    data: {}
+    input:
+      zero: 0
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules:
+      - |
+        package demo
+        import rego.v1
+        default allow := false
+        allow if { __builtin_host_await([1], "echo", 1 / input.zero) }
+    query: data.demo.allow
+    host_await_responses:
+      - id: "echo"
+        value: "host-response"
+    want_result: false
+
+  - note: explicit_host_await_strict_output_expression_error_suspendable
+    data: {}
+    input:
+      zero: 0
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+        default allow := false
+        allow if { __builtin_host_await([1], "echo", 1 / input.zero) }
+    query: data.demo.allow
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: [1]
+        value: "host-response"
+    want_result: false
+
+  - note: registered_standard_builtin_zero_input_interception
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: time.now_ns
+        arg_count: 0
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := time.now_ns()
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "time.now_ns"
+        args: []
+        value: 1700000000
+    want_result: 1700000000
+
+  - note: registered_standard_builtin_two_input_interception
+    data: {}
+    input:
+      text: "alpha-beta"
+      part: "beta"
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - name: contains
+        arg_count: 2
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := contains(input.text, input.part)
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "contains"
+        args: ["alpha-beta", "beta"]
+        value: false
+    want_result: false

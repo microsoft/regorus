@@ -4,9 +4,7 @@
 
 //! Implicit allOf for unbound `[*]` wildcard fields.
 
-use alloc::format;
-use alloc::string::{String, ToString as _};
-use alloc::vec::Vec;
+use alloc::string::String;
 
 use anyhow::{anyhow, Result};
 
@@ -14,8 +12,9 @@ use crate::languages::azure_policy::ast::{Condition, FieldKind, Lhs};
 use crate::rvm::instructions::{GuardMode, LoopMode, LoopStartParams};
 use crate::rvm::Instruction;
 
+use super::binding_path::split_bound_path;
 use super::core::{Compiler, CountBinding};
-use super::utils::{split_count_wildcard_path, split_path_without_wildcards};
+use super::utils::{has_unquoted_wildcard, split_count_wildcard_path};
 
 impl Compiler {
     /// Check whether a condition's LHS is a field with an unbound `[*]`
@@ -31,13 +30,14 @@ impl Compiler {
             _ => return Ok(None),
         };
 
-        if !path.contains("[*]") {
+        if !has_unquoted_wildcard(&path) {
             return Ok(None);
         }
 
         if self.resolve_count_binding(&path)?.is_some() {
             return Ok(None);
         }
+        self.ensure_not_malformed_below_binding(&path, &field.span)?;
 
         Ok(Some(path))
     }
@@ -58,27 +58,14 @@ impl Compiler {
             _ => return Ok(None),
         };
 
-        if !path.contains("[*]") {
+        if !has_unquoted_wildcard(&path) {
             return Ok(None);
         }
 
-        let binding = match self.resolve_count_binding(&path)? {
-            Some(b) => b,
-            None => return Ok(None),
-        };
-
-        if let Some(prefix) = &binding.field_wildcard_prefix {
-            let lc_prefix = prefix.to_ascii_lowercase();
-            let bound_prefix = format!("{}[*].", lc_prefix);
-            if let Some(remainder) = path.to_ascii_lowercase().strip_prefix(&bound_prefix) {
-                let remainder = remainder.to_string();
-                if remainder.contains("[*]") {
-                    return Ok(Some((binding, remainder)));
-                }
-            }
-        }
-
-        Ok(None)
+        Ok(self
+            .resolve_path_below_bound_element(&path)?
+            .filter(|nested| nested.rest_has_wildcard)
+            .map(|nested| (nested.binding, nested.rest)))
     }
 
     /// Compile a condition where the field LHS contains `[*]` outside a
@@ -109,9 +96,8 @@ impl Compiler {
         let collection_reg = match base_reg {
             Some(base) if prefix.is_empty() => base,
             Some(base) => {
-                let parts = split_path_without_wildcards(&prefix)?;
-                let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                self.emit_chained_index_literal_path(base, &refs, span)?
+                let parts = split_bound_path(&prefix)?;
+                self.emit_chained_index_segments(base, &parts, span)?
             }
             None if prefix.is_empty() => self.compile_resource_root(span)?,
             None => self.compile_resource_path_value(&prefix, span)?,
@@ -137,7 +123,7 @@ impl Compiler {
             .map_err(|_| anyhow!("instruction index overflow"))?;
 
         match suffix {
-            Some(ref s) if s.contains("[*]") => {
+            Some(ref s) if has_unquoted_wildcard(s) => {
                 let inner_result =
                     self.compile_allof_loop_inner(Some(current_reg), s, rhs_reg, condition)?;
                 self.emit(
@@ -151,9 +137,8 @@ impl Compiler {
             _ => {
                 let element_reg = match &suffix {
                     Some(s) => {
-                        let parts = split_path_without_wildcards(s)?;
-                        let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-                        self.emit_chained_index_literal_path(current_reg, &refs, span)?
+                        let parts = split_bound_path(s)?;
+                        self.emit_chained_index_segments(current_reg, &parts, span)?
                     }
                     None => current_reg,
                 };

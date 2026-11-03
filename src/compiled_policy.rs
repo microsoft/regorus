@@ -10,6 +10,7 @@
 use crate::ast::*;
 use crate::compiler::hoist::HoistedLoopsLookup;
 use crate::engine::Engine;
+use crate::parser::ParserContext;
 use crate::scheduler::*;
 use crate::utils::*;
 use crate::*;
@@ -212,9 +213,11 @@ pub(crate) struct TargetInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompiledPolicyData {
     pub(crate) modules: Rc<Vec<Ref<Module>>>,
+    pub(crate) parser_contexts: Rc<Vec<ParserContext>>,
     pub(crate) schedule: Option<Rc<Schedule>>,
     pub(crate) rules: Map<String, Vec<Ref<Rule>>>,
     pub(crate) default_rules: Map<String, Vec<DefaultRuleInfo>>,
+    pub(crate) rule_path_components: Map<String, Vec<String>>,
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
     pub(crate) functions: FunctionTable,
     pub(crate) rule_paths: MapSet<String>,

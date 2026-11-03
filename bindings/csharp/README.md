@@ -124,7 +124,13 @@ of being truncated.
 
 ### Per-execution memory budget
 
-RVM run-to-completion evaluation can use an optional additional live-memory budget. Each ordinary `Execute` or `ExecuteEntryPoint` call starts with a fresh budget for execution; program compilation, program loading, and prior `SetDataJson`, `SetInputJson`, and `SetContextJson` calls occur before and outside that budget.
+RVM run-to-completion and suspendable evaluation can use an optional memory
+budget. Each accepted initial `Execute` or `ExecuteEntryPoint` call snapshots
+the configured budget; `Resume` continues the same budget, including when it
+runs on a different thread. Program compilation, program loading, and prior
+`SetDataJson`, `SetInputJson`, and `SetContextJson` calls occur before and
+outside that budget. Changing or clearing the configuration affects only the
+next initial execution.
 
 ```csharp
 using var vm = new Rvm();
@@ -143,13 +149,27 @@ catch (RegorusMemoryBudgetExceededException ex)
 }
 ```
 
-The native execution budget includes result JSON serialization and Rust `CString` allocation before the native call returns. Managed UTF-8 decoding and C# `string` allocation after that return are not charged.
+The native execution budget includes resume C-string copying and JSON parsing, VM resume work, result JSON serialization, and Rust `CString` allocation before the native call returns. Managed UTF-8 decoding and C# `string` allocation after that return are not charged.
 
-This is a cooperative observed-live-bytes budget, not an allocation-time peak-memory cap. A single instruction, builtin, native serialization, or `CString` allocation may exceed the limit before the next checkpoint; configure headroom for that overshoot.
+Run-to-completion accounting observes live-byte deltas; suspendable accounting
+accumulates the requested size of each successful allocation and reallocation
+across the initial execution and all resumes. Frees do not refund suspendable
+usage. Both are cooperative budgets, not allocation-time peak-memory caps. A
+single instruction, builtin, native serialization, or `CString` allocation
+may exceed the limit before the next checkpoint; configure headroom for that
+overshoot.
 
-Accounting observes the execution thread rather than allocation ownership. Synchronous host work on that thread contributes to usage, cross-thread frees can temporarily skew observations, and a downward baseline ratchet can permanently remove headroom during an execution. A reused VM receives a new baseline, but retained capacities and pools can make it allocate differently from a fresh VM. See the [RVM memory budget documentation](../../docs/limits/memory_budget.md) for the detailed accounting model.
+The VM retains suspendable usage as a cumulative scalar and selects it only
+during each synchronous segment, so a resume may migrate threads without
+resetting consumption. Native resume parsing, inner resume, and immediate
+serialization share one accounting window.
+Successful reallocation charges the full new requested size to the selected
+execution, while failed reallocation charges nothing. Run-to-completion
+accounting keeps its existing execution-thread baseline and downward ratchet.
+See the [RVM memory budget documentation](../../docs/limits/memory_budget.md)
+for the detailed accounting model.
 
-Budgets are not supported in suspendable execution mode. `ClearMemoryBudgetConfig` restores the previous unlimited per-execution behavior. Public multi-call begin/end scopes are intentionally absent because allocator counters are thread-local. Failed terminal execution clears retained state. The process-wide limit exposed by `MemoryLimits` remains a separate safeguard.
+Terminal budget or runtime failures invalidate retained results and clear execution state. Missing/unexpected resume input and malformed JSON are retryable while a valid continuation remains, but allocation requests consumed by malformed native input are not refunded and may exhaust the budget on a later valid resume. Native status 11 and `RegorusMemoryBudgetUnsupportedException` remain reserved for compatibility and are not used to reject suspendable execution. The process-wide limit exposed by `MemoryLimits` remains a separate safeguard.
 
 ## RVM with Registered Host-Await Builtins
 
@@ -176,7 +196,7 @@ allow if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.allow" };
-var builtins = new[] { new HostAwaitBuiltin("get_account") };
+var builtins = new[] { new HostAwaitBuiltin("get_account", 1) };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();
@@ -189,7 +209,7 @@ vm.Execute();
 
 // Inspect which builtin suspended and what argument was passed
 var identifier = vm.GetHostAwaitIdentifier();  // "get_account"
-var argument = vm.GetHostAwaitArgument();       // {"id":"acct-42"}
+var argument = vm.GetHostAwaitArgument();       // [{"id":"acct-42"}]
 
 // Resolve externally, then resume
 var result = vm.Resume("""{"status": "active", "name": "Alice"}""");
@@ -214,7 +234,7 @@ greeting := msg if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.greeting" };
-var builtins = new[] { new HostAwaitBuiltin("translate") };
+var builtins = new[] { new HostAwaitBuiltin("translate", 1) };
 
 using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
 using var vm = new Rvm();

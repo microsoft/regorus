@@ -58,7 +58,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let all_const: Option<Vec<_>> = items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
-            let dest = self.alloc_register();
+            let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::from_array(values));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
             return Ok(dest);
@@ -70,7 +70,7 @@ impl<'a> Compiler<'a> {
             element_registers.push(item_reg);
         }
 
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
         let params = ArrayCreateParams {
             dest,
             elements: element_registers,
@@ -91,7 +91,7 @@ impl<'a> Compiler<'a> {
         let all_const: Option<BTreeSet<_>> =
             items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
-            let dest = self.alloc_register();
+            let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::from_set(values));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
             return Ok(dest);
@@ -103,7 +103,7 @@ impl<'a> Compiler<'a> {
             element_registers.push(item_reg);
         }
 
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
         let params = SetCreateParams {
             dest,
             elements: element_registers,
@@ -123,13 +123,13 @@ impl<'a> Compiler<'a> {
             .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
             .collect();
         if let Some(obj) = all_const {
-            let dest = self.alloc_register();
+            let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::Object(Rc::new(obj)));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
             return Ok(dest);
         }
 
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
 
         let mut value_regs = Vec::with_capacity(fields.len());
         for (_, _key_expr, value_expr) in fields {

@@ -371,24 +371,41 @@ impl Analyzer {
                 // Args are maintained in a separate scope so that they aren't used for
                 // scheduling.
                 self.scopes.push(scope);
-                for b in bodies {
-                    self.analyze_query(key.clone(), value.clone(), &b.query, Scope::default())?;
+                let is_partial = match head {
+                    RuleHead::Set { .. } => true,
+                    RuleHead::Compr { refr, .. } => {
+                        matches!(refr.as_ref(), Expr::RefBrack { .. })
+                    }
+                    RuleHead::Func { .. } => false,
+                };
+                for (idx, b) in bodies.iter().enumerate() {
+                    let use_head_output = idx == 0 || (is_partial && b.assign.is_none());
+                    let (body_key, body_value) = if use_head_output {
+                        (key.clone(), value.clone())
+                    } else {
+                        (None, b.assign.as_ref().map(|assign| assign.value.clone()))
+                    };
+                    self.analyze_query(body_key, body_value, &b.query, Scope::default())?;
                 }
 
                 if bodies.is_empty() {
+                    let mut scope = Scope::default();
+                    if let Some(key) = key {
+                        self.analyze_value_expr(&key, &mut scope)?;
+                    }
                     if let Some(value) = value {
-                        self.analyze_value_expr(&value)?;
+                        self.analyze_value_expr(&value, &mut scope)?;
                     }
                 }
 
                 self.scopes.pop();
                 Ok(())
             }
-            Rule::Default { value, .. } => self.analyze_value_expr(value),
+            Rule::Default { value, .. } => self.analyze_value_expr(value, &mut Scope::default()),
         }
     }
 
-    fn analyze_value_expr(&mut self, expr: &Ref<Expr>) -> Result<()> {
+    fn analyze_value_expr(&mut self, expr: &Ref<Expr>, scope: &mut Scope) -> Result<()> {
         let mut comprs = vec![];
         traverse(expr, &mut |e| match e.as_ref() {
             ArrayCompr { .. } | SetCompr { .. } | ObjectCompr { .. } => {
@@ -398,22 +415,58 @@ impl Analyzer {
             _ => Ok(true),
         })?;
         for compr in comprs {
-            match compr.as_ref() {
+            let qidx = match compr.as_ref() {
                 Expr::ArrayCompr { query, term, .. } | Expr::SetCompr { query, term, .. } => {
                     self.analyze_query(None, Some(term.clone()), query, Scope::default())?;
+                    query.qidx
                 }
                 Expr::ObjectCompr {
                     query, key, value, ..
-                } => self.analyze_query(
-                    Some(key.clone()),
-                    Some(value.clone()),
-                    query,
-                    Scope::default(),
-                )?,
-                _ => (),
+                } => {
+                    self.analyze_query(
+                        Some(key.clone()),
+                        Some(value.clone()),
+                        query,
+                        Scope::default(),
+                    )?;
+                    query.qidx
+                }
+                _ => continue,
+            };
+
+            if let Some(compr_scope) = self
+                .schedule_table
+                .get_checked(self.current_module_index, qidx)
+                .map_err(|err| anyhow!("schedule_table out of bounds: {err}"))?
+                .map(|qs| &qs.scope)
+            {
+                Self::propagate_nested_scope(compr_scope, scope);
             }
         }
         Ok(())
+    }
+
+    fn propagate_nested_scope(compr_scope: &Scope, scope: &mut Scope) {
+        if compr_scope.uses_input {
+            scope.uses_input = true;
+        }
+        for iv in &compr_scope.inputs {
+            if !scope.locals.contains_key(iv) && !scope.unscoped.contains(iv) {
+                scope.inputs.insert(iv.clone());
+            }
+        }
+    }
+
+    fn analyze_output_expr(&mut self, expr: &Ref<Expr>, scope: &mut Scope) -> Result<()> {
+        let mut output_scope = scope.clone();
+        output_scope
+            .unscoped
+            .extend(output_scope.locals.keys().cloned());
+        self.scopes.push(output_scope.clone());
+        let result = self.analyze_value_expr(expr, &mut output_scope);
+        self.scopes.pop();
+        Self::propagate_nested_scope(&output_scope, scope);
+        result
     }
 
     fn analyze_rule_head(
@@ -442,8 +495,8 @@ impl Analyzer {
 
     fn gather_local_vars(
         &mut self,
-        key: Option<Ref<Expr>>,
-        value: Option<Ref<Expr>>,
+        key: Option<&Ref<Expr>>,
+        value: Option<&Ref<Expr>>,
         query: &Query,
         scope: &mut Scope,
     ) -> Result<()> {
@@ -495,10 +548,10 @@ impl Analyzer {
             }
         }
 
-        if let Some(key) = &key {
+        if let Some(key) = key {
             gather_vars(key, false, &self.scopes, scope)?;
         }
-        if let Some(value) = &value {
+        if let Some(value) = value {
             gather_vars(value, false, &self.scopes, scope)?;
         }
 
@@ -869,7 +922,7 @@ impl Analyzer {
         mut scope: Scope,
     ) -> Result<()> {
         let empty_str = query.span.source_str().clone_empty();
-        self.gather_local_vars(key, value, query, &mut scope)?;
+        self.gather_local_vars(key.as_ref(), value.as_ref(), query, &mut scope)?;
 
         let mut infos = vec![];
         let mut first_use = BTreeMap::new();
@@ -1110,6 +1163,14 @@ impl Analyzer {
             }
             _ => Vec::new(),
         };
+
+        // Output expressions are evaluated after the query body.
+        if let Some(key) = &key {
+            self.analyze_output_expr(key, &mut scope)?;
+        }
+        if let Some(value) = &value {
+            self.analyze_output_expr(value, &mut scope)?;
+        }
 
         let query_schedule = QuerySchedule {
             scope: scope.clone(),

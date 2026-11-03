@@ -54,10 +54,12 @@ cases:
         - 1e3
         - 1e-3
       p2:
-        - 1e30
-        - 1e27
-        - 1e24
-        - 1e21
+        # Keep values above f64's exact integer range as decimal integers so the expected
+        # results retain their exact values.
+        - 1000000000000000000000000000000
+        - 1000000000000000000000000000
+        - 1000000000000000000000000
+        - 1000000000000000000000
         - 1e2
         - 1e1
         - 1e-1

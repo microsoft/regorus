@@ -170,3 +170,7 @@ cases:
   - note: non-string-index
     rego: package a[1]
     error: expected string
+
+  - note: non-string-decimal-index
+    rego: package a[1.0]
+    error: expected string

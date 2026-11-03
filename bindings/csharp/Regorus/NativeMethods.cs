@@ -131,6 +131,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_program_serialize_binary(RegorusProgram* program);
 
         /// <summary>
+        /// Get the builtin names recorded in a program.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_program_get_builtin_names", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_program_get_builtin_names(RegorusProgram* program);
+
+        /// <summary>
         /// Deserialize a program from binary format.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_program_deserialize_binary", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -285,6 +291,12 @@ namespace Regorus.Internal
         internal static extern RegorusResult regorus_engine_add_policy(RegorusEngine* engine, byte* path, byte* rego);
 
         /// <summary>
+        /// Check whether the policy module at the exact source path declares a rule at rootName or a component-wise descendant.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_has_declared_rule_rooted_at", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_has_declared_rule_rooted_at(RegorusEngine* engine, byte* path, byte* rootName);
+
+        /// <summary>
         /// Add a policy from file.
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_add_policy_from_file", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -406,6 +418,12 @@ namespace Regorus.Internal
         /// </summary>
         [DllImport(LibraryName, EntryPoint = "regorus_engine_get_ast_as_json", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern RegorusResult regorus_engine_get_ast_as_json(RegorusEngine* engine);
+
+        /// <summary>
+        /// Gets each loaded module's source label and decoded package components as JSON.
+        /// </summary>
+        [DllImport(LibraryName, EntryPoint = "regorus_engine_get_policy_package_components", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern RegorusResult regorus_engine_get_policy_package_components(RegorusEngine* engine);
 
         /// <summary>
         /// Gets the package names defined in each policy added to the engine.
@@ -865,7 +883,7 @@ namespace Regorus.Internal
         /// </summary>
         MemoryBudgetExceeded,
         /// <summary>
-        /// An RVM memory budget was used with suspendable execution.
+        /// Reserved for native ABI compatibility.
         /// </summary>
         MemoryBudgetUnsupportedInSuspendableExecution,
     }
@@ -1029,6 +1047,7 @@ namespace Regorus.Internal
     internal unsafe partial struct RegorusHostAwaitBuiltin
     {
         public byte* name;
+        public UIntPtr arg_count;
     }
 
     /// <summary>

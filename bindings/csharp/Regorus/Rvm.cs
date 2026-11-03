@@ -176,7 +176,7 @@ namespace Regorus
         }
 
         /// <summary>
-        /// Configure a fresh memory budget for every run-to-completion execution.
+        /// Configure the memory budget for the next initial RVM execution.
         /// </summary>
         /// <param name="config">Memory-budget configuration.</param>
         public void SetMemoryBudgetConfig(MemoryBudgetConfig config)
@@ -277,7 +277,9 @@ namespace Regorus
         }
 
         /// <summary>
-        /// Get the HostAwait argument as a JSON string.
+        /// Get the HostAwait argument as a JSON string. Newly compiled registered
+        /// calls return the complete ordered input array; explicit raw calls and
+        /// previously compiled programs retain their payload shape.
         /// Returns null if the VM is not in a HostAwait-suspended state.
         /// </summary>
         public string? GetHostAwaitArgument()

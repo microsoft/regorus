@@ -12,3 +12,30 @@ cases:
     query: data.test
     want_result:
       x: [0, 1]
+  - note: literal-dot package and nested package materialize as distinct components
+    modules:
+      - |
+        package graph["a.b"]
+        literal := 1
+      - |
+        package graph.a.b
+        nested := 2
+    query: data
+    want_result:
+      graph:
+        a:
+          b:
+            nested: 2
+        a.b:
+          literal: 1
+  - note: missing literal-dot package does not read a nested package
+    modules:
+      - |
+        package graph.a.b
+        value := "nested"
+      - |
+        package consumer
+        import rego.v1
+        result := data.graph["a.b"].value
+    query: data.consumer.result
+    no_result: true

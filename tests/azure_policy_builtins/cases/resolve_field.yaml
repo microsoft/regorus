@@ -47,3 +47,40 @@ cases:
       - name: "test"
       - 42
     want_undefined: true
+
+  - note: empty_normalized_tag_bracket_does_not_resolve_parent
+    args:
+      - tags:
+          env: "production"
+          "": "empty"
+      - "tags[ ]"
+    want_undefined: true
+
+  - note: unclosed_tag_bracket_does_not_resolve_parent
+    args:
+      - tags:
+          env: "production"
+      - "tags[env"
+    want_undefined: true
+
+  - note: empty_quoted_tag_bracket_does_not_resolve_parent
+    args:
+      - tags:
+          env: "production"
+          "": "empty"
+      - "tags[ '' ]"
+    want_undefined: true
+
+  - note: quoted_space_tag_is_not_empty
+    args:
+      - tags:
+          " ": "production"
+      - "tags[ ' ' ]"
+    want: "production"
+
+  - note: quoted_space_tag_twin_does_not_match_unquoted_key
+    args:
+      - tags:
+          env: "production"
+      - "tags[ ' ' ]"
+    want_undefined: true

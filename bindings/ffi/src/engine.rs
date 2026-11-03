@@ -81,14 +81,50 @@ mod tests {
 #[cfg(all(test, feature = "std"))]
 mod panic_tests {
     use super::{
-        regorus_engine_drop, regorus_engine_eval_query, regorus_engine_get_policies,
-        regorus_engine_new,
+        regorus_engine_add_policy, regorus_engine_drop, regorus_engine_eval_query,
+        regorus_engine_eval_rule, regorus_engine_get_policies, regorus_engine_new,
     };
     use crate::common::{regorus_result_drop, RegorusStatus};
     use crate::panic_guard::{is_poisoned, reset_poison};
     use alloc::boxed::Box;
     use regorus::Value;
     use std::ffi::{CStr, CString};
+
+    #[test]
+    fn rule_conflict_preserves_error_status_and_message() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let first_path = CString::new(r"C:\policy files\first.rego").unwrap();
+        let first_policy = CString::new("package test\np := 1\n").unwrap();
+        let second_path = CString::new(r"C:\policy files\second.rego").unwrap();
+        let second_policy = CString::new("package test\np := 2\n").unwrap();
+        let query = CString::new("data.test.p").unwrap();
+
+        let first_result =
+            regorus_engine_add_policy(engine, first_path.as_ptr(), first_policy.as_ptr());
+        assert!(matches!(first_result.status, RegorusStatus::Ok));
+        regorus_result_drop(first_result);
+
+        let second_result =
+            regorus_engine_add_policy(engine, second_path.as_ptr(), second_policy.as_ptr());
+        assert!(matches!(second_result.status, RegorusStatus::Ok));
+        regorus_result_drop(second_result);
+
+        let result = regorus_engine_eval_rule(engine, query.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Error));
+        assert!(!result.error_message.is_null());
+        unsafe {
+            let message = CStr::from_ptr(result.error_message).to_str().unwrap();
+            assert!(message.contains(r"rule conflicts with rule at C:\policy files\first.rego:2:1"));
+            assert!(!message.contains("defined here"));
+            regorus_result_drop(result);
+        }
+        regorus_engine_drop(engine);
+    }
 
     #[test]
     fn catches_extension_panics_and_marks_poison() {
@@ -163,6 +199,327 @@ mod panic_tests {
     }
 }
 
+#[cfg(all(test, feature = "std"))]
+mod declared_rule_tests {
+    use super::{
+        regorus_engine_add_policy, regorus_engine_drop, regorus_engine_has_declared_rule_rooted_at,
+        regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusDataType, RegorusStatus};
+    use core::ffi::c_char;
+    use core::num::{NonZeroU32, NonZeroUsize};
+    use core::ptr;
+    use std::ffi::CString;
+
+    #[test]
+    fn reports_declared_roots_and_source_errors() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let path = CString::new("policy.rego").expect("valid path");
+        let policy =
+            CString::new("package customer\nmetadata.parameters := false").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let root = CString::new("metadata").expect("valid root");
+        let found =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), root.as_ptr());
+        assert!(matches!(found.status, RegorusStatus::Ok));
+        assert!(matches!(found.data_type, RegorusDataType::Boolean));
+        assert!(found.bool_value);
+        regorus_result_drop(found);
+
+        let dotted_root = CString::new("metadata.parameters").expect("valid root");
+        let dotted =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), dotted_root.as_ptr());
+        assert!(matches!(dotted.status, RegorusStatus::Ok));
+        assert!(matches!(dotted.data_type, RegorusDataType::Boolean));
+        assert!(dotted.bool_value);
+        regorus_result_drop(dotted);
+
+        let invalid_root = CString::new("metadata..parameters").expect("valid text");
+        let invalid = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            path.as_ptr(),
+            invalid_root.as_ptr(),
+        );
+        assert!(matches!(invalid.status, RegorusStatus::InvalidArgument));
+        regorus_result_drop(invalid);
+
+        let absent_path = CString::new("absent.rego").expect("valid path");
+        let absent_policy =
+            CString::new("package customer\nuse := params.value").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, absent_path.as_ptr(), absent_policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let absent =
+            regorus_engine_has_declared_rule_rooted_at(engine, absent_path.as_ptr(), root.as_ptr());
+        assert!(matches!(absent.status, RegorusStatus::Ok));
+        assert!(matches!(absent.data_type, RegorusDataType::Boolean));
+        assert!(!absent.bool_value);
+        regorus_result_drop(absent);
+
+        let missing_path = CString::new("missing.rego").expect("valid path");
+        let missing = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            missing_path.as_ptr(),
+            invalid_root.as_ptr(),
+        );
+        assert!(matches!(missing.status, RegorusStatus::Error));
+        regorus_result_drop(missing);
+
+        let duplicate_policy = CString::new("package customer\nx := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), duplicate_policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let ambiguous = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            path.as_ptr(),
+            invalid_root.as_ptr(),
+        );
+        assert!(matches!(ambiguous.status, RegorusStatus::Error));
+        regorus_result_drop(ambiguous);
+
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn maps_root_arguments_and_preserves_source_transport_errors() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let path = CString::new("policy.rego").expect("valid path");
+        let policy = CString::new("package customer\nmetadata := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let root = CString::new("metadata").expect("valid root");
+        let null_path =
+            regorus_engine_has_declared_rule_rooted_at(engine, ptr::null(), root.as_ptr());
+        assert!(matches!(null_path.status, RegorusStatus::Error));
+        regorus_result_drop(null_path);
+
+        let null_root =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), ptr::null());
+        assert!(matches!(null_root.status, RegorusStatus::InvalidArgument));
+        regorus_result_drop(null_root);
+
+        let invalid_utf8 = [0xff, 0];
+        let invalid_path = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            invalid_utf8.as_ptr().cast::<c_char>(),
+            root.as_ptr(),
+        );
+        assert!(matches!(invalid_path.status, RegorusStatus::Error));
+        regorus_result_drop(invalid_path);
+
+        let invalid_utf8 = [0xff, 0];
+        let invalid_root = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            path.as_ptr(),
+            invalid_utf8.as_ptr().cast::<c_char>(),
+        );
+        assert!(matches!(
+            invalid_root.status,
+            RegorusStatus::InvalidArgument
+        ));
+        regorus_result_drop(invalid_root);
+
+        let bad_head_path = CString::new("bad.rego").expect("valid path");
+        let bad_head = CString::new("package customer\nmetadata := true\nbroken[lookup()] := true")
+            .expect("valid policy");
+        let added = regorus_engine_add_policy(engine, bad_head_path.as_ptr(), bad_head.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+        let unclassifiable = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            bad_head_path.as_ptr(),
+            root.as_ptr(),
+        );
+        assert!(matches!(unclassifiable.status, RegorusStatus::Error));
+        regorus_result_drop(unclassifiable);
+
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn source_transport_errors_follow_engine_and_lock_validation() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let root = CString::new("metadata").expect("valid root");
+        let invalid_utf8 = [0xff, 0];
+
+        let null_source =
+            regorus_engine_has_declared_rule_rooted_at(engine, ptr::null(), root.as_ptr());
+        let null_source_is_error = matches!(&null_source.status, RegorusStatus::Error);
+        regorus_result_drop(null_source);
+
+        let invalid_source = regorus_engine_has_declared_rule_rooted_at(
+            engine,
+            invalid_utf8.as_ptr().cast::<c_char>(),
+            root.as_ptr(),
+        );
+        let invalid_source_message = crate::common::from_c_str(invalid_source.error_message)
+            .expect("invalid source should report its UTF-8 error");
+        let invalid_source_is_utf8_error = matches!(&invalid_source.status, RegorusStatus::Error)
+            && invalid_source_message.starts_with("invalid utf8:");
+        regorus_result_drop(invalid_source);
+
+        let null_engine_source = regorus_engine_has_declared_rule_rooted_at(
+            ptr::null_mut(),
+            invalid_utf8.as_ptr().cast::<c_char>(),
+            root.as_ptr(),
+        );
+        let null_engine_message = crate::common::from_c_str(null_engine_source.error_message)
+            .expect("null engine should report its pointer error");
+        let null_engine_precedes_source =
+            matches!(&null_engine_source.status, RegorusStatus::Error)
+                && null_engine_message == "null pointer";
+        regorus_result_drop(null_engine_source);
+
+        let lock_error_precedes_source = {
+            let engine_ref = unsafe { &*engine };
+            let _write_guard = engine_ref.try_write().expect("write lock should succeed");
+            let expected_lock_error = engine_ref
+                .try_read()
+                .err()
+                .map(|error| error.to_string())
+                .expect("write lock should prevent a read lock");
+            let locked_source = regorus_engine_has_declared_rule_rooted_at(
+                engine,
+                invalid_utf8.as_ptr().cast::<c_char>(),
+                root.as_ptr(),
+            );
+            let locked_source_message = crate::common::from_c_str(locked_source.error_message)
+                .expect("lock contention should report its error");
+            let is_lock_error = matches!(&locked_source.status, RegorusStatus::Error)
+                && locked_source_message == expected_lock_error;
+            regorus_result_drop(locked_source);
+            is_lock_error
+        };
+        let lock_released = unsafe { &*engine }.try_read().is_ok();
+
+        assert_eq!(
+            [
+                null_source_is_error,
+                invalid_source_is_utf8_error,
+                null_engine_precedes_source,
+                lock_error_precedes_source,
+                lock_released,
+            ],
+            [true; 5],
+            "source transport must retain Error status and follow engine/read-lock validation, with locks released"
+        );
+
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn declared_rule_policy_length_limit_errors_keep_the_operation_error_status() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let engine_ref = unsafe { &*engine };
+        {
+            let mut guard = engine_ref.try_write().expect("write lock should succeed");
+            guard.set_policy_length_config(::regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(64).expect("nonzero"),
+                max_file_bytes: NonZeroUsize::new(32).expect("nonzero"),
+                max_lines: NonZeroUsize::new(4).expect("nonzero"),
+            });
+        }
+
+        let path = CString::new("limits.rego").expect("valid path");
+        let policy = CString::new("package customer\nx := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        {
+            let mut guard = engine_ref.try_write().expect("write lock should succeed");
+            guard.set_policy_length_config(::regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(1).expect("nonzero"),
+                max_file_bytes: NonZeroUsize::new(1).expect("nonzero"),
+                max_lines: NonZeroUsize::new(1).expect("nonzero"),
+            });
+        }
+
+        let at_limit = CString::new("a".repeat(32)).expect("valid root");
+        let accepted =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), at_limit.as_ptr());
+        assert!(matches!(accepted.status, RegorusStatus::Ok));
+        assert!(matches!(accepted.data_type, RegorusDataType::Boolean));
+        assert!(!accepted.bool_value);
+        regorus_result_drop(accepted);
+
+        let over_limit = CString::new("a".repeat(33)).expect("valid root");
+        let rejected =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), over_limit.as_ptr());
+        assert!(
+            matches!(&rejected.status, RegorusStatus::Error),
+            "expected a policy-length failure to retain Error status, got {:?}",
+            rejected.status
+        );
+        regorus_result_drop(rejected);
+
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn deep_declared_rule_selector_preserves_result_lock_and_engine_reuse() {
+        const COMPONENT_COUNT: usize = 20_000;
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let engine_ref = unsafe { &*engine };
+        {
+            let mut guard = engine_ref.try_write().expect("engine write lock");
+            guard.set_policy_length_config(::regorus::PolicyLengthConfig {
+                max_col: NonZeroU32::new(524_288).expect("nonzero"),
+                max_file_bytes: NonZeroUsize::new(524_288).expect("nonzero"),
+                max_lines: NonZeroUsize::new(4).expect("nonzero"),
+            });
+        }
+
+        let path = CString::new("shallow.rego").expect("valid path");
+        let policy = CString::new("package customer\nmetadata := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, path.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let mut selector = String::from("metadata");
+        for index in 0..COMPONENT_COUNT {
+            selector.push_str(&format!(".segment_{index:05}"));
+        }
+        let selector = CString::new(selector).expect("valid selector");
+        let deep =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), selector.as_ptr());
+        assert!(matches!(deep.status, RegorusStatus::Ok));
+        assert!(matches!(deep.data_type, RegorusDataType::Boolean));
+        assert!(!deep.bool_value);
+        regorus_result_drop(deep);
+        assert!(
+            engine_ref.try_write().is_ok(),
+            "dropping the result must release the engine lock"
+        );
+
+        let root = CString::new("metadata").expect("valid root");
+        let subsequent =
+            regorus_engine_has_declared_rule_rooted_at(engine, path.as_ptr(), root.as_ptr());
+        assert!(matches!(subsequent.status, RegorusStatus::Ok));
+        assert!(matches!(subsequent.data_type, RegorusDataType::Boolean));
+        assert!(subsequent.bool_value);
+        regorus_result_drop(subsequent);
+
+        regorus_engine_drop(engine);
+    }
+}
+
 #[no_mangle]
 #[cfg(feature = "std")]
 pub extern "C" fn regorus_engine_test_trigger_panic() -> RegorusResult {
@@ -214,6 +571,9 @@ pub extern "C" fn regorus_engine_drop(engine: *mut RegorusEngine) {
 ///
 /// The policy is parsed into AST.
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.add_policy
+/// The returned package string is the legacy metadata projection: component
+/// text is dot-joined, and quoted strings omit their delimiter quotes. It is
+/// not a canonical rule lookup path.
 ///
 /// * `path`: A filename to be associated with the policy.
 /// * `rego`: Rego policy.
@@ -229,6 +589,57 @@ pub extern "C" fn regorus_engine_add_policy(
             let mut guard = engine.try_write()?;
             guard.add_policy(from_c_str(path)?, from_c_str(rego)?)
         }())
+    })
+}
+
+/// Check whether the module identified by `path` declares a rule at the selected path or a component-wise descendant.
+#[no_mangle]
+pub extern "C" fn regorus_engine_has_declared_rule_rooted_at(
+    engine: *mut RegorusEngine,
+    path: *const c_char,
+    root_name: *const c_char,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        let engine = match to_shared_ref(engine as *const RegorusEngine) {
+            Ok(engine) => engine,
+            Err(error) => return to_regorus_result(Err(error)),
+        };
+        let guard = match engine.try_read() {
+            Ok(guard) => guard,
+            Err(error) => return to_regorus_result(Err(error)),
+        };
+        let source_path = match from_c_str(path) {
+            Ok(value) => value,
+            Err(error) => return to_regorus_result(Err(error)),
+        };
+        if root_name.is_null() {
+            return RegorusResult::err_with_message(
+                RegorusStatus::InvalidArgument,
+                "root name is null".into(),
+            );
+        }
+        let root_name = match from_c_str(root_name) {
+            Ok(value) => value,
+            Err(error) => {
+                return RegorusResult::err_with_message(
+                    RegorusStatus::InvalidArgument,
+                    format!("invalid root name: {error}"),
+                )
+            }
+        };
+
+        let output = guard.has_declared_rule_rooted_at(&source_path, &root_name);
+        match output {
+            Ok(value) => RegorusResult::ok_bool(value),
+            Err(error)
+                if error
+                    .downcast_ref::<::regorus::InvalidRuleRootError>()
+                    .is_some() =>
+            {
+                RegorusResult::err_with_message(RegorusStatus::InvalidArgument, format!("{error}"))
+            }
+            Err(error) => to_regorus_result(Err(error)),
+        }
     })
 }
 
@@ -268,6 +679,9 @@ pub extern "C" fn regorus_engine_add_data_json(
 /// Get list of loaded Rego packages as JSON.
 ///
 /// See https://docs.rs/regorus/latest/regorus/struct.Engine.html#method.get_packages
+/// Package strings use the legacy dot-joined metadata projection; quoted string
+/// contents omit their delimiter quotes. Canonical rule lookups continue to
+/// use bracket notation for string keys.
 #[no_mangle]
 pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> RegorusResult {
     with_unwind_guard(|| {
@@ -275,6 +689,25 @@ pub extern "C" fn regorus_engine_get_packages(engine: *mut RegorusEngine) -> Reg
             let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let guard = engine.try_read()?;
             serde_json::to_string_pretty(&guard.get_packages()?).map_err(anyhow::Error::msg)
+        }())
+    })
+}
+
+/// Get loaded modules' lossless package components as JSON.
+///
+/// Each row contains `source_file` and decoded string `components`, without a
+/// synthetic `data` prefix. Module insertion order and duplicates are preserved.
+/// An empty engine returns `[]`. This does not prepare or evaluate the engine.
+#[no_mangle]
+pub extern "C" fn regorus_engine_get_policy_package_components(
+    engine: *mut RegorusEngine,
+) -> RegorusResult {
+    with_unwind_guard(|| {
+        to_regorus_string_result(|| -> Result<String> {
+            let engine = to_shared_ref(engine as *const RegorusEngine)?;
+            let guard = engine.try_read()?;
+            serde_json::to_string_pretty(&guard.get_policy_package_components()?)
+                .map_err(anyhow::Error::msg)
         }())
     })
 }
@@ -625,6 +1058,9 @@ pub extern "C" fn regorus_engine_get_ast_as_json(engine: *mut RegorusEngine) -> 
 /// Gets the package names defined in each policy added to the engine.
 ///
 /// See https://docs.rs/regorus/latest/regorus/coverage/struct.Engine.html#method.get_policy_package_names
+/// Each `package_name` uses the legacy dot-joined metadata projection without
+/// a `data` prefix; quoted string contents omit their delimiter quotes. It is
+/// not a canonical rule lookup path.
 #[no_mangle]
 #[cfg(feature = "azure_policy")]
 pub extern "C" fn regorus_engine_get_policy_package_names(
@@ -826,4 +1262,395 @@ pub extern "C" fn regorus_engine_compile_program_with_entrypoints(
             ),
         }
     })
+}
+
+#[cfg(all(test, feature = "std"))]
+mod namespace_tests {
+    #[cfg(feature = "azure_policy")]
+    use super::regorus_engine_get_policy_package_names;
+    use super::{
+        regorus_engine_add_policy, regorus_engine_compile_program_with_entrypoints,
+        regorus_engine_drop, regorus_engine_eval_rule, regorus_engine_get_packages,
+        regorus_engine_get_policy_package_components, regorus_engine_new,
+    };
+    use crate::common::{regorus_result_drop, RegorusStatus};
+    use core::ffi::CStr;
+    use std::ffi::CString;
+
+    #[test]
+    fn package_components_preserve_module_identity_and_engine_reuse() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let empty = regorus_engine_get_policy_package_components(engine);
+        assert!(matches!(&empty.status, RegorusStatus::Ok));
+        assert_eq!(unsafe { CStr::from_ptr(empty.output) }.to_bytes(), b"[]");
+        regorus_result_drop(empty);
+
+        let file = CString::new("same.rego").expect("valid file");
+        for policy in [
+            r#"package graph.definition["1.0.0"]
+               value := 1"#,
+            r#"package graph.definition["1"]["0"]["0"]"#,
+            r#"package graph["a\".b"]["c\\d"]["\u03bb"]"#,
+        ] {
+            let policy = CString::new(policy).expect("valid policy");
+            let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+            assert!(matches!(&added.status, RegorusStatus::Ok));
+            regorus_result_drop(added);
+        }
+        for _ in 0..2 {
+            let result = regorus_engine_get_policy_package_components(engine);
+            assert!(matches!(&result.status, RegorusStatus::Ok));
+            let json = unsafe { CStr::from_ptr(result.output) }
+                .to_str()
+                .expect("UTF-8 result");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(json).expect("valid JSON"),
+                serde_json::json!([
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "definition", "1.0.0"]
+                    },
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "definition", "1", "0", "0"]
+                    },
+                    {
+                        "source_file": "same.rego",
+                        "components": ["graph", "a\".b", "c\\d", "\u{03bb}"]
+                    }
+                ])
+            );
+            regorus_result_drop(result);
+            let rule = CString::new(r#"data.graph.definition["1.0.0"].value"#).expect("valid rule");
+            let value = regorus_engine_eval_rule(engine, rule.as_ptr());
+            assert!(matches!(&value.status, RegorusStatus::Ok));
+            assert_eq!(unsafe { CStr::from_ptr(value.output) }.to_bytes(), b"1");
+            regorus_result_drop(value);
+        }
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn package_components_null_engine_errors_without_poisoning() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+        let rejected = regorus_engine_get_policy_package_components(core::ptr::null_mut());
+        assert!(matches!(&rejected.status, RegorusStatus::Error));
+        assert!(!rejected.error_message.is_null());
+        regorus_result_drop(rejected);
+        assert!(!crate::panic_guard::is_poisoned());
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+        let result = regorus_engine_get_policy_package_components(engine);
+        assert!(matches!(&result.status, RegorusStatus::Ok));
+        regorus_result_drop(result);
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn legacy_package_metadata_and_canonical_rule_paths_cross_the_ffi_boundary() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let file = CString::new("namespace.rego").expect("valid file path");
+        let policy = CString::new(
+            "package graph.defUniqueName[\"1.0.0\"]\n\
+             default deny := false\n\
+             deny := true if { input.blocked == true }\n",
+        )
+        .expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        unsafe {
+            let package = CStr::from_ptr(added.output)
+                .to_str()
+                .expect("UTF-8 package");
+            assert_eq!(package, "data.graph.defUniqueName.1.0.0");
+        }
+        regorus_result_drop(added);
+
+        let packages = regorus_engine_get_packages(engine);
+        assert!(matches!(packages.status, RegorusStatus::Ok));
+        unsafe {
+            let packages_json = CStr::from_ptr(packages.output)
+                .to_str()
+                .expect("UTF-8 package JSON");
+            assert_eq!(
+                serde_json::from_str::<Vec<String>>(packages_json).expect("valid package JSON"),
+                vec!["data.graph.defUniqueName.1.0.0"]
+            );
+        }
+        regorus_result_drop(packages);
+
+        #[cfg(feature = "azure_policy")]
+        {
+            let names = regorus_engine_get_policy_package_names(engine);
+            assert!(matches!(names.status, RegorusStatus::Ok));
+            unsafe {
+                let names_json = CStr::from_ptr(names.output)
+                    .to_str()
+                    .expect("UTF-8 package-name JSON");
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(names_json)
+                        .expect("valid package-name JSON"),
+                    serde_json::json!([{
+                        "source_file": "namespace.rego",
+                        "package_name": "graph.defUniqueName.1.0.0"
+                    }])
+                );
+            }
+            regorus_result_drop(names);
+        }
+
+        let rule =
+            CString::new("data.graph.defUniqueName[\"1.0.0\"].deny").expect("valid rule path");
+        let result = regorus_engine_eval_rule(engine, rule.as_ptr());
+        assert!(matches!(result.status, RegorusStatus::Ok));
+        unsafe {
+            let value = CStr::from_ptr(result.output).to_str().expect("UTF-8 value");
+            assert_eq!(value, "false");
+        }
+        regorus_result_drop(result);
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn deep_bracketed_registered_path_matches_dotted_path_and_reuses_ffi_engine() {
+        let _poison_test_lock = crate::panic_guard::lock_poison_test_state();
+        crate::panic_guard::reset_poison();
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let package_components = (0..31).map(|index| format!("p{index}")).collect::<Vec<_>>();
+        let package_path = package_components.join(".");
+        let dotted_path = format!("data.{package_path}.value");
+        let mut bracketed_path = String::from("data");
+        for component in &package_components {
+            bracketed_path.push_str(&format!("[\"{component}\"]"));
+        }
+        bracketed_path.push_str("[\"value\"]");
+
+        let file = CString::new("deep.rego").expect("valid policy path");
+        let policy =
+            CString::new(format!("package {package_path}\nvalue := 7")).expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(&added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let dotted = CString::new(dotted_path).expect("valid dotted path");
+        let dotted_result = regorus_engine_eval_rule(engine, dotted.as_ptr());
+        assert!(matches!(&dotted_result.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(dotted_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(dotted_result);
+
+        let bracketed = CString::new(bracketed_path.clone()).expect("valid bracketed path");
+        let bracketed_result = regorus_engine_eval_rule(engine, bracketed.as_ptr());
+        assert!(
+            matches!(&bracketed_result.status, RegorusStatus::Ok),
+            "equivalent bracketed lookup failed: {:?}",
+            bracketed_result.status
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(bracketed_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(bracketed_result);
+
+        let missing_path = bracketed_path.replace("[\"value\"]", "[\"missing\"]");
+        let missing = CString::new(missing_path).expect("valid missing path");
+        let rejected = regorus_engine_eval_rule(engine, missing.as_ptr());
+        assert!(matches!(&rejected.status, RegorusStatus::Error));
+        regorus_result_drop(rejected);
+        assert!(
+            !crate::panic_guard::is_poisoned(),
+            "a lookup error must not poison the FFI engine"
+        );
+
+        let reused_result = regorus_engine_eval_rule(engine, bracketed.as_ptr());
+        assert!(matches!(&reused_result.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(reused_result.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(reused_result);
+        regorus_engine_drop(engine);
+    }
+
+    #[test]
+    fn overdeep_policy_path_returns_an_error_and_keeps_the_engine_usable() {
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let stable_file = CString::new("stable.rego").expect("valid file path");
+        let stable_policy = CString::new("package stable\nvalue := true").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, stable_file.as_ptr(), stable_policy.as_ptr());
+        assert!(matches!(&added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let deep_package = ["segment"; 33].join(".");
+        let deep_file = CString::new("deep.rego").expect("valid file path");
+        let deep_policy =
+            CString::new(format!("package {deep_package}\nvalue := true")).expect("valid policy");
+        let rejected = regorus_engine_add_policy(engine, deep_file.as_ptr(), deep_policy.as_ptr());
+        let is_error = matches!(&rejected.status, RegorusStatus::Error);
+        let error_message = if rejected.error_message.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(rejected.error_message) }
+                    .to_str()
+                    .expect("UTF-8 error message")
+                    .to_owned(),
+            )
+        };
+        regorus_result_drop(rejected);
+        assert!(
+            is_error,
+            "overdeep policy was not rejected: {error_message:?}"
+        );
+
+        let query = CString::new("data.stable.value").expect("valid rule path");
+        let result = regorus_engine_eval_rule(engine, query.as_ptr());
+        let succeeded = matches!(&result.status, RegorusStatus::Ok);
+        let output = if result.output.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(result.output) }
+                    .to_str()
+                    .expect("UTF-8 result")
+                    .to_owned(),
+            )
+        };
+        regorus_result_drop(result);
+        assert!(
+            succeeded,
+            "engine failed after rejecting the policy: {output:?}"
+        );
+        assert_eq!(output.as_deref(), Some("true"));
+
+        let long_dotted = format!("data{}", ".a".repeat(300_000));
+        let long_bracketed = format!("data{}", r#"["a"]"#.repeat(180_000));
+        for path in [long_dotted, long_bracketed] {
+            assert!(path.len() < 1024 * 1024);
+            let rule = CString::new(path).expect("valid rule path");
+            let rejected = regorus_engine_eval_rule(engine, rule.as_ptr());
+            let is_error = matches!(&rejected.status, RegorusStatus::Error);
+            let error_message = if rejected.error_message.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(rejected.error_message) }
+                        .to_str()
+                        .expect("UTF-8 error message")
+                        .to_owned(),
+                )
+            };
+            regorus_result_drop(rejected);
+            assert!(
+                is_error,
+                "huge rule path was not rejected: {error_message:?}"
+            );
+            assert_eq!(
+                error_message.as_deref(),
+                Some("not a valid rule path"),
+                "expected the path validation error, not an engine-poisoned error"
+            );
+
+            let result = regorus_engine_eval_rule(engine, query.as_ptr());
+            let succeeded = matches!(&result.status, RegorusStatus::Ok);
+            let output = if result.output.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(result.output) }
+                        .to_str()
+                        .expect("UTF-8 result")
+                        .to_owned(),
+                )
+            };
+            regorus_result_drop(result);
+            assert!(
+                succeeded,
+                "engine failed after rejecting the rule: {output:?}"
+            );
+            assert_eq!(output.as_deref(), Some("true"));
+        }
+
+        regorus_engine_drop(engine);
+    }
+
+    #[cfg(feature = "rvm")]
+    #[test]
+    fn bracketed_identifier_entrypoint_compiles_and_executes_through_engine_ffi() {
+        use crate::rvm::{
+            regorus_program_drop, regorus_rvm_drop, regorus_rvm_execute_entry_point_by_index,
+            regorus_rvm_execute_entry_point_by_name, regorus_rvm_load_program, regorus_rvm_new,
+            RegorusProgram,
+        };
+
+        let engine = regorus_engine_new();
+        assert!(!engine.is_null());
+
+        let file = CString::new("namespace.rego").expect("valid file path");
+        let policy = CString::new("package graph.version\nvalue := 7").expect("valid policy");
+        let added = regorus_engine_add_policy(engine, file.as_ptr(), policy.as_ptr());
+        assert!(matches!(added.status, RegorusStatus::Ok));
+        regorus_result_drop(added);
+
+        let entrypoint = CString::new("data.graph[\"version\"].value").expect("valid entry point");
+        let entrypoints = [entrypoint.as_ptr()];
+        let compiled =
+            regorus_engine_compile_program_with_entrypoints(engine, entrypoints.as_ptr(), 1);
+        assert!(
+            matches!(compiled.status, RegorusStatus::Ok),
+            "RVM compilation failed with {:?}",
+            compiled.status
+        );
+        let program = compiled.pointer_value as *mut RegorusProgram;
+        assert!(!program.is_null());
+        regorus_result_drop(compiled);
+
+        let vm = regorus_rvm_new();
+        assert!(!vm.is_null());
+        let loaded = regorus_rvm_load_program(vm, program);
+        assert!(matches!(loaded.status, RegorusStatus::Ok));
+        regorus_result_drop(loaded);
+
+        let named = regorus_rvm_execute_entry_point_by_name(vm, entrypoint.as_ptr());
+        assert!(matches!(named.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(named.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(named);
+
+        let indexed = regorus_rvm_execute_entry_point_by_index(vm, 0);
+        assert!(matches!(indexed.status, RegorusStatus::Ok));
+        assert_eq!(
+            unsafe { CStr::from_ptr(indexed.output) }
+                .to_str()
+                .expect("UTF-8 result"),
+            "7"
+        );
+        regorus_result_drop(indexed);
+
+        regorus_rvm_drop(vm);
+        regorus_program_drop(program);
+        regorus_engine_drop(engine);
+    }
 }

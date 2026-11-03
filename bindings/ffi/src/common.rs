@@ -47,7 +47,8 @@ pub enum RegorusStatus {
     /// An RVM execution exceeded its configured memory budget.
     MemoryBudgetExceeded,
 
-    /// An RVM memory budget was used with suspendable execution.
+    /// Reserved for ABI compatibility.
+    #[allow(dead_code)]
     MemoryBudgetUnsupportedInSuspendableExecution,
 }
 

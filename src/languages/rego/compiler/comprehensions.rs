@@ -18,9 +18,9 @@ impl<'a> Compiler<'a> {
         query: &Query,
         span: &Span,
     ) -> Result<Register> {
-        let result_reg = self.alloc_register();
-        let key_reg = self.alloc_register();
-        let value_reg = self.alloc_register();
+        let result_reg = self.alloc_register()?;
+        let key_reg = self.alloc_register()?;
+        let value_reg = self.alloc_register()?;
 
         let params_index = self
             .program

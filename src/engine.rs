@@ -18,16 +18,205 @@ use crate::{Extension, QueryResults};
 use crate::Rc;
 use anyhow::{anyhow, bail, Result};
 
+/// The supplied rule-root selector is invalid in the selected module's load-time parser context.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid rule root selector")]
+pub struct InvalidRuleRootError;
+
+fn rule_head_matches_selector_prefix(
+    expression: &Expr,
+    selector_components: &[String],
+    matched_components: &mut usize,
+) -> Result<bool> {
+    let mut pending = Vec::new();
+    let mut current_expression = expression;
+    let root = loop {
+        match *current_expression {
+            Expr::RefDot { ref refr, .. } | Expr::RefBrack { ref refr, .. } => {
+                pending.push(current_expression);
+                crate::utils::limits::check_memory_limit_if_needed()
+                    .map_err(|error| anyhow!(error))?;
+                current_expression = refr.as_ref();
+            }
+            Expr::Var {
+                value: Value::String(ref root),
+                ..
+            } => break root,
+            Expr::Var { .. } => return Ok(false),
+            _ => bail!("cannot classify rule-head reference"),
+        }
+    };
+
+    let Some(expected_root) = selector_components.get(*matched_components) else {
+        return Ok(true);
+    };
+    if root.as_ref() != expected_root {
+        return Ok(false);
+    }
+    *matched_components = matched_components.saturating_add(1);
+
+    while let Some(expression_node) = pending.pop() {
+        let Some(expected_component) = selector_components.get(*matched_components) else {
+            return Ok(true);
+        };
+        match *expression_node {
+            Expr::RefDot { ref field, .. } => {
+                let name = field.1.as_string()?;
+                if name.as_ref() != expected_component {
+                    return Ok(false);
+                }
+                *matched_components = matched_components.saturating_add(1);
+            }
+            Expr::RefBrack { ref index, .. } => match *index.as_ref() {
+                Expr::String {
+                    value: Value::String(ref name),
+                    ..
+                } => {
+                    if name.as_ref() != expected_component {
+                        return Ok(false);
+                    }
+                    *matched_components = matched_components.saturating_add(1);
+                }
+                Expr::Bool { .. } | Expr::Null { .. } | Expr::Number { .. } => return Ok(false),
+                _ => bail!("cannot classify unresolved bracketed rule-head component"),
+            },
+            _ => bail!("cannot classify rule-head reference"),
+        }
+    }
+
+    Ok(true)
+}
+
+#[cfg(test)]
+mod iterative_selector_tests {
+    use super::*;
+    use anyhow::Result;
+
+    fn engine_with_deep_authored_head(depth: usize) -> Result<Engine> {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "deep_head.rego".to_string(),
+            "package customer\nmetadata := true".to_string(),
+        )?;
+
+        let (package, target, rego_v1, rule_span, root_span) = {
+            let module = engine
+                .modules
+                .first()
+                .ok_or_else(|| anyhow!("loaded module is missing"))?;
+            let rule = module
+                .policy
+                .first()
+                .ok_or_else(|| anyhow!("loaded rule is missing"))?;
+            let (rule_span, root_span) = match *rule.as_ref() {
+                Rule::Spec {
+                    ref span,
+                    head: RuleHead::Compr { ref refr, .. },
+                    ..
+                } => match *refr.as_ref() {
+                    Expr::Var {
+                        span: ref root_span,
+                        ..
+                    } => (span.clone(), root_span.clone()),
+                    _ => bail!("loaded rule head is not a variable"),
+                },
+                _ => bail!("loaded rule is not a complete rule"),
+            };
+
+            (
+                Package {
+                    span: module.package.span.clone(),
+                    refr: module.package.refr.clone(),
+                },
+                module.target.clone(),
+                module.rego_v1,
+                rule_span,
+                root_span,
+            )
+        };
+
+        let mut deep_head = Ref::new(Expr::Var {
+            span: root_span.clone(),
+            value: Value::from("metadata"),
+            eidx: 0,
+        });
+        for index in 0..depth {
+            let component = alloc::format!("segment_{index:05}");
+            deep_head = Ref::new(Expr::RefDot {
+                span: rule_span.clone(),
+                refr: deep_head,
+                field: (root_span.clone(), Value::from(component.as_str())),
+                eidx: 0,
+            });
+        }
+
+        let module = Module {
+            package,
+            imports: alloc::vec![],
+            policy: alloc::vec![Ref::new(Rule::Spec {
+                span: rule_span.clone(),
+                head: RuleHead::Compr {
+                    span: rule_span,
+                    refr: deep_head,
+                    assign: None,
+                },
+                bodies: alloc::vec![],
+            })],
+            rego_v1,
+            target,
+            num_expressions: 0,
+            num_statements: 0,
+            num_queries: 0,
+        };
+        engine.modules = Rc::new(alloc::vec![Ref::new(module)]);
+
+        Ok(engine)
+    }
+
+    #[test]
+    fn deep_authored_refdot_head_matches_prefixes_and_engine_drop_is_iterative() -> Result<()> {
+        const COMPONENT_COUNT: usize = 20_000;
+
+        let engine = engine_with_deep_authored_head(COMPONENT_COUNT)?;
+        for (selector, expected) in [
+            ("metadata", true),
+            ("metadata.segment_00000.segment_00001", true),
+            ("metadata.segment_00001.segment_00000", false),
+        ] {
+            anyhow::ensure!(
+                engine.has_declared_rule_rooted_at("deep_head.rego", selector)? == expected,
+                "selector {selector} returned an unexpected declaration result"
+            );
+        }
+
+        drop(engine);
+        Ok(())
+    }
+}
+
 /// The Rego evaluation engine.
 ///
 #[derive(Debug, Clone)]
 pub struct Engine {
     modules: Rc<Vec<Ref<Module>>>,
+    parser_contexts: Rc<Vec<ParserContext>>,
     interpreter: Interpreter,
     prepared: bool,
     rego_v1: bool,
     execution_timer_config: Option<ExecutionTimerConfig>,
     policy_length_config: PolicyLengthConfig,
+}
+
+/// A loaded module's source label and lossless, decoded package components.
+///
+/// The label is supplied when adding the policy and need not be unique.
+/// Components describe the declared package, without a synthetic `data` prefix.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PolicyPackageComponents {
+    /// The source-file label supplied when the module was loaded.
+    pub source_file: String,
+    /// Semantic string components, preserving literal dots and decoded escapes.
+    pub components: Vec<String>,
 }
 
 #[cfg(feature = "azure_policy")]
@@ -59,6 +248,49 @@ pub struct PolicyParameters {
     pub modifiers: Vec<PolicyModifier>,
 }
 
+fn legacy_package_metadata_projection<'a>(
+    reference: &'a Expr,
+    document: Option<&'a str>,
+) -> Result<String> {
+    let mut components = Vec::new();
+    let mut expr = Some(reference);
+
+    while let Some(node) = expr {
+        match *node {
+            Expr::RefDot {
+                ref refr,
+                ref field,
+                ..
+            } => {
+                components.push(field.0.text());
+                expr = Some(refr);
+            }
+            Expr::RefBrack {
+                ref refr,
+                ref index,
+                ..
+            } => match *index.as_ref() {
+                Expr::String { ref span, .. } => {
+                    components.push(span.text());
+                    expr = Some(refr);
+                }
+                _ => bail!(node.span().error("invalid ref expression")),
+            },
+            Expr::Var { ref span, .. } => {
+                components.push(span.text());
+                expr = None;
+            }
+            _ => bail!(node.span().error("invalid ref expression")),
+        }
+    }
+
+    if let Some(document) = document {
+        components.push(document);
+    }
+    components.reverse();
+    Ok(components.join("."))
+}
+
 /// Create a default engine.
 impl Default for Engine {
     fn default() -> Self {
@@ -81,6 +313,7 @@ impl Engine {
     pub fn new() -> Self {
         let mut engine = Self {
             modules: Rc::new(vec![]),
+            parser_contexts: Rc::new(vec![]),
             interpreter: Interpreter::new(),
             prepared: false,
             rego_v1: true,
@@ -217,7 +450,12 @@ impl Engine {
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy.
+    /// Returns the legacy public package-metadata projection, which joins
+    /// package component text with dots and prefixes `data`. String components
+    /// retain their source content without their delimiter quotes: for example,
+    /// `package graph["1.0.0"]` returns `data.graph.1.0.0`. This metadata
+    /// projection is not a canonical rule path; use
+    /// `data.graph["1.0.0"]` to look up a rule in that package.
     ///
     /// * `path`: A filename to be associated with the policy.
     /// * `rego`: The rego policy code.
@@ -248,18 +486,87 @@ impl Engine {
         )?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
+        let parser_context = parser.snapshot_context(self.policy_length_config);
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Rc::make_mut(&mut self.modules).push(module.clone());
+        Rc::make_mut(&mut self.parser_contexts).push(parser_context);
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        legacy_package_metadata_projection(&module.package.refr, Some("data"))
+    }
+
+    /// Check whether a loaded policy module declares a rule at `root_name` or a component-wise descendant.
+    ///
+    /// `source_path` must exactly identify one loaded module. `root_name` must
+    /// be a valid rule path in that module's load-time parser context. A
+    /// declaration at that exact path or any descendant matches. This checks
+    /// authored rule heads without evaluating the policy.
+    ///
+    /// Returns an error if no module or multiple modules have the source path,
+    /// if `root_name` is not a valid rule path, or if a rule head cannot be
+    /// classified as a reference.
+    pub fn has_declared_rule_rooted_at(&self, source_path: &str, root_name: &str) -> Result<bool> {
+        let mut modules = self
+            .modules
+            .iter()
+            .enumerate()
+            .filter(|&(_, module)| module.package.span.source.get_path() == source_path);
+        let (module_index, module) = modules
+            .next()
+            .ok_or_else(|| anyhow!("no policy module found for source path '{source_path}'"))?;
+        if modules.next().is_some() {
+            bail!("multiple policy modules found for source path '{source_path}'");
+        }
+
+        let parser_context = self.parser_contexts.get(module_index).ok_or_else(|| {
+            anyhow!("missing parser context for policy module at index {module_index}")
+        })?;
+        let selector_source = parser_context.create_rule_selector_source(root_name)?;
+        let selector_components =
+            match parser_context.parse_rule_selector(&selector_source, root_name) {
+                Ok(components) => components,
+                Err(error)
+                    if error
+                        .downcast_ref::<crate::utils::limits::LimitError>()
+                        .is_some() =>
+                {
+                    return Err(error)
+                }
+                Err(_) => return Err(InvalidRuleRootError.into()),
+            };
+
+        let mut found = false;
+        for rule in &module.policy {
+            let head = match *rule.as_ref() {
+                Rule::Spec { ref head, .. } => match *head {
+                    RuleHead::Compr { ref refr, .. }
+                    | RuleHead::Set { ref refr, .. }
+                    | RuleHead::Func { ref refr, .. } => refr,
+                },
+                Rule::Default { ref refr, .. } => refr,
+            };
+            let _ = Parser::get_path_ref_components(head)?;
+            let mut matched_components = 0;
+            let matches_prefix = rule_head_matches_selector_prefix(
+                head.as_ref(),
+                &selector_components,
+                &mut matched_components,
+            )?;
+            found |= matches_prefix && matched_components == selector_components.len();
+        }
+
+        Ok(found)
     }
 
     /// Add a policy from a given file.
     ///
     /// The policy file will be parsed and converted to AST representation.
     /// Multiple policy files may be added to the engine.
-    /// Returns the Rego package name declared in the policy.
+    /// Returns the legacy public package-metadata projection, joining package
+    /// component text with dots and prefixing `data`. String components retain
+    /// their source content without delimiter quotes. This is not a canonical
+    /// rule path: use bracket notation for literal string components when
+    /// looking up rules.
     ///
     /// * `path`: Path to the policy file (.rego).
     ///
@@ -286,14 +593,22 @@ impl Engine {
         )?;
         let mut parser = self.make_parser(&source)?;
         let module = Ref::new(parser.parse()?);
+        let parser_context = parser.snapshot_context(self.policy_length_config);
         limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Rc::make_mut(&mut self.modules).push(module.clone());
+        Rc::make_mut(&mut self.parser_contexts).push(parser_context);
         // if policies change, interpreter needs to be prepared again
         self.prepared = false;
-        Interpreter::get_path_string(&module.package.refr, Some("data"))
+        legacy_package_metadata_projection(&module.package.refr, Some("data"))
     }
 
     /// Get the list of packages defined by loaded policies.
+    ///
+    /// Each package uses the legacy public metadata projection: component text
+    /// is joined with dots and prefixed by `data`. Quoted string components
+    /// retain their source content without delimiter quotes, so
+    /// `["1.0.0"]` is reported as `.1.0.0`. This differs from canonical rule
+    /// lookup paths, which use bracket notation for string components.
     ///
     /// ```
     /// # use regorus::*;
@@ -314,8 +629,52 @@ impl Engine {
     pub fn get_packages(&self) -> Result<Vec<String>> {
         self.modules
             .iter()
-            .map(|m| Interpreter::get_path_string(&m.package.refr, Some("data")))
+            .map(|m| legacy_package_metadata_projection(&m.package.refr, Some("data")))
             .collect()
+    }
+
+    /// Get lossless package components for each loaded policy module.
+    ///
+    /// Rows follow insertion order, including modules without rules and repeated
+    /// package declarations or source labels. A source label is not a unique
+    /// module identifier. No synthetic `data` prefix is added.
+    ///
+    /// String escapes are decoded and literal dots remain inside their component.
+    /// Unlike [`Engine::get_packages`], this distinguishes `graph["1.0.0"]`
+    /// from `graph["1"]["0"]["0"]`. This reads the existing parsed modules
+    /// without preparing, evaluating or compiling the engine. An empty engine
+    /// returns an empty vector.
+    ///
+    /// ```
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut engine = regorus::Engine::new();
+    /// engine.add_policy("policy.rego".into(), r#"package graph["1.0.0"]"#.into())?;
+    /// let packages = engine.get_policy_package_components()?;
+    /// assert_eq!(packages[0].source_file, "policy.rego");
+    /// assert_eq!(packages[0].components, vec!["graph", "1.0.0"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_policy_package_components(&self) -> Result<Vec<PolicyPackageComponents>> {
+        let mut packages = Vec::new();
+        for module in self.modules.iter() {
+            limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
+            let components = crate::utils::get_rule_path_components(&module.package.refr)?
+                .into_iter()
+                .map(|component| match component {
+                    crate::utils::PathComponent::String(value) => Ok(value),
+                    crate::utils::PathComponent::Raw(_) => {
+                        bail!("internal error: package component is not a string")
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            packages.push(PolicyPackageComponents {
+                source_file: module.package.span.source.file().to_string(),
+                components,
+            });
+        }
+        limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
+        Ok(packages)
     }
 
     /// Get the list of policy files.
@@ -796,7 +1155,12 @@ impl Engine {
     /// The `rule` parameter should follow the Rego rule path format:
     /// - `"data.package.rule"` - For rules in a specific package
     /// - `"data.package.subpackage.rule"` - For nested packages
+    /// - `"data.graph.defUniqueName[\"1.0.0\"].deny"` - For a rule under a
+    ///   package with a literal string component
     /// - `"allow"` - For rules in the default package (though this is not recommended)
+    ///
+    /// Bracketed string components are matched by their literal value; an
+    /// identifier in brackets is equivalent to dot notation.
     ///
     /// # Notes
     ///
@@ -850,6 +1214,9 @@ impl Engine {
     /// // Evaluating a non-existent rule is an error.
     /// let r = engine.eval_rule("data.exaample.x".to_string());
     /// assert!(r.is_err());
+    ///
+    /// // Literal string components use bracket notation.
+    /// // engine.eval_rule("data.graph[\"1.0.0\"].deny".to_string())?;
     ///
     /// // Path must be valid rule paths.
     /// assert!( engine.eval_rule("data".to_string()).is_err());
@@ -1036,7 +1403,6 @@ impl Engine {
 
         // Populate loop hoisting for the query snippet
         // Query snippets are treated as if they're in a module appended at the end (same as analyzer)
-        // The loop hoisting table already has capacity for this (ensured in prepare_for_eval)
         let module_idx = u32::try_from(self.modules.len())
             .map_err(|_| anyhow!("module count exceeds u32::MAX"))?;
 
@@ -1069,33 +1435,7 @@ impl Engine {
             }
         }
 
-        // Get the existing table, merge in the query loops, and set it back
-        let mut existing_table = self.interpreter.take_loop_hoisting_table();
-        existing_table.truncate_modules(self.modules.len());
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(
-                existing_table.module_len() <= self.modules.len(),
-                "loop hoisting table should not retain extra modules before merge"
-            );
-        }
-        existing_table.merge_query_loops(query_lookup, self.modules.len());
-        #[cfg(debug_assertions)]
-        {
-            for stmt in &query_node.stmts {
-                debug_assert!(
-                    existing_table
-                        .get_statement_loops(module_idx, stmt.sidx)
-                        .ok()
-                        .and_then(|entry| entry)
-                        .is_some(),
-                    "missing hoisted loop entry after merge for module {} stmt {}",
-                    module_idx,
-                    stmt.sidx
-                );
-            }
-        }
-        self.interpreter.set_loop_hoisting_table(existing_table);
+        self.interpreter.set_query_loop_hoisting(query_lookup);
 
         Ok((Ref::new(query_module), query_node, query_schedule))
     }
@@ -1131,7 +1471,8 @@ impl Engine {
             let analyzer = Analyzer::new();
             let schedule = Rc::new(analyzer.analyze(&self.modules)?);
 
-            self.interpreter.set_modules(self.modules.clone());
+            self.interpreter
+                .set_modules(self.modules.clone(), self.parser_contexts.clone());
 
             self.interpreter.clear_builtins_cache();
             // clean_internal_evaluation_state will set data to an efficient clont of use supplied init_data
@@ -1145,7 +1486,6 @@ impl Engine {
             self.interpreter.process_imports()?;
 
             // Populate loop hoisting table for efficient evaluation
-            // Reserve capacity for 1 extra module (for query modules)
             use crate::compiler::hoist::LoopHoister;
 
             // Run loop hoisting pass first
@@ -1203,8 +1543,8 @@ impl Engine {
 
         // Ensure that empty modules are created.
         for m in self.modules.iter().filter(|m| m.policy.is_empty()) {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = Parser::get_static_string_path_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1229,8 +1569,8 @@ impl Engine {
 
         // Ensure that all modules are created.
         for m in self.modules.iter() {
-            let path = Parser::get_path_ref_components(&m.package.refr)?;
-            let path: Vec<&str> = path.iter().map(|s| s.text()).collect();
+            let path = Parser::get_static_string_path_components(&m.package.refr)?;
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
             let vref =
                 Interpreter::make_or_get_value_mut(self.interpreter.get_data_mut(), &path[..])?;
             if *vref == Value::Undefined {
@@ -1469,6 +1809,10 @@ impl Engine {
 
     /// Get the package names of each policy added to the engine.
     ///
+    /// `package_name` preserves the legacy source-content metadata projection
+    /// without a `data` prefix. String delimiters are omitted and components
+    /// are dot-joined. It is not a canonical rule lookup path; use bracket
+    /// notation for quoted string components when evaluating rules.
     ///
     /// ```rust
     /// # use regorus::*;
@@ -1490,7 +1834,7 @@ impl Engine {
     pub fn get_policy_package_names(&self) -> Result<Vec<PolicyPackageNameDefinition>> {
         let mut package_names = vec![];
         for m in self.modules.iter() {
-            let package_name = Interpreter::get_path_string(&m.package.refr, None)?;
+            let package_name = legacy_package_metadata_projection(&m.package.refr, None)?;
             package_names.push(PolicyPackageNameDefinition {
                 source_file: m.package.span.source.file().to_string(),
                 package_name,
@@ -1619,8 +1963,10 @@ impl Engine {
         compiled_policy: Rc<crate::compiled_policy::CompiledPolicyData>,
     ) -> Self {
         let modules = compiled_policy.modules.clone();
+        let parser_contexts = compiled_policy.parser_contexts.clone();
         let mut engine = Self {
             modules,
+            parser_contexts,
             interpreter: Interpreter::new_from_compiled_policy(compiled_policy),
             rego_v1: true, // Value doesn't matter since this is used only for policy parsing
             prepared: true,
@@ -1629,5 +1975,95 @@ impl Engine {
         };
         engine.apply_effective_execution_timer_config();
         engine
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::panic_in_result_fn)]
+mod query_sharing_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_clones_share_policy_across_evaluations() -> Result<()> {
+        let mut base = Engine::new();
+        base.add_policy(
+            "catalog.rego".into(),
+            r#"package catalog
+grants := {"a": ["reader", "writer"], "b": ["writer"]}
+can_access(resource, roles) if {
+    some grant in grants[resource]
+    some role in roles
+    role == grant
+}
+"#
+            .into(),
+        )?;
+        base.add_policy(
+            "access.rego".into(),
+            r#"package access
+import data.catalog
+allowed := [r | some r in input.resources; catalog.can_access(r, input.roles)]
+summary := {"allowed": allowed, "count": count(allowed)}
+"#
+            .into(),
+        )?;
+        base.set_input(Value::from_json_str(
+            r#"{"resources": ["a", "b", "missing"], "roles": ["reader"]}"#,
+        )?);
+        let expected = Value::from_json_str(r#"{"allowed": ["a"], "count": 1}"#)?;
+        let warm = base.eval_query("data.access.summary".into(), false)?;
+        assert_eq!(warm.result[0].expressions[0].value, expected);
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 1);
+
+        let mut cloned = base.clone();
+        assert!(Rc::ptr_eq(
+            base.interpreter.get_compiled_policy(),
+            cloned.interpreter.get_compiled_policy()
+        ));
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+
+        for query in [
+            "data.access.summary",
+            r#"{"allowed": [r | some r in data.access.allowed; data.catalog.can_access(r, input.roles)], "count": count(data.access.allowed)}"#,
+            r#"some r in input.resources; data.catalog.can_access(r, input.roles); data.access.summary"#,
+        ] {
+            let result = cloned.eval_query(query.into(), false)?;
+            assert_eq!(result.result.len(), 1);
+            assert_eq!(
+                result.result[0]
+                    .expressions
+                    .last()
+                    .ok_or_else(|| anyhow!("query produced no expressions"))?
+                    .value,
+                expected
+            );
+            assert!(Rc::ptr_eq(
+                base.interpreter.get_compiled_policy(),
+                cloned.interpreter.get_compiled_policy()
+            ));
+            assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+        }
+
+        let err = cloned
+            .eval_query(r#"to_number("invalid")"#.into(), false)
+            .err()
+            .ok_or_else(|| anyhow!("invalid number conversion succeeded"))?;
+        assert!(err.to_string().contains("to_number"));
+        assert_eq!(cloned.eval_rule("data.access.summary".into())?, expected);
+        assert_eq!(cloned.eval_modules(false)?["access"]["summary"], expected);
+        let all = cloned.eval_query_and_all_rules("data.access.summary".into(), false)?;
+        assert_eq!(all.result[0].expressions[0].value, expected);
+        let data = cloned.eval_query("data".into(), false)?;
+        assert_eq!(
+            data.result[0].expressions[0].value["access"]["summary"],
+            expected
+        );
+        assert!(Rc::ptr_eq(
+            base.interpreter.get_compiled_policy(),
+            cloned.interpreter.get_compiled_policy()
+        ));
+        assert_eq!(Rc::strong_count(base.interpreter.get_compiled_policy()), 2);
+        assert_eq!(base.eval_rule("data.access.summary".into())?, expected);
+        Ok(())
     }
 }

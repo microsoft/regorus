@@ -1,0 +1,74 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: partial_set_head_output_loop
+    input:
+      values: [1, 2, 1]
+    modules:
+      - |
+        package test
+        values contains input.values[_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [1, 2]
+
+  - note: partial_set_head_nested_output_loops
+    input:
+      groups: [[1, 2], [2, 3], []]
+    modules:
+      - |
+        package test
+        values contains input.groups[_][_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [1, 2, 3]
+
+  - note: partial_set_head_empty_output_loop
+    input:
+      values: []
+    modules:
+      - |
+        package test
+        values contains 0
+        values contains input.values[_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [0]
+
+  - note: partial_set_head_output_loop_suspendable
+    execution_mode: suspendable
+    input:
+      values: [1, 2, 1]
+    modules:
+      - |
+        package test
+        values contains input.values[_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [1, 2]
+
+  - note: partial_set_head_nested_output_loops_suspendable
+    execution_mode: suspendable
+    input:
+      groups: [[1, 2], [2, 3], []]
+    modules:
+      - |
+        package test
+        values contains input.groups[_][_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [1, 2, 3]
+
+  - note: partial_set_head_empty_output_loop_suspendable
+    execution_mode: suspendable
+    input:
+      values: []
+    modules:
+      - |
+        package test
+        values contains 0
+        values contains input.values[_] if { true }
+    query: data.test.values
+    want_result:
+      set!: [0]

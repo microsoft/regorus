@@ -48,3 +48,43 @@ cases:
         }
     query: data.test.main
     want_result: 3
+
+  # OPA v1.21.2 returns finite values for all four cases by using big.Int or a
+  # bounded-precision, wide-exponent big.Float. Regorus deliberately fails closed
+  # because its fractional representation is binary64. These errors are a breaking
+  # compatibility difference and must stay aligned with the interpreter.
+  - note: arithmetic_overflow_addition
+    data: {}
+    modules:
+      - |
+        package test
+        main := (1e300 * 1e300) + 0.5
+    query: data.test.main
+    want_error: "numeric overflow in addition"
+
+  - note: arithmetic_overflow_subtraction
+    data: {}
+    modules:
+      - |
+        package test
+        main := (1e300 * 1e300) - 0.5
+    query: data.test.main
+    want_error: "numeric overflow in subtraction"
+
+  - note: arithmetic_overflow_multiplication
+    data: {}
+    modules:
+      - |
+        package test
+        main := (1e300 * 1e300) * 0.0
+    query: data.test.main
+    want_error: "numeric overflow in multiplication"
+
+  - note: arithmetic_overflow_division
+    data: {}
+    modules:
+      - |
+        package test
+        main := (1e300 * 1e300) / 7
+    query: data.test.main
+    want_error: "numeric overflow in division"

@@ -5,6 +5,9 @@
 
 extern crate alloc;
 
+#[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
+pub(crate) static TEST_GLOBAL_MEMORY_LIMIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 mod alias_registry;
 mod allocator;
 mod common;

@@ -127,22 +127,6 @@ impl<T: Clone> Lookup<T> {
         }
     }
 
-    pub(crate) fn truncate_modules(&mut self, module_count: usize) {
-        self.slots.truncate(module_count);
-    }
-
-    pub(crate) const fn module_len(&self) -> usize {
-        self.slots.len()
-    }
-
-    pub(crate) fn push_module(&mut self, module: Vec<Option<T>>) {
-        self.slots.push(module);
-    }
-
-    pub(crate) fn remove_module(&mut self, module_idx: usize) -> Option<Vec<Option<T>>> {
-        (module_idx < self.slots.len()).then(|| self.slots.remove(module_idx))
-    }
-
     /// Validate indices and return them as usize on success.
     fn validate_indices(&self, module_idx: u32, node_idx: u32) -> LookupResult<(usize, usize)> {
         let m = usize_from_u32(module_idx).ok_or(LookupIndexError::ModuleOutOfBounds {

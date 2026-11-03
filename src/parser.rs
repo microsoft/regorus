@@ -20,7 +20,8 @@ use crate::number::*;
 use crate::value::*;
 use crate::*;
 
-use alloc::collections::BTreeMap;
+use crate::utils::limits::PolicyLengthConfig;
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::num::NonZeroU32;
 use core::str::FromStr;
 
@@ -29,6 +30,39 @@ use anyhow::{anyhow, bail, Result};
 #[inline]
 fn check_memory_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(|err| anyhow!(err))
+}
+
+#[derive(Clone, Debug)]
+pub struct ParserContext {
+    rego_v1: bool,
+    future_keywords: BTreeSet<String>,
+    policy_length_config: PolicyLengthConfig,
+}
+
+impl ParserContext {
+    pub(crate) fn create_rule_selector_source(&self, selector: &str) -> Result<Source> {
+        Source::from_contents_with_limits(
+            "<rule-root>".to_string(),
+            selector.to_string(),
+            self.policy_length_config.max_file_bytes,
+            self.policy_length_config.max_lines,
+        )
+    }
+
+    pub(crate) fn parse_rule_selector(
+        &self,
+        source: &Source,
+        selector: &str,
+    ) -> Result<Vec<String>> {
+        let mut parser = Parser::new_with_max_col(source, Some(self.policy_length_config.max_col))?;
+        parser.rego_v1 = self.rego_v1;
+        parser.future_keywords = self
+            .future_keywords
+            .iter()
+            .map(|keyword| (keyword.clone(), None))
+            .collect();
+        parser.parse_rule_selector(selector)
+    }
 }
 
 #[derive(Clone)]
@@ -58,8 +92,21 @@ const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
 const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
+    pub(crate) const MAX_PATH_COMPONENTS: usize = DEFAULT_MAX_EXPR_DEPTH;
+
     pub fn new(source: &'source Source) -> Result<Self> {
+        Self::new_with_max_col(source, None)
+    }
+
+    fn new_with_max_col(source: &'source Source, max_col: Option<NonZeroU32>) -> Result<Self> {
         let mut lexer = Lexer::new(source);
+        if let Some(max_col) = max_col {
+            lexer.set_max_col(max_col);
+        }
+        Self::from_lexer(source, lexer)
+    }
+
+    fn from_lexer(source: &'source Source, mut lexer: Lexer<'source>) -> Result<Self> {
         let tok = lexer.next_token()?;
         Ok(Self {
             source: source.clone(),
@@ -98,6 +145,17 @@ impl<'source> Parser<'source> {
 
     pub fn enable_rego_v1(&mut self) -> Result<()> {
         self.turn_on_rego_v1(&None)
+    }
+
+    pub(crate) fn snapshot_context(
+        &self,
+        policy_length_config: PolicyLengthConfig,
+    ) -> ParserContext {
+        ParserContext {
+            rego_v1: self.rego_v1,
+            future_keywords: self.future_keywords.keys().cloned().collect(),
+            policy_length_config,
+        }
     }
 
     fn turn_on_rego_v1(&mut self, span: &Option<Span>) -> Result<()> {
@@ -204,28 +262,40 @@ impl<'source> Parser<'source> {
     }
 
     pub fn get_path_ref_components_into(refr: &Ref<Expr>, comps: &mut Vec<Span>) -> Result<()> {
-        match refr.as_ref() {
-            Expr::RefDot { refr, field, .. } => {
-                Self::get_path_ref_components_into(refr, comps)?;
-                comps.push(field.0.clone());
-            }
-            Expr::RefBrack { refr, index, .. } => {
-                Self::get_path_ref_components_into(refr, comps)?;
-                Self::get_path_ref_components_into(index, comps)?;
-            }
-            Expr::Var { span: v, .. } => comps.push(v.clone()),
-            Expr::String { span: s, .. } => comps.push(s.clone()),
-            Expr::Bool { span: s, .. } | Expr::Null { span: s, .. } => comps.push(s.clone()),
-            Expr::Number { span, value, .. } => {
-                // Ensure that the span will be the serialized representation.
-                if span.text() == value.to_json_str()? {
-                    comps.push(span.clone());
-                } else {
-                    bail!(refr.span().error("not a valid ref"));
-                }
-            }
+        enum ComponentAction<'a> {
+            Visit(&'a Expr),
+            Append(&'a Span),
+        }
 
-            _ => bail!(refr.span().error("not a valid ref")),
+        let mut pending = alloc::vec![ComponentAction::Visit(refr.as_ref())];
+        while let Some(action) = pending.pop() {
+            match action {
+                ComponentAction::Visit(expression) => match expression {
+                    Expr::RefDot { refr, field, .. } => {
+                        pending.push(ComponentAction::Append(&field.0));
+                        pending.push(ComponentAction::Visit(refr.as_ref()));
+                    }
+                    Expr::RefBrack { refr, index, .. } => {
+                        pending.push(ComponentAction::Visit(index.as_ref()));
+                        pending.push(ComponentAction::Visit(refr.as_ref()));
+                    }
+                    Expr::Var { span, .. }
+                    | Expr::String { span, .. }
+                    | Expr::Bool { span, .. }
+                    | Expr::Null { span, .. } => comps.push(span.clone()),
+                    Expr::Number { span, value, .. } => {
+                        // Ensure that the span will be the serialized representation.
+                        if span.text() == value.to_json_str()? {
+                            comps.push(span.clone());
+                        } else {
+                            bail!(expression.span().error("not a valid ref"));
+                        }
+                    }
+                    _ => bail!(expression.span().error("not a valid ref")),
+                },
+                ComponentAction::Append(span) => comps.push(span.clone()),
+            }
+            check_memory_limit()?;
         }
         Ok(())
     }
@@ -234,6 +304,130 @@ impl<'source> Parser<'source> {
         let mut comps = vec![];
         Self::get_path_ref_components_into(refr, &mut comps)?;
         Ok(comps)
+    }
+
+    pub(crate) fn get_static_string_path_components(refr: &Expr) -> Result<Vec<String>> {
+        fn collect(refr: &Expr, components: &mut Vec<String>) -> Result<()> {
+            match refr {
+                Expr::Var { span, .. } => components.push(span.text().to_string()),
+                Expr::RefDot { refr, field, .. } => {
+                    collect(refr, components)?;
+                    components.push(field.0.text().to_string());
+                }
+                Expr::RefBrack { refr, index, .. } => {
+                    collect(refr, components)?;
+                    if let Expr::String { value, .. } = index.as_ref() {
+                        components.push(value.as_string()?.as_ref().to_string());
+                    } else {
+                        bail!(refr.span().error("not a static string path"));
+                    }
+                }
+                _ => bail!(refr.span().error("not a static string path")),
+            }
+            Ok(())
+        }
+
+        let mut components = Vec::new();
+        collect(refr, &mut components)?;
+        Ok(components)
+    }
+
+    pub(crate) fn parse_static_path_components(
+        path: &str,
+        max_components: usize,
+    ) -> Result<Vec<String>> {
+        let max_col = path
+            .len()
+            .checked_add(1)
+            .and_then(|max_col| u32::try_from(max_col).ok())
+            .and_then(NonZeroU32::new)
+            .ok_or_else(|| anyhow!("path exceeds maximum supported length"))?;
+        let source = Source::from_contents("entrypoint.rego".to_string(), path.to_string())?;
+        let mut parser = Parser::<'_>::new_with_max_col(&source, Some(max_col))?;
+        let mut components = Vec::new();
+
+        let root = parser.parse_var()?;
+        Self::push_static_path_component(&mut components, root.text().to_string(), max_components)?;
+
+        loop {
+            match parser.token_text() {
+                "." | "[" if parser.tok.1.start != parser.end => {
+                    bail!(
+                        "{}",
+                        parser.source.error(
+                            parser.tok.1.line,
+                            parser.tok.1.col.saturating_sub(1),
+                            format!("invalid whitespace before {}", parser.token_text()).as_str()
+                        )
+                    );
+                }
+                "." => {
+                    let separator = parser.tok.1.start;
+                    parser.next_token()?;
+                    let field = parser.parse_ref_field()?;
+                    if field.start != separator.saturating_add(1) {
+                        bail!(
+                            "{}",
+                            parser.source.error(
+                                field.line,
+                                field.col.saturating_sub(1),
+                                "invalid whitespace between . and identifier"
+                            )
+                        );
+                    }
+                    Self::push_static_path_component(
+                        &mut components,
+                        field.text().to_string(),
+                        max_components,
+                    )?;
+                }
+                "[" => {
+                    parser.next_token()?;
+                    if parser.tok.0 != TokenKind::String {
+                        bail!(parser.tok.1.error("expected string"));
+                    }
+                    let index = parser.parse_scalar_or_var()?;
+                    parser.expect("]", "while parsing bracketed reference")?;
+                    let Expr::String { ref value, .. } = index else {
+                        bail!("internal error: static path component is not a string");
+                    };
+                    Self::push_static_path_component(
+                        &mut components,
+                        value.as_string()?.as_ref().to_string(),
+                        max_components,
+                    )?;
+                }
+                _ => break,
+            }
+        }
+        if parser.tok.0 != TokenKind::Eof {
+            bail!(parser.tok.1.error("expecting EOF"));
+        }
+        Ok(components)
+    }
+
+    fn push_static_path_component(
+        components: &mut Vec<String>,
+        component: String,
+        max_components: usize,
+    ) -> Result<()> {
+        if components.len() >= max_components {
+            bail!("path exceeds maximum supported component count of {max_components}");
+        }
+        components.push(component);
+        check_memory_limit()?;
+        Ok(())
+    }
+
+    fn check_path_component_limit(&self, current_count: usize) -> Result<()> {
+        if current_count >= Self::MAX_PATH_COMPONENTS {
+            let message = alloc::format!(
+                "path exceeds maximum depth of {} components",
+                Self::MAX_PATH_COMPONENTS
+            );
+            bail!("{}", self.tok.1.error(&message));
+        }
+        Ok(())
     }
 
     fn handle_import_future_keywords(&mut self, comps: &[Span]) -> Result<bool> {
@@ -661,15 +855,13 @@ impl<'source> Parser<'source> {
 
         while self.token_text() == "," {
             self.next_token()?;
-            let item_start = self.tok.1.start;
+            let mut item_span = self.tok.1.clone();
             let key = match self.token_text() {
                 "}" => break,
                 "" if self.tok.0 == TokenKind::Eof => break,
                 _ => self.parse_in_expr()?,
             };
 
-            let mut item_span = self.tok.1.clone();
-            span.start = item_start;
             self.expect(":", "while parsing object item")?;
             let value = self.parse_in_expr()?;
             item_span.end = self.end;
@@ -1423,6 +1615,7 @@ impl<'source> Parser<'source> {
     fn parse_path_ref(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let var = self.parse_var()?;
+        let mut component_count = 1;
 
         let (span, value) = Self::span_and_value(var);
         let mut refr = Expr::Var {
@@ -1446,6 +1639,8 @@ impl<'source> Parser<'source> {
                     );
                 }
                 "." => {
+                    self.check_path_component_limit(component_count)?;
+                    component_count = component_count.saturating_add(1);
                     // Read identifier. Keywords are allowed as field names in
                     // dot-notation refs (e.g. `import data.my.package`).
                     self.next_token()?;
@@ -1471,16 +1666,11 @@ impl<'source> Parser<'source> {
                     };
                 }
                 "[" => {
+                    self.check_path_component_limit(component_count)?;
+                    component_count = component_count.saturating_add(1);
                     self.next_token()?;
                     let index = match &self.tok.0 {
-                        TokenKind::String => {
-                            let (span, value) = Self::span_and_value(self.tok.1.clone());
-                            Expr::String {
-                                span,
-                                value,
-                                eidx: self.next_eidx(),
-                            }
-                        }
+                        TokenKind::String => self.parse_scalar_or_var()?,
                         _ => {
                             return Err(self.source.error(
                                 self.tok.1.line,
@@ -1489,7 +1679,6 @@ impl<'source> Parser<'source> {
                             ));
                         }
                     };
-                    self.next_token()?;
                     self.expect("]", "while parsing bracketed reference")?;
                     span.end = self.end;
                     refr = Expr::RefBrack {
@@ -1591,6 +1780,41 @@ impl<'source> Parser<'source> {
         }
 
         Ok(term)
+    }
+
+    fn parse_rule_selector(&mut self, selector: &str) -> Result<Vec<String>> {
+        let expression = self.parse_rule_ref()?;
+        if self.tok.0 != TokenKind::Eof {
+            return Err(self.tok.1.error("expecting EOF"));
+        }
+
+        if !matches!(&expression, Expr::Var { .. } | Expr::RefDot { .. }) {
+            bail!("expected a rule-root selector");
+        }
+        let span = expression.span();
+        if span.start != 0 || span.text() != selector {
+            bail!("rule-root selector must match its complete input");
+        }
+
+        let mut components = Vec::new();
+        let mut expression = &expression;
+        loop {
+            match expression {
+                Expr::Var { span, .. } => {
+                    components.push(span.text().to_string());
+                    check_memory_limit()?;
+                    break;
+                }
+                Expr::RefDot { refr, field, .. } => {
+                    components.push(field.0.text().to_string());
+                    check_memory_limit()?;
+                    expression = refr.as_ref();
+                }
+                _ => bail!("expected a rule-root selector"),
+            }
+        }
+        components.reverse();
+        Ok(components)
     }
 
     pub fn parse_rule_head(&mut self) -> Result<RuleHead> {
@@ -2186,5 +2410,71 @@ impl<'source> Parser<'source> {
     }
     pub fn num_queries(&self) -> u32 {
         self.qidx
+    }
+}
+
+#[cfg(test)]
+mod iterative_path_tests {
+    #![allow(clippy::panic_in_result_fn)]
+
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn path_components_preserve_bracket_order_and_numeric_validation() -> Result<()> {
+        let source =
+            Source::from_contents("path.rego".to_string(), "root[\"key\"][1]".to_string())?;
+        let mut parser = Parser::new(&source)?;
+        let reference = Ref::new(parser.parse_rule_ref()?);
+        let components = Parser::get_path_ref_components(&reference)?;
+        let component_text = components
+            .iter()
+            .map(|component| component.text())
+            .collect::<Vec<_>>();
+
+        assert_eq!(component_text, alloc::vec!["root", "key", "1"]);
+
+        let invalid_source =
+            Source::from_contents("invalid-number.rego".to_string(), "root01".to_string())?;
+        let root = Ref::new(Expr::Var {
+            span: Span {
+                source: invalid_source.clone(),
+                line: 1,
+                col: 1,
+                start: 0,
+                end: 4,
+            },
+            value: Value::from("root"),
+            eidx: 0,
+        });
+        let invalid_number = Ref::new(Expr::Number {
+            span: Span {
+                source: invalid_source.clone(),
+                line: 1,
+                col: 5,
+                start: 4,
+                end: 6,
+            },
+            value: Value::from(1_i64),
+            eidx: 0,
+        });
+        let invalid_reference = Ref::new(Expr::RefBrack {
+            span: Span {
+                source: invalid_source,
+                line: 1,
+                col: 1,
+                start: 0,
+                end: 6,
+            },
+            refr: root,
+            index: invalid_number,
+            eidx: 0,
+        });
+        let error = Parser::get_path_ref_components(&invalid_reference)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("non-canonical numeric references must fail"))?;
+        assert!(error.to_string().contains("not a valid ref"));
+
+        Ok(())
     }
 }

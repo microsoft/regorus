@@ -11,7 +11,7 @@ use super::{CompilationContext, Compiler, CompilerError, Register, Result, Scope
 use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
-use crate::lexer::Span;
+use crate::lexer::{Source, Span};
 use crate::rvm::program::{BuiltinInfo, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Value;
@@ -69,19 +69,32 @@ impl<'a> Compiler<'a> {
         Ok(index)
     }
 
-    pub fn alloc_register(&mut self) -> Register {
-        // Assert that we don't exceed 256 registers (u8::MAX + 1)
-        assert!(
-            self.register_counter < 255,
-            "Register overflow: attempted to allocate register {}, but maximum is 255. \
-			 Consider using register windowing or spill handling.",
-            self.register_counter
-        );
-
+    /// Allocate a register in the current rule's window, returning a structured
+    /// error when the RVM's 255-register limit would be exceeded.
+    pub fn alloc_register(&mut self) -> Result<Register> {
+        self.ensure_register_capacity(1)?;
         let reg = self.register_counter;
-        self.register_counter += 1;
+        self.register_counter =
+            self.register_counter
+                .checked_add(1)
+                .ok_or(CompilerError::RegisterOverflow {
+                    current: self.register_counter,
+                    additional: 1,
+                })?;
 
-        reg
+        Ok(reg)
+    }
+
+    pub(super) fn ensure_register_capacity(&self, additional: usize) -> Result<()> {
+        let next_register = usize::from(self.register_counter).checked_add(additional);
+        if next_register.is_none_or(|next| next > usize::from(u8::MAX)) {
+            return Err(CompilerError::RegisterOverflow {
+                current: self.register_counter,
+                additional,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     /// Add a literal value to the literal table, returning its index
@@ -228,7 +241,7 @@ impl<'a> Compiler<'a> {
                     return Ok(register);
                 }
 
-                let dest = self.alloc_register();
+                let dest = self.alloc_register()?;
                 self.emit_instruction(Instruction::LoadInput { dest }, span);
                 self.current_input_register = Some(dest);
                 return Ok(dest);
@@ -238,7 +251,7 @@ impl<'a> Compiler<'a> {
                     return Ok(register);
                 }
 
-                let dest = self.alloc_register();
+                let dest = self.alloc_register()?;
                 self.emit_instruction(Instruction::LoadData { dest }, span);
                 self.current_data_register = Some(dest);
                 return Ok(dest);
@@ -252,7 +265,7 @@ impl<'a> Compiler<'a> {
 
         let rule_path = format!("{}.{}", &self.current_package, var_name);
         let rule_index = self.get_or_assign_rule_index(&rule_path)?;
-        let dest = self.alloc_register();
+        let dest = self.alloc_register()?;
 
         self.emit_instruction(Instruction::CallRule { dest, rule_index }, span);
         Ok(dest)
@@ -264,19 +277,18 @@ impl<'a> Compiler<'a> {
         }
         self.program.instructions.push(instruction);
 
-        let source_path = span.source.get_path().to_string();
-        let source_index = self.get_or_create_source_index(&source_path);
+        let source_index = self.get_or_create_source_index(&span.source);
 
         self.spans
             .push(SpanInfo::from_lexer_span(span, source_index));
     }
 
-    fn get_or_create_source_index(&mut self, source_path: &str) -> usize {
-        if let Some(&index) = self.source_to_index.get(source_path) {
+    fn get_or_create_source_index(&mut self, source: &Source) -> usize {
+        if let Some(&index) = self.source_to_index.get(source) {
             index
         } else {
             let index = self.source_to_index.len();
-            self.source_to_index.insert(source_path.to_string(), index);
+            self.source_to_index.insert(source.clone(), index);
             index
         }
     }

@@ -16,4 +16,7 @@ mod value;
 mod azure_policy;
 
 #[cfg(feature = "rvm")]
+mod explanation_corpus;
+
+#[cfg(feature = "rvm")]
 mod rvm;

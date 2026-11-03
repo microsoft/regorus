@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 use anyhow::{anyhow, Result};
 use core::num::{NonZeroU32, NonZeroUsize};
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::*;
 use pyo3::IntoPyObjectExt;
@@ -96,6 +96,11 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     } else if let Ok(v) = ob.extract::<u64>() {
         v.into()
     } else if let Ok(v) = ob.extract::<f64>() {
+        if !v.is_finite() {
+            return Err(PyErr::new::<PyValueError, _>(
+                "NaN and infinity are not valid Rego numbers",
+            ));
+        }
         v.into()
     }
     // None

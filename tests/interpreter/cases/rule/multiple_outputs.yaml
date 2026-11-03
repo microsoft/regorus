@@ -109,7 +109,7 @@ cases:
 
         p["a"] := 2
     query: data.test.p
-    error: "rule conflicts with the following rule"
+    error: "rule conflicts with rule at"
 
   - note: partial_object_same_key_object_values_conflict_no_deep_merge
     data: {}
@@ -122,7 +122,7 @@ cases:
 
         p["a"] := {"y": 2}
     query: data.test.p
-    error: "rule conflicts with the following rule"
+    error: "rule conflicts with rule at"
 
   # ----------------------------------------------------------------------------
   # Ref-head rules: combine across disjoint sub-paths.
@@ -154,7 +154,7 @@ cases:
 
         p.q.r := 2
     query: data.test.p
-    error: "rule conflicts with the following rule"
+    error: "rule conflicts with rule at"
 
   - note: refhead_same_node_object_values_conflict_no_deep_merge
     data: {}
@@ -167,7 +167,7 @@ cases:
 
         p.q := {"s": 2}
     query: data.test.p
-    error: "rule conflicts with the following rule"
+    error: "rule conflicts with rule at"
 
   # ----------------------------------------------------------------------------
   # Dynamic partial objects (keys computed at eval time).

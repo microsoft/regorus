@@ -161,11 +161,35 @@ impl TestFfiCommand {
         }
         test_args.push(OsString::from("--features"));
         test_args.push(OsString::from("contention_checks"));
+        let isolated_tests = [
+            "limits::tests::ffi_roundtrips_global_limit",
+            "rvm::tests::correction_ffi_malformed_resume_is_retryable_under_global_memory_pressure",
+            "rvm::tests::ffi_valid_resume_global_limit_failure_terminalizes_with_generic_error_status",
+            "panic_guard::tests::ordinary_guarded_calls_are_not_serialized_by_the_poison_test_gate",
+        ];
+
+        // Global limits and the poison-gate concurrency test need separate processes.
+        let mut parallel_test_args = test_args.clone();
+        parallel_test_args.push(OsString::from("--"));
+        for test in isolated_tests {
+            parallel_test_args.push(OsString::from("--skip"));
+            parallel_test_args.push(OsString::from(test));
+        }
         run_cargo_step(
             &ffi_dir,
-            "cargo test --features contention_checks (bindings/ffi)",
-            test_args,
+            "cargo test --features contention_checks (parallel FFI tests)",
+            parallel_test_args,
         )?;
+
+        for test in isolated_tests {
+            let mut isolated_test_args = test_args.clone();
+            isolated_test_args.extend(["--lib", test, "--", "--exact"].map(OsString::from));
+            run_cargo_step(
+                &ffi_dir,
+                &format!("cargo test --features contention_checks (isolated {test})"),
+                isolated_test_args,
+            )?;
+        }
 
         Ok(())
     }

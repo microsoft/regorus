@@ -1,0 +1,58 @@
+[
+  {
+    "namespace": "Microsoft.Test",
+    "resourceTypes": [
+      {
+        "resourceType": "quotedKeys",
+        "capabilities": "SupportsTags, SupportsLocation",
+        "aliases": [
+          {
+            "name": "Microsoft.Test/quotedKeys/labels['a[*]']",
+            "defaultPath": "properties.labels['a[*]']",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/labels['a]b']",
+            "defaultPath": "properties.labels['a]b']",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/items[*]",
+            "defaultPath": "properties.items[*]",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/items[*]['a[*]']",
+            "defaultPath": "properties.items[*]['a[*]']",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/items[*].m['k[*]']",
+            "defaultPath": "properties.items[*].m['k[*]']",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/groups['g[*]'][*]",
+            "defaultPath": "properties.groups['g[*]'][*]",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/labels['a/b']",
+            "defaultPath": "properties.labels['a/b']",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/grp['a/b'][*]",
+            "defaultPath": "properties.grp['a/b'][*]",
+            "paths": []
+          },
+          {
+            "name": "Microsoft.Test/quotedKeys/items[*]['a/b']",
+            "defaultPath": "properties.items[*]['a/b']",
+            "paths": []
+          }
+        ]
+      }
+    ]
+  }
+]

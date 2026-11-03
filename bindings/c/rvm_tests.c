@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 #include <stdio.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include "regorus.h"
 
@@ -13,12 +16,164 @@ static int assert_ok(RegorusResult r, const char* message) {
     return 1;
 }
 
+static int test_registered_host_await_wide_stride(void) {
+    typedef struct WiderHostAwaitBuiltin {
+        RegorusHostAwaitBuiltin prefix;
+        uintptr_t trailing;
+    } WiderHostAwaitBuiltin;
+
+    if (offsetof(RegorusHostAwaitBuiltin, name) != 0 ||
+        offsetof(RegorusHostAwaitBuiltin, arg_count) != sizeof(const char*) ||
+        sizeof(RegorusHostAwaitBuiltin) != sizeof(const char*) + sizeof(uintptr_t) ||
+        sizeof(WiderHostAwaitBuiltin) <= sizeof(RegorusHostAwaitBuiltin)) {
+        fprintf(stderr, "unexpected registered HostAwait ABI layout\n");
+        return 1;
+    }
+
+    const char* module_text =
+        "package demo\n"
+        "import rego.v1\n"
+        "result := echo(input.left, input.right)\n";
+    const char* expected_argument =
+        "[\n"
+        "  \"first\",\n"
+        "  {\n"
+        "    \"nested\": [\n"
+        "      2\n"
+        "    ]\n"
+        "  }\n"
+        "]";
+    RegorusPolicyModule module = {"registered_host_await_stride.rego", module_text};
+    const char* entry_points[] = {"data.demo.result"};
+    WiderHostAwaitBuiltin builtins[] = {
+        {{"unused", 0}, 0},
+        {{"echo", 2}, 0},
+    };
+
+    RegorusResult result = regorus_program_compile_from_modules_with_host_await(
+        "{}",
+        &module,
+        1,
+        entry_points,
+        1,
+        &builtins[0].prefix,
+        2,
+        sizeof(WiderHostAwaitBuiltin));
+    bool result_valid = true;
+    RegorusProgram* program = NULL;
+    RegorusRvm* vm = NULL;
+    int exit_code = 1;
+
+    if (!assert_ok(result, "compile registered HostAwait with wider stride")) {
+        goto Cleanup;
+    }
+    program = (RegorusProgram*)result.pointer_value;
+    regorus_result_drop(result);
+    result_valid = false;
+    if (!program) {
+        fprintf(stderr, "registered HostAwait compile returned no program\n");
+        goto Cleanup;
+    }
+
+    vm = regorus_rvm_new();
+    if (!vm) {
+        fprintf(stderr, "failed to allocate registered HostAwait VM\n");
+        goto Cleanup;
+    }
+    result = regorus_rvm_set_execution_mode(vm, 1);
+    result_valid = true;
+    if (!assert_ok(result, "set registered HostAwait execution mode")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_load_program(vm, program);
+    result_valid = true;
+    if (!assert_ok(result, "load registered HostAwait program")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_set_input(vm, "{\"left\":\"first\",\"right\":{\"nested\":[2]}}");
+    result_valid = true;
+    if (!assert_ok(result, "set registered HostAwait input")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_execute(vm);
+    result_valid = true;
+    if (!assert_ok(result, "execute registered HostAwait program")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_get_host_await_identifier(vm);
+    result_valid = true;
+    if (!assert_ok(result, "get registered HostAwait identifier")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "echo") != 0) {
+        fprintf(stderr, "unexpected registered HostAwait identifier: %s\n",
+            result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_get_host_await_argument(vm);
+    result_valid = true;
+    if (!assert_ok(result, "get registered HostAwait argument")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, expected_argument) != 0) {
+        fprintf(stderr, "unexpected registered HostAwait argument: %s\n",
+            result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_resume(vm, "123", true);
+    result_valid = true;
+    if (!assert_ok(result, "resume registered HostAwait program")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "123") != 0) {
+        fprintf(stderr, "unexpected registered HostAwait result: %s\n",
+            result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    printf("Registered HostAwait wide-stride C ABI test passed.\n");
+    exit_code = 0;
+
+Cleanup:
+    if (result_valid) {
+        regorus_result_drop(result);
+    }
+    if (vm) {
+        regorus_rvm_drop(vm);
+    }
+    if (program) {
+        regorus_program_drop(program);
+    }
+    return exit_code;
+}
+
 int main() {
     RegorusResult result = {0};
     bool result_valid = false;
     RegorusProgram* program = NULL;
     RegorusBuffer* buffer = NULL;
     RegorusProgram* program2 = NULL;
+    RegorusProgram* empty_program = NULL;
     RegorusRvm* vm = NULL;
     RegorusProgram* host_program = NULL;
     RegorusRvm* host_vm = NULL;
@@ -80,6 +235,45 @@ int main() {
     regorus_result_drop(result);
     result_valid = false;
 
+    printf("Reading compiled builtin names...\n");
+    result = regorus_program_get_builtin_names(program);
+    result_valid = true;
+    if (!assert_ok(result, "get compiled builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[\"count\"]") != 0) {
+        fprintf(stderr, "unexpected builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_program_get_builtin_names(NULL);
+    result_valid = true;
+    if (result.status == Ok || !result.error_message) {
+        fprintf(stderr, "null program should return an explicit error\n");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    empty_program = regorus_program_new();
+    if (!empty_program) {
+        fprintf(stderr, "failed to allocate empty program\n");
+        goto Cleanup;
+    }
+    result = regorus_program_get_builtin_names(empty_program);
+    result_valid = true;
+    if (!assert_ok(result, "get empty program builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[]") != 0) {
+        fprintf(stderr, "unexpected empty program builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
     printf("Generating assembly listing...\n");
     result = regorus_program_generate_listing(program);
     result_valid = true;
@@ -117,6 +311,18 @@ int main() {
     }
 
     program2 = (RegorusProgram*)result.pointer_value;
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_program_get_builtin_names(program2);
+    result_valid = true;
+    if (!assert_ok(result, "get deserialized program builtin names")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, "[\"count\"]") != 0) {
+        fprintf(stderr, "unexpected deserialized builtin names: %s\n", result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
     regorus_result_drop(result);
     result_valid = false;
 
@@ -261,6 +467,10 @@ int main() {
     regorus_result_drop(result);
     result_valid = false;
 
+    if (test_registered_host_await_wide_stride() != 0) {
+        goto Cleanup;
+    }
+
     exit_code = 0;
 
 Cleanup:
@@ -284,6 +494,9 @@ Cleanup:
     }
     if (program) {
         regorus_program_drop(program);
+    }
+    if (empty_program) {
+        regorus_program_drop(empty_program);
     }
     return exit_code;
 }

@@ -34,6 +34,8 @@ fields to responsibilities.
 | `step_mode`                           | Enables single-step suspension after each instruction.      | `execution.rs` |
 | `host_await_responses`                | Pre-scripted responses keyed by identifier (run-to-completion). | `dispatch.rs` |
 | `execution_mode`                      | `RunToCompletion` or `Suspendable`.                         | `execution.rs` |
+| `next_execution_mode`                 | Mode selected for the next initial execution.                | `machine.rs` |
+| memory-budget usage scalar            | Per-VM requested-byte total retained across suspendable segments. | `machine.rs`, allocator shim |
 | `frame_pc_overridden`                 | Tracks manual PC updates inside frames.                     | `execution.rs`, `loops.rs`, `comprehension.rs` |
 | `strict_builtin_errors`               | Configures builtin failure handling (error vs `undefined`).  | `machine.rs`, `arithmetic.rs`, `dispatch.rs` |
 
@@ -49,7 +51,8 @@ fields to responsibilities.
   runtime policy. `set_max_instructions` replaces the limit without resetting
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
-  FIFO order when `HostAwait` executes in run-to-completion mode.
+  FIFO order when `HostAwait` executes in run-to-completion mode. A registered
+  call with an undefined input skips `HostAwait` and leaves the queue untouched.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
@@ -57,7 +60,10 @@ fields to responsibilities.
 - `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
   the argument value passed by the policy. Returns `None` if not suspended or
   suspended for a different reason. At the serialization boundary the argument
-  uses the same `Value`→JSON encoding as evaluation results.
+  uses the same `Value`→JSON encoding as evaluation results. Newly compiled
+  registered calls return the complete ordered input array (including a
+  one-element array); explicit raw calls and previously compiled programs keep
+  their original payload shape.
 - `get_host_await_identifier`: when the VM is suspended on a `HostAwait`, returns
   the identifier that triggered the suspension. Returns `None` if not applicable.
   The identifier is an arbitrary `Value` chosen by the policy — for a registered
@@ -102,6 +108,24 @@ fields to responsibilities.
   `resume(resume_value)` to continue.
 - Completion: when `execution_stack` becomes empty the VM sets
   `ExecutionState::Completed { result }`.
+- With `allocator-memory-limits`, the VM retains a checked requested-byte
+  scalar across suspendable segments. The allocator shim selects it in
+  thread-local state only while a synchronous segment runs, charging every
+  successful allocation, zeroed allocation, and reallocation; frees do not
+  refund it. Segment boundaries persist the scalar to the VM and restore the
+  prior selector, so resumes may migrate between threads without resetting
+  consumption. Updating the configured budget or execution mode affects only
+  the next initial execution. Native FFI resume parsing, inner resume, and
+  immediate result serialization share one accounting window.
+- An independent unbudgeted VM entry, resume, or native conversion nested inside
+  a budgeted callback temporarily selects no usage and restores the caller's
+  selector on return or unwind. This does not alter run-to-completion
+  thread-baseline accounting. Initial suspendable failures publish
+  `ExecutionState::Error`; unbudgeted failures retain the legacy register
+  contents.
+- With `allocator-memory-limits`, each valid initial entry point checks the
+  global memory ceiling after setup and validation, immediately before dispatch.
+  Per-instruction checks remain throttled, and resume behavior is unchanged.
 
 `execution_model.rs` defines the frame types and state machine:
 
@@ -277,4 +301,3 @@ internal runtime field and is not a public C# getter.
   combines nested loops, comprehensions, function calls, and host awaits.
 
 ---
-

@@ -6,6 +6,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/microsoft/regorus/compare/regorus-v0.14.0...regorus-v0.14.1) - 2026-11-02
+
+### Added
+
+- *(explain)* add explanation report types and settings ([#876](https://github.com/microsoft/regorus/pull/876))
+- add default-off `explanations` cargo feature ([#873](https://github.com/microsoft/regorus/pull/873))
+
+### Fixed
+
+- *(number)* make equality and ordering exact ([#846](https://github.com/microsoft/regorus/pull/846))
+- *(azure_policy)* quote-aware [*] detection in field paths ([#875](https://github.com/microsoft/regorus/pull/875))
+- *(azure_policy)* trim whitespace around bracket tag names ([#877](https://github.com/microsoft/regorus/pull/877))
+- *(azure_policy)* keep value-count names out of field() resolution ([#874](https://github.com/microsoft/regorus/pull/874))
+- *(azure_policy)* support double-quoted tag keys and reject empty tag names ([#872](https://github.com/microsoft/regorus/pull/872))
+- *(azure_policy)* scope count field bindings to their resource ([#870](https://github.com/microsoft/regorus/pull/870))
+- *(azure_policy)* collect nested wildcards below a count-bound prefix ([#871](https://github.com/microsoft/regorus/pull/871))
+- *(azure_policy)* index only all-digit subscripts and saturate overflow ([#869](https://github.com/microsoft/regorus/pull/869))
+
+### Security
+
+- Updated the build-tool-only `zip` dependency from 9.0.4 to 9.1.3 to address [CVE-2026-115905 / GHSA-m665-v7pm-7grj](https://github.com/advisories/GHSA-m665-v7pm-7grj) ([#881](https://github.com/microsoft/regorus/pull/881)). Regorus's policy evaluation runtime is unaffected; its build tooling does not use the affected streaming-extraction workflow.
+
+### Other
+
+- add shared explanation corpus ([#885](https://github.com/microsoft/regorus/pull/885))
+- *(deps)* bump the github-actions group across 1 directory with 9 updates ([#880](https://github.com/microsoft/regorus/pull/880))
+- *(deps)* bump the rust-dependencies group across 6 directories with 12 updates ([#881](https://github.com/microsoft/regorus/pull/881))
+
+## [0.14.0](https://github.com/microsoft/regorus/compare/regorus-v0.13.0...regorus-v0.14.0) - 2026-10-27
+
+### Added
+
+- *(compiler)* [**breaking**] support fixed-arity host-await builtins ([#857](https://github.com/microsoft/regorus/pull/857))
+- *(bindings)* expose compiled program builtin names ([#853](https://github.com/microsoft/regorus/pull/853))
+
+### Fixed
+
+- *(number)* reject non-finite arithmetic results ([#845](https://github.com/microsoft/regorus/pull/845))
+- *(engine)* keep query loop hoisting out of the shared compiled policy ([#849](https://github.com/microsoft/regorus/pull/849))
+- *(rvm)* stop after compiling the final hoisted output loop ([#850](https://github.com/microsoft/regorus/pull/850))
+- *(number)* reject non-finite values at supported ingress boundaries ([#840](https://github.com/microsoft/regorus/pull/840))
+- *(rvm)* omit undefined values from set accumulation ([#841](https://github.com/microsoft/regorus/pull/841))
+
+### Other
+
+- Fix ARM function naming in arity errors and enhance compile-error tests ([#867](https://github.com/microsoft/regorus/pull/867))
+- Fix handling of quoted digit path segments in Azure Policy ([#866](https://github.com/microsoft/regorus/pull/866))
+- Enhance Azure Policy tests for evaluation errors and short circuits ([#865](https://github.com/microsoft/regorus/pull/865))
+- Preserve memory budgets across suspendable execution ([#830](https://github.com/microsoft/regorus/pull/830))
+- fix dependency audits and vulnerable zip dependency ([#844](https://github.com/microsoft/regorus/pull/844))
+- *(deps)* bump the github-actions group with 7 updates ([#839](https://github.com/microsoft/regorus/pull/839))
+
+### Added
+
+- Expose compiled RVM builtin names through the C FFI and `Program.GetBuiltinNames()` in C#.
+
+### Changed
+
+- [**breaking**] Registered RVM HostAwait builtins now require a declared input arity and pass new calls to host handlers as ordered arrays; host responses remain unwrapped. The C# `HostAwaitBuiltin(string)` constructor was removed, a source and CLR binary break, and public Rust `Compiler::alloc_register` now returns `Result<Register, SpannedCompilerError>`; the registered-builtin API signature is unchanged. Explicit `__builtin_host_await` calls and previously compiled programs keep their raw payloads, which may themselves be arrays and cannot be identified by shape. Deploy a matching program/handler/native/managed bundle or provide application-owned legacy routing; no runtime handshake or universal compatibility handler is provided. New managed code with an older size-aware native library may have its count ignored and is unsupported. Roll back the matching prior package/handler/program bundle together.
+- [**breaking**] Float-promoting arithmetic now raises `numeric overflow in <operation>` instead of producing NaN or infinity, regardless of strict-builtin-error mode. Unlike OPA's wide-exponent arithmetic, finite results outside the binary64 range are rejected.
+
+## [0.13.0](https://github.com/microsoft/regorus/compare/regorus-v0.12.0...regorus-v0.13.0) - 2026-10-14
+
+### Changed
+
+- Package and import paths are now limited to 32 components. Previously accepted longer paths are rejected, making this a breaking release for the `0.12.x` compatibility line.
+- Rule lookups and compilation entrypoints use canonical paths that preserve literal namespace components. For `package graph["1.0.0"]`, use `data.graph["1.0.0"].deny`, not the flattened package-metadata string `data.graph.1.0.0.deny`.
+
+### Added
+
+- Add source-scoped, nonexecuting rule-declaration detection through `HasDeclaredRuleRootedAt` in Rust, FFI, and C#, including dotted-prefix matching and load-time parser context preservation ([#826](https://github.com/microsoft/regorus/pull/826))
+- expose lossless package components ([#834](https://github.com/microsoft/regorus/pull/834))
+- *(sprintf)* support Go-compatible %q for strings ([#809](https://github.com/microsoft/regorus/pull/809))
+- *(csharp)* expose RVM instruction budget setter ([#811](https://github.com/microsoft/regorus/pull/811))
+- *(compiler)* FFI and C# bindings for RVM, incl. host-await built-ins ([#672](https://github.com/microsoft/regorus/pull/672))
+
+### Fixed
+
+- preserve literal namespace components across evaluation paths ([#827](https://github.com/microsoft/regorus/pull/827))
+- *(rego)* schedule comprehensions in rule outputs ([#825](https://github.com/microsoft/regorus/pull/825))
+- disambiguate prior rule file labels ([#824](https://github.com/microsoft/regorus/pull/824))
+- keep prior rule locations in concise conflict diagnostics ([#820](https://github.com/microsoft/regorus/pull/820))
+- Rule-conflict diagnostics now retain the current source envelope and identify the previous rule by file, line, and column without nesting a second diagnostic; literal percent, CR, and LF characters in the previous file label are percent-encoded. RVM conflict result semantics are unchanged.
+- Suspendable RVM budgets remain immutable across host-await resumes, include native resume parsing and immediate result serialization, and leave malformed JSON syntax/EOF retryable; independent unbudgeted VM calls do not inherit a caller's account, and run-to-completion thread-baseline behavior remains unchanged.
+
+### Other
+
+- *(deps)* bump the github-actions group across 1 directory with 5 updates ([#828](https://github.com/microsoft/regorus/pull/828))
+- *(deps)* bump the rust-dependencies group across 6 directories with 13 updates ([#832](https://github.com/microsoft/regorus/pull/832))
+- *(deps)* bump the github-actions group with 3 updates ([#822](https://github.com/microsoft/regorus/pull/822))
+- *(deps)* bump the github-actions group with 5 updates ([#818](https://github.com/microsoft/regorus/pull/818))
+- *(deps)* bump the rust-dependencies group across 5 directories with 5 updates ([#813](https://github.com/microsoft/regorus/pull/813))
+- *(deps)* bump MarcoIeni/release-plz-action in the github-actions group ([#814](https://github.com/microsoft/regorus/pull/814))
+- *(deps)* bump the github-actions group with 4 updates ([#807](https://github.com/microsoft/regorus/pull/807))
+- *(deps)* bump the rust-dependencies group across 5 directories with 9 updates ([#808](https://github.com/microsoft/regorus/pull/808))
+
 ## [0.12.0](https://github.com/microsoft/regorus/compare/regorus-v0.11.0...regorus-v0.12.0) - 2026-09-01
 
 ### Added

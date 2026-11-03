@@ -21,12 +21,101 @@ const DEFAULT_THREAD_FLUSH_THRESHOLD: i64 = 1024 * 1024;
 static THREAD_FLUSH_THRESHOLD: AtomicI64 = AtomicI64::new(DEFAULT_THREAD_FLUSH_THRESHOLD);
 
 thread_local! {
+    // Suspendable execution usage is copied into and out of this cell at segment boundaries.
+    static CURRENT_MEMORY_BUDGET_USAGE: Cell<Option<MemoryBudgetUsage>> =
+        const { Cell::new(None) };
     // Each thread tracks its own allocations and deallocations. Periodically the thread's
     // stats are flushed into the global counters. Such a design minimizes contention on the
     // global atomic variables on each allocation/free operation.
     static THREAD_COUNTERS: ThreadAllocationCounters = const { ThreadAllocationCounters::new() };
     // Marks that this thread published allocator deltas since the last limit check.
     static THREAD_FLUSHED_SINCE_CHECK: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Gross requested bytes retained by a suspendable VM between execution segments.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryBudgetUsage {
+    requested_bytes: u64,
+    overflowed: bool,
+}
+
+impl MemoryBudgetUsage {
+    /// Return the gross requested bytes charged to this execution.
+    pub const fn requested_bytes(self) -> u64 {
+        self.requested_bytes
+    }
+
+    /// Return whether this usage exceeds the configured limit, including arithmetic overflow.
+    pub const fn exceeds_limit(self, limit: u64) -> bool {
+        self.overflowed || self.requested_bytes > limit
+    }
+
+    fn record_allocation(&mut self, size: usize) {
+        let Ok(size) = u64::try_from(size) else {
+            self.requested_bytes = u64::MAX;
+            self.overflowed = true;
+            return;
+        };
+
+        match self.requested_bytes.checked_add(size) {
+            Some(requested_bytes) => self.requested_bytes = requested_bytes,
+            None => {
+                self.requested_bytes = u64::MAX;
+                self.overflowed = true;
+            }
+        }
+    }
+}
+
+/// Select a suspendable execution's usage while one synchronous segment runs.
+///
+/// The guard captures the segment's final usage on both return and unwind, then restores the
+/// previously-selected execution. Callers own the captured scalar and persist it with their VM.
+#[doc(hidden)]
+pub fn with_memory_budget_usage_scope<R>(
+    initial: Option<MemoryBudgetUsage>,
+    updated: &mut Option<MemoryBudgetUsage>,
+    operation: impl FnOnce() -> R,
+) -> R {
+    let previous = CURRENT_MEMORY_BUDGET_USAGE.with(|selected| selected.replace(initial));
+    let _scope = MemoryBudgetUsageScope { previous, updated };
+    operation()
+}
+
+struct MemoryBudgetUsageScope<'a> {
+    previous: Option<MemoryBudgetUsage>,
+    updated: &'a mut Option<MemoryBudgetUsage>,
+}
+
+impl Drop for MemoryBudgetUsageScope<'_> {
+    fn drop(&mut self) {
+        *self.updated = CURRENT_MEMORY_BUDGET_USAGE.with(Cell::get);
+        CURRENT_MEMORY_BUDGET_USAGE.with(|selected| selected.set(self.previous));
+    }
+}
+
+/// Select no execution budget for the duration of an independent synchronous operation.
+#[doc(hidden)]
+pub fn with_unowned_memory_budget_scope<R>(operation: impl FnOnce() -> R) -> R {
+    let mut ignored = None;
+    with_memory_budget_usage_scope(None, &mut ignored, operation)
+}
+
+/// Return the usage of the currently-selected suspendable execution segment.
+#[doc(hidden)]
+pub fn current_memory_budget_usage() -> Option<MemoryBudgetUsage> {
+    CURRENT_MEMORY_BUDGET_USAGE.with(Cell::get)
+}
+
+/// Add the successful allocation's requested size to the active TLS usage scalar.
+pub(crate) fn record_memory_budget_alloc(size: usize) {
+    CURRENT_MEMORY_BUDGET_USAGE.with(|selected| {
+        if let Some(mut usage) = selected.get() {
+            usage.record_allocation(size);
+            selected.set(Some(usage));
+        }
+    });
 }
 
 /// Process-wide view of allocator usage at the moment of sampling.
@@ -273,7 +362,10 @@ pub fn thread_flush_threshold() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_thread_live_bytes, record_alloc, record_free};
+    use super::{
+        current_memory_budget_usage, current_thread_live_bytes, record_alloc, record_free,
+        record_memory_budget_alloc, with_memory_budget_usage_scope, MemoryBudgetUsage,
+    };
 
     #[test]
     fn current_thread_live_bytes_tracks_usage_without_a_snapshot() {
@@ -288,5 +380,28 @@ mod tests {
 
         record_free(SIZE);
         assert_eq!(current_thread_live_bytes(), before);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn requested_byte_overflow_exceeds_even_the_maximum_budget_stickily() {
+        let mut exact = Some(MemoryBudgetUsage::default());
+        with_memory_budget_usage_scope(exact, &mut exact, || {
+            record_memory_budget_alloc(usize::MAX);
+        });
+        let exact = exact.expect("budgeted usage");
+        assert_eq!(exact.requested_bytes(), u64::MAX);
+        assert!(!exact.exceeds_limit(u64::MAX));
+        assert_eq!(current_memory_budget_usage(), None);
+
+        let mut overflowed = Some(MemoryBudgetUsage::default());
+        with_memory_budget_usage_scope(overflowed, &mut overflowed, || {
+            record_memory_budget_alloc(usize::MAX);
+            record_memory_budget_alloc(1);
+        });
+        let overflowed = overflowed.expect("budgeted usage");
+        assert_eq!(overflowed.requested_bytes(), u64::MAX);
+        assert!(overflowed.exceeds_limit(u64::MAX));
+        assert!(overflowed.exceeds_limit(0));
     }
 }
