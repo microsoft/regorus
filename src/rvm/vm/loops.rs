@@ -470,6 +470,14 @@ impl RegoVM {
                     // over a virtual null element.
                     Ok(Some(IterationState::Single { consumed: false }))
                 } else {
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled()
+                        && *mode != LoopMode::Every
+                        && !self.virtual_element_on_non_collection
+                        && collection_value == Value::Undefined
+                    {
+                        self.explain_undefined_collection();
+                    }
                     // Standard Rego: iterating a non-collection scalar (number,
                     // string, bool, null, undefined) yields no iterations. For
                     // `every` this makes the quantifier undefined (it fails) — it
