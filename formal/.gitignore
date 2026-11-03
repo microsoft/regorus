@@ -1,0 +1,9 @@
+# Local Lean/Lake toolchain installation (elan, lean, lake binaries) — not
+# part of the formalization source; contributors should install their own
+# toolchain via elan using the pinned `lean-toolchain` file.
+.lean-tools/
+
+# Lake build artifacts and downloaded dependency packages (Mathlib, Batteries,
+# etc.) — reproducible from lakefile.lean + lake-manifest.json via `lake build`.
+.lake/
+build/

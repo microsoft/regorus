@@ -1,0 +1,108 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+#
+name: lean
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "formal/**"
+      - ".github/workflows/lean.yml"
+
+env:
+  # elan (the Lean toolchain manager) reads `formal/lean-toolchain` to decide
+  # which pinned Lean release to install; this only sets its install location.
+  ELAN_HOME: ${{ github.workspace }}/.elan
+
+# This workflow only checks out code, installs a pinned Lean/elan toolchain,
+# fetches precompiled Mathlib caches, and builds/checks the `formal/`
+# formalization. It never writes to the repository, so restrict the
+# GITHUB_TOKEN to read-only access to repository contents.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: lean (formal/)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install elan (pinned release, pinned to formal/lean-toolchain)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          toolchain="$(cat formal/lean-toolchain)"
+          test -n "$toolchain"
+
+          # Download a specific, pinned elan release binary instead of piping
+          # the mutable `elan/master` install script into bash, and verify its
+          # integrity before executing it (mirroring how
+          # .github/workflows/verus.yml pins and hash-checks the Verus release).
+          elan_version=4.2.4
+          asset_url="https://github.com/leanprover/elan/releases/download/v${elan_version}/elan-x86_64-unknown-linux-gnu.tar.gz"
+          asset_sha256=42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+          curl -fsSL "$asset_url" -o elan.tar.gz
+          echo "${asset_sha256}  elan.tar.gz" | sha256sum --check --strict
+
+          tar -xzf elan.tar.gz
+          chmod +x elan-init
+          ./elan-init -y --default-toolchain "$toolchain"
+          echo "$ELAN_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Lake build artifacts and Mathlib cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            formal/.lake
+          # Keyed on the manifest (exact pinned dependency revisions) and the
+          # toolchain version, so a Mathlib/Batteries bump invalidates the
+          # cache instead of silently reusing stale `.olean` files.
+          key: lean-lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain', 'formal/lake-manifest.json') }}
+          restore-keys: |
+            lean-lake-${{ runner.os }}-
+
+      - name: Fetch dependencies and precompiled Mathlib cache
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          lake --version
+          # `lake exe cache get` resolves/fetches the pinned dependencies from
+          # lake-manifest.json (Mathlib, Batteries, ...) and then downloads
+          # their prebuilt `.olean` files instead of compiling them from
+          # source, which would otherwise take a very long time. Failures are
+          # tolerated here (e.g. no cache entry for a brand-new revision);
+          # `lake build` below falls back to compiling anything missing.
+          lake exe cache get || echo "Mathlib cache fetch skipped/unavailable; continuing to lake build."
+
+      - name: Build the Regorus formalization
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # `@[default_target]` is only on the `Regorus` library, so a bare
+          # `lake build` never builds/typechecks the `regorusFormal`
+          # executable (whose root is `Main.lean`). Build it explicitly; it
+          # imports `Regorus`, so this still builds/checks the full library.
+          lake build regorusFormal
+
+      - name: Reject unproven placeholders (sorry/admit)
+        working-directory: formal
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # `lake build` succeeds even in the presence of `sorry`, which only
+          # produces a warning. Fail CI explicitly so the formalization can
+          # never merge with an unproven theorem hiding behind a warning.
+          if grep -rnE '\bsorry\b|\badmit\b' Regorus Main.lean Regorus.lean; then
+            echo "::error::Found sorry/admit in the Lean formalization; all theorems must be fully proved."
+            exit 1
+          fi
+          echo "No sorry/admit found."
