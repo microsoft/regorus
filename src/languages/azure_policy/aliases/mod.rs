@@ -17,11 +17,28 @@
 //! alias short names are direct paths. This means the compiler and VM never
 //! need to know about aliases — the normalizer handles the translation once
 //! before evaluation.
+//!
+//! Alias and ARM paths are parsed with a bracket-aware grammar when the
+//! catalog is loaded: dotted fields and bracket subscripts, including quoted
+//! keys containing dots, brackets or literal `[*]`. Quotes have no escapes and
+//! close only before optional whitespace and `]`. Only an unquoted `[*]` is an
+//! array wildcard; unquoted numeric subscripts are array indices, and only an
+//! unquoted `properties` key followed by another key is a wrapper (an
+//! unquoted `properties/...` key also marks a sub-resource wrapper). Parsed
+//! paths drive wildcard classification, element remaps, array base renames,
+//! sub-resource array detection, envelope field classification and casing
+//! restoration; paths outside the grammar fall back to splitting on `.` for
+//! casing. Field reads and writes during normalization and denormalization,
+//! and [`types::ResolvedEntry`] segments, still split on `.`.
 
 pub mod denormalizer;
 pub mod normalizer;
 pub(crate) mod obj_map;
+mod path;
 pub mod types;
+
+#[cfg(test)]
+mod bracket_tests;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString as _};
@@ -483,52 +500,72 @@ fn compute_aggregates_for_version(
 
         // Select the ARM path for this version (or default).
         let selected_path = entry.select_path(api_version);
-        let short_parts: Vec<&str> = entry.short_name.split("[*].").collect();
-        let arm_raw_parts: Vec<&str> = selected_path.split("[*].").collect();
+        let Some(short_path) = path::parse(&entry.short_name) else {
+            continue;
+        };
+        let Some(arm_path) = path::parse(selected_path) else {
+            continue;
+        };
+        let short_parts: Vec<_> = short_path
+            .parts()
+            .into_iter()
+            .map(|part| part.segments)
+            .collect();
+        let arm_parts = arm_path.parts();
 
-        if short_parts.len() >= 2 && arm_raw_parts.len() >= 2 {
-            if let (Some(short_leaf), Some(arm_leaf_raw)) =
-                (short_parts.last(), arm_raw_parts.last())
-            {
-                let arm_leaf = arm_leaf_raw
-                    .strip_prefix("properties.")
-                    .unwrap_or(arm_leaf_raw);
-
-                if !short_leaf.eq_ignore_ascii_case(arm_leaf) {
-                    let array_chain: Vec<Vec<String>> = short_parts
-                        .split_last()
-                        .map(|(_, init)| init)
+        if short_parts.len() >= 2 && arm_parts.len() >= 2 {
+            if let (Some(short_leaf), Some(arm_leaf_raw)) = (short_parts.last(), arm_parts.last()) {
+                let arm_leaf = arm_leaf_raw.without_properties();
+                if !short_leaf.is_empty()
+                    && !arm_leaf.is_empty()
+                    && !path::equivalent(short_leaf, arm_leaf)
+                {
+                    let array_chain: Option<Vec<Vec<String>>> = short_parts
+                        .get(..short_parts.len().saturating_sub(1))
                         .unwrap_or_default()
                         .iter()
-                        .map(|part| part.split('.').map(|s| s.to_ascii_lowercase()).collect())
+                        .map(|part| {
+                            if part.is_empty() {
+                                return None;
+                            }
+                            part.iter()
+                                .map(|segment| match segment {
+                                    path::Segment::Key(key) => Some(key.to_ascii_lowercase()),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
                         .collect();
+                    if let Some(array_chain) = array_chain {
+                        let arm_leaf = path::render(arm_leaf);
+                        let source_lc = arm_leaf.to_ascii_lowercase();
+                        let target_lc = path::render(short_leaf).to_ascii_lowercase();
+                        element_remaps.push(PrecomputedRemap {
+                            array_chain: array_chain.clone(),
+                            source_field: source_lc.clone(),
+                            target_field: target_lc.clone(),
+                        });
 
-                    let source_lc = arm_leaf.to_ascii_lowercase();
-                    let target_lc = short_leaf.to_ascii_lowercase();
-
-                    element_remaps.push(PrecomputedRemap {
-                        array_chain: array_chain.clone(),
-                        source_field: source_lc.clone(),
-                        target_field: target_lc.clone(),
-                    });
-
-                    reverse_element_remaps.push(PrecomputedReverseRemap {
-                        array_chain: array_chain.clone(),
-                        source_field: target_lc.clone(),
-                        target_field: source_lc,
-                        cleanup_field: target_lc,
-                    });
+                        reverse_element_remaps.push(PrecomputedReverseRemap {
+                            array_chain: array_chain.clone(),
+                            source_field: target_lc.clone(),
+                            target_field: arm_leaf,
+                            cleanup_field: target_lc,
+                        });
+                    }
                 }
             }
         }
 
         // Compute array base rename.
-        if let (Some(short_base), Some(arm_base)) = (
-            entry.short_name.split("[*]").next(),
-            selected_path.split("[*]").next(),
-        ) {
-            let arm_base_stripped = arm_base.strip_prefix("properties.").unwrap_or(arm_base);
-            if !short_base.eq_ignore_ascii_case(arm_base_stripped) {
+        if let (Some(short_base), Some(arm_base)) = (short_parts.first(), arm_parts.first()) {
+            let arm_base_stripped = arm_base.without_properties();
+            if !short_base.is_empty()
+                && !arm_base_stripped.is_empty()
+                && !path::equivalent(short_base, arm_base_stripped)
+            {
+                let short_base = path::render(short_base);
+                let arm_base_stripped = path::render(arm_base_stripped);
                 // Normalize direction: (arm_base_lc, short_base_lc)
                 let norm_pair = (
                     arm_base_stripped.to_ascii_lowercase(),
@@ -539,10 +576,7 @@ fn compute_aggregates_for_version(
                 }
 
                 // Denormalize direction: (short_base_lc, arm_base)
-                let denorm_pair = (
-                    short_base.to_ascii_lowercase(),
-                    arm_base_stripped.to_string(),
-                );
+                let denorm_pair = (short_base.to_ascii_lowercase(), arm_base_stripped);
                 if seen_denorm.insert(denorm_pair.clone()) {
                     renames_denorm.push(denorm_pair);
                 }
@@ -572,44 +606,57 @@ fn detect_sub_resource_array(
     default_path: &str,
     sub_resource_arrays: &mut BTreeSet<String>,
 ) {
-    // Split short name and default path by `[*].`
-    let short_parts: Vec<&str> = short_name.split("[*].").collect();
-    let path_parts: Vec<&str> = default_path.split("[*].").collect();
+    let (Some(short_path), Some(arm_path)) = (path::parse(short_name), path::parse(default_path))
+    else {
+        return;
+    };
+    let short_parts = short_path.element_parts();
+    let path_parts = arm_path.element_parts();
 
     if short_parts.len() < 2 || path_parts.len() < 2 {
         return; // No wildcard — not a sub-resource array alias
     }
 
-    // For each `[*]` level, check if the pattern matches sub-resource wrapping.
+    // For each `[*]` level, the ARM part after that wildcard must begin with
+    // an unquoted `properties` wrapper:
     // short_name: securityRules[*].protocol
     // default_path: properties.securityRules[*].properties.protocol
-    //
-    // The first segment of the default_path after splitting should start with
-    // "properties." and the part after the first [*]. should start with
-    // "properties." to indicate sub-resource wrapping.
 
     // Build up the chain of sub-resource array names.
     let mut accumulated_name = String::new();
 
-    for (i, array_field) in short_parts
+    for (i, array_part) in short_parts
         .iter()
         .enumerate()
         .take(short_parts.len().saturating_sub(1))
     {
-        // For the first level, check that default_path starts with `properties.X[*].properties.`
-        // For nested levels, the segment after [*]. should also start with `properties.`
-        if let Some(next_path_segment) = path_parts.get(i.saturating_add(1)) {
-            if next_path_segment.starts_with("properties.")
-                || next_path_segment.starts_with("properties/")
-            {
+        // Names are dotted, so only plain dot-free keys can form one.
+        let mut array_field = String::new();
+        for segment in array_part.segments {
+            match segment {
+                path::Segment::Key(key) if !key.contains('.') => {
+                    if !array_field.is_empty() {
+                        array_field.push('.');
+                    }
+                    array_field.push_str(&key.to_ascii_lowercase());
+                }
+                _ => return,
+            }
+        }
+        if array_field.is_empty() {
+            return;
+        }
+
+        if let Some(next_part) = path_parts.get(i.saturating_add(1)) {
+            if next_part.has_wrapper() || next_part.has_slash_wrapper() {
                 // This is a sub-resource array!
                 let name = if accumulated_name.is_empty() {
-                    array_field.to_string()
+                    array_field
                 } else {
                     alloc::format!("{}.{}", accumulated_name, array_field)
                 };
 
-                sub_resource_arrays.insert(name.to_ascii_lowercase());
+                sub_resource_arrays.insert(name.clone());
                 accumulated_name = name;
             }
         }

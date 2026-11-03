@@ -11,6 +11,7 @@ use crate::value::Object;
 use crate::Value;
 
 use super::super::obj_map::{make_value, new_map, obj_insert, val_str, ObjMap};
+use super::super::path;
 use super::super::types::ResolvedEntry;
 use super::helpers::find_key_ci;
 
@@ -32,8 +33,23 @@ pub fn rewrap_sub_resource_arrays(
         depth_b.cmp(&depth_a)
     });
 
+    if sorted.is_empty() {
+        return;
+    }
+    // Parse once per call; only wildcard aliases can address array elements.
+    let parsed: Vec<(path::Path, path::Path)> = entries
+        .values()
+        .filter(|entry| entry.is_wildcard)
+        .filter_map(|entry| {
+            Some((
+                path::parse(&entry.short_name)?,
+                path::parse(entry.select_path(api_version))?,
+            ))
+        })
+        .collect();
+
     for sub_array_path in sorted {
-        let envelope_fields = classify_envelope_fields(sub_array_path, entries, api_version);
+        let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
         let parts: Vec<&str> = sub_array_path.split('.').collect();
 
         if parts.len() == 1 {
@@ -52,41 +68,38 @@ pub fn rewrap_sub_resource_arrays(
 }
 
 /// Determine which element-level fields are envelope fields for a given
-/// sub-resource array.
+/// sub-resource array, from parsed `(short name, ARM path)` pairs. Entries
+/// whose short name or selected ARM path does not parse are excluded.
 fn classify_envelope_fields(
     sub_array_path: &str,
-    entries: &BTreeMap<String, ResolvedEntry>,
-    api_version: Option<&str>,
+    parsed: &[(path::Path, path::Path)],
 ) -> BTreeSet<String> {
     let mut envelope = BTreeSet::new();
     for &f in ELEMENT_ENVELOPE_FIELDS {
         envelope.insert(f.to_ascii_lowercase());
     }
 
-    let wildcard_prefix: String = {
-        let parts: Vec<&str> = sub_array_path.split('.').collect();
-        let mut prefix = String::new();
-        for (i, part) in parts.iter().enumerate() {
-            if i > 0 {
-                prefix.push_str("[*].");
-            }
-            prefix.push_str(&part.to_ascii_lowercase());
-        }
-        prefix.push_str("[*].");
-        prefix
-    };
-
-    for (lc_key, entry) in entries {
-        if !lc_key.starts_with(&wildcard_prefix) {
+    let array_keys: Vec<&str> = sub_array_path.split('.').collect();
+    for (short, arm_path) in parsed {
+        let parts = short.parts();
+        let in_array = array_keys.iter().zip(&parts).all(|(name, part)| {
+            matches!(part.segments, [path::Segment::Key(key)] if key.eq_ignore_ascii_case(name))
+        });
+        let Some(path::Segment::Key(first_segment)) = parts
+            .get(array_keys.len())
+            .filter(|_| in_array)
+            .and_then(|part| part.segments.first())
+        else {
             continue;
-        }
-        let field = &lc_key[wildcard_prefix.len()..];
-        let first_segment = field.split('.').next().unwrap_or(field);
+        };
+        // Classify by the ARM part at this array's element level, not by the
+        // deepest part of a nested field.
+        let wrapped = arm_path
+            .parts()
+            .get(array_keys.len())
+            .is_some_and(path::Part::has_wrapper);
 
-        let arm_path = entry.select_path(api_version);
-        let arm_after_last_wildcard = arm_path.rsplit("[*].").next().unwrap_or("");
-
-        if !arm_after_last_wildcard.starts_with("properties.") {
+        if !wrapped {
             envelope.insert(first_segment.to_ascii_lowercase());
         }
     }

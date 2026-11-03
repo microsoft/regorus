@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 use crate::Value;
 
 use super::super::obj_map::{make_array, make_value, new_map, obj_insert, val_str, ROOT_FIELDS};
+use super::super::path::{self, Segment};
 use super::super::types::ResolvedEntry;
 
 fn insert_default_casing(map: &mut BTreeMap<String, String>) {
@@ -48,31 +49,46 @@ pub fn build_casing_map(entries: &BTreeMap<String, ResolvedEntry>) -> BTreeMap<S
     let mut map = BTreeMap::new();
     insert_default_casing(&mut map);
 
+    let mut parsed = Vec::new();
+    let mut unparsed = Vec::new();
     for entry in entries.values() {
-        for segment in entry.short_name.split('.') {
-            let clean = segment.replace("[*]", "");
-            if !clean.is_empty() {
-                map.entry(clean.to_ascii_lowercase())
-                    .or_insert_with(|| clean.to_string());
+        // `properties` is an ARM wrapper, so only short names supply its casing.
+        for (text, arm) in core::iter::once((entry.short_name.as_str(), false))
+            .chain(core::iter::once((entry.default_path.as_str(), true)))
+            .chain(
+                entry
+                    .versioned_paths
+                    .iter()
+                    .map(|(_, path)| (path.as_str(), true)),
+            )
+        {
+            match path::parse(text) {
+                Some(path) => parsed.push((path, arm)),
+                None => unparsed.push((text, arm)),
             }
         }
+    }
 
-        for segment in entry.default_path.split('.') {
-            let clean = segment.replace("[*]", "");
-            if !clean.is_empty() && !clean.eq_ignore_ascii_case("properties") {
-                map.entry(clean.to_ascii_lowercase())
-                    .or_insert_with(|| clean.to_string());
+    // Unquoted keys name ordinary fields, so they win over quoted literal keys.
+    for want_quoted in [false, true] {
+        for (path, arm) in &parsed {
+            for (segment, quoted) in path.segments.iter().zip(&path.quoted) {
+                if let (Segment::Key(key), true) = (segment, *quoted == want_quoted) {
+                    if !*arm || !key.eq_ignore_ascii_case("properties") {
+                        map.entry(key.to_ascii_lowercase())
+                            .or_insert_with(|| key.to_string());
+                    }
+                }
             }
         }
-
-        // Also include segments from all version-specific ARM paths so
-        // casing can be restored correctly for versioned aliases.
-        for (_ver, path) in &entry.versioned_paths {
-            for segment in path.split('.') {
-                let clean = segment.replace("[*]", "");
-                if !clean.is_empty() && !clean.eq_ignore_ascii_case("properties") {
-                    map.entry(clean.to_ascii_lowercase())
-                        .or_insert_with(|| clean.to_string());
+        if !want_quoted {
+            // Paths outside the grammar still supply casing by dot-splitting.
+            for (text, arm) in &unparsed {
+                for segment in text.split('.') {
+                    let clean = segment.replace("[*]", "");
+                    if !clean.is_empty() && (!*arm || !clean.eq_ignore_ascii_case("properties")) {
+                        map.entry(clean.to_ascii_lowercase()).or_insert(clean);
+                    }
                 }
             }
         }
