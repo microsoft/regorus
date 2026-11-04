@@ -397,6 +397,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
             ('s', v) => s += &to_string(v, false),
 
             ('v', _) => s += &to_string(arg, false),
+            ('t', Value::Bool(value)) => s += if *value { "true" } else { "false" },
             ('b', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);
                 s += sign;

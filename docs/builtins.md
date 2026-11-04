@@ -108,6 +108,10 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [trim_suffix](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-trim_suffix)                          | _       |
   | [upper](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-upper)                                      | _       |
 
+  `sprintf("%t", [value])` renders boolean values as `true` or `false`, following
+  Rust's boolean formatting convention rather than OPA's embedded formatter
+  diagnostics (such as `%!t(string=true)`).
+
 - [Regex](https://www.openpolicyagent.org/docs/latest/policy-reference/#regex)
   | Builtin                                                                                                                                         | Feature |
   |-------------------------------------------------------------------------------------------------------------------------------------------------|---------|

@@ -18,3 +18,22 @@ cases:
       quoted: "\"a\\u2028b\""
       width: "  \"é\""
       precision: "\"é\""
+
+  - note: sprintf_boolean_run_to_completion
+    data: {}
+    modules:
+      - |
+        package test
+        result := sprintf("%t %t", [true, false])
+    query: data.test.result
+    want_result: "true false"
+
+  - note: sprintf_boolean_suspendable
+    execution_mode: suspendable
+    data: {}
+    modules:
+      - |
+        package test
+        result := sprintf("%t %t", [true, false])
+    query: data.test.result
+    want_result: "true false"
