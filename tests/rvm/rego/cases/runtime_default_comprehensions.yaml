@@ -1,0 +1,131 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: runtime_default_blocked_subject
+    strict: false
+    data: &blocked_bob {blocked: ["bob"]}
+    input: &bob {subject: "bob"}
+    modules: &blocked_policy
+      - |
+        package test
+        import rego.v1
+        default deny := [u | some u in data.blocked; u == input.subject]
+        allow if { count(deny) == 0 }
+    query: data.test.allow
+    want_result: "#undefined"
+
+  - note: runtime_default_blocked_subject_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: *blocked_bob
+    input: *bob
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: "#undefined"
+
+  - note: runtime_default_deny_contains_blocked_subject
+    strict: false
+    data: *blocked_bob
+    input: *bob
+    modules: *blocked_policy
+    query: data.test.deny
+    want_result: ["bob"]
+
+  - note: runtime_default_unblocked_input
+    strict: false
+    data: *blocked_bob
+    input: {subject: "alice"}
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: true
+
+  - note: runtime_default_unblocked_input_suspendable
+    strict: false
+    execution_mode: suspendable
+    data: *blocked_bob
+    input: {subject: "alice"}
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: true
+
+  - note: runtime_default_unblocked_data
+    strict: false
+    data: {blocked: ["alice"]}
+    input: *bob
+    modules: *blocked_policy
+    query: data.test.allow
+    want_result: true
+
+  # Registered host interception is an RVM extension, not an interpreter/OPA API.
+  - note: runtime_default_host_denial_shadows_local_function
+    strict: false
+    skip_interpreter: true
+    data: {}
+    input: {}
+    modules: &authorize_policy
+      - |
+        package test
+        import rego.v1
+        authorize(_) := true
+        default checks := [authorize("bob") | true]
+        allow if { checks[0] }
+    host_await_builtins: &authorize_registration
+      - name: authorize
+        arg_count: 1
+    host_await_responses:
+      - id: authorize
+        value: false
+    query: data.test.allow
+    want_result: "#undefined"
+
+  - note: runtime_default_host_denial_shadows_local_function_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules: *authorize_policy
+    host_await_builtins: *authorize_registration
+    host_await_responses:
+      - id: authorize
+        args: ["bob"]
+        value: false
+    query: data.test.allow
+    want_result: "#undefined"
+
+  - note: runtime_default_host_approval_shadows_local_function
+    strict: false
+    skip_interpreter: true
+    data: {}
+    input: {}
+    modules: *authorize_policy
+    host_await_builtins: *authorize_registration
+    host_await_responses:
+      - id: authorize
+        value: true
+    query: data.test.allow
+    want_result: true
+
+  - note: runtime_default_host_approval_shadows_local_function_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules: *authorize_policy
+    host_await_builtins: *authorize_registration
+    host_await_responses:
+      - id: authorize
+        args: ["bob"]
+        value: true
+    query: data.test.allow
+    want_result: true
+
+  - note: runtime_default_without_registration_uses_local_function
+    strict: false
+    data: {}
+    input: {}
+    modules: *authorize_policy
+    query: data.test.allow
+    want_result: true

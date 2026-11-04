@@ -127,6 +127,23 @@ Both `execute()` and named/indexed entry-point execution check this flag and
 default metadata before dispatch in either execution mode; `resume()` continues
 the already-validated execution without restarting it.
 
+For example, this default must be evaluated against the current request:
+
+```rego
+package test
+import rego.v1
+default deny := [u | some u in data.blocked; u == input.subject]
+allow if { count(deny) == 0 }
+```
+
+With `data.blocked = ["bob"]` and `input.subject = "bob"`, `deny` is `["bob"]`
+and `allow` is undefined, not `true`. Changing the subject to `"alice"` produces
+an empty deny list and `allow = true`, as in the interpreter and OPA.
+Registered host functions inside defaults retain normal RVM call precedence
+over same-named local functions and can suspend in suspendable mode. Host
+registration is an RVM extension; without registration, ordinary local-function
+resolution is unchanged.
+
 ---
 
 ## 2. Runtime Subsystems
