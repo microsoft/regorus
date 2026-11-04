@@ -8,6 +8,7 @@ use crate::lexer::Span;
 use crate::rvm::instructions::BuiltinCallParams;
 use crate::rvm::Instruction;
 use crate::Value;
+use alloc::string::ToString as _;
 
 impl<'a> Compiler<'a> {
     pub(super) fn compile_arith_expr(
@@ -187,6 +188,49 @@ impl<'a> Compiler<'a> {
 
         let dest = self.alloc_register()?;
         if let Some(key) = key {
+            let is_array_reg = self.alloc_register()?;
+            let is_object_reg = self.alloc_register()?;
+            for (name, result) in [("is_array", is_array_reg), ("is_object", is_object_reg)] {
+                let builtin_index = self.get_builtin_index(name)?;
+                let params_index =
+                    self.program
+                        .instruction_data
+                        .add_builtin_call_params(BuiltinCallParams {
+                            dest: result,
+                            builtin_index,
+                            num_args: 1,
+                            args: [collection_reg, 0, 0, 0, 0, 0, 0, 0],
+                        });
+                self.emit_instruction(Instruction::BuiltinCall { params_index }, span);
+            }
+            self.emit_instruction(
+                Instruction::Or {
+                    dest: is_array_reg,
+                    left: is_array_reg,
+                    right: is_object_reg,
+                },
+                span,
+            );
+            self.emit_instruction(
+                Instruction::Not {
+                    dest: is_array_reg,
+                    operand: is_array_reg,
+                },
+                span,
+            );
+            self.emit_instruction(Instruction::LoadFalse { dest }, span);
+            // Invalid containers return false without evaluating the key.
+            let branch_index = self.program.instructions.len();
+            self.emit_instruction(
+                Instruction::AnyOfNext {
+                    check: is_array_reg,
+                    result: is_array_reg,
+                    end_pc: 0,
+                },
+                span,
+            );
+            let saved_input_register = self.current_input_register;
+            let saved_data_register = self.current_data_register;
             let key_reg = self.compile_rego_expr_with_span(key, key.span(), false)?;
             let indexed_reg = self.alloc_register()?;
             self.emit_instruction(
@@ -221,34 +265,30 @@ impl<'a> Compiler<'a> {
                 span,
             );
 
-            // Sets support indexing, but never keyed membership.
-            let not_set_reg = self.alloc_register()?;
-            let builtin_index = self.get_builtin_index("is_set")?;
-            let params_index =
-                self.program
-                    .instruction_data
-                    .add_builtin_call_params(BuiltinCallParams {
-                        dest: not_set_reg,
-                        builtin_index,
-                        num_args: 1,
-                        args: [collection_reg, 0, 0, 0, 0, 0, 0, 0],
-                    });
-            self.emit_instruction(Instruction::BuiltinCall { params_index }, span);
-            self.emit_instruction(
-                Instruction::Not {
-                    dest: not_set_reg,
-                    operand: not_set_reg,
-                },
-                span,
-            );
-            self.emit_instruction(
-                Instruction::And {
-                    dest,
-                    left: dest,
-                    right: not_set_reg,
-                },
-                span,
-            );
+            // Root loads inside the skipped key cannot be reused afterwards.
+            self.current_input_register = saved_input_register;
+            self.current_data_register = saved_data_register;
+            let end_pc = self
+                .program
+                .instructions
+                .len()
+                .checked_sub(1)
+                .and_then(|pc| u16::try_from(pc).ok())
+                .ok_or_else(|| CompilerError::General {
+                    message: "membership branch target exceeds the RVM instruction limit"
+                        .to_string(),
+                })?;
+            let Some(Instruction::AnyOfNext {
+                end_pc: branch_end_pc,
+                ..
+            }) = self.program.instructions.get_mut(branch_index)
+            else {
+                return Err(CompilerError::General {
+                    message: "membership branch instruction is missing or invalid".to_string(),
+                }
+                .into());
+            };
+            *branch_end_pc = end_pc;
             return Ok(dest);
         }
         self.emit_instruction(
