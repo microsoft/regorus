@@ -15,6 +15,7 @@
 //! - [`PartialEvalResult`] holds the residual conditions of a partial
 //!   evaluation.
 //! - [`ExplainError`] reports why an explanation could not be produced.
+//! - [`ExplanationRecorder`] receives the RVM's evaluation events.
 //!
 //! The report types are `#[non_exhaustive]` so that fields and variants can
 //! be added without breaking callers. They implement [`serde::Serialize`];
@@ -63,6 +64,7 @@
 //! Signalling a report that was cut short will come with bounded tracing.
 
 mod error;
+mod recorder;
 mod report;
 mod settings;
 
@@ -73,6 +75,10 @@ pub(crate) mod fixtures;
 mod tests;
 
 pub use error::ExplainError;
+pub use recorder::{
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, EmissionEvent, ExplanationRecorder, HookContext,
+    NotCapturedEvent, UncapturedConstruct,
+};
 pub use report::{
     ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,
     DefinitionExplanation, Derivation, DistinctElements, EmissionExplanation, ExplanationReport,

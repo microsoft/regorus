@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# A rule body that fails with an error inside a comprehension must not
+# affect the bodies evaluated after it.
+
+cases:
+  - note: error_in_comprehension_does_not_affect_later_bodies
+    data: {}
+    input:
+      s: "a"
+      z: 4
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        r := 1 if {
+          ys := [y | y := input.s + 1]
+          count(ys) > 0
+        } else := 2 if {
+          input.z == 3
+        }
+        r := 3 if {
+          some x in [1, 2]
+          x > 5
+        }
+    query: data.test.r
+    want_result: "#undefined"

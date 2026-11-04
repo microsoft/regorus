@@ -269,6 +269,12 @@ fn compile_and_run_rvm_with_entry_points(
     }
 }
 
+#[cfg(feature = "explanations")]
+struct IgnoreEvents;
+
+#[cfg(feature = "explanations")]
+impl regorus::explain::ExplanationRecorder for IgnoreEvents {}
+
 fn compile_and_run_rvm_with_all_entry_points(
     compiled_policy: &CompiledPolicy,
     entry_points: &[&str],
@@ -294,6 +300,9 @@ fn compile_and_run_rvm_with_all_entry_points(
     vm.load_program(program);
     vm.set_data(data.clone())?;
     vm.set_input(input.clone());
+    // Recording must not change any result.
+    #[cfg(feature = "explanations")]
+    vm.set_explanation_recorder(Box::new(IgnoreEvents));
 
     if execution_options.execution_mode == ExecutionMode::Suspendable {
         vm.set_execution_mode(ExecutionMode::Suspendable);

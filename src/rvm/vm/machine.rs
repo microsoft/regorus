@@ -205,6 +205,10 @@ pub struct RegoVM {
     /// Cached `Value` representation of `program.metadata`, computed once in
     /// `load_program()` and reused by `LoadMetadata` instructions.
     pub(super) metadata_value: Value,
+
+    /// Explanation recorder and its bookkeeping.
+    #[cfg(feature = "explanations")]
+    pub(super) explain: super::explain::ExplainHooks,
 }
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -292,6 +296,8 @@ impl RegoVM {
             cached_builtin_args: Vec::new(),
             virtual_element_on_non_collection: false,
             metadata_value: Value::Undefined,
+            #[cfg(feature = "explanations")]
+            explain: super::explain::ExplainHooks::default(),
         }
     }
 

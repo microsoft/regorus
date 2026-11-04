@@ -105,11 +105,24 @@ impl RegoVM {
                 self.registers
                     .resize(num_retained_registers, Value::Undefined);
                 self.registers.resize(num_registers, Value::Undefined);
+                // A body that failed with an error inside a loop or
+                // comprehension leaves its entries behind.
+                self.loop_stack.clear();
+                self.comprehension_stack.clear();
 
                 if let Some(destructuring_entry_point) =
                     rule_info.destructuring_blocks.get(def_idx).and_then(|x| *x)
                 {
-                    match self.jump_to(destructuring_entry_point) {
+                    #[cfg(feature = "explanations")]
+                    let outer_parameters = self
+                        .explain_enabled()
+                        .then(|| self.explain_enter_parameters());
+                    let destructuring_result = self.jump_to(destructuring_entry_point);
+                    #[cfg(feature = "explanations")]
+                    if let Some(outer) = outer_parameters {
+                        self.explain_leave_parameters(outer);
+                    }
+                    match destructuring_result {
                         Ok(_result) => {}
                         Err(e) if Self::is_fatal_vm_error(&e) => {
                             self.restore_rule_state(
@@ -124,7 +137,26 @@ impl RegoVM {
                     }
                 }
 
-                match self.jump_to(*body_entry_point) {
+                let body_result = self.jump_to(*body_entry_point);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    match body_result {
+                        Ok(_) => self.explain_body_end(
+                            true,
+                            (matches!(rule_info.rule_type, RuleType::Complete) || is_function_call)
+                                .then_some(result_reg),
+                        ),
+                        Err(ref e) if !Self::is_fatal_vm_error(e) => {
+                            // An error inside a loop or comprehension leaves
+                            // its entries, which would misplace the body end.
+                            self.loop_stack.clear();
+                            self.comprehension_stack.clear();
+                            self.explain_body_end(false, None);
+                        }
+                        Err(_) => {}
+                    }
+                }
+                match body_result {
                     Ok(_) => {
                         if matches!(rule_info.rule_type, RuleType::Complete) || is_function_call {
                             let current_result = self.get_register(result_reg)?.clone();
@@ -277,6 +309,10 @@ impl RegoVM {
             return Ok(());
         }
 
+        #[cfg(feature = "explanations")]
+        if self.explain_enabled() {
+            self.explain_rule_call();
+        }
         self.call_rule_stack.push(CallRuleContext {
             return_pc: self.pc,
             dest_reg: dest,
@@ -880,6 +916,12 @@ impl RegoVM {
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
         let rule_info = self.get_rule_info(frame_data.rule_index)?;
+        #[cfg(feature = "explanations")]
+        if self.explain_enabled() && frame_data.phase == RuleFramePhase::ExecutingBody {
+            let has_result =
+                matches!(frame_data.rule_type, RuleType::Complete) || frame_data.is_function_rule;
+            self.explain_body_end(true, has_result.then_some(frame_data.result_reg));
+        }
         match frame_data.phase {
             RuleFramePhase::ExecutingDestructuring => {
                 self.rule_frame_after_destructuring_success(frame_data, &rule_info)
@@ -894,6 +936,10 @@ impl RegoVM {
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
         let rule_info = self.get_rule_info(frame_data.rule_index)?;
+        #[cfg(feature = "explanations")]
+        if self.explain_enabled() && frame_data.phase == RuleFramePhase::ExecutingBody {
+            self.explain_body_end(false, None);
+        }
         self.rule_frame_after_failure(frame_data, &rule_info)
     }
 

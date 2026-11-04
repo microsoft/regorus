@@ -106,6 +106,11 @@ impl RegoVM {
 
         self.execution_state = ExecutionState::Ready;
 
+        #[cfg(feature = "explanations")]
+        if self.explain_enabled() {
+            self.explain_reset();
+        }
+
         // Reset rule cache
         self.rule_cache = alloc::vec![(false, Value::Undefined); self.program.rule_infos.len()];
 
