@@ -401,7 +401,21 @@ impl Analyzer {
                 self.scopes.pop();
                 Ok(())
             }
-            Rule::Default { value, .. } => self.analyze_value_expr(value, &mut Scope::default()),
+            Rule::Default { args, value, .. } => {
+                let mut scope = Scope::default();
+                for arg in args {
+                    traverse(arg, &mut |expr| {
+                        if let Var { span, .. } = expr.as_ref() {
+                            scope.unscoped.insert(span.source_str());
+                        }
+                        Ok(true)
+                    })?;
+                }
+                self.scopes.push(scope);
+                let result = self.analyze_value_expr(value, &mut Scope::default());
+                self.scopes.pop();
+                result
+            }
         }
     }
 

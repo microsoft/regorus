@@ -270,6 +270,18 @@ impl RegoVM {
 
     /// Validate VM state consistency for debugging
     pub(super) fn validate_vm_state(&self) -> Result<()> {
+        if self.program.needs_recompilation {
+            return Err(VmError::Internal {
+                message: alloc::string::String::from("program requires recompilation"),
+                pc: self.pc,
+            });
+        }
+        self.program
+            .validate_defaults()
+            .map_err(|message| VmError::Internal {
+                message,
+                pc: self.pc,
+            })?;
         // Check register bounds
         if self.registers.len() < self.base_register_count {
             return Err(VmError::RegisterCountBelowBase {

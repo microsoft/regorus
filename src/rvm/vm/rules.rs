@@ -183,13 +183,31 @@ impl RegoVM {
             }
         }
 
-        let final_result = if rule_failed_due_to_inconsistency {
+        let mut final_result = if rule_failed_due_to_inconsistency {
             Value::Undefined
         } else if let Some(successful_result) = first_successful_result {
             successful_result
         } else {
             self.get_register(result_reg)?.clone()
         };
+
+        if final_result == Value::Undefined {
+            if let Some(entry_point) = rule_info.default_entry_point {
+                self.registers
+                    .resize(num_retained_registers, Value::Undefined);
+                self.registers.resize(num_registers, Value::Undefined);
+                match self.jump_to(entry_point) {
+                    Ok(_) => final_result = self.get_register(result_reg)?.clone(),
+                    Err(error) => {
+                        self.restore_rule_state(
+                            &mut previous_loop_stack,
+                            &mut previous_comprehension_stack,
+                        );
+                        return Err(error);
+                    }
+                }
+            }
+        }
 
         if let Some(restored_registers) = self.register_stack.pop() {
             let mut current_register_window = Vec::default();
@@ -253,7 +271,7 @@ impl RegoVM {
         let rule_type = rule_info.rule_type.clone();
         let rule_definitions = rule_info.definitions.clone();
 
-        if rule_definitions.is_empty() {
+        if rule_definitions.is_empty() && rule_info.default_entry_point.is_none() {
             // No compiled definitions — check for a default value before returning Undefined.
             // Default-only rules (e.g., `default deny := true`) have no body definitions
             // but their default value was evaluated at compile time and stored as a literal.
@@ -417,7 +435,7 @@ impl RegoVM {
             }
         }
 
-        if rule_info.definitions.is_empty() {
+        if rule_info.definitions.is_empty() && rule_info.default_entry_point.is_none() {
             // No compiled definitions — check for a default value before returning Undefined.
             let result = rule_info
                 .default_literal_index
@@ -633,6 +651,18 @@ impl RegoVM {
             }
         }
 
+        if frame_data.accumulated_result.is_none()
+            && self.get_register(frame_data.result_reg)? == &Value::Undefined
+        {
+            if let Some(entry_point) = rule_info.default_entry_point {
+                self.registers
+                    .resize(frame_data.num_retained_registers, Value::Undefined);
+                self.registers
+                    .resize(frame_data.num_registers, Value::Undefined);
+                frame_data.phase = RuleFramePhase::ExecutingDefault;
+                return Ok(Some(self.convert_pc(entry_point, "default entry point")?));
+            }
+        }
         frame_data.phase = RuleFramePhase::Finalizing;
         Ok(None)
     }
@@ -885,6 +915,12 @@ impl RegoVM {
                 self.rule_frame_after_destructuring_success(frame_data, &rule_info)
             }
             RuleFramePhase::ExecutingBody => self.rule_frame_after_success(frame_data, &rule_info),
+            RuleFramePhase::ExecutingDefault => {
+                frame_data.accumulated_result =
+                    Some(self.get_register(frame_data.result_reg)?.clone());
+                frame_data.phase = RuleFramePhase::Finalizing;
+                Ok(None)
+            }
             RuleFramePhase::Initializing | RuleFramePhase::Finalizing => Ok(None),
         }
     }
@@ -894,6 +930,11 @@ impl RegoVM {
         frame_data: &mut RuleFrameData,
     ) -> Result<Option<usize>> {
         let rule_info = self.get_rule_info(frame_data.rule_index)?;
+        if frame_data.phase == RuleFramePhase::ExecutingDefault {
+            frame_data.accumulated_result = Some(Value::Undefined);
+            frame_data.phase = RuleFramePhase::Finalizing;
+            return Ok(None);
+        }
         self.rule_frame_after_failure(frame_data, &rule_info)
     }
 

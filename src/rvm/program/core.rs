@@ -89,7 +89,7 @@ pub struct Program {
 
 impl Program {
     /// Current serialization format version
-    pub const SERIALIZATION_VERSION: u32 = 6;
+    pub const SERIALIZATION_VERSION: u32 = 7;
     /// Magic bytes to identify Regorus program files
     pub const MAGIC: [u8; 4] = *b"REGO";
     /// Maximum instructions supported (matches u16 jump targets)
@@ -211,6 +211,41 @@ impl Program {
                 let body_end = core::cmp::max(body_start, loop_end);
                 if usize::from(body_end) > Self::MAX_INSTRUCTIONS {
                     return Err("LoopNext offsets exceed supported instruction range".to_string());
+                }
+            }
+        }
+
+        self.validate_defaults()
+    }
+
+    pub(crate) fn validate_defaults(&self) -> Result<(), String> {
+        for (rule_index, rule) in self.rule_infos.iter().enumerate() {
+            if let Some(index) = rule.default_literal_index {
+                if rule.rule_type != super::types::RuleType::Complete
+                    || self.literals.get(usize::from(index)).is_none()
+                {
+                    return Err(format!(
+                        "Default literal out of bounds for rule '{}'",
+                        rule.name
+                    ));
+                }
+            }
+            if let Some(entry_point) = rule.default_entry_point {
+                let entry_instruction = usize::try_from(entry_point)
+                    .ok()
+                    .and_then(|pc| self.instructions.get(pc));
+                if rule.rule_type != super::types::RuleType::Complete
+                    || rule.default_literal_index.is_some()
+                    || !matches!(entry_instruction,
+                        Some(Instruction::RuleInit { result_reg, rule_index: index })
+                            if *result_reg == rule.result_reg && usize::from(*index) == rule_index)
+                    || rule.num_registers <= rule.result_reg
+                    || rule
+                        .function_info
+                        .as_ref()
+                        .is_some_and(|info| info.num_params >= u32::from(rule.num_registers))
+                {
+                    return Err(format!("Invalid default bytecode for rule '{}'", rule.name));
                 }
             }
         }

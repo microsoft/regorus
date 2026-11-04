@@ -19,6 +19,12 @@ impl RegoVM {
                 pc: self.pc,
                 available: self.program.instruction_data.function_call_params.len(),
             })?;
+        for &arg in params.arg_registers() {
+            if self.get_register(arg)? == &Value::Undefined {
+                self.set_register(params.dest, Value::Undefined)?;
+                return Ok(());
+            }
+        }
         let call_result = match self.execution_mode {
             ExecutionMode::RunToCompletion => {
                 self.execute_call_rule_common(params.dest, params.func_rule_index, Some(&params))

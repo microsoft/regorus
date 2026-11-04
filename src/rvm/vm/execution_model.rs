@@ -57,6 +57,7 @@ pub(super) enum RuleFramePhase {
     Initializing,
     ExecutingDestructuring,
     ExecutingBody,
+    ExecutingDefault,
     Finalizing,
 }
 

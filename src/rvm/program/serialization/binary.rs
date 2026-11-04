@@ -6,12 +6,85 @@ use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use postcard::{take_from_bytes, to_allocvec};
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 
 use super::{DeserializationResult, Program};
 
 use super::value::{
     binaries_to_values, binary_to_value, BinaryValue, BinaryValueRef, BinaryValueSlice,
 };
+
+#[derive(Deserialize)]
+struct LegacyRuleInfoV6 {
+    name: String,
+    rule_type: crate::rvm::program::RuleType,
+    definitions: crate::Rc<Vec<Vec<u32>>>,
+    function_info: Option<crate::rvm::program::FunctionInfo>,
+    default_literal_index: Option<u16>,
+    result_reg: u8,
+    num_registers: u8,
+    destructuring_blocks: Vec<Option<u32>>,
+    else_bodies: Vec<Vec<bool>>,
+    early_exit_on_first_success: bool,
+}
+
+#[derive(Deserialize)]
+struct LegacyProgramV6 {
+    instructions: Vec<crate::rvm::Instruction>,
+    instruction_data: crate::rvm::instructions::InstructionData,
+    builtin_info_table: Vec<crate::rvm::program::BuiltinInfo>,
+    rule_infos: Vec<LegacyRuleInfoV6>,
+    instruction_spans: Vec<Option<crate::rvm::program::SpanInfo>>,
+    main_entry_point: u32,
+    max_rule_window_size: u8,
+    dispatch_window_size: u8,
+    metadata: crate::rvm::program::ProgramMetadata,
+    needs_runtime_recursion_check: bool,
+    has_host_await: bool,
+    needs_recompilation: bool,
+}
+
+impl LegacyProgramV6 {
+    fn into_program(self) -> Program {
+        let rule_infos: Vec<_> = self
+            .rule_infos
+            .into_iter()
+            .map(|rule| crate::rvm::program::RuleInfo {
+                name: rule.name,
+                rule_type: rule.rule_type,
+                definitions: rule.definitions,
+                function_info: rule.function_info,
+                default_literal_index: rule.default_literal_index,
+                result_reg: rule.result_reg,
+                num_registers: rule.num_registers,
+                destructuring_blocks: rule.destructuring_blocks,
+                else_bodies: rule.else_bodies,
+                early_exit_on_first_success: rule.early_exit_on_first_success,
+                default_entry_point: None,
+            })
+            .collect();
+        // Old compilers could freeze input/data-dependent defaults into literals.
+        let needs_recompilation = self.needs_recompilation
+            || rule_infos
+                .iter()
+                .any(|rule| rule.default_literal_index.is_some());
+        Program {
+            instructions: self.instructions,
+            instruction_data: self.instruction_data,
+            builtin_info_table: self.builtin_info_table,
+            rule_infos,
+            instruction_spans: self.instruction_spans,
+            main_entry_point: self.main_entry_point,
+            max_rule_window_size: self.max_rule_window_size,
+            dispatch_window_size: self.dispatch_window_size,
+            metadata: self.metadata,
+            needs_runtime_recursion_check: self.needs_runtime_recursion_check,
+            has_host_await: self.has_host_await,
+            needs_recompilation,
+            ..Program::new()
+        }
+    }
+}
 
 /// Helper for tracking offsets with overflow checking
 struct OffsetTracker {
@@ -167,7 +240,7 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            6..=7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -225,17 +298,29 @@ impl Program {
                     Self::get_slice(data, rule_tree_start, binary_len_start)?,
                     "Rule tree",
                 )?)?;
-                let mut program = Self::deserialize_section::<Program>(
-                    Self::get_slice(data, binary_start, binary_end)?,
-                    "Program structure",
-                )?;
+                let core = Self::get_slice(data, binary_start, binary_end)?;
+                let mut program = if version == 6 {
+                    Self::deserialize_section::<LegacyProgramV6>(core, "Program structure")
+                        .map_or_else(
+                            |_| {
+                                let mut legacy = Program::new();
+                                legacy.needs_recompilation = true;
+                                legacy
+                            },
+                            LegacyProgramV6::into_program,
+                        )
+                } else {
+                    Self::deserialize_section::<Program>(core, "Program structure")?
+                };
 
                 program.entry_points = entry_points;
                 program.sources = sources;
                 program.literals = literals;
                 program.rule_tree = rule_tree;
                 program.rego_v0 = rego_v0;
-                program.needs_recompilation = false;
+                if version != 6 {
+                    program.needs_recompilation = false;
+                }
 
                 // Apply the same supported bounds as compilation and serialization.
                 program.validate_limits()?;
@@ -249,6 +334,7 @@ impl Program {
                 if program.needs_recompilation {
                     Ok(DeserializationResult::Partial(program))
                 } else {
+                    program.validate_limits()?;
                     Ok(DeserializationResult::Complete(program))
                 }
             }
@@ -270,7 +356,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=7) => Ok(true),
             _ => Ok(false),
         }
     }

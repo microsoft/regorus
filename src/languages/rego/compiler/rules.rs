@@ -20,7 +20,7 @@ use crate::rvm::Instruction;
 use crate::utils::{format_string_path, get_path_string};
 use crate::Map;
 use crate::{CompiledPolicy, Value};
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -768,27 +768,40 @@ impl<'a> Compiler<'a> {
                     self.rule_num_registers.push(0);
                 }
 
-                // Add the rule to the data tree so it is discoverable.
-                let components = self
+                let is_function = self
                     .policy
                     .inner
-                    .rule_path_components
+                    .default_rules
                     .get(rule_path)
-                    .ok_or_else(|| CompilerError::General {
-                        message: format!(
-                            "missing components for registered rule path '{rule_path}'"
-                        ),
-                    })?;
-                let (rule_name, package_parts) =
-                    components
-                        .split_last()
+                    .and_then(|defaults| defaults.first())
+                    .is_some_and(|(rule, _)| {
+                        matches!(rule.as_ref(), Rule::Default { args, .. } if !args.is_empty())
+                    });
+                // Functions are callable but are not virtual data documents.
+                if !is_function {
+                    let components = self
+                        .policy
+                        .inner
+                        .rule_path_components
+                        .get(rule_path)
                         .ok_or_else(|| CompilerError::General {
-                            message: format!("invalid registered rule path '{rule_path}'"),
+                            message: format!(
+                                "missing components for registered rule path '{rule_path}'"
+                            ),
                         })?;
-                let package_path = package_parts.to_vec();
-                let _ =
-                    self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                    let (rule_name, package_parts) =
+                        components
+                            .split_last()
+                            .ok_or_else(|| CompilerError::General {
+                                message: format!("invalid registered rule path '{rule_path}'"),
+                            })?;
+                    let package_path = package_parts.to_vec();
+                    let _ = self.program.add_rule_to_tree(
+                        &package_path,
+                        rule_name,
+                        rule_index as usize,
+                    );
+                }
             }
 
             self.register_counter = saved_register_counter;
@@ -796,6 +809,229 @@ impl<'a> Compiler<'a> {
             self.current_module_index = saved_module_index;
         }
 
+        self.compile_default_rule(rule_path)?;
         Ok(())
+    }
+
+    fn compile_default_rule(&mut self, rule_path: &str) -> Result<()> {
+        let Some(defaults) = self.policy.inner.default_rules.get(rule_path).cloned() else {
+            return Ok(());
+        };
+        let Some((rule_ref, _)) = defaults.first() else {
+            return Ok(());
+        };
+        let Rule::Default { args, value, .. } = rule_ref.as_ref() else {
+            return Ok(());
+        };
+        let rule_index = self.rule_index_map[rule_path];
+        let idx = usize::from(rule_index);
+        let is_function = !args.is_empty() || self.policy.inner.functions.contains_key(rule_path);
+        if is_function {
+            if self.rule_function_param_count[idx].is_some_and(|count| count != args.len()) {
+                return Err(CompilerError::General {
+                    message: format!("default function '{rule_path}' has inconsistent arity"),
+                }
+                .at(rule_ref.span()));
+            }
+            self.rule_function_param_count[idx] = Some(args.len());
+            if self.rule_definition_function_params[idx].is_empty() {
+                self.rule_definition_function_params[idx].push(Some(
+                    args.iter()
+                        .map(|arg| arg.span().text().to_string())
+                        .collect(),
+                ));
+            }
+        }
+
+        // Registrations also include indexed defaults and virtual-document prefixes.
+        let mut values = Vec::new();
+        let mut paths_seen = BTreeSet::new();
+        for (default, _) in &defaults {
+            if let Rule::Default { refr, value, .. } = default.as_ref() {
+                let module_index = self.find_module_index_for_rule(default)?;
+                let module = &self.policy.get_modules()[module_index as usize];
+                let package = get_path_string(&module.package.refr, Some("data"))
+                    .map_err(CompilerError::from)?;
+                let (base, index) = match refr.as_ref() {
+                    Expr::RefBrack { refr, index, .. } => (refr, Some(index)),
+                    _ => (refr, None),
+                };
+                let full_path =
+                    get_path_string(base, Some(&package)).map_err(CompilerError::from)?;
+                let full_components = self
+                    .policy
+                    .inner
+                    .rule_path_components
+                    .get(&full_path)
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!("missing default path components for '{full_path}'"),
+                    })?;
+                let prefix = &self.policy.inner.rule_path_components[rule_path];
+                let mut keys: Vec<Value> = full_components
+                    .get(prefix.len()..)
+                    .ok_or_else(|| CompilerError::General {
+                        message: format!("invalid default prefix '{rule_path}'"),
+                    })?
+                    .iter()
+                    .map(|key| Value::from(key.as_str()))
+                    .collect();
+                if let Some(index) = index {
+                    keys.push(
+                        super::expressions::try_eval_const(index.as_ref()).ok_or_else(|| {
+                            CompilerError::General {
+                                message: "default object key must be constant".to_string(),
+                            }
+                        })?,
+                    );
+                }
+                if paths_seen.insert(keys.clone()) {
+                    values.push((value.clone(), keys, package, module_index));
+                }
+            }
+        }
+
+        let constants: Option<Vec<_>> = values
+            .iter()
+            .map(|(value, keys, _, _)| {
+                let mut constant = super::expressions::try_eval_const(value.as_ref())?;
+                for key in keys.iter().rev() {
+                    let mut object = crate::value::Object::new();
+                    object.insert(key.clone(), constant);
+                    constant = Value::Object(crate::Rc::new(object));
+                }
+                Some(constant)
+            })
+            .collect();
+        if let Some(constants) = constants {
+            let mut constant = Value::Undefined;
+            for value in constants {
+                if constant == Value::Undefined {
+                    constant = value;
+                } else {
+                    constant.deep_merge(value).map_err(CompilerError::from)?;
+                }
+            }
+            let num_registers = u8::try_from(args.len().saturating_add(1)).map_err(|_| {
+                CompilerError::RegisterOverflow {
+                    current: 0,
+                    additional: args.len().saturating_add(1),
+                }
+            })?;
+            self.rule_num_registers[idx] = self.rule_num_registers[idx].max(num_registers);
+            let literal = self.add_literal(constant);
+            self.rule_defaults.insert(rule_index, (Some(literal), None));
+            return Ok(());
+        }
+
+        let saved_package = self.current_package.clone();
+        let saved_module_index = self.current_module_index;
+        let saved_register_counter = self.register_counter;
+        self.register_counter = 0;
+        self.push_scope();
+        let result_reg = self.alloc_register()?;
+        for arg in args {
+            let param_reg = self.alloc_register()?;
+            if let Expr::Var {
+                value: Value::String(name),
+                ..
+            } = arg.as_ref()
+            {
+                self.add_variable(name, param_reg);
+            }
+        }
+        self.reset_rule_definition_registers();
+        let entry_point = self.program.instructions.len() as u32;
+        self.emit_instruction(
+            Instruction::RuleInit {
+                result_reg,
+                rule_index,
+            },
+            value.span(),
+        );
+        let mut object_fields = BTreeMap::new();
+        let mut direct_value = None;
+        for (value, keys, package, module_index) in values {
+            self.current_package = package;
+            self.current_module_index = module_index;
+            self.reset_rule_definition_registers();
+            let value_reg = self.compile_rego_expr(&value)?;
+            if let Some((key, prefix)) = keys.split_last() {
+                object_fields
+                    .entry(prefix.to_vec())
+                    .or_insert_with(BTreeMap::new)
+                    .insert(key.clone(), value_reg);
+                for length in 0..prefix.len() {
+                    object_fields.entry(prefix[..length].to_vec()).or_default();
+                }
+            } else {
+                direct_value = Some(value_reg);
+            }
+        }
+        let value_reg = match direct_value {
+            Some(register) => register,
+            None => self.compile_default_object(object_fields, value.span())?,
+        };
+        self.emit_instruction(
+            Instruction::Move {
+                dest: result_reg,
+                src: value_reg,
+            },
+            value.span(),
+        );
+        self.emit_instruction(Instruction::RuleReturn {}, value.span());
+        self.rule_num_registers[idx] = self.rule_num_registers[idx].max(self.register_counter);
+        self.rule_defaults
+            .insert(rule_index, (None, Some(entry_point)));
+        self.pop_scope();
+        self.register_counter = saved_register_counter;
+        self.current_package = saved_package;
+        self.current_module_index = saved_module_index;
+        Ok(())
+    }
+
+    fn compile_default_object(
+        &mut self,
+        mut objects: BTreeMap<Vec<Value>, BTreeMap<Value, super::Register>>,
+        span: &Span,
+    ) -> Result<super::Register> {
+        let mut paths: Vec<_> = objects.keys().cloned().collect();
+        // Finish children before copying their values into parent objects.
+        paths.sort_by_key(|path| core::cmp::Reverse(path.len()));
+        for path in paths {
+            let fields = objects
+                .remove(&path)
+                .ok_or_else(|| CompilerError::General {
+                    message: "missing default object fields".to_string(),
+                })?;
+            let dest = self.alloc_register()?;
+            let mut template = crate::value::Object::new();
+            let mut literal_key_fields = Vec::new();
+            for (key, register) in fields {
+                template.insert(key.clone(), Value::Undefined);
+                literal_key_fields.push((self.add_literal(key), register));
+            }
+            let template_literal_idx = self.add_literal(Value::Object(crate::Rc::new(template)));
+            let params_index = self.program.instruction_data.add_object_create_params(
+                crate::rvm::instructions::ObjectCreateParams {
+                    dest,
+                    template_literal_idx,
+                    literal_key_fields,
+                    fields: Vec::new(),
+                },
+            );
+            self.emit_instruction(Instruction::ObjectCreate { params_index }, span);
+            if let Some((key, prefix)) = path.split_last() {
+                objects
+                    .entry(prefix.to_vec())
+                    .or_default()
+                    .insert(key.clone(), dest);
+            } else {
+                return Ok(dest);
+            }
+        }
+        Err(CompilerError::General {
+            message: "missing default value".to_string(),
+        }
+        .at(span))
     }
 }

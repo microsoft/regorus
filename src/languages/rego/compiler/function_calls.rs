@@ -64,7 +64,9 @@ impl<'a> Compiler<'a> {
             .map_err(|_| CompilerError::InvalidFunctionExpression.at(&span))?;
 
         let original_fcn_path = fcn_path.clone();
-        let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
+        let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path)
+            || self.policy.inner.functions.contains_key(&fcn_path)
+        {
             fcn_path
         } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_fcn_path) {
             // Resolve a leading import alias before module-prefixing and builtins.
@@ -128,6 +130,22 @@ impl<'a> Compiler<'a> {
             }
 
             self.ensure_register_capacity(3)?;
+        }
+
+        if let CallTarget::User {
+            expected_args: Some(expected),
+            ..
+        } = &call_target
+        {
+            if params_to_compile != *expected || params_to_compile > 8 {
+                return Err(CompilerError::General {
+                    message: format!(
+                        "function '{original_fcn_path}' expects {expected} input arguments \
+                         (RVM maximum 8), got {params_to_compile}"
+                    ),
+                }
+                .at(&span));
+            }
         }
 
         let mut arg_regs = Vec::new();

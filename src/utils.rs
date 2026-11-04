@@ -224,28 +224,45 @@ pub fn gather_functions(modules: &[Ref<Module>]) -> Result<FunctionTable> {
     for module in modules {
         let module_path = get_path_string(&module.package.refr, Some("data"))?;
         for rule in &module.policy {
-            if let Rule::Spec {
-                span,
-                head: RuleHead::Func { refr, args, .. },
-                ..
-            } = rule.as_ref()
-            {
-                let full_path = get_path_string(refr, Some(module_path.as_str()))?;
+            let (span, refr, args, is_default) = match rule.as_ref() {
+                Rule::Spec {
+                    span,
+                    head: RuleHead::Func { refr, args, .. },
+                    ..
+                } => (span, refr, args, false),
+                Rule::Default {
+                    span, refr, args, ..
+                } if !args.is_empty() => (span, refr, args, true),
+                _ => continue,
+            };
+            let full_path = get_path_string(refr, Some(module_path.as_str()))?;
 
-                if let Some((functions, arity, _)) = table.get_mut(&full_path) {
-                    if args.len() as u8 != *arity {
-                        bail!(span.error(
-                            format!("{full_path} was previously defined with {arity} arguments.")
-                                .as_str()
-                        ));
+            if let Some((functions, arity, function_module)) = table.get_mut(&full_path) {
+                if args.len() as u8 != *arity {
+                    bail!(span.error(
+                        format!("{full_path} was previously defined with {arity} arguments.")
+                            .as_str()
+                    ));
+                }
+                if !is_default {
+                    if functions.is_empty() {
+                        *function_module = module.clone();
                     }
                     functions.push(rule.clone());
-                } else {
-                    table.insert(
-                        full_path,
-                        (vec![rule.clone()], args.len() as u8, module.clone()),
-                    );
                 }
+            } else {
+                table.insert(
+                    full_path,
+                    (
+                        if is_default {
+                            vec![]
+                        } else {
+                            vec![rule.clone()]
+                        },
+                        args.len() as u8,
+                        module.clone(),
+                    ),
+                );
             }
         }
     }

@@ -87,7 +87,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `6`).
+  `7`).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper
@@ -111,6 +111,18 @@ contain policy sources, so callers must retain the original sources for
 recompilation. Successful current-version loads initialize resolved builtins.
 `Program::can_deserialize` only checks the magic and supported version; it is
 not an integrity check and does not replace `Program::deserialize_binary`.
+
+Rule defaults use `default_literal_index` only for syntactically proven constant
+values. Other defaults use `default_entry_point` bytecode and the rule's register
+window, including function arguments. They run only when ordinary definitions
+produce no defined result, in both execution modes; `false` is a defined result,
+and errors or conflicts must not select a default. Defaults read the current
+evaluation's input and data, and function defaults are not cached across calls.
+Both fields survive JSON and binary serialization. Binary version 6 artifacts
+without defaults migrate directly; those with folded defaults retain their
+sources and entry points but require recompilation to avoid frozen input/data.
+Legacy JSON defaults without the new metadata also set `needs_recompilation`;
+the VM rejects flagged programs rather than executing potentially frozen values.
 
 ---
 

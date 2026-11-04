@@ -106,6 +106,9 @@ pub struct RuleInfo {
     /// checking consistency with remaining definitions.
     #[serde(default)]
     pub early_exit_on_first_success: bool,
+    /// Bytecode for a non-constant default, evaluated in the rule's register window.
+    #[serde(default)]
+    pub default_entry_point: Option<u32>,
 }
 
 impl RuleInfo {
@@ -132,6 +135,7 @@ impl RuleInfo {
             destructuring_blocks: alloc::vec![None; num_definitions],
             else_bodies,
             early_exit_on_first_success: false,
+            default_entry_point: None,
         }
     }
 
@@ -164,6 +168,7 @@ impl RuleInfo {
             destructuring_blocks: alloc::vec![None; num_definitions],
             else_bodies,
             early_exit_on_first_success: false,
+            default_entry_point: None,
         }
     }
 

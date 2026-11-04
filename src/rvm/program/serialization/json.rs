@@ -16,6 +16,7 @@ use indexmap::IndexMap;
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        self.validate_limits()?;
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -119,10 +120,22 @@ impl Program {
             .get("has_host_await")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let needs_recompilation = metadata
-            .get("needs_recompilation")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let legacy_defaults = json_data
+            .get("rule_infos")
+            .and_then(|rules| rules.as_array())
+            .is_some_and(|rules| {
+                rules.iter().any(|rule| {
+                    rule.get("default_entry_point").is_none()
+                        && rule
+                            .get("default_literal_index")
+                            .is_some_and(|index| !index.is_null())
+                })
+            });
+        let needs_recompilation = legacy_defaults
+            || metadata
+                .get("needs_recompilation")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
         let program_structure = json_data
             .get("program_structure")
@@ -235,6 +248,7 @@ impl Program {
             let _ = program.initialize_resolved_builtins();
         }
 
+        program.validate_limits()?;
         Ok(program)
     }
 }

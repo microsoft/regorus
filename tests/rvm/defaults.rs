@@ -1,0 +1,435 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+#![cfg(feature = "rvm")]
+
+use regorus::languages::rego::compiler::Compiler;
+use regorus::rvm::program::{DeserializationResult, Program};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason};
+use regorus::{Engine, Rc, Value};
+use std::sync::Arc;
+
+const ENTRY: &str = "data.defaults.result";
+
+fn compile(module: &str, host_await: &[(&str, usize)]) -> Arc<Program> {
+    let mut engine = Engine::new();
+    engine
+        .add_policy("defaults.rego".into(), module.into())
+        .unwrap();
+    let policy = engine.compile_with_entrypoint(&Rc::from(ENTRY)).unwrap();
+    Compiler::compile_from_policy_with_host_await(&policy, &[ENTRY], host_await).unwrap()
+}
+
+fn round_trips(program: Arc<Program>) -> Vec<Arc<Program>> {
+    let json = Arc::new(Program::deserialize_json(&program.serialize_json().unwrap()).unwrap());
+    let binary = match Program::deserialize_binary(&program.serialize_binary().unwrap()).unwrap() {
+        DeserializationResult::Complete(program) => Arc::new(program),
+        DeserializationResult::Partial(_) => panic!("new default metadata must round-trip"),
+    };
+    vec![program, json, binary]
+}
+
+fn assert_reusable(module: &str, cases: &[(&str, &str, Value)]) {
+    for program in round_trips(compile(module, &[])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_strict_builtin_errors(true);
+            for (input, data, expected) in cases {
+                vm.set_input(Value::from_json_str(input).unwrap());
+                vm.set_data(Value::from_json_str(data).unwrap()).unwrap();
+                assert_eq!(
+                    vm.execute_entry_point_by_name(ENTRY).unwrap(),
+                    *expected,
+                    "{mode:?}, input={input}, data={data}"
+                );
+
+                let mut interpreter = Engine::new();
+                interpreter
+                    .add_policy("defaults.rego".into(), module.into())
+                    .unwrap();
+                interpreter.set_strict_builtin_errors(true);
+                interpreter.set_input(Value::from_json_str(input).unwrap());
+                interpreter
+                    .add_data(Value::from_json_str(data).unwrap())
+                    .unwrap();
+                assert_eq!(interpreter.eval_rule(ENTRY.into()).unwrap(), *expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn default_comprehensions_read_current_input_and_data() {
+    let modules = [
+        "package defaults\ndefault result := [x | x := input.x]",
+        "package defaults\ndefault result := [x | x := data.x]",
+        r#"package defaults
+        default result := {"value": x | x := input.x}
+        "#,
+        "package defaults\ndefault result := {x | x := data.x}",
+    ];
+    for (index, module) in modules.iter().enumerate() {
+        let expected = |number| match index {
+            0 | 1 => Value::Array(Rc::new(vec![Value::from(number)].into())),
+            2 => Value::from_json_str(&format!(r#"{{"value":{number}}}"#)).unwrap(),
+            _ => Value::Set(Rc::new([Value::from(number)].into_iter().collect())),
+        };
+        assert_reusable(
+            module,
+            &[
+                (r#"{"x":3}"#, r#"{"x":3}"#, expected(3)),
+                (
+                    "{}",
+                    "{}",
+                    match index {
+                        0 | 1 => Value::new_array(),
+                        2 => Value::new_object(),
+                        _ => Value::new_set(),
+                    },
+                ),
+                (r#"{"x":8}"#, r#"{"x":8}"#, expected(8)),
+                (r#"{"x":3}"#, r#"{"x":3}"#, expected(3)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn indexed_and_nested_defaults_preserve_their_object_shape() {
+    for module in [
+        r#"package defaults
+        default result["first"] := [x | x := input.x]
+        default result["second"] := [y | y := data.y]
+        "#,
+        r#"package defaults
+        default nested.first := [x | x := input.x]
+        default nested.second := [y | y := data.y]
+        result := nested
+        "#,
+    ] {
+        assert_reusable(
+            module,
+            &[
+                (
+                    r#"{"x":3}"#,
+                    r#"{"y":4}"#,
+                    Value::from_json_str(r#"{"first":[3],"second":[4]}"#).unwrap(),
+                ),
+                (
+                    r#"{"x":8}"#,
+                    r#"{"y":9}"#,
+                    Value::from_json_str(r#"{"first":[8],"second":[9]}"#).unwrap(),
+                ),
+            ],
+        );
+    }
+    assert_reusable(
+        r#"package defaults
+        default result["first"] := 3
+        default result["second"] := 4
+        "#,
+        &[(
+            "{}",
+            "{}",
+            Value::from_json_str(r#"{"first":3,"second":4}"#).unwrap(),
+        )],
+    );
+}
+
+#[test]
+fn function_defaults_bind_parameters_and_do_not_cache_calls() {
+    assert_reusable(
+        r#"package defaults
+        default f(parameter) := [y | y := parameter]
+        f(x) := [x, x] if x > 10
+        result := [f(input.x), f(30), f(4)]
+        "#,
+        &[
+            (
+                r#"{"x":3}"#,
+                "{}",
+                Value::from_json_str("[[3],[30,30],[4]]").unwrap(),
+            ),
+            (
+                r#"{"x":8}"#,
+                "{}",
+                Value::from_json_str("[[8],[30,30],[4]]").unwrap(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn dynamic_defaults_only_run_after_undefined_not_false() {
+    assert_reusable(
+        r#"package defaults
+        default result := [x | x := input.x]
+        result := false if input.enabled
+        "#,
+        &[
+            (
+                r#"{"x":3,"enabled":false}"#,
+                "{}",
+                Value::from_json_str("[3]").unwrap(),
+            ),
+            (r#"{"x":8,"enabled":true}"#, "{}", Value::Bool(false)),
+            (
+                r#"{"x":8,"enabled":false}"#,
+                "{}",
+                Value::from_json_str("[8]").unwrap(),
+            ),
+            ("{}", "{}", Value::from_json_str("[]").unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn conflicts_never_select_literal_or_executable_defaults() {
+    for default in ["7", "[x | x := input.x]"] {
+        let module =
+            format!("package defaults\ndefault result := {default}\nresult := 1\nresult := 2");
+        for program in round_trips(compile(&module, &[])) {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_input(Value::from_json_str(r#"{"x":3}"#).unwrap());
+                match vm.execute_entry_point_by_name(ENTRY) {
+                    Ok(Value::Undefined) | Err(_) => {}
+                    Ok(value) => panic!("a conflict must not select a default: {value:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn object_and_set_function_defaults_bind_lexical_parameters() {
+    assert_reusable(
+        r#"package defaults
+        default object(x) := {"value": y | y := x}
+        default set(x) := {y | y := x}
+        result := [object(3), object(8), set(3), set(8)]
+        "#,
+        &[(
+            "{}",
+            "{}",
+            Value::Array(Rc::new(
+                vec![
+                    Value::from_json_str(r#"{"value":3}"#).unwrap(),
+                    Value::from_json_str(r#"{"value":8}"#).unwrap(),
+                    Value::Set(Rc::new([Value::from(3)].into_iter().collect())),
+                    Value::Set(Rc::new([Value::from(8)].into_iter().collect())),
+                ]
+                .into(),
+            )),
+        )],
+    );
+}
+
+#[test]
+fn default_only_function_has_arity_and_lexical_parameters() {
+    let module = r#"package defaults
+        default f(x) := [y | y := x]
+        result := [f(3), f(8)]
+    "#;
+    let program = compile(module, &[]);
+    let function = program
+        .rule_infos
+        .iter()
+        .find(|rule| rule.name == "data.defaults.f")
+        .unwrap();
+    assert_eq!(function.function_info.as_ref().unwrap().num_params, 1);
+    assert!(function.default_entry_point.is_some());
+    assert!(function.default_literal_index.is_none());
+    assert_reusable(
+        module,
+        &[("{}", "{}", Value::from_json_str("[[3],[8]]").unwrap())],
+    );
+}
+
+#[test]
+fn default_only_function_output_arguments_are_scheduled() {
+    assert_reusable(
+        r#"package defaults
+        default f(x) := [y | y := x]
+        result := output if { f(3, output) }
+        "#,
+        &[("{}", "{}", Value::from_json_str("[3]").unwrap())],
+    );
+}
+
+#[test]
+fn imported_default_function_uses_its_own_module_scope() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "library.rego".into(),
+            "package library\nbase := 5\ndefault f(x) := [y | y := x + base]".into(),
+        )
+        .unwrap();
+    engine
+        .add_policy(
+            "defaults.rego".into(),
+            "package defaults\nimport data.library.f\nresult := [f(3), data.library.f(8)]".into(),
+        )
+        .unwrap();
+    let expected = Value::from_json_str("[[8],[13]]").unwrap();
+    assert_eq!(engine.eval_rule(ENTRY.into()).unwrap(), expected);
+    let policy = engine.compile_with_entrypoint(&Rc::from(ENTRY)).unwrap();
+    let program = Compiler::compile_from_policy(&policy, &[ENTRY]).unwrap();
+    for program in round_trips(program) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            assert_eq!(vm.execute_entry_point_by_name(ENTRY).unwrap(), expected);
+        }
+    }
+}
+
+#[test]
+fn constant_defaults_keep_literal_fast_path_and_false_is_defined() {
+    let module = r#"package defaults
+        default f(x) := 7
+        f(x) := x if x > 10
+        default flag(x) := true
+        flag(x) := false if x == 0
+        result := [f(3), f(30), flag(0)]
+    "#;
+    let program = compile(module, &[]);
+    let function = program
+        .rule_infos
+        .iter()
+        .find(|rule| rule.name == "data.defaults.f")
+        .unwrap();
+    assert!(function.default_literal_index.is_some());
+    assert!(function.default_entry_point.is_none());
+    assert_reusable(
+        module,
+        &[("{}", "{}", Value::from_json_str("[7,30,false]").unwrap())],
+    );
+}
+
+#[test]
+fn undefined_function_arguments_do_not_select_defaults() {
+    for default in ["7", "[y | y := x]"] {
+        let module =
+            format!("package defaults\ndefault f(x) := {default}\nresult := f(input.missing)");
+        assert_reusable(&module, &[("{}", "{}", Value::Undefined)]);
+    }
+}
+
+#[test]
+fn default_functions_resume_in_their_parameter_window() {
+    let module = r#"package defaults
+        default f(x) := [y | y := lookup(x)]
+        result := [f(3), f(8)]
+    "#;
+    for program in round_trips(compile(module, &[("lookup", 1)])) {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.execute_entry_point_by_name(ENTRY).unwrap();
+        for number in [3, 8] {
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended {
+                    reason: SuspendReason::HostAwait { argument, .. },
+                    ..
+                } if argument == &Value::Array(Rc::new(vec![Value::from(number)].into()))
+            ));
+            vm.resume(Some(Value::from(number * 10))).unwrap();
+        }
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Completed { result }
+                if result == &Value::from_json_str("[[30],[80]]").unwrap()
+        ));
+    }
+}
+
+#[test]
+fn default_bytecode_metadata_is_validated() {
+    let mut program = (*compile(
+        "package defaults\ndefault result := [x | x := input.x]",
+        &[],
+    ))
+    .clone();
+    let rule = program.rule_infos.first_mut().unwrap();
+    rule.default_entry_point = Some(u32::MAX);
+    assert!(program.validate_limits().is_err());
+    assert!(program.serialize_binary().is_err());
+    assert!(program.serialize_json().is_err());
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program.clone()));
+        vm.set_execution_mode(mode);
+        assert!(vm.execute_entry_point_by_name(ENTRY).is_err());
+    }
+}
+
+#[test]
+fn malformed_serialized_default_metadata_is_rejected() {
+    let program = compile(
+        "package defaults\ndefault result := [x | x := input.x]",
+        &[],
+    );
+    let mut json: serde_json::Value =
+        serde_json::from_str(&program.serialize_json().unwrap()).unwrap();
+    json["rule_infos"][0]["default_entry_point"] = serde_json::json!(u32::MAX);
+    assert!(Program::deserialize_json(&json.to_string()).is_err());
+    json["rule_infos"][0]["default_entry_point"] = serde_json::json!(0);
+    assert!(Program::deserialize_json(&json.to_string()).is_err());
+}
+
+#[test]
+fn legacy_json_defaults_require_recompilation_before_execution() {
+    let program = compile("package defaults\ndefault result := 7", &[]);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&program.serialize_json().unwrap()).unwrap();
+    json["rule_infos"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("default_entry_point");
+    let legacy = Arc::new(Program::deserialize_json(&json.to_string()).unwrap());
+    assert!(legacy.needs_recompilation);
+    assert_eq!(legacy.sources.len(), program.sources.len());
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(legacy.clone());
+        vm.set_execution_mode(mode);
+        assert!(vm.execute_entry_point_by_name(ENTRY).is_err());
+    }
+}
+
+#[test]
+fn default_only_functions_enforce_call_arity() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "defaults.rego".into(),
+            "package defaults\ndefault f(x) := 7\nresult := f(3, 4, 5)".into(),
+        )
+        .unwrap();
+    let result = engine.compile_with_entrypoint(&Rc::from(ENTRY));
+    if let Ok(policy) = result {
+        assert!(Compiler::compile_from_policy(&policy, &[ENTRY]).is_err());
+    }
+}
+
+#[test]
+fn previous_binary_version_preserves_recompilation_artifacts() {
+    let program = compile("package defaults\ndefault result := true", &[]);
+    let mut bytes = program.serialize_binary().unwrap();
+    bytes[4..8].copy_from_slice(&6u32.to_le_bytes());
+    match Program::deserialize_binary(&bytes).unwrap() {
+        DeserializationResult::Partial(old) => {
+            assert!(old.needs_recompilation);
+            assert_eq!(old.sources.len(), program.sources.len());
+            assert_eq!(old.entry_points, program.entry_points);
+        }
+        DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
+    }
+}

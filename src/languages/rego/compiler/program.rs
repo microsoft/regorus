@@ -8,9 +8,8 @@
 )]
 
 use super::{Compiler, CompilerError, Result};
-use crate::interpreter::Interpreter;
 use crate::lexer::Source;
-use crate::rvm::program::{Program, RuleType, SpanInfo};
+use crate::rvm::program::{Program, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Rc;
 use crate::Value;
@@ -100,6 +99,10 @@ impl<'a> Compiler<'a> {
             };
 
             rule_info.destructuring_blocks = destructuring_blocks;
+            if let Some(&(literal_index, entry_point)) = self.rule_defaults.get(&rule_index) {
+                rule_info.default_literal_index = literal_index;
+                rule_info.default_entry_point = entry_point;
+            }
             rule_info.else_bodies = self
                 .rule_definition_else_bodies
                 .get(rule_index as usize)
@@ -146,27 +149,6 @@ impl<'a> Compiler<'a> {
             rule_infos_map.insert(rule_index as usize, rule_info);
         }
 
-        let rule_paths_to_evaluate: Vec<(String, usize)> = self
-            .rule_index_map
-            .iter()
-            .filter_map(|(rule_path, &rule_index)| {
-                let rule_type = &self.rule_types[rule_index as usize];
-                if *rule_type == RuleType::Complete {
-                    Some((rule_path.clone(), rule_index as usize))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for (rule_path, rule_index) in rule_paths_to_evaluate {
-            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path) {
-                if let Some(rule_info) = rule_infos_map.get_mut(&rule_index) {
-                    rule_info.set_default_literal_index(default_literal_index);
-                }
-            }
-        }
-
         self.program.rule_infos = rule_infos_map.into_values().collect();
 
         // Spans refer to sources by the index assigned on first use, so the
@@ -211,26 +193,6 @@ impl<'a> Compiler<'a> {
             .map_err(|e| CompilerError::from(anyhow!(e)))?;
 
         Ok(self.program)
-    }
-
-    fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
-        if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
-        }
-
-        let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
-
-        match interpreter.eval_default_rule_for_compiler(rule_path) {
-            Ok(computed_value) => {
-                if computed_value != Value::Undefined {
-                    let literal_index = self.add_literal(computed_value);
-                    return Some(literal_index);
-                }
-            }
-            Err(_e) => {}
-        }
-
-        None
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {
