@@ -285,10 +285,6 @@ cases:
       - note: different_values
         input: {resources: [{name: a, owner: alice}, {name: a, owner: bob}]}
         want_error: "multiple outputs"
-        divergence:
-          reason: The RVM keeps the last value for a conflicting partial-object key (microsoft/regorus#719).
-          engines: [rvm]
-          actual_result: {a: bob}
 
   - note: function_multiple_definitions
     description: A function with two definitions selected by its argument.

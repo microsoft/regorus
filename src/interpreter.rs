@@ -190,6 +190,7 @@ struct Context {
     is_old_style_set: bool,
     output_constness_determined: bool,
     early_return: bool,
+    output_query: Option<u32>,
 }
 
 impl Default for Context {
@@ -207,6 +208,7 @@ impl Default for Context {
             is_old_style_set: false,
             output_constness_determined: false,
             early_return: false,
+            output_query: None,
         }
     }
 }
@@ -369,6 +371,20 @@ impl Interpreter {
         }
     }
 
+    fn expression_binding_plan(
+        &self,
+        expr_idx: u32,
+    ) -> crate::lookup::LookupResult<Option<&BindingPlan>> {
+        self.loop_hoisting_table(self.current_module_index)
+            .get_output_binding_plan(
+                self.current_module_index,
+                self.contexts
+                    .last()
+                    .and_then(|context| context.output_query),
+                expr_idx,
+            )
+    }
+
     pub const fn get_data_mut(&mut self) -> &mut Value {
         &mut self.data
     }
@@ -500,11 +516,9 @@ impl Interpreter {
 
         if let Expr::Call { params, .. } = Self::loop_assignment_expr(loop_info).as_ref() {
             if let Some(last_param) = params.last() {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
                 return match binding_plan.cloned() {
@@ -765,6 +779,10 @@ impl Interpreter {
         self.scopes.push(Scope::new());
         self.contexts.push(Context {
             value: Value::new_set(),
+            output_query: self
+                .contexts
+                .last()
+                .and_then(|context| context.output_query),
             ..Context::default()
         });
         let mut r = true;
@@ -1021,12 +1039,10 @@ impl Interpreter {
         let mut count: usize = 0;
 
         // Fetch the binding plan for this some..in expression
-        let module_idx = self.current_module_index;
         let expr_idx = collection.as_ref().eidx();
 
         let binding_plan = self
-            .loop_hoisting_table(module_idx)
-            .get_expr_binding_plan(module_idx, expr_idx)
+            .expression_binding_plan(expr_idx)
             .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
 
         let Some(BindingPlan::SomeIn {
@@ -1717,28 +1733,7 @@ impl Interpreter {
                 }
             }
 
-            let index_plan = if let Some(index) = index_expr {
-                let module_idx = self.current_module_index;
-                let expr_idx = index.as_ref().eidx();
-                let plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
-
-                match plan.cloned() {
-                    Some(BindingPlan::LoopIndex {
-                        destructuring_plan, ..
-                    }) => destructuring_plan,
-                    Some(other_plan) => {
-                        bail!("internal error: expected LoopIndex for loop index expression, got {:?}", other_plan);
-                    }
-                    None => {
-                        bail!("internal error: no binding plan found for loop index expression");
-                    }
-                }
-            } else {
-                bail!("internal error: no binding plan found for loop index expression");
-            };
+            let index_plan = self.get_loop_index_plan(loop_info)?;
 
             // Create a new scope.
             self.scopes.push(Scope::default());
@@ -1957,6 +1952,43 @@ impl Interpreter {
         Ok(is_const && Self::is_simple_literal(output_expr)?)
     }
 
+    fn get_loop_index_plan(&self, loop_info: &HoistedLoop) -> Result<DestructuringPlan> {
+        let index = Self::loop_index_expr(loop_info)
+            .ok_or_else(|| anyhow!("internal error: no loop index expression"))?;
+        let plan = self
+            .expression_binding_plan(index.as_ref().eidx())
+            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
+        match plan {
+            Some(BindingPlan::LoopIndex {
+                destructuring_plan, ..
+            }) => Ok(destructuring_plan.clone()),
+            Some(other_plan) => bail!(
+                "internal error: expected LoopIndex for loop index expression, got {:?}",
+                other_plan
+            ),
+            None => bail!("internal error: no binding plan found for loop index expression"),
+        }
+    }
+
+    fn eval_output_loop_iteration(
+        &mut self,
+        loop_info: &HoistedLoop,
+        index_plan: &DestructuringPlan,
+        index: &Value,
+        value: &Value,
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
+        self.memory_check()?;
+        self.set_loop_var_value(Self::loop_assignment_expr(loop_info), value.clone())?;
+        let result = if self.execute_destructuring_plan(index_plan, index)? == Value::Bool(true) {
+            self.eval_output_expr_in_loop(loops)
+        } else {
+            Ok(false)
+        };
+        Self::clear_scope(self.current_scope_mut()?);
+        result
+    }
+
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         self.check_execution_time()?;
         if loops.is_empty() {
@@ -2012,8 +2044,14 @@ impl Interpreter {
                 }
 
                 if output == Value::Undefined || !comps_defined {
-                    ctx_mut.rule_value = Value::Undefined;
+                    if matches!(&ctx_mut.rule_value, Value::Object(object) if object.is_empty()) {
+                        ctx_mut.rule_value = Value::Undefined;
+                    }
                     return Ok(false);
+                }
+
+                if ctx_mut.rule_value == Value::Undefined {
+                    ctx_mut.rule_value = Value::new_object();
                 }
 
                 if is_set {
@@ -2133,36 +2171,57 @@ impl Interpreter {
         let (loop_info, loop_tail) = loops
             .split_first()
             .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
-        let mut result = false;
         let loop_target_expr = Self::loop_assignment_expr(loop_info);
-        match self.eval_expr(Self::loop_collection_expr(loop_info))? {
-            Value::Array(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+        let collection = self.eval_expr(Self::loop_collection_expr(loop_info))?;
+        let index_plan = if Self::loop_index_expr(loop_info).is_some() {
+            self.get_loop_index_plan(loop_info)?
+        } else {
+            DestructuringPlan::Ignore
+        };
+        self.scopes.push(Scope::default());
+        let result = (|| {
+            let mut result = false;
+            match collection {
+                Value::Array(items) => {
+                    for (idx, value) in items.iter().enumerate() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            &Value::from(idx),
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Set(items) => {
-                for v in items.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Set(items) => {
+                    for value in items.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            value,
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
-            }
-            Value::Object(obj) => {
-                for (_, v) in obj.iter() {
-                    self.set_loop_var_value(loop_target_expr, v.clone())?;
-                    result = self.eval_output_expr_in_loop(loop_tail)? || result;
+                Value::Object(obj) => {
+                    for (key, value) in obj.iter() {
+                        result = self.eval_output_loop_iteration(
+                            loop_info,
+                            &index_plan,
+                            key,
+                            value,
+                            loop_tail,
+                        )? || result;
+                    }
                 }
+                _ => {}
             }
-            _ => {
-                let span = Self::loop_span(loop_info);
-                return Err(span
-                    .source
-                    .error(span.line, span.col, "item cannot be indexed"));
-            }
-        }
+            Ok(result)
+        })();
+        self.scopes.pop();
         self.remove_loop_var_value(loop_target_expr);
-        Ok(result)
+        result
     }
 
     fn get_current_context(&self) -> Result<&Context> {
@@ -2190,12 +2249,33 @@ impl Interpreter {
 
         let (key_expr, output_expr) = self.get_exprs_from_context()?;
         let mut loops: Vec<HoistedLoop> = Vec::new();
+        let mut key_exprs: Vec<ExprRef> = key_expr.into_iter().collect();
+        if let Some(rule_ref) = &self.get_current_context()?.rule_ref {
+            let mut current = rule_ref.as_ref();
+            loop {
+                match current {
+                    Expr::RefBrack { refr, index, .. } => {
+                        key_exprs.push(index.clone());
+                        current = refr.as_ref();
+                    }
+                    Expr::RefDot { refr, .. } => current = refr.as_ref(),
+                    _ => break,
+                }
+            }
+            key_exprs.reverse();
+        }
 
         // Get pre-computed loops for key expression
-        if let Some(ke) = &key_expr {
+        for ke in &key_exprs {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, ke.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    ke.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2211,7 +2291,13 @@ impl Interpreter {
         if let Some(oe) = &output_expr {
             match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_expr_loops(self.current_module_index, oe.as_ref().eidx())
+                .get_output_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    oe.as_ref().eidx(),
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2244,7 +2330,13 @@ impl Interpreter {
             // Get pre-computed hoisted loops from compilation phase
             let loop_exprs: Vec<HoistedLoop> = match self
                 .loop_hoisting_table(self.current_module_index)
-                .get_statement_loops(self.current_module_index, stmt.sidx)
+                .get_output_statement_loops(
+                    self.current_module_index,
+                    self.contexts
+                        .last()
+                        .and_then(|context| context.output_query),
+                    stmt.sidx,
+                )
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
             {
                 Some(hoisted_loops) => {
@@ -2314,6 +2406,9 @@ impl Interpreter {
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
         self.check_execution_time()?;
+        self.get_current_context_mut()?
+            .output_query
+            .get_or_insert(query.qidx);
         // Execute the query in a new scope
         self.scopes.push(Scope::new());
         let order_indices = {
@@ -2500,6 +2595,10 @@ impl Interpreter {
             output_expr: Some(term.clone()),
             value: Value::new_array(),
             is_compr: true,
+            output_query: self
+                .contexts
+                .last()
+                .and_then(|context| context.output_query),
             ..Context::default()
         });
 
@@ -2519,6 +2618,10 @@ impl Interpreter {
             output_expr: Some(term.clone()),
             value: Value::new_set(),
             is_compr: true,
+            output_query: self
+                .contexts
+                .last()
+                .and_then(|context| context.output_query),
             ..Context::default()
         });
 
@@ -2543,6 +2646,10 @@ impl Interpreter {
             output_expr: Some(value.clone()),
             value: Value::new_object(),
             is_compr: true,
+            output_query: self
+                .contexts
+                .last()
+                .and_then(|context| context.output_query),
             ..Context::default()
         });
 
@@ -3118,13 +3225,11 @@ impl Interpreter {
 
             let value = self.eval_call_impl(span, expr, fcn, arg_prefix)?;
             if allow_return_arg {
-                let module_idx = self.current_module_index;
                 let expr_idx = last_param.as_ref().eidx();
                 if let Some(BindingPlan::Parameter {
                     destructuring_plan, ..
                 }) = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
@@ -3521,8 +3626,7 @@ impl Interpreter {
                 let expr_idx = expr.as_ref().eidx();
                 let expr_text = expr.span().text().to_string();
                 let binding_plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
+                    .expression_binding_plan(expr_idx)
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                     .ok_or_else(|| {
@@ -3655,7 +3759,14 @@ impl Interpreter {
         // Independent bodies of a partial (object/set) rule each contribute
         // keys/members. Bodies introduced by `else`, however, are mutually
         // exclusive even for partial rules and must short-circuit.
-        let is_partial = ctx.is_set || ctx.key_expr.is_some();
+        let is_partial = ctx.is_set
+            || ctx.key_expr.is_some()
+            || ctx
+                .rule_ref
+                .as_ref()
+                .map(Self::is_constant_ref)
+                .transpose()?
+                == Some(false);
         let result = if bodies.is_empty() {
             self.contexts.push(ctx.clone());
             self.eval_output_expr()
@@ -3697,6 +3808,7 @@ impl Interpreter {
                     }
                     self.contexts.push(next_ctx);
                 }
+                self.get_current_context_mut()?.output_query = Some(body.query.qidx);
                 result = self.eval_query(&body.query);
                 match &result {
                     Ok(true) => {

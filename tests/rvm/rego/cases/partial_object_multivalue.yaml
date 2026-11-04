@@ -1,0 +1,998 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Partial Object Multi-Value Rules Test Suite
+# Tests `foo[key] contains value` patterns that produce objects with set values
+# Previously these were incorrectly compiled as flat partial sets.
+
+cases:
+  - note: simple_multivalue_partial_object
+    data: {}
+    modules:
+      - |
+        package test
+
+        servers := {"s1": ["p1", "p2"], "s2": ["p3"]}
+
+        ports[server] contains port if {
+          some server, port_list in servers
+          some port in port_list
+        }
+    query: data.test.ports
+    want_result:
+      s1:
+        set!: ["p1", "p2"]
+      s2:
+        set!: ["p3"]
+
+  - note: multivalue_partial_object_with_input
+    data: {}
+    input:
+      hosts:
+        web1:
+          ports: [80, 443]
+        web2:
+          ports: [80, 8080]
+        db1:
+          ports: [5432]
+    modules:
+      - |
+        package test
+
+        host_ports[host] contains port if {
+          some host, info in input.hosts
+          some port in info.ports
+        }
+    query: data.test.host_ports
+    want_result:
+      web1:
+        set!: [80, 443]
+      web2:
+        set!: [80, 8080]
+      db1:
+        set!: [5432]
+
+  - note: multivalue_partial_object_single_element_sets
+    data: {}
+    modules:
+      - |
+        package test
+
+        groups := {"a": ["x"], "b": ["y"]}
+
+        items[g] contains v if {
+          some g, vals in groups
+          some v in vals
+        }
+    query: data.test.items
+    want_result:
+      a:
+        set!: ["x"]
+      b:
+        set!: ["y"]
+
+  - note: multivalue_partial_object_with_filter
+    data: {}
+    modules:
+      - |
+        package test
+
+        data_map := {
+          "alice": [1, 2, 3, 4, 5],
+          "bob": [2, 4, 6, 8, 10]
+        }
+
+        even_values[name] contains v if {
+          some name, values in data_map
+          some v in values
+          v % 2 == 0
+        }
+    query: data.test.even_values
+    want_result:
+      alice:
+        set!: [2, 4]
+      bob:
+        set!: [2, 4, 6, 8, 10]
+
+  - note: multivalue_partial_object_overlapping_values
+    data: {}
+    modules:
+      - |
+        package test
+
+        tag_pairs := [
+          ["colors", "red"],
+          ["colors", "blue"],
+          ["sizes", "small"],
+          ["sizes", "large"],
+        ]
+
+        tags[category] contains tag if {
+          some pair in tag_pairs
+          category := pair[0]
+          tag := pair[1]
+        }
+    query: data.test.tags
+    want_result:
+      colors:
+        set!: ["red", "blue"]
+      sizes:
+        set!: ["small", "large"]
+
+  - note: regular_partial_object_still_works
+    data: {}
+    modules:
+      - |
+        package test
+
+        info[name] := count if {
+          counts := {"a": 1, "b": 2, "c": 3}
+          some name, count in counts
+        }
+    query: data.test.info
+    want_result:
+      a: 1
+      b: 2
+      c: 3
+
+  - note: simple_partial_set_still_works
+    data: {}
+    modules:
+      - |
+        package test
+
+        items contains x if {
+          some x in [1, 2, 3]
+        }
+    query: data.test.items
+    want_result:
+      set!: [1, 2, 3]
+
+  # ── Multi-value with non-scalar leaf values ──
+
+  - note: multivalue_with_object_values
+    data: {}
+    modules:
+      - |
+        package test
+
+        records := [
+          {"category": "A", "item": {"id": 1, "name": "one"}},
+          {"category": "A", "item": {"id": 2, "name": "two"}},
+          {"category": "B", "item": {"id": 3, "name": "three"}}
+        ]
+
+        by_category[cat] contains item if {
+          some rec in records
+          cat := rec.category
+          item := rec.item
+        }
+    query: data.test.by_category
+    want_result:
+      A:
+        set!:
+          - {"id": 1, "name": "one"}
+          - {"id": 2, "name": "two"}
+      B:
+        set!:
+          - {"id": 3, "name": "three"}
+
+  - note: multivalue_with_array_values
+    data: {}
+    modules:
+      - |
+        package test
+
+        data_map := {"k1": [[1,2],[3,4]], "k2": [[5,6]]}
+
+        grouped[key] contains arr if {
+          some key, arrs in data_map
+          some arr in arrs
+        }
+    query: data.test.grouped
+    want_result:
+      k1:
+        set!: [[1,2], [3,4]]
+      k2:
+        set!: [[5,6]]
+
+  # ── Numeric key types ──
+
+  - note: multivalue_with_numeric_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        buckets := {0: ["a", "b"], 1: ["c"]}
+
+        items[k] contains v if {
+          some k, vals in buckets
+          some v in vals
+        }
+    query: data.test.items
+    want_result:
+      0:
+        set!: ["a", "b"]
+      1:
+        set!: ["c"]
+
+  # ── Empty body / no matches ──
+
+  - note: multivalue_empty_result
+    data: {}
+    modules:
+      - |
+        package test
+
+        items[k] contains v if {
+          some k, vals in {}
+          some v in vals
+        }
+    query: data.test.items
+    want_result: "#undefined"
+
+  # ── Consuming multivalue result in another rule ──
+
+  - note: multivalue_consumed_by_another_rule
+    data: {}
+    modules:
+      - |
+        package test
+
+        sources := {"web": [80, 443], "ssh": [22]}
+
+        ports[svc] contains p if {
+          some svc, ps in sources
+          some p in ps
+        }
+
+        web_ports := ports.web
+    query: data.test.web_ports
+    want_result:
+      set!: [80, 443]
+
+  - note: multivalue_count_in_another_rule
+    data: {}
+    modules:
+      - |
+        package test
+
+        sources := {"a": [1,2,3], "b": [4,5]}
+
+        items[k] contains v if {
+          some k, vals in sources
+          some v in vals
+        }
+
+        sizes[k] := count(items[k]) if {
+          some k, _ in sources
+        }
+    query: data.test.sizes
+    want_result:
+      a: 3
+      b: 2
+
+  # ── Single-element edge cases ──
+
+  - note: multivalue_single_key_single_value
+    data: {}
+    modules:
+      - |
+        package test
+
+        items[k] contains v if {
+          k := "only"
+          v := "one"
+        }
+    query: data.test.items
+    want_result:
+      only:
+        set!: ["one"]
+
+  # ── Multiple rule definitions with different keys ──
+
+  - note: multivalue_multiple_definitions_different_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        tags[category] contains tag if {
+          some tag in ["critical", "high"]
+          category := "severity"
+        }
+
+        tags[category] contains tag if {
+          some tag in ["network", "storage"]
+          category := "type"
+        }
+    query: data.test.tags
+    want_result:
+      severity:
+        set!: ["critical", "high"]
+      type:
+        set!: ["network", "storage"]
+
+  # ── Multivalue with body conditions and filtering ──
+
+  - note: multivalue_with_condition_filtering
+    data: {}
+    modules:
+      - |
+        package test
+
+        entries := {
+          "team1": [
+            {"name": "alice", "active": true},
+            {"name": "bob", "active": false},
+            {"name": "carol", "active": true}
+          ],
+          "team2": [
+            {"name": "dave", "active": false}
+          ]
+        }
+
+        active_members[team] contains member.name if {
+          some team, members in entries
+          some member in members
+          member.active == true
+        }
+    query: data.test.active_members
+    want_result:
+      team1:
+        set!: ["alice", "carol"]
+
+  # ── Multivalue from input data ──
+
+  - note: multivalue_from_nested_input
+    data: {}
+    input:
+      departments:
+        engineering:
+          members: ["alice", "bob"]
+        marketing:
+          members: ["carol"]
+    modules:
+      - |
+        package test
+
+        dept_members[dept] contains member if {
+          some dept, info in input.departments
+          some member in info.members
+        }
+    query: data.test.dept_members
+    want_result:
+      engineering:
+        set!: ["alice", "bob"]
+      marketing:
+        set!: ["carol"]
+
+  # ── Multiple definitions accumulating into same key ──
+
+  - note: multivalue_multiple_definitions_same_key
+    data: {}
+    modules:
+      - |
+        package test
+
+        items[k] contains v if {
+          some v in ["a", "b"]
+          k := "shared"
+        }
+
+        items[k] contains v if {
+          some v in ["b", "c"]
+          k := "shared"
+        }
+    query: data.test.items
+    want_result:
+      shared:
+        set!: ["a", "b", "c"]
+
+  # ── Boolean value in multivalue set ──
+
+  - note: multivalue_with_boolean_values
+    data: {}
+    modules:
+      - |
+        package test
+
+        checks := {"auth": [true, false], "ssl": [true]}
+
+        results[name] contains val if {
+          some name, vals in checks
+          some val in vals
+        }
+    query: data.test.results
+    want_result:
+      auth:
+        set!: [false, true]
+      ssl:
+        set!: [true]
+
+  # ── Multivalue with string key derived from computation ──
+
+  - note: multivalue_computed_keys
+    data: {}
+    modules:
+      - |
+        package test
+
+        raw := [
+          {"region": "us-east", "svc": "web"},
+          {"region": "us-east", "svc": "api"},
+          {"region": "eu-west", "svc": "web"}
+        ]
+
+        services[region] contains svc if {
+          some entry in raw
+          region := entry.region
+          svc := entry.svc
+        }
+    query: data.test.services
+    want_result:
+      us-east:
+        set!: ["api", "web"]
+      eu-west:
+        set!: ["web"]
+
+  # ── Large number of values per key ──
+
+  - note: multivalue_many_values_per_key
+    data: {}
+    modules:
+      - |
+        package test
+
+        numbers[bucket] contains n if {
+          some n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+          bucket := "all"
+        }
+    query: data.test.numbers
+    want_result:
+      all:
+        set!: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  # ── Multivalue alongside regular complete rule ──
+
+  - note: multivalue_alongside_complete_rule
+    data: {}
+    modules:
+      - |
+        package test
+
+        sources := {"x": [1, 2], "y": [3]}
+
+        items[k] contains v if {
+          some k, vs in sources
+          some v in vs
+        }
+
+        total := count(items)
+    query: data.test.total
+    want_result: 2
+
+  # ── Query the full package with both complete and multivalue rules ──
+
+  - note: multivalue_with_data_document_lookup
+    data: {}
+    modules:
+      - |
+        package test
+
+        sources := {"a": ["x", "y"]}
+
+        grouped[k] contains v if {
+          some k, vs in sources
+          some v in vs
+        }
+
+        first_group := grouped.a
+    query: data.test.first_group
+    want_result:
+      set!: ["x", "y"]
+
+  # Multi-bracket rule heads
+
+  - note: multi_bracket_two_key_assign
+    data: {}
+    modules:
+      - |
+        package test
+
+        settings[svc][field] := v if {
+          some svc, fields in {"web": {"port": 80, "tls": true}, "ssh": {"port": 22}}
+          some field, v in fields
+        }
+
+        result := settings
+    query: data.test.result
+    want_result:
+      web:
+        port: 80
+        tls: true
+      ssh:
+        port: 22
+
+  - note: multi_bracket_two_key_contains
+    data: {}
+    modules:
+      - |
+        package test
+
+        perms[role] contains action if {
+          some role, actions in {"admin": ["read", "write"], "viewer": ["read"]}
+          some action in actions
+        }
+
+        result := perms
+    query: data.test.result
+    want_result:
+      admin:
+        set!: ["read", "write"]
+      viewer:
+        set!: ["read"]
+
+  - note: multi_bracket_three_key_nesting
+    data: {}
+    modules:
+      - |
+        package test
+
+        config[env][svc][key] := val if {
+          entries := [
+            {"env": "prod", "svc": "web", "key": "port", "val": 443},
+            {"env": "prod", "svc": "api", "key": "port", "val": 8080},
+            {"env": "dev", "svc": "web", "key": "port", "val": 8000}
+          ]
+          some entry in entries
+          env := entry.env
+          svc := entry.svc
+          key := entry.key
+          val := entry.val
+        }
+
+        result := config
+    query: data.test.result
+    want_result:
+      prod:
+        web:
+          port: 443
+        api:
+          port: 8080
+      dev:
+        web:
+          port: 8000
+
+  - note: multi_bracket_merge_across_definitions
+    data: {}
+    modules:
+      - |
+        package test
+
+        access[group][perm] := true if {
+          some group in ["admin", "ops"]
+          perm := "read"
+        }
+
+        access[group][perm] := true if {
+          group := "admin"
+          perm := "write"
+        }
+
+        result := access
+    query: data.test.result
+    want_result:
+      admin:
+        read: true
+        write: true
+      ops:
+        read: true
+
+  - note: multi_bracket_contains_accumulation
+    data: {}
+    modules:
+      - |
+        package test
+
+        tags[category] contains item if {
+          pairs := [
+            ["color", "red"],
+            ["color", "blue"],
+            ["size", "large"]
+          ]
+          some pair in pairs
+          category := pair[0]
+          item := pair[1]
+        }
+
+        result := tags
+    query: data.test.result
+    want_result:
+      color:
+        set!: ["blue", "red"]
+      size:
+        set!: ["large"]
+
+  - note: multivalue_two_dynamic_keys
+    data: {}
+    input:
+      rows:
+        - {group: admin, scope: app, value: read}
+        - {group: admin, scope: app, value: write}
+        - {group: admin, scope: app, value: read}
+        - {group: ops, scope: infra, value: deploy}
+    modules:
+      - |
+        package test
+        permissions[row.group][row.scope] contains row.value if {
+          some row in input.rows
+        }
+        result := permissions
+    query: data.test.result
+    want_result:
+      admin: {app: {set!: [read, write]}}
+      ops: {infra: {set!: [deploy]}}
+
+  - note: multivalue_static_dotted_prefix_not_repeated
+    data: {}
+    modules:
+      - |
+        package test
+        nested.items[k] contains v if {
+          some v in [1, 2]
+          k := "group"
+        }
+    query: data.test.nested.items
+    want_result:
+      group: {set!: [1, 2]}
+
+  - note: multivalue_static_bracket_prefix_not_repeated
+    data: {}
+    modules:
+      - |
+        package test
+        nested["a.b"][k] contains v if {
+          some v in [1, 2]
+          k := "group"
+        }
+    query: data.test.nested["a.b"]
+    want_result:
+      group: {set!: [1, 2]}
+
+  - note: static_dotted_contains_remains_partial_set
+    data: {}
+    modules:
+      - |
+        package test
+        nested.items contains v if {
+          some v in [1, 2]
+        }
+    query: data.test.nested.items
+    want_result:
+      set!: [1, 2]
+
+  - note: multivalue_literal_field_after_dynamic_key
+    data: {}
+    modules:
+      - |
+        package test
+        items[k].leaf contains v if {
+          some v in [1, 2]
+          k := "group"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      group: {leaf: {set!: [1, 2]}}
+
+  - note: nested_literal_key_after_dynamic_key
+    data: {}
+    modules:
+      - |
+        package test
+        items[k]["literal"] := false if {
+          k := "group"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      group: {literal: false}
+
+  - note: nested_dotted_literal_after_dynamic_key
+    data: {}
+    modules:
+      - |
+        package test
+        items[k].literal := null if {
+          k := "group"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      group: {literal: null}
+
+  - note: multivalue_preserves_outputs_across_undefined_rows
+    data: {}
+    input:
+      rows:
+        - {value: missing_key}
+        - {key: x, value: a}
+        - {key: x}
+        - {key: y, value: null}
+        - {key: y, value: false}
+        - {key: x, value: b}
+        - {key: z}
+    modules:
+      - |
+        package test
+        items[row.key] contains row.value if {
+          some row in input.rows
+        }
+    query: data.test.items
+    want_result:
+      x: {set!: [a, b]}
+      y: {set!: [null, false]}
+
+  - note: nested_undefined_value_does_not_materialize_prefix
+    data: {}
+    input:
+      rows:
+        - {group: missing, key: a}
+        - {group: x, key: a, value: false}
+        - {group: x, key: b}
+        - {key: c, value: 3}
+        - {group: x, key: d, value: null}
+    modules:
+      - |
+        package test
+        items[row.group][row.key] := row.value if {
+          some row in input.rows
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      x: {a: false, d: null}
+
+  - note: multivalue_accepts_all_defined_key_types
+    data: {}
+    modules:
+      - |
+        package test
+        keys := [null, false, 3, [], {}, {1, 2}]
+        items[k] contains k if {
+          some k in keys
+        }
+        result := {
+          "count": count(items),
+          "values": [count(items[k]) | some k in keys],
+        }
+    query: data.test.result
+    want_result:
+      count: 6
+      values: [1, 1, 1, 1, 1, 1]
+
+  - note: nested_key_head_wildcard_loop_is_hoisted
+    data: {}
+    input:
+      keys: [a, b]
+    modules:
+      - |
+        package test
+        items[input.keys[_]][k] := true if {
+          k := "leaf"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      a: {leaf: true}
+      b: {leaf: true}
+
+  - note: multivalue_head_wildcard_loop_is_hoisted
+    data: {}
+    input:
+      keys: [a, b]
+    modules:
+      - |
+        package test
+        items[input.keys[_]] contains 1 if {
+          true
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      a: {set!: [1]}
+      b: {set!: [1]}
+
+  - note: nested_duplicate_key_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        items[a][b] := v if {
+          some v in [1, 2]
+          a := "group"
+          b := "leaf"
+        }
+        result := items
+    query: data.test.result
+    want_error: "multiple outputs"
+
+  - note: nested_equal_duplicate_key_is_allowed
+    data: {}
+    modules:
+      - |
+        package test
+        items[a][b] := v if {
+          some v in [1, 1]
+          a := "group"
+          b := "leaf"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      group: {leaf: 1}
+
+  - note: nested_leaf_and_branch_conflict
+    data: {}
+    modules:
+      - |
+        package test
+        items[a] := 1 if {
+          a := "group"
+        }
+        items[a][b] := 2 if {
+          a := "group"
+          b := "leaf"
+        }
+        result := items
+    query: data.test.result
+    want_error: "object"
+
+  - note: nested_static_numeric_prefix_retains_empty_object
+    data: {}
+    input: {rows: []}
+    modules:
+      - |
+        package test
+        items[1][row.key] := row.value if {
+          some row in input.rows
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      1: {}
+
+  - note: multivalue_static_numeric_key_retains_empty_set
+    data: {}
+    input: {values: []}
+    modules:
+      - |
+        package test
+        items[1] contains v if {
+          some v in input.values
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      1: {set!: []}
+
+  - note: multivalue_static_prefix_before_dynamic_key_empty
+    data: {}
+    input: {rows: []}
+    modules:
+      - |
+        package test
+        items[1][row.key] contains row.value if {
+          some row in input.rows
+        }
+        result := items
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: mixed_flat_and_nested_empty_definitions
+    data: {}
+    input: {rows: []}
+    modules:
+      - |
+        package test
+        items[row.key] := row.value if {
+          some row in input.rows
+        }
+        items[row.group][row.key] := row.value if {
+          some row in input.rows
+        }
+        result := items
+    query: data.test.result
+    want_result: {}
+
+  - note: multivalue_head_loops_without_body
+    data: {}
+    input: {keys: [a, b], values: [1, 2]}
+    modules:
+      - |
+        package test
+        items[input.keys[_]] contains input.values[_]
+        result := items
+    query: data.test.result
+    want_result:
+      a: {set!: [1, 2]}
+      b: {set!: [1, 2]}
+
+  - note: multivalue_head_loops_with_empty_body
+    data: {}
+    input: {keys: [a, b], values: [1, 2]}
+    modules:
+      - |
+        package test
+        items[input.keys[_]] contains input.values[_] if {}
+        result := items
+    query: data.test.result
+    want_result:
+      a: {set!: [1, 2]}
+      b: {set!: [1, 2]}
+
+  - note: nested_head_loops_repeated_across_bodies
+    rego_v0: true
+    data: {}
+    input: {keys: [a, b]}
+    modules:
+      - |
+        package test
+        items[input.keys[_]][k] = 1 {
+          k := "first"
+        } {
+          k := "second"
+        }
+        result := items
+    query: data.test.result
+    want_result:
+      a: {first: 1, second: 1}
+      b: {first: 1, second: 1}
+
+  - note: independent_partial_bodies_resume_host_await
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    host_await_builtins:
+      - {name: lookup, arg_count: 1}
+    modules:
+      - |
+        package test
+        items[k] := v if {
+          k := "first"
+          v := lookup(k)
+        } {
+          k := "second"
+          v := lookup(k)
+        }
+    query: data.test.items
+    host_await_responses_suspendable:
+      - {id: lookup, args: [first], value: false}
+      - {id: lookup, args: [second], value: null}
+    want_result: {first: false, second: null}
+
+  - note: independent_partial_bodies_consume_host_responses
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    host_await_builtins:
+      - {name: lookup, arg_count: 1}
+    modules:
+      - |
+        package test
+        items[k] := v if {
+          k := "first"
+          v := lookup(k)
+        } {
+          k := "second"
+          v := lookup(k)
+        }
+    query: data.test.items
+    host_await_responses:
+      - {id: lookup, value: false}
+      - {id: lookup, value: null}
+    want_result: {first: false, second: null}

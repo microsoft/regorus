@@ -88,7 +88,7 @@ pub struct RuleInfo {
     pub definitions: crate::Rc<Vec<Vec<u32>>>,
     /// Function-specific information (only present for function rules)
     pub function_info: Option<FunctionInfo>,
-    /// Index into the program's literal table for default value (only for Complete rules)
+    /// Fallback literal for complete rules or empty partial-object results.
     pub default_literal_index: Option<u16>,
     /// Register allocated for this rule's result accumulation
     pub result_reg: u8,

@@ -61,9 +61,15 @@ pub struct CompilationContext {
     pub(super) context_type: ContextType,
     pub(super) dest_register: Register,
     pub(super) key_expr: Option<ExprRef>,
+    /// Additional key expressions for multi-level partial objects (e.g., foo[a][b][c] := v).
+    /// When non-empty, all keys (key_expr + extra_key_exprs) form the full key path.
+    pub(super) extra_key_exprs: Vec<ExprRef>,
+    /// If true, the leaf is a set and values are inserted into it (contains rules).
+    pub(super) multi_value: bool,
     pub(super) value_expr: Option<ExprRef>,
     pub(super) span: Span,
     pub(super) key_value_loops_hoisted: bool,
+    pub(super) output_query: Option<u32>,
 }
 
 /// Entry in the rule compilation worklist that tracks both rule path and full call stack for recursion detection

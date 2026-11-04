@@ -19,6 +19,7 @@ use test_generator::test_resources;
 
 mod comprehension_failure_differential;
 mod every_binding_differential;
+mod partial_object_planning;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {

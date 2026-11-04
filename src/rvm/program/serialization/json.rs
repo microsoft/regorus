@@ -4,9 +4,11 @@
 use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
+use serde::Deserialize as _;
 
 use super::super::metadata::ProgramMetadata;
 use super::super::types::{BuiltinInfo, RuleInfo, SourceFile, SpanInfo};
+use super::value::{binaries_to_values, BinaryValue, BinaryValueSlice};
 use super::Program;
 use crate::rvm::instructions::InstructionData;
 use crate::rvm::Instruction;
@@ -16,6 +18,22 @@ use indexmap::IndexMap;
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        let typed_literals = self
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::ObjectDeepSet { .. }))
+            || self.rule_infos.iter().any(|rule| {
+                rule.rule_type == crate::rvm::program::RuleType::PartialObject
+                    && rule.default_literal_index.is_some()
+            });
+        // Deep-set empty-result templates need Undefined, sets and typed keys
+        // to survive JSON loading instead of becoming strings or arrays.
+        let literals = if typed_literals {
+            serde_json::to_value(BinaryValueSlice(self.literals.as_slice()))
+        } else {
+            serde_json::to_value(&self.literals)
+        }
+        .map_err(|error| format!("Literals JSON serialization failed: {error}"))?;
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -44,9 +62,11 @@ impl Program {
                 "set_create_params": self.instruction_data.set_create_params,
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
-                "comprehension_begin_params": self.instruction_data.comprehension_begin_params
+                "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
+                "object_deep_set_params": self.instruction_data.object_deep_set_params
             },
-            "literals": self.literals,
+            "literals": literals,
+            "literals_encoding": if typed_literals { "binary-value-v1" } else { "json" },
             "builtin_info_table": self.builtin_info_table,
             "entry_points": self.entry_points,
             "sources": self.sources,
@@ -158,10 +178,28 @@ impl Program {
             serde_json::from_value(instruction_data_json.clone())
                 .map_err(|e| format!("Failed to deserialize instruction_data: {}", e))?;
 
-        let literals: Vec<Value> = json_data
-            .get("literals")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
-            .unwrap_or_default();
+        let literal_encoding = json_data
+            .get("literals_encoding")
+            .map(|encoding| encoding.as_str().ok_or("Unsupported literals encoding"))
+            .transpose()?
+            .unwrap_or("json");
+        let literals = match literal_encoding {
+            "json" => match json_data.get("literals") {
+                Some(literals) => Vec::<Value>::deserialize(literals)
+                    .map_err(|error| format!("Literals deserialization failed: {error}"))?,
+                None => Vec::new(),
+            },
+            "binary-value-v1" => {
+                let literals = json_data
+                    .get("literals")
+                    .ok_or("Missing literals section")?;
+                binaries_to_values(
+                    Vec::<BinaryValue>::deserialize(literals)
+                        .map_err(|error| format!("Literals deserialization failed: {error}"))?,
+                )?
+            }
+            _ => return Err("Unsupported literals encoding".into()),
+        };
 
         let builtin_info_table: Vec<BuiltinInfo> = json_data
             .get("builtin_info_table")
@@ -236,5 +274,91 @@ impl Program {
         }
 
         Ok(program)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use anyhow::{ensure, Result};
+
+    #[test]
+    fn deep_set_json_preserves_typed_literals() -> Result<()> {
+        let mut program = Program::new();
+        program.instructions = vec![Instruction::ObjectDeepSet { params_index: 0 }];
+        let mut object = Value::new_object();
+        object
+            .as_object_mut()?
+            .insert(Value::Bool(false), Value::Null);
+        object.as_object_mut()?.insert(
+            Value::from_array(vec![Value::from("key")]),
+            Value::from_set(alloc::collections::BTreeSet::from([Value::Undefined])),
+        );
+        program.literals = vec![
+            Value::Undefined,
+            Value::Null,
+            Value::Bool(false),
+            Value::from("<undefined>"),
+            object,
+        ];
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let restored = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+        ensure!(restored.literals == program.literals);
+
+        program.instructions.clear();
+        let mut rule = RuleInfo::new(
+            "empty".into(),
+            crate::rvm::program::RuleType::PartialObject,
+            crate::Rc::new(vec![]),
+            0,
+            1,
+        );
+        rule.default_literal_index = Some(0);
+        program.rule_infos.push(rule);
+        let empty_json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let empty_restored = Program::deserialize_json(&empty_json).map_err(anyhow::Error::msg)?;
+        ensure!(empty_restored.literals == program.literals);
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_json_literals_remain_readable() -> Result<()> {
+        let mut program = Program::new();
+        program.literals = vec![Value::Null, Value::Bool(false), Value::from("<undefined>")];
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let mut json: serde_json::Value = serde_json::from_str(&json)?;
+        json.as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("expected JSON program object"))?
+            .remove("literals_encoding");
+        let restored = Program::deserialize_json(&serde_json::to_string(&json)?)
+            .map_err(anyhow::Error::msg)?;
+        ensure!(restored.literals == program.literals);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_json_literal_encodings_are_errors() -> Result<()> {
+        let mut program = Program::new();
+        program.instructions = vec![Instruction::ObjectDeepSet { params_index: 0 }];
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let json: serde_json::Value = serde_json::from_str(&json)?;
+        for (field, invalid) in [
+            ("literals_encoding", serde_json::json!("future-encoding")),
+            ("literals_encoding", serde_json::json!(false)),
+            ("literals", serde_json::json!(["UnknownVariant"])),
+            (
+                "literals",
+                serde_json::json!([{"NumberF64": "not a number"}]),
+            ),
+        ] {
+            let mut corrupt = json.clone();
+            corrupt
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("expected JSON program object"))?
+                .insert(field.into(), invalid);
+            ensure!(Program::deserialize_json(&serde_json::to_string(&corrupt)?).is_err());
+        }
+        Ok(())
     }
 }

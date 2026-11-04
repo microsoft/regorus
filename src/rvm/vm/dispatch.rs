@@ -4,6 +4,7 @@
 use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
+use alloc::format;
 use alloc::vec::Vec;
 use core::mem;
 
@@ -463,6 +464,44 @@ impl RegoVM {
                         pc: self.pc,
                     });
                 }
+                Ok(InstructionOutcome::Continue)
+            }
+            ObjectDeepSet { params_index } => {
+                let params = program
+                    .instruction_data
+                    .get_object_deep_set_params(params_index)
+                    .ok_or(VmError::InvalidObjectDeepSetParams {
+                        index: params_index,
+                        pc: self.pc,
+                        available: program.instruction_data.object_deep_set_params.len(),
+                    })?;
+
+                if params.keys.is_empty() || params.depth() > Program::MAX_PATH_DEPTH {
+                    return Err(VmError::InvalidObjectDeepSetPath {
+                        depth: params.depth(),
+                        max_depth: Program::MAX_PATH_DEPTH,
+                        pc: self.pc,
+                    });
+                }
+
+                let key_values: alloc::vec::Vec<Value> = params
+                    .keys
+                    .iter()
+                    .map(|&k| self.get_register(k).cloned())
+                    .collect::<core::result::Result<_, _>>()?;
+                let leaf_value = self.get_register(params.value)?.clone();
+                if leaf_value == Value::Undefined || key_values.contains(&Value::Undefined) {
+                    return Ok(InstructionOutcome::Continue);
+                }
+                let multi_value = params.multi_value;
+                let obj = params.obj;
+
+                let mut root = self.take_register(obj)?;
+                let result =
+                    self.object_deep_set(&mut root, &key_values, leaf_value, multi_value, obj);
+                self.set_register(obj, root)?;
+                result?;
+                self.check_initial_memory_limit()?;
                 Ok(InstructionOutcome::Continue)
             }
             ObjectCreate { params_index } => {
@@ -1173,5 +1212,353 @@ impl RegoVM {
                 pc: self.pc,
             }),
         }
+    }
+
+    fn object_deep_set(
+        &mut self,
+        current: &mut Value,
+        key_values: &[Value],
+        leaf_value: Value,
+        multi_value: bool,
+        obj_register: u8,
+    ) -> Result<()> {
+        let Some((first_key, remaining_keys)) = key_values.split_first() else {
+            return Err(VmError::Internal {
+                message: alloc::string::String::from("ObjectDeepSet requires a non-empty key path"),
+                pc: self.pc,
+            });
+        };
+
+        let object = match current.as_object_mut() {
+            Ok(obj) => obj,
+            Err(_) => {
+                return Err(VmError::InvalidObjectDeepSetRoot {
+                    register: obj_register,
+                    value: current.clone(),
+                    pc: self.pc,
+                });
+            }
+        };
+
+        if remaining_keys.is_empty() {
+            if multi_value {
+                let leaf = object.get_or_insert_with(first_key.clone(), Value::new_set);
+
+                if !matches!(leaf, Value::Set(_)) {
+                    return Err(VmError::ObjectKeyConflict {
+                        key: first_key.clone(),
+                        pc: self.pc,
+                    });
+                }
+                let set = leaf.as_set_mut().map_err(|error| VmError::Internal {
+                    message: format!("cannot access object deep set leaf: {error}"),
+                    pc: self.pc,
+                })?;
+                set.insert(leaf_value);
+            } else {
+                if let Some(previous) = object.get(first_key) {
+                    if *previous != leaf_value {
+                        return Err(VmError::ObjectKeyConflict {
+                            key: first_key.clone(),
+                            pc: self.pc,
+                        });
+                    }
+                } else {
+                    object.insert(first_key.clone(), leaf_value);
+                }
+            }
+            self.check_initial_memory_limit()?;
+            return Ok(());
+        }
+
+        let child = object.get_or_insert_with(first_key.clone(), Value::new_object);
+
+        if !matches!(child, Value::Object(_)) {
+            return Err(VmError::ObjectKeyConflict {
+                key: first_key.clone(),
+                pc: self.pc,
+            });
+        }
+
+        self.check_initial_memory_limit()?;
+        self.object_deep_set(child, remaining_keys, leaf_value, multi_value, obj_register)
+    }
+}
+
+#[cfg(test)]
+mod object_deep_set_tests {
+    use super::{Instruction, Program, RegoVM, Value, VmError};
+    use crate::rvm::instructions::ObjectDeepSetParams;
+    use crate::rvm::vm::ExecutionMode;
+    use alloc::sync::Arc;
+    use alloc::vec;
+    use anyhow::{ensure, Result};
+
+    fn deep_set_program(depth: usize, multi_value: bool) -> Program {
+        let mut program = Program::new();
+        program.dispatch_window_size = 3;
+        program.literals = vec![Value::new_object(), Value::from("key"), Value::from(1)];
+        program
+            .instruction_data
+            .add_object_deep_set_params(ObjectDeepSetParams {
+                obj: 0,
+                keys: vec![1; depth],
+                value: 2,
+                multi_value,
+            });
+        program.instructions = vec![
+            Instruction::Load {
+                dest: 0,
+                literal_idx: 0,
+            },
+            Instruction::Load {
+                dest: 1,
+                literal_idx: 1,
+            },
+            Instruction::Load {
+                dest: 2,
+                literal_idx: 2,
+            },
+            Instruction::ObjectDeepSet { params_index: 0 },
+            Instruction::Return { value: 0 },
+        ];
+        program
+    }
+
+    #[test]
+    fn object_deep_set_enforces_exact_path_depth_boundary() -> Result<()> {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let program = deep_set_program(Program::MAX_PATH_DEPTH, false);
+            ensure!(program.validate_limits().is_ok());
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(Arc::new(program));
+            let result = vm.execute()?;
+            let mut leaf = &result;
+            for _ in 0..Program::MAX_PATH_DEPTH {
+                leaf = leaf
+                    .as_object()?
+                    .get(&Value::from("key"))
+                    .ok_or_else(|| anyhow::anyhow!("missing key in deepest supported path"))?;
+            }
+            ensure!(*leaf == Value::from(1));
+
+            for depth in [0, Program::MAX_PATH_DEPTH.saturating_add(1)] {
+                let invalid_program = deep_set_program(depth, false);
+                ensure!(invalid_program.validate_limits().is_err());
+                let mut invalid_vm = RegoVM::new();
+                invalid_vm.set_execution_mode(mode);
+                invalid_vm.load_program(Arc::new(invalid_program));
+                ensure!(matches!(
+                    invalid_vm.execute(),
+                    Err(VmError::InvalidObjectDeepSetPath { depth: actual, .. }) if actual == depth
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn object_deep_set_json_round_trip_retains_parameters_and_behavior() -> Result<()> {
+        for multi_value in [false, true] {
+            let original = deep_set_program(2, multi_value);
+            let json = original.serialize_json().map_err(anyhow::Error::msg)?;
+            let restored = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+            ensure!(restored.instruction_data.object_deep_set_params.len() == 1);
+            let mut original_vm = RegoVM::new();
+            original_vm.load_program(Arc::new(original));
+            let mut restored_vm = RegoVM::new();
+            restored_vm.load_program(Arc::new(restored));
+            ensure!(original_vm.execute()? == restored_vm.execute()?);
+        }
+        let json = Program::new()
+            .serialize_json()
+            .map_err(anyhow::Error::msg)?;
+        let mut json: serde_json::Value = serde_json::from_str(&json)?;
+        json.get_mut("instruction_data")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| anyhow::anyhow!("missing instruction data"))?
+            .remove("object_deep_set_params");
+        let restored = Program::deserialize_json(&serde_json::to_string(&json)?)
+            .map_err(anyhow::Error::msg)?;
+        ensure!(restored.instruction_data.object_deep_set_params.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn object_deep_set_operand_errors_are_fatal() -> Result<()> {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut invalid_root = deep_set_program(1, false);
+            let root = invalid_root
+                .literals
+                .first_mut()
+                .ok_or_else(|| anyhow::anyhow!("missing root literal"))?;
+            *root = Value::Null;
+            let mut invalid_register = deep_set_program(1, false);
+            let params = invalid_register
+                .instruction_data
+                .object_deep_set_params
+                .first_mut()
+                .ok_or_else(|| anyhow::anyhow!("missing object deep set parameters"))?;
+            params.keys = vec![u8::MAX];
+            for program in [invalid_root, invalid_register] {
+                for inside_rule in [false, true] {
+                    let mut program = program.clone();
+                    if inside_rule {
+                        *program
+                            .instructions
+                            .last_mut()
+                            .ok_or_else(|| anyhow::anyhow!("missing rule return"))? =
+                            Instruction::RuleReturn {};
+                        let mut instructions = vec![
+                            Instruction::CallRule {
+                                dest: 0,
+                                rule_index: 0,
+                            },
+                            Instruction::Return { value: 0 },
+                            Instruction::RuleInit {
+                                result_reg: 0,
+                                rule_index: 0,
+                            },
+                        ];
+                        instructions.extend(program.instructions);
+                        program.instructions = instructions;
+                        program.max_rule_window_size = 3;
+                        program.rule_infos.push(crate::rvm::program::RuleInfo::new(
+                            "test".into(),
+                            crate::rvm::program::RuleType::PartialObject,
+                            crate::Rc::new(vec![vec![2]]),
+                            0,
+                            3,
+                        ));
+                    }
+                    let mut vm = RegoVM::new();
+                    vm.set_execution_mode(mode);
+                    vm.load_program(Arc::new(program));
+                    let error = vm
+                        .execute()
+                        .err()
+                        .ok_or_else(|| anyhow::anyhow!("invalid operands must fail"))?;
+                    ensure!(matches!(
+                        error,
+                        VmError::InvalidObjectDeepSetRoot { .. }
+                            | VmError::RegisterIndexOutOfBounds { .. }
+                    ));
+                    ensure!(RegoVM::is_fatal_vm_error(&error));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    #[test]
+    fn object_deep_set_enforces_memory_budget_during_accumulation() -> Result<()> {
+        use crate::MemoryBudgetConfig;
+        use core::num::NonZeroU64;
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for multi_value in [false, true] {
+                let mut program = deep_set_program(
+                    if multi_value {
+                        2
+                    } else {
+                        Program::MAX_PATH_DEPTH
+                    },
+                    multi_value,
+                );
+                if multi_value {
+                    program.instructions = vec![
+                        Instruction::Load {
+                            dest: 0,
+                            literal_idx: 0,
+                        },
+                        Instruction::Load {
+                            dest: 1,
+                            literal_idx: 1,
+                        },
+                    ];
+                    for value in 0..256_i64 {
+                        let literal_idx = u16::try_from(program.literals.len())?;
+                        program.literals.push(Value::from(value));
+                        program.instructions.extend([
+                            Instruction::Load {
+                                dest: 2,
+                                literal_idx,
+                            },
+                            Instruction::ObjectDeepSet { params_index: 0 },
+                        ]);
+                    }
+                    program.instructions.push(Instruction::Return { value: 0 });
+                }
+                let program = Arc::new(program);
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+                    limit: NonZeroU64::new(2048)
+                        .ok_or_else(|| anyhow::anyhow!("invalid test memory budget"))?,
+                }));
+                let error = vm
+                    .execute()
+                    .err()
+                    .ok_or_else(|| anyhow::anyhow!("object deep set exceeded no memory budget"))?;
+                let VmError::MemoryBudgetExceeded { pc, .. } = error else {
+                    anyhow::bail!("unexpected error: {error}");
+                };
+                ensure!(
+                    matches!(
+                        program.instructions.get(pc),
+                        Some(Instruction::ObjectDeepSet { .. })
+                    ),
+                    "budget was exhausted before object deep set at pc {pc}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn object_deep_set_preserves_existing_instruction_discriminants() -> Result<()> {
+        ensure!(
+            postcard::to_allocvec(&Instruction::ObjectSet {
+                obj: 0,
+                key: 1,
+                value: 2
+            })? == vec![28, 0, 1, 2]
+        );
+        ensure!(
+            postcard::to_allocvec(&Instruction::ObjectCreate { params_index: 7 })? == vec![29, 7]
+        );
+        ensure!(
+            postcard::to_allocvec(&Instruction::CallRule {
+                dest: 3,
+                rule_index: 5
+            })? == vec![48, 3, 5]
+        );
+        ensure!(
+            postcard::to_allocvec(&Instruction::ObjectDeepSet { params_index: 0 })? == vec![62, 0]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn object_deep_set_listings_show_keys_and_accumulation_mode() -> Result<()> {
+        use crate::rvm::{
+            generate_assembly_listing, generate_tabular_assembly_listing, AssemblyListingConfig,
+        };
+
+        let config = AssemblyListingConfig::default();
+        for multi_value in [false, true] {
+            let program = deep_set_program(2, multi_value);
+            let expected = if multi_value {
+                "r0[r1][r1] ∪= r2"
+            } else {
+                "r0[r1][r1] ← r2"
+            };
+            ensure!(generate_assembly_listing(&program, &config).contains(expected));
+            ensure!(generate_tabular_assembly_listing(&program, &config).contains(expected));
+        }
+        Ok(())
     }
 }

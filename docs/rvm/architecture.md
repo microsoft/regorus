@@ -87,7 +87,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `6`).
+  `7`).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper
@@ -99,18 +99,32 @@ version:
   program is reconstructed.
 
 During deserialization the loader checks the header, section lengths, version,
-and boolean `rego_v0` flag before decoding each section. For the current format,
-decode failures, unconsumed bytes within a section, and bytes after the program
-core are errors, not empty defaults or `DeserializationResult::Partial`.
+and boolean `rego_v0` flag before decoding each section. For supported executable
+formats, decode failures, unconsumed bytes within a section, and bytes after the
+program core are errors, not empty defaults or `DeserializationResult::Partial`.
 The assembled program must also satisfy `Program::validate_limits`; this checks
 supported table bounds, not full bytecode semantic validity.
 
-Legacy versions and unresolved builtins retain the
+Versions 1 through 5 and unresolved builtins retain the
 `DeserializationResult::Partial` recompilation path. Legacy results may not
 contain policy sources, so callers must retain the original sources for
-recompilation. Successful current-version loads initialize resolved builtins.
+recompilation. Successful executable-format loads initialize resolved builtins.
 `Program::can_deserialize` only checks the magic and supported version; it is
 not an integrity check and does not replace `Program::deserialize_binary`.
+
+Format 7 adds `ObjectDeepSet` parameters for nested and set-valued partial
+objects. Existing instruction discriminants remain unchanged. Compatible
+format 6 artifacts remain executable: their instruction-data layout is
+upgraded with an empty new parameter table while retaining their original
+instructions, artifacts, and language flag. Engines that support only format 6
+reject format 7 rather than interpreting incompatible bytecode.
+
+JSON programs containing `ObjectDeepSet` or partial-object empty-result templates use
+`"literals_encoding": "binary-value-v1"` and the tagged `BinaryValue`
+representation, preserving Undefined, sets, and non-string object keys in templates and
+other literals. Other programs retain plain JSON literals
+(`"json"`). JSON without an encoding field retains the legacy plain format;
+unknown encodings and malformed literal payloads are errors.
 
 ---
 

@@ -8,6 +8,11 @@ use postcard::{take_from_bytes, to_allocvec};
 use serde::de::DeserializeOwned;
 
 use super::{DeserializationResult, Program};
+use crate::rvm::instructions::{
+    ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
+    FunctionCallParams, Instruction, LoopStartParams, ObjectCreateParams, SetCreateParams,
+    VirtualDataDocumentLookupParams,
+};
 
 use super::value::{
     binaries_to_values, binary_to_value, BinaryValue, BinaryValueRef, BinaryValueSlice,
@@ -167,7 +172,7 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            6 | 7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -216,7 +221,7 @@ impl Program {
                     "Sources",
                 )?;
 
-                // Current-version decode failures are corruption, not a legacy format.
+                // Supported-version decode failures are corruption, not a legacy format.
                 let literals = binaries_to_values(Self::deserialize_section::<Vec<BinaryValue>>(
                     Self::get_slice(data, literals_start, rule_tree_start)?,
                     "Literals",
@@ -225,10 +230,15 @@ impl Program {
                     Self::get_slice(data, rule_tree_start, binary_len_start)?,
                     "Rule tree",
                 )?)?;
-                let mut program = Self::deserialize_section::<Program>(
-                    Self::get_slice(data, binary_start, binary_end)?,
-                    "Program structure",
-                )?;
+                let core = Self::get_slice(data, binary_start, binary_end)?;
+                let upgraded;
+                let core = if version == 6 {
+                    upgraded = Self::upgrade_format_six_core(core)?;
+                    upgraded.as_slice()
+                } else {
+                    core
+                };
+                let mut program = Self::deserialize_section::<Program>(core, "Program structure")?;
 
                 program.entry_points = entry_points;
                 program.sources = sources;
@@ -256,6 +266,42 @@ impl Program {
         }
     }
 
+    fn upgrade_format_six_core(core: &[u8]) -> Result<Vec<u8>, String> {
+        type LegacyInstructionData = (
+            Vec<LoopStartParams>,
+            Vec<BuiltinCallParams>,
+            Vec<FunctionCallParams>,
+            Vec<ObjectCreateParams>,
+            Vec<ArrayCreateParams>,
+            Vec<SetCreateParams>,
+            Vec<VirtualDataDocumentLookupParams>,
+            Vec<ChainedIndexParams>,
+            Vec<ComprehensionBeginParams>,
+        );
+        let (instructions, remaining) = postcard::take_from_bytes::<Vec<Instruction>>(core)
+            .map_err(|error| format!("Format-six instructions deserialization failed: {error}"))?;
+        if instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::ObjectDeepSet { .. }))
+        {
+            return Err("ObjectDeepSet is not valid in format six".into());
+        }
+        drop(instructions);
+        let (_, remaining) = postcard::take_from_bytes::<LegacyInstructionData>(remaining)
+            .map_err(|error| format!("Format-six parameters deserialization failed: {error}"))?;
+        let split = core
+            .len()
+            .checked_sub(remaining.len())
+            .ok_or("Offset overflow")?;
+        let mut upgraded = Vec::with_capacity(core.len().checked_add(1).ok_or("Size overflow")?);
+        upgraded.extend_from_slice(Self::get_slice(core, 0, split)?);
+        // The new parameter table is appended; existing opcode ordinals and
+        // every other core field retain their format-six encoding.
+        upgraded.push(0);
+        upgraded.extend_from_slice(remaining);
+        Ok(upgraded)
+    }
+
     /// Check if data can be deserialized without actually deserializing
     pub fn can_deserialize(data: &[u8]) -> Result<bool, String> {
         if data.len() < 8 {
@@ -270,7 +316,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=Self::SERIALIZATION_VERSION) => Ok(true),
             _ => Ok(false),
         }
     }
@@ -281,6 +327,150 @@ impl Program {
             2..=5 => data.get(24).map(|value| *value != 0),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::{DeserializationResult, Program};
+    use crate::rvm::instructions::Instruction;
+    use crate::rvm::program::SourceFile;
+    use crate::value::Value;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use anyhow::{ensure, Result};
+
+    fn format_six_binary(original: &Program) -> Result<Vec<u8>> {
+        let mut binary = original.serialize_binary().map_err(anyhow::Error::msg)?;
+        let mut payload_start = 25_usize;
+        for offset in [8, 12, 16, 20] {
+            payload_start = payload_start.saturating_add(
+                Program::read_u32_as_usize(&binary, offset).map_err(anyhow::Error::msg)?,
+            );
+        }
+        let payload_len = Program::read_u32(&binary, payload_start).map_err(anyhow::Error::msg)?;
+        let instructions_len = postcard::to_allocvec(&original.instructions)?.len();
+        let params_len = postcard::to_allocvec(&original.instruction_data)?.len();
+        let table_offset = payload_start
+            .saturating_add(4)
+            .saturating_add(instructions_len)
+            .saturating_add(params_len.saturating_sub(1));
+        ensure!(binary.get(table_offset) == Some(&0));
+        // Format 6 lacks the appended empty ObjectDeepSet parameter table.
+        let suffix = binary
+            .get(table_offset.saturating_add(1)..)
+            .ok_or_else(|| anyhow::anyhow!("missing format-six payload suffix"))?
+            .to_vec();
+        binary.truncate(table_offset);
+        binary.extend_from_slice(&suffix);
+        binary
+            .get_mut(4..8)
+            .ok_or_else(|| anyhow::anyhow!("missing version"))?
+            .copy_from_slice(&6_u32.to_le_bytes());
+        binary
+            .get_mut(payload_start..payload_start.saturating_add(4))
+            .ok_or_else(|| anyhow::anyhow!("missing payload length"))?
+            .copy_from_slice(&payload_len.saturating_sub(1).to_le_bytes());
+        Ok(binary)
+    }
+
+    #[test]
+    fn format_six_preserves_artifacts_and_execution_data() -> Result<()> {
+        let mut original = Program::new();
+        original.rego_v0 = true;
+        original.entry_points.insert("data.test.result".into(), 0);
+        original.sources.push(SourceFile::new(
+            "test.rego".into(),
+            "package test\nresult = true".into(),
+        ));
+        original.literals = vec![Value::Bool(true)];
+        original.instructions = vec![Instruction::LoadBool {
+            dest: 0,
+            value: true,
+        }];
+        original.rule_tree = Value::from_json_str(r#"{"test":{"result":0}}"#)?;
+        let binary = format_six_binary(&original)?;
+
+        ensure!(Program::can_deserialize(&binary).map_err(anyhow::Error::msg)?);
+        let DeserializationResult::Complete(restored) =
+            Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)?
+        else {
+            anyhow::bail!("compatible format-six execution data must remain executable");
+        };
+        ensure!(!restored.needs_recompilation());
+        ensure!(restored.rego_v0);
+        ensure!(restored.entry_points == original.entry_points);
+        ensure!(restored.sources.len() == 1);
+        ensure!(
+            restored.sources.first().map(|source| &source.content)
+                == original.sources.first().map(|source| &source.content)
+        );
+        ensure!(restored.literals == original.literals);
+        ensure!(restored.rule_tree == original.rule_tree);
+        ensure!(
+            postcard::to_allocvec(&restored.instructions)?
+                == postcard::to_allocvec(&original.instructions)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn format_six_rejects_trailing_data_and_noncanonical_flags() -> Result<()> {
+        let binary = format_six_binary(&Program::new())?;
+        let mut trailing = binary.clone();
+        trailing.push(0);
+        ensure!(Program::deserialize_binary(&trailing).is_err());
+        let mut invalid_flag = binary;
+        *invalid_flag
+            .get_mut(24)
+            .ok_or_else(|| anyhow::anyhow!("missing flag"))? = 2;
+        ensure!(Program::deserialize_binary(&invalid_flag).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn format_six_requires_exact_section_consumption() -> Result<()> {
+        let binary = format_six_binary(&Program::new())?;
+        let mut end = 25_usize;
+        for length_offset in [8, 12, 16, 20] {
+            let length = Program::read_u32(&binary, length_offset).map_err(anyhow::Error::msg)?;
+            end = end
+                .checked_add(usize::try_from(length)?)
+                .ok_or_else(|| anyhow::anyhow!("section offset overflow"))?;
+            let mut corrupt = binary.clone();
+            corrupt.insert(end, 0x99);
+            let increased = length
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("section length overflow"))?;
+            corrupt
+                .get_mut(length_offset..length_offset.saturating_add(4))
+                .ok_or_else(|| anyhow::anyhow!("missing length"))?
+                .copy_from_slice(&increased.to_le_bytes());
+            ensure!(Program::deserialize_binary(&corrupt).is_err());
+        }
+        let mut corrupt = binary.clone();
+        corrupt.push(0x99);
+        let core_length = Program::read_u32(&binary, end).map_err(anyhow::Error::msg)?;
+        corrupt
+            .get_mut(end..end.saturating_add(4))
+            .ok_or_else(|| anyhow::anyhow!("missing core length"))?
+            .copy_from_slice(
+                &core_length
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("core length overflow"))?
+                    .to_le_bytes(),
+            );
+        ensure!(Program::deserialize_binary(&corrupt).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn format_six_rejects_new_instruction_ordinals() -> Result<()> {
+        let mut program = Program::new();
+        program.instructions = vec![Instruction::ObjectDeepSet { params_index: 0 }];
+        let binary = format_six_binary(&program)?;
+        ensure!(Program::deserialize_binary(&binary).is_err());
+        Ok(())
     }
 }
 

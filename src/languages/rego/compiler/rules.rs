@@ -37,6 +37,78 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn extract_ref_key_exprs(
+        &self,
+        refr: &Expr,
+        rule_path: &str,
+        module_index: u32,
+    ) -> Result<Vec<ExprRef>> {
+        let mut keys = Vec::new();
+        let mut current = refr;
+        loop {
+            match current {
+                Expr::RefBrack {
+                    refr: inner, index, ..
+                } => {
+                    keys.push(index.clone());
+                    current = inner.as_ref();
+                }
+                Expr::RefDot {
+                    refr: inner, field, ..
+                } => {
+                    let field_expr = ExprRef::new(Expr::String {
+                        span: field.0.clone(),
+                        value: field.1.clone(),
+                        eidx: 0,
+                    });
+                    keys.push(field_expr);
+                    current = inner.as_ref();
+                }
+                _ => break,
+            }
+        }
+        keys.reverse();
+
+        let module = self
+            .policy
+            .get_modules()
+            .get(module_index as usize)
+            .ok_or_else(|| CompilerError::General {
+                message: format!("missing module {module_index} for rule '{rule_path}'"),
+            })?;
+        let package_components = crate::utils::get_rule_path_components(&module.package.refr)
+            .map_err(|error| CompilerError::General {
+                message: error.to_string(),
+            })?;
+        let path_components = self
+            .policy
+            .inner
+            .rule_path_components
+            .get(rule_path)
+            .ok_or_else(|| CompilerError::General {
+                message: format!("missing components for registered rule path '{rule_path}'"),
+            })?;
+        let prefix_len = package_components.len().saturating_add(2);
+        let mut consumed = 0;
+        // Static components already represented by this rule's path must not
+        // be inserted again into its result. Dynamic keys remain in the yield.
+        for (key, component) in keys.iter().zip(path_components.iter().skip(prefix_len)) {
+            match key.as_ref() {
+                Expr::String {
+                    value: Value::String(value),
+                    ..
+                }
+                | Expr::RawString {
+                    value: Value::String(value),
+                    ..
+                } if value.as_ref() == component => consumed += 1,
+                _ => break,
+            }
+        }
+        keys.drain(..consumed);
+        Ok(keys)
+    }
+
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
@@ -53,23 +125,39 @@ impl<'a> Compiler<'a> {
         let rule_types: BTreeSet<RuleType> = definitions
             .iter()
             .map(|def| {
-                if let Rule::Spec { head, .. } = def.as_ref() {
+                let rule_type = if let Rule::Spec { head, .. } = def.as_ref() {
                     match head {
-                        RuleHead::Set { .. } => RuleType::PartialSet,
+                        RuleHead::Set { refr, .. } => {
+                            let module_index = self.find_module_index_for_rule(def)?;
+                            if !self
+                                .extract_ref_key_exprs(refr, rule_path, module_index)?
+                                .is_empty()
+                            {
+                                RuleType::PartialObject
+                            } else {
+                                RuleType::PartialSet
+                            }
+                        }
                         RuleHead::Compr { refr, assign, .. } => match refr.as_ref() {
                             crate::ast::Expr::RefBrack { .. } if assign.is_some() => {
                                 RuleType::PartialObject
                             }
                             crate::ast::Expr::RefBrack { .. } => RuleType::PartialObject,
+                            crate::ast::Expr::RefDot { .. }
+                                if Self::has_dynamic_bracket_prefix(refr) =>
+                            {
+                                RuleType::PartialObject
+                            }
                             _ => RuleType::Complete,
                         },
                         _ => RuleType::Complete,
                     }
                 } else {
                     RuleType::Complete
-                }
+                };
+                Ok(rule_type)
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         if rule_types.len() > 1 {
             return Err(CompilerError::General {
@@ -89,6 +177,63 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    pub(super) fn partial_object_empty_result(&self, rule_path: &str) -> Result<Value> {
+        let definitions =
+            self.policy
+                .inner
+                .rules
+                .get(rule_path)
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("missing definitions for partial object '{rule_path}'"),
+                })?;
+        let mut empty = Value::Undefined;
+        for definition in definitions {
+            let Rule::Spec { head, .. } = definition.as_ref() else {
+                continue;
+            };
+            let (refr, is_set) = match head {
+                RuleHead::Compr { refr, .. } => (refr, false),
+                RuleHead::Set { refr, .. } => (refr, true),
+                RuleHead::Func { .. } => continue,
+            };
+            let keys = self.extract_ref_key_exprs(
+                refr,
+                rule_path,
+                self.find_module_index_for_rule(definition)?,
+            )?;
+            let prefix = if is_set {
+                keys.as_slice()
+            } else {
+                keys.split_last().map_or(&[][..], |(_, prefix)| prefix)
+            };
+            let mut contribution = if is_set {
+                Value::new_set()
+            } else {
+                Value::new_object()
+            };
+            for key in prefix.iter().rev() {
+                let Some(key) = super::expressions::try_eval_const(key.as_ref()) else {
+                    contribution = Value::Undefined;
+                    break;
+                };
+                let mut parent = Value::new_object();
+                parent
+                    .as_object_mut()
+                    .map_err(CompilerError::from)?
+                    .insert(key, contribution);
+                contribution = parent;
+            }
+            if empty == Value::Undefined {
+                empty = contribution;
+            } else if contribution != Value::Undefined {
+                empty
+                    .deep_merge(contribution)
+                    .map_err(CompilerError::from)?;
+            }
+        }
+        Ok(empty)
+    }
+
     fn validate_partial_object_shape(&self, refr: &ExprRef) -> Result<()> {
         let Expr::RefBrack {
             refr: prefix,
@@ -99,23 +244,19 @@ impl<'a> Compiler<'a> {
             return Ok(());
         };
 
-        if Self::has_unsupported_bracket_prefix(prefix) {
-            return Err(CompilerError::PartialObjectNestedKeyUnsupported.at(refr.span()));
-        }
-
-        if Self::is_simple_literal(index) {
+        if !Self::has_dynamic_bracket_prefix(prefix) && Self::is_simple_literal(index) {
             return Err(CompilerError::PartialObjectConstantKeyUnsupported.at(index.span()));
         }
 
         Ok(())
     }
 
-    fn has_unsupported_bracket_prefix(expr: &ExprRef) -> bool {
+    fn has_dynamic_bracket_prefix(expr: &ExprRef) -> bool {
         match expr.as_ref() {
             Expr::RefBrack { refr, index, .. } => {
-                !Self::is_string_literal(index) || Self::has_unsupported_bracket_prefix(refr)
+                !Self::is_string_literal(index) || Self::has_dynamic_bracket_prefix(refr)
             }
-            Expr::RefDot { refr, .. } => Self::has_unsupported_bracket_prefix(refr),
+            Expr::RefDot { refr, .. } => Self::has_dynamic_bracket_prefix(refr),
             _ => false,
         }
     }
@@ -453,7 +594,7 @@ impl<'a> Compiler<'a> {
 
                     self.current_module_index = self.find_module_index_for_rule(rule_ref)?;
 
-                    let (key_expr, value_expr) = match head {
+                    let (key_expr, extra_key_exprs, multi_value, value_expr) = match head {
                         RuleHead::Compr { refr, assign, .. } => {
                             if rule_type == RuleType::PartialObject {
                                 self.validate_partial_object_shape(refr)?;
@@ -464,18 +605,43 @@ impl<'a> Compiler<'a> {
                                 .push(None);
 
                             let output_expr = assign.as_ref().map(|assign| assign.value.clone());
-                            let key_expr = match refr.as_ref() {
-                                Expr::RefBrack { index, .. } => Some(index.clone()),
-                                _ => None,
+                            let all_keys = if rule_type == RuleType::PartialObject {
+                                self.extract_ref_key_exprs(
+                                    refr,
+                                    rule_path,
+                                    self.current_module_index,
+                                )?
+                            } else {
+                                Vec::new()
                             };
-                            (key_expr, output_expr)
+                            let (first_key, rest_keys) = if all_keys.is_empty() {
+                                (None, Vec::new())
+                            } else {
+                                let mut keys = all_keys;
+                                let first = keys.remove(0);
+                                (Some(first), keys)
+                            };
+                            (first_key, rest_keys, false, output_expr)
                         }
-                        RuleHead::Set { key, .. } => {
+                        RuleHead::Set { refr, key, .. } => {
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);
 
-                            (None, key.clone())
+                            let all_keys = self.extract_ref_key_exprs(
+                                refr,
+                                rule_path,
+                                self.current_module_index,
+                            )?;
+                            if all_keys.is_empty() {
+                                // Simple set: `foo contains v`
+                                (None, Vec::new(), false, key.clone())
+                            } else {
+                                // Multi-value partial object: `foo[a] contains v`
+                                let mut keys = all_keys;
+                                let first = keys.remove(0);
+                                (Some(first), keys, true, key.clone())
+                            }
                         }
                         RuleHead::Func { assign, args, .. } => {
                             let mut param_names = Vec::new();
@@ -556,8 +722,10 @@ impl<'a> Compiler<'a> {
                             }
 
                             match assign {
-                                Some(assignment) => (None, Some(assignment.value.clone())),
-                                None => (None, None),
+                                Some(assignment) => {
+                                    (None, Vec::new(), false, Some(assignment.value.clone()))
+                                }
+                                None => (None, Vec::new(), false, None),
                             }
                         }
                     };
@@ -572,9 +740,12 @@ impl<'a> Compiler<'a> {
                         dest_register: result_register,
                         context_type: ContextType::Rule(rule_type.clone()),
                         key_expr,
+                        extra_key_exprs,
+                        multi_value,
                         value_expr,
                         span,
                         key_value_loops_hoisted: false,
+                        output_query: None,
                     };
                     self.push_context(context);
                     let mut body_entry_points = Vec::new();
@@ -597,7 +768,7 @@ impl<'a> Compiler<'a> {
                                 value_expr.span(),
                             );
 
-                            self.emit_context_yield()?;
+                            self.hoist_loops_and_emit_context_yield()?;
 
                             self.emit_instruction(Instruction::RuleReturn {}, value_expr.span());
                             self.pop_scope();
@@ -631,6 +802,8 @@ impl<'a> Compiler<'a> {
 
                             if let Some(context) = self.context_stack.last_mut() {
                                 context.value_expr = body_value_expr.clone();
+                                context.key_value_loops_hoisted = false;
+                                context.output_query = Some(body.query.qidx);
                             }
 
                             self.emit_instruction(
@@ -643,15 +816,8 @@ impl<'a> Compiler<'a> {
 
                             if !body.query.stmts.is_empty() {
                                 self.compile_query(&body.query)?;
-                            } else if let Some(value_expr) = body_value_expr.clone() {
-                                let value_reg = self.compile_rego_expr(&value_expr)?;
-                                self.emit_instruction(
-                                    Instruction::Move {
-                                        dest: result_register,
-                                        src: value_reg,
-                                    },
-                                    value_expr.span(),
-                                );
+                            } else {
+                                self.hoist_loops_and_emit_context_yield()?;
                             }
 
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);
