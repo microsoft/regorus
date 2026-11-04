@@ -61,6 +61,10 @@ pub struct ScopeContext {
 
     /// Shared set of module-level globals available in this scope
     pub module_globals: Option<crate::Rc<BTreeSet<String>>>,
+
+    /// Key and value variables of enclosing `every` quantifiers. A `some .. in`
+    /// in a nested scope may redeclare them, as in OPA.
+    pub quantifier_vars: BTreeSet<String>,
 }
 
 impl ScopeContext {
@@ -76,6 +80,7 @@ impl ScopeContext {
             key_expr: None,
             value_expr: None,
             module_globals: None,
+            quantifier_vars: BTreeSet::new(),
         }
     }
 
@@ -92,6 +97,7 @@ impl ScopeContext {
             key_expr: None,
             value_expr: None,
             module_globals: None,
+            quantifier_vars: BTreeSet::new(),
         }
     }
 
@@ -112,6 +118,7 @@ impl ScopeContext {
             key_expr,
             value_expr,
             module_globals: None,
+            quantifier_vars: BTreeSet::new(),
         }
     }
 
@@ -132,6 +139,7 @@ impl ScopeContext {
             key_expr,
             value_expr,
             module_globals: self.module_globals.clone(),
+            quantifier_vars: self.quantifier_vars.clone(),
         }
     }
 

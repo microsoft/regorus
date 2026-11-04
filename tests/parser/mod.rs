@@ -87,7 +87,8 @@ fn match_object(s: &Span, fields: &[(Span, Ref<Expr>, Ref<Expr>)], v: &Value) ->
     match &v["fields"].as_array() {
         Ok(a) => {
             my_assert_eq!(fields.len(), a.len(), "field length mismatch");
-            for (idx, (_, k, v)) in fields.iter().enumerate() {
+            for (idx, (span, k, v)) in fields.iter().enumerate() {
+                match_span_opt(span, &a[idx]["span"])?;
                 match_expr(k, &a[idx]["key"])?;
                 match_expr(v, &a[idx]["value"])?;
             }
@@ -809,6 +810,44 @@ fn yaml_test(file: &str) -> Result<()> {
 #[test_resources("tests/parser/**/*.yaml")]
 fn run(path: &str) {
     yaml_test(path).unwrap()
+}
+
+#[test]
+fn object_field_spans_start_at_their_key() -> Result<()> {
+    // Fields on the first line, on later lines, with the colon on a
+    // different line from the key, and with string and compound keys.
+    let rego = "{1: 2, x: 3,\n  4: 5,\n  6\n  : 7,\n  \"s\": 8, a.b: 9}";
+    let source = Source::from_contents("object.rego".to_string(), rego.to_string())?;
+    let mut parser = Parser::new(&source)?;
+    let expr = parser.parse_expr()?;
+    let Expr::Object { fields, .. } = &expr else {
+        bail!("expected an object, got {expr:?}");
+    };
+
+    let expected = [
+        (1, 2, "1: 2"),
+        (1, 8, "x: 3"),
+        (2, 3, "4: 5"),
+        (3, 3, "6\n  : 7"),
+        // String spans exclude the quotes.
+        (5, 4, "s\": 8"),
+        (5, 11, "a.b: 9"),
+    ];
+    assert_eq!(fields.len(), expected.len());
+    for ((span, key, _), (line, col, text)) in fields.iter().zip(expected) {
+        assert_eq!(
+            (span.line, span.col, span.text()),
+            (line, col, text),
+            "field span"
+        );
+        assert_eq!(
+            span.start,
+            key.span().start,
+            "field span must start at its key"
+        );
+    }
+
+    Ok(())
 }
 
 #[test]

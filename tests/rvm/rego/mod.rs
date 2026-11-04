@@ -17,6 +17,9 @@ use std::fs;
 use std::sync::Arc;
 use test_generator::test_resources;
 
+mod comprehension_failure_differential;
+mod every_binding_differential;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,
@@ -1335,6 +1338,90 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn keyed_membership_loaded_artifacts_preserve_pairs() -> Result<()> {
+    let entrypoint = "data.membership.result";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "membership.rego".into(),
+        "package membership\nresult := input.key, input.value in input.collection".into(),
+    )?;
+    let policy = engine.compile_with_entrypoint(&Rc::from(entrypoint))?;
+    let program = Compiler::compile_from_policy(&policy, &[entrypoint])?;
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;
+    let binary = program.serialize_binary().map_err(anyhow::Error::msg)?;
+    let binary_program = match Program::deserialize_binary(&binary).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => program,
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("membership program needs recompilation")
+        }
+    };
+    let mut numeric_object = Value::new_object();
+    numeric_object
+        .as_object_mut()?
+        .insert(Value::from(7), Value::Bool(false));
+    for (artifact, program) in [
+        ("JSON", Arc::new(json_program)),
+        ("binary", Arc::new(binary_program)),
+    ] {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for (collection, key, value, expected) in [
+                (
+                    Value::from_json_str(r#"{"alice":"admin","bob":"user"}"#)?,
+                    Value::from("alice"),
+                    Value::from("admin"),
+                    true,
+                ),
+                (
+                    Value::from_json_str(r#"{"alice":"admin","bob":"user"}"#)?,
+                    Value::from("bob"),
+                    Value::from("admin"),
+                    false,
+                ),
+                (
+                    Value::from_json_str(r#"{"alice":"admin","bob":"user"}"#)?,
+                    Value::from("missing"),
+                    Value::from("admin"),
+                    false,
+                ),
+                (
+                    numeric_object.clone(),
+                    Value::from(7),
+                    Value::Bool(false),
+                    true,
+                ),
+                (
+                    numeric_object.clone(),
+                    Value::from("7"),
+                    Value::Bool(false),
+                    false,
+                ),
+            ] {
+                let mut input = Value::new_object();
+                let fields = input.as_object_mut()?;
+                fields.insert(Value::from("collection"), collection);
+                fields.insert(Value::from("key"), key);
+                fields.insert(Value::from("value"), value);
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_strict_builtin_errors(false);
+                vm.set_execution_mode(mode);
+                vm.set_input(input);
+                let expected = Value::Bool(expected);
+                assert_eq!(vm.execute()?, expected, "{artifact}, {mode:?}");
+                if mode == ExecutionMode::Suspendable {
+                    assert!(matches!(
+                        vm.execution_state(),
+                        ExecutionState::Completed { result } if result == &expected
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
