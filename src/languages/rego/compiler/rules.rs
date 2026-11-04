@@ -17,7 +17,7 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::rvm::program::{Program, RuleType};
 use crate::rvm::Instruction;
-use crate::utils::{format_string_path, get_path_string};
+use crate::utils::{format_string_path, get_path_string, get_rule_path_components, PathComponent};
 use crate::Map;
 use crate::{CompiledPolicy, Value};
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -264,6 +264,7 @@ impl<'a> Compiler<'a> {
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
+        compiler.validate_default_rule_paths()?;
         for &(name, arg_count) in host_await_builtins {
             compiler.register_host_await_builtin(name, arg_count)?;
         }
@@ -313,6 +314,58 @@ impl<'a> Compiler<'a> {
 
         let program = Arc::new(compiler.finish()?);
         Ok(program)
+    }
+
+    fn validate_default_rule_paths(&self) -> Result<()> {
+        let mut defaults = BTreeMap::new();
+        for module in self.policy.get_modules() {
+            for rule in &module.policy {
+                if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                    if !args.is_empty() {
+                        continue;
+                    }
+                    let mut components = get_rule_path_components(&module.package.refr)
+                        .map_err(CompilerError::from)?;
+                    components.extend(get_rule_path_components(refr).map_err(CompilerError::from)?);
+                    let path: Vec<Value> = components
+                        .into_iter()
+                        .map(|component| match component {
+                            PathComponent::String(key) => Ok(Value::from(key)),
+                            PathComponent::Raw(key) => match key.as_str() {
+                                "true" => Ok(Value::Bool(true)),
+                                "false" => Ok(Value::Bool(false)),
+                                "null" => Ok(Value::Null),
+                                _ => key
+                                    .parse::<crate::number::Number>()
+                                    .map(Value::Number)
+                                    .map_err(|_| {
+                                        CompilerError::General {
+                                            message: format!(
+                                                "invalid default path component '{key}'"
+                                            ),
+                                        }
+                                        .at(refr.span())
+                                    }),
+                            },
+                        })
+                        .collect::<Result<_>>()?;
+                    defaults.entry(path).or_insert(rule);
+                }
+            }
+        }
+
+        let mut previous: Option<&Vec<Value>> = None;
+        for (path, rule) in &defaults {
+            if previous.is_some_and(|parent| path.starts_with(parent)) {
+                return Err(CompilerError::General {
+                    message: "conflicting default rules: a default and its descendant cannot both be defined"
+                        .to_string(),
+                }
+                .at(rule.span()));
+            }
+            previous = Some(path);
+        }
+        Ok(())
     }
 
     fn compile_worklist_rules(

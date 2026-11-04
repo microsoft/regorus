@@ -144,6 +144,18 @@ over same-named local functions and can suspend in suspendable mode. Host
 registration is an RVM extension; without registration, ordinary local-function
 resolution is unchanged.
 
+Rust callers constructing `RuleInfo` directly must add `default_entry_point:
+None` to existing struct literals. The provided constructors already initialize
+that field. This source update is separate from the v7 artifact format change.
+Interpreter default-function parameter/module binding remains a follow-up; this
+change targets RVM non-strict execution.
+
+The compiler rejects defaults for both a path and one of its descendants, such
+as `default result := {"keep": 1}` with `default result.child := 3`, matching
+OPA 1.22.0. Use a single object default or defaults for disjoint sibling paths.
+This intentionally differs from the interpreter, which still accepts the
+overlapping definitions. RVM does not add parent-object overlay semantics.
+
 ---
 
 ## 2. Runtime Subsystems

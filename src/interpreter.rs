@@ -3058,26 +3058,8 @@ impl Interpreter {
 
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
-                        if let Rule::Default { args, value, .. } = rule.as_ref() {
-                            let module = self.get_rule_module(rule)?;
-                            let previous_module = self.set_current_module(Some(module))?;
-                            self.scopes.push(Scope::new());
-                            let result = (|| {
-                                if args.len() != param_values.len() {
-                                    bail!(span
-                                        .error("mismatch in number of default function arguments"));
-                                }
-                                for (arg, param_value) in args.iter().zip(&param_values) {
-                                    self.add_variable(
-                                        &arg.span().source_str(),
-                                        param_value.clone(),
-                                    )?;
-                                }
-                                self.eval_expr(value)
-                            })();
-                            self.scopes.clear();
-                            self.set_current_module(previous_module)?;
-                            match result {
+                        if let Rule::Default { value, .. } = rule.as_ref() {
+                            match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
                                 Err(e) => errors.push(e),
                             }

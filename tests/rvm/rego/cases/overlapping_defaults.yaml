@@ -1,0 +1,126 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# OPA 1.22.0 rejects parent/child defaults. The interpreter still accepts them;
+# this compiler check deliberately does not change interpreter behavior.
+cases:
+  - note: overlapping_defaults_direct_parent
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result := {"keep": 1}
+        default result.child := [x | x := input.x]
+    query: data.test.result
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_nested_parent
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result.a := {"keep": 1}
+        default result.a.b := [x | x := input.x]
+        output := result
+    query: data.test.output
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_reverse_declaration_order
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result.a.b := [x | x := input.x]
+        default result.a := {"keep": 1}
+        output := result
+    query: data.test.output
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_constant_parent_and_child
+    strict: false
+    modules:
+      - |
+        package test
+        default result := {"keep": 1}
+        default result.child := 3
+    query: data.test.result
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_child_entry_point
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result := {"keep": 1}
+        default result.child := [x | x := input.x]
+    query: data.test.result.child
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_across_modules
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result := {"keep": 1}
+      - |
+        package test.result
+        default child := [x | x := input.x]
+    query: data.test.result.child
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
+
+  - note: overlapping_defaults_disjoint_siblings_remain_valid
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result.keep := 1
+        default result.child := [x | x := input.x]
+        output := result
+    query: data.test.output
+    want_result: {keep: 1, child: [3]}
+
+  - note: overlapping_defaults_literal_dot_is_not_a_path_separator
+    strict: false
+    input: {x: 3}
+    modules:
+      - |
+        package test
+        default result["a.b"] := 1
+        default result.a.b := [x | x := input.x]
+    query: data.test.result
+    want_result: {"a.b": 1, a: {b: [3]}}
+
+  - note: overlapping_defaults_large_numeric_keys_remain_distinct
+    strict: false
+    modules:
+      - |
+        package test
+        default unused[18446744073709551616] := false
+        default unused[18446744073709551617].child := false
+        result := true
+    query: data.test.result
+    want_result: true
+
+  - note: overlapping_defaults_identical_large_numeric_keys_conflict
+    strict: false
+    modules:
+      - |
+        package test
+        default unused[18446744073709551616] := false
+        default unused[18446744073709551616].child := false
+        result := true
+    query: data.test.result
+    want_error: "conflicting default rules"
+    allow_interpreter_success: true
