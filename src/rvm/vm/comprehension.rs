@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode};
+use crate::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode, Instruction};
 use crate::value::Object;
 use crate::value::Value;
 use alloc::format;
@@ -93,10 +93,11 @@ impl RegoVM {
             body_start: params.body_start,
             comprehension_end: params.comprehension_end,
             iteration_state,
-            loop_stack_depth: self.loop_stack.len(),
             resume_pc,
+            loop_depth: self.loop_stack.len(),
         };
 
+        let jumped_to_end = auto_iterate && !has_iteration;
         if auto_iterate {
             if has_iteration {
                 self.pc = usize::from(params.body_start).saturating_sub(1);
@@ -106,7 +107,7 @@ impl RegoVM {
             }
         }
 
-        self.comprehension_stack.push(comprehension_context);
+        self.push_unless_exhausted(comprehension_context, jumped_to_end);
 
         Ok(())
     }
@@ -177,8 +178,8 @@ impl RegoVM {
             body_start: params.body_start,
             comprehension_end: params.comprehension_end,
             iteration_state,
-            loop_stack_depth: self.loop_stack.len(),
             resume_pc,
+            loop_depth: self.loop_stack.len(),
         };
 
         let next_pc = if auto_iterate {
@@ -257,11 +258,15 @@ impl RegoVM {
                 }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
@@ -284,6 +289,7 @@ impl RegoVM {
 
         self.set_register(result_reg, current_result)?;
 
+        let mut jumped_to_end = false;
         if let Some(iter_state) = comprehension_context.iteration_state.as_mut() {
             iter_state.advance();
             let has_next = self.setup_next_iteration(
@@ -297,10 +303,11 @@ impl RegoVM {
             } else {
                 comprehension_context.iteration_state = None;
                 self.pc = usize::from(comprehension_context.comprehension_end).saturating_sub(1);
+                jumped_to_end = true;
             }
         }
 
-        self.comprehension_stack.push(comprehension_context);
+        self.push_unless_exhausted(comprehension_context, jumped_to_end);
 
         Ok(())
     }
@@ -371,11 +378,15 @@ impl RegoVM {
                 }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {
@@ -468,12 +479,34 @@ impl RegoVM {
         }
     }
 
+    /// Re-activates a run-to-completion comprehension context unless execution
+    /// jumped to `comprehension_end` and will not reach a `ComprehensionEnd`.
+    ///
+    /// Without a next iteration execution resumes at `comprehension_end`. If
+    /// that is a `ComprehensionEnd` it completes the comprehension; otherwise
+    /// (compiled code targets the instruction after it) the context is finished
+    /// here, as suspendable execution does. The result is already in its
+    /// register, so dropping the context loses nothing.
+    fn push_unless_exhausted(&mut self, context: ComprehensionContext, jumped_to_end: bool) {
+        let lands_on_end = matches!(
+            self.program
+                .instructions
+                .get(usize::from(context.comprehension_end)),
+            Some(Instruction::ComprehensionEnd {})
+        );
+        if !jumped_to_end || lands_on_end {
+            self.comprehension_stack.push(context);
+        }
+    }
+
     pub(super) fn handle_comprehension_condition_failure_run_to_completion(
         &mut self,
     ) -> Result<bool> {
         if let Some(mut context) = self.comprehension_stack.pop() {
             self.advance_comprehension_after_failure(&mut context)?;
-            self.comprehension_stack.push(context);
+            // Without a next iteration the failure jumped to `comprehension_end`.
+            let jumped_to_end = context.iteration_state.is_none();
+            self.push_unless_exhausted(context, jumped_to_end);
             Ok(true)
         } else {
             Ok(false)

@@ -400,9 +400,10 @@ impl<'a> Compiler<'a> {
                 self.apply_some_in_binding_plan(
                     key_plan.as_ref(),
                     key_register,
+                    key.as_ref().map(|key| key.span()),
                     value_plan,
                     value_reg,
-                    collection.span(),
+                    value.span(),
                 )
                 .map_err(|e| CompilerError::from(e).at(collection.span()))?;
             } else {

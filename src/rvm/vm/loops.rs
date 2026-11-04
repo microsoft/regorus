@@ -598,16 +598,15 @@ impl RegoVM {
             return Ok(());
         }
 
-        if self
+        // The failure belongs to the innermost active construct. A comprehension
+        // that began after every loop on the stack (e.g. inside a loop body)
+        // is innermost and must handle the failure itself.
+        let comprehension_is_innermost = self
             .comprehension_stack
             .last()
-            .is_some_and(|context| self.loop_stack.len() == context.loop_stack_depth)
-        {
-            self.handle_comprehension_condition_failure_run_to_completion()?;
-            return Ok(());
-        }
+            .is_some_and(|context| context.loop_depth >= self.loop_stack.len());
 
-        if !self.loop_stack.is_empty() {
+        if !comprehension_is_innermost && !self.loop_stack.is_empty() {
             let (loop_mode, loop_next_pc, loop_end, result_reg) = {
                 let loop_ctx = self
                     .loop_stack
@@ -641,6 +640,8 @@ impl RegoVM {
                     self.pc = usize::from(loop_next_pc.saturating_sub(1));
                 }
             }
+        } else if self.handle_comprehension_condition_failure_run_to_completion()? {
+            // handled by comprehension context
         } else {
             return Err(VmError::AssertionFailed { pc: self.pc });
         }

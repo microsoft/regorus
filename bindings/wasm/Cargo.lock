@@ -1082,7 +1082,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regorus"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1098,6 +1098,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "parking_lot 0.13.0",
+ "percent-encoding",
  "postcard",
  "rand",
  "regex",
@@ -1114,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "regorusjs"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",

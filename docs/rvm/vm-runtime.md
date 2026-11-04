@@ -186,7 +186,7 @@ the caller's PC when needed, and decides whether to continue or exit.
 - Pending key/value registers.
 - `body_start` / `comprehension_end` PCs.
 - `iteration_state` for nested loops bound to the comprehension.
-- `loop_stack_depth` at entry, used to distinguish enclosing loops from loops
+- `loop_depth` at entry, used to distinguish enclosing loops from loops
   inside the comprehension in run-to-completion mode.
 
 `ComprehensionYield` writes to the builder, respecting set uniqueness and object
@@ -200,9 +200,8 @@ comprehension keys and values must also be defined before yielding; `false`,
 `null`, and empty collections remain valid values.
 
 An empty inner comprehension is a defined collection, not a failure of its
-parent. When a guard skips `ComprehensionEnd` and reaches the comprehension's
-exclusive end, the completed context is unwound before parent instructions run,
-in both execution modes.
+parent. When a guard skips `ComprehensionEnd`, the completed context is unwound
+before parent instructions run, in both execution modes.
 
 ---
 
