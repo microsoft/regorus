@@ -113,8 +113,8 @@ pub axiom fn axiom_f64_finite_order(f: f64, g: f64, exponent: int)
     requires
         f.is_finite_spec(),
         g.is_finite_spec(),
-        exponent <= f64_finite_exponent(f) || f64_finite_significand(f) == 0,
-        exponent <= f64_finite_exponent(g) || f64_finite_significand(g) == 0,
+        exponent <= f64_finite_exponent(f),
+        exponent <= f64_finite_exponent(g),
     ensures
         f.ieee_lt(g) == (f64_scaled_value(f, exponent) < f64_scaled_value(g, exponent)),
         f.ieee_gt(g) == (f64_scaled_value(f, exponent) > f64_scaled_value(g, exponent)),

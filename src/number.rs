@@ -437,22 +437,6 @@ impl FromStr for Number {
 impl Number {
     #[verus_spec(result =>
         ensures
-            result == match ordering {
-                Ordering::Less => Ordering::Greater,
-                Ordering::Equal => Ordering::Equal,
-                Ordering::Greater => Ordering::Less,
-            },
-    )]
-    const fn reverse_ordering(ordering: Ordering) -> Ordering {
-        match ordering {
-            Ordering::Less => Ordering::Greater,
-            Ordering::Equal => Ordering::Equal,
-            Ordering::Greater => Ordering::Less,
-        }
-    }
-
-    #[verus_spec(result =>
-        ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
     fn cmp_float_uint(f: f64, n: u64) -> Ordering {
@@ -743,30 +727,18 @@ impl Ord for Number {
             (Number::Float(a), Number::UInt(b)) => Self::cmp_float_uint(*a, *b),
             (Number::Float(a), Number::Int(b)) => Self::cmp_float_sint(*a, *b),
             (Number::Float(a), Number::BigInt(b)) => Self::cmp_float_int(*a, b),
-            (Number::UInt(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_uint(*b, *a))
-            }
-            (Number::Int(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_sint(*b, *a))
-            }
-            (Number::BigInt(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_int(*b, a))
-            }
+            (Number::UInt(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_uint(*b, *a)),
+            (Number::Int(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_sint(*b, *a)),
+            (Number::BigInt(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_int(*b, a)),
             (Number::UInt(a), Number::UInt(b)) => Self::cmp_uint(*a, *b),
             (Number::Int(a), Number::Int(b)) => Self::cmp_sint(*a, *b),
             (Number::UInt(a), Number::Int(b)) => Self::cmp_uint_sint(*a, *b),
-            (Number::Int(a), Number::UInt(b)) => {
-                Self::reverse_ordering(Self::cmp_uint_sint(*b, *a))
-            }
+            (Number::Int(a), Number::UInt(b)) => Ordering::reverse(Self::cmp_uint_sint(*b, *a)),
             (Number::BigInt(a), Number::BigInt(b)) => Self::cmp_bigint(a, b),
             (Number::BigInt(a), Number::UInt(b)) => Self::cmp_bigint_uint(a, *b),
-            (Number::UInt(a), Number::BigInt(b)) => {
-                Self::reverse_ordering(Self::cmp_bigint_uint(b, *a))
-            }
+            (Number::UInt(a), Number::BigInt(b)) => Ordering::reverse(Self::cmp_bigint_uint(b, *a)),
             (Number::BigInt(a), Number::Int(b)) => Self::cmp_bigint_sint(a, *b),
-            (Number::Int(a), Number::BigInt(b)) => {
-                Self::reverse_ordering(Self::cmp_bigint_sint(b, *a))
-            }
+            (Number::Int(a), Number::BigInt(b)) => Ordering::reverse(Self::cmp_bigint_sint(b, *a)),
         }
     }
 }
