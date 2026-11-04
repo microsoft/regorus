@@ -176,6 +176,7 @@ impl<'a> Compiler<'a> {
 
     pub(super) fn compile_membership(
         &mut self,
+        key: Option<&ExprRef>,
         value: &ExprRef,
         collection: &ExprRef,
         span: &Span,
@@ -185,6 +186,71 @@ impl<'a> Compiler<'a> {
             self.compile_rego_expr_with_span(collection, collection.span(), false)?;
 
         let dest = self.alloc_register()?;
+        if let Some(key) = key {
+            let key_reg = self.compile_rego_expr_with_span(key, key.span(), false)?;
+            let indexed_reg = self.alloc_register()?;
+            self.emit_instruction(
+                Instruction::Index {
+                    dest: indexed_reg,
+                    container: collection_reg,
+                    key: key_reg,
+                },
+                span,
+            );
+            self.emit_instruction(
+                Instruction::Eq {
+                    dest,
+                    left: indexed_reg,
+                    right: value_reg,
+                },
+                span,
+            );
+            // A missing index must yield false, not an undefined comparison.
+            self.emit_instruction(
+                Instruction::Not {
+                    dest,
+                    operand: dest,
+                },
+                span,
+            );
+            self.emit_instruction(
+                Instruction::Not {
+                    dest,
+                    operand: dest,
+                },
+                span,
+            );
+
+            // Sets support indexing, but never keyed membership.
+            let not_set_reg = self.alloc_register()?;
+            let builtin_index = self.get_builtin_index("is_set")?;
+            let params_index =
+                self.program
+                    .instruction_data
+                    .add_builtin_call_params(BuiltinCallParams {
+                        dest: not_set_reg,
+                        builtin_index,
+                        num_args: 1,
+                        args: [collection_reg, 0, 0, 0, 0, 0, 0, 0],
+                    });
+            self.emit_instruction(Instruction::BuiltinCall { params_index }, span);
+            self.emit_instruction(
+                Instruction::Not {
+                    dest: not_set_reg,
+                    operand: not_set_reg,
+                },
+                span,
+            );
+            self.emit_instruction(
+                Instruction::And {
+                    dest,
+                    left: dest,
+                    right: not_set_reg,
+                },
+                span,
+            );
+            return Ok(dest);
+        }
         self.emit_instruction(
             Instruction::Contains {
                 dest,
