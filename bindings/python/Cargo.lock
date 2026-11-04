@@ -1107,6 +1107,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "parking_lot 0.13.0",
+ "percent-encoding",
  "postcard",
  "rand",
  "regex",

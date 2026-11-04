@@ -180,15 +180,9 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
-  `urlquery.decode` decodes one query component: literal `&`, `=`, `#`, tabs,
-  and newlines are preserved, and `+` becomes a space. `urlquery.decode_object`
-  instead splits on `&` and the first `=`, grouping duplicate decoded keys in
-  arrays. Empty parameters are ignored; bare keys have empty values. Like Go's
-  `ParseQuery`, the object decoder rejects unescaped semicolons.
-  Both decoders reject malformed percent escapes and decoded bytes that are
-  not valid UTF-8 rather than silently replacing them with U+FFFD. Unlike Go
-  strings, Regorus strings cannot hold arbitrary bytes. Invalid input is
-  undefined in non-strict mode and an error in strict mode.
+  `urlquery.decode` decodes one query component, preserving literal `&`, `=`,
+  `#`, tabs, and newlines; `+` becomes a space. Parameter parsing remains the
+  responsibility of `urlquery.decode_object`.
 
 - [Time](https://www.openpolicyagent.org/docs/latest/policy-reference/#time)
    | Builtin                                                                                                                    | Feature |
