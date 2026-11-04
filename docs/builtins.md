@@ -37,6 +37,11 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [x % y](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-rem)                            | _       |
   | [round](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-numbers-round)                          | _       |
 
+  `numbers.range_step` accepts integer endpoints and a positive integer step,
+  includes the start, and stops before crossing the end. Descending ranges
+  automatically subtract the step. Invalid steps are errors in strict mode
+  and Undefined otherwise. Stepping uses exact integers and incremental
+  allocation, with existing memory-limit checks during accumulation.
 
 - [Aggregates](https://www.openpolicyagent.org/docs/latest/policy-reference/#aggregates)
   | Builtin                                                                                             | Feature |
@@ -96,6 +101,7 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [startswith](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-startswith)                            | _       |
   | [strings.any_prefix_match](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsany_prefix_match) | _       |
   | [strings.any_suffix_match](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsany_suffix_match) | _       |
+  | [strings.count](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringscount)                       | _       |
   | [strings.render_template](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsrender_template)   | _       |
   | [strings.replace_n](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsreplace_n)               | _       |
   | [strings.reverse](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-stringsreverse)                   | _       |
@@ -111,6 +117,9 @@ In future, each builtin will be associated with a feature (many builtins could b
   `sprintf("%t", [value])` renders boolean values as `true` or `false`, following
   Rust's boolean formatting convention rather than OPA's embedded formatter
   diagnostics (such as `%!t(string=true)`).
+
+  `strings.count` counts non-overlapping matches. An empty needle returns one
+  plus the number of Unicode code points, not bytes or grapheme clusters.
 
 - [Regex](https://www.openpolicyagent.org/docs/latest/policy-reference/#regex)
   | Builtin                                                                                                                                         | Feature |

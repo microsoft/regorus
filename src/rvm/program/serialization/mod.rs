@@ -22,7 +22,7 @@ pub struct VersionedProgram {
 pub enum DeserializationResult {
     /// Full deserialization was successful - program is fully functional
     Complete(Program),
-    /// Only artifact section was deserialized - extensible sections failed
-    /// The program contains entry_points and sources but requires recompilation
+    /// A legacy format or unresolved builtin requires recompilation.
+    /// Legacy results may lack source artifacts; callers must retain the original policy sources.
     Partial(Program),
 }
