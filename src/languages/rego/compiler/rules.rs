@@ -138,6 +138,17 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
+        let index = self.assign_rule_index(rule_path)?;
+        if let Some(&caller) = self.current_call_stack.last() {
+            self.rule_dependencies
+                .entry(caller)
+                .or_default()
+                .insert(index);
+        }
+        Ok(index)
+    }
+
+    pub(super) fn assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
         if let Some(&index) = self.rule_index_map.get(rule_path) {
             return Ok(index);
         }
@@ -437,7 +448,53 @@ impl<'a> Compiler<'a> {
             result?;
             compiled_rules.insert(entry.rule_path);
         }
-        Ok(())
+        self.validate_rule_dependencies()
+    }
+
+    fn validate_rule_dependencies(&self) -> Result<()> {
+        // Worklist ancestry misses edges to rules assigned by another entry point.
+        // Eliminate dependency-free rules iteratively, without native recursion.
+        let mut dependencies = self.rule_dependencies.clone();
+        let mut callers = BTreeMap::<u16, Vec<u16>>::new();
+        for (&caller, callees) in &dependencies {
+            for &callee in callees {
+                callers.entry(callee).or_default().push(caller);
+            }
+        }
+        let mut remaining: BTreeSet<u16> = self.rule_index_map.values().copied().collect();
+        let mut ready: Vec<u16> = remaining
+            .iter()
+            .filter(|index| dependencies.get(index).is_none_or(BTreeSet::is_empty))
+            .copied()
+            .collect();
+        while let Some(index) = ready.pop() {
+            remaining.remove(&index);
+            if let Some(parents) = callers.get(&index) {
+                for &caller in parents {
+                    if let Some(callees) = dependencies.get_mut(&caller) {
+                        if callees.remove(&index) && callees.is_empty() {
+                            ready.push(caller);
+                        }
+                    }
+                }
+            }
+        }
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        let paths: Vec<&str> = self
+            .rule_index_map
+            .iter()
+            .filter(|(_, index)| remaining.contains(index))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        Err(CompilerError::General {
+            message: format!(
+                "Compile-time recursion detected in rule dependencies: {}",
+                paths.join(", ")
+            ),
+        }
+        .into())
     }
 
     fn compile_worklist_rule(

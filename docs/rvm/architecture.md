@@ -156,6 +156,13 @@ OPA 1.22.0. Use a single object default or defaults for disjoint sibling paths.
 This intentionally differs from the interpreter, which still accepts the
 overlapping definitions. RVM does not add parent-object overlay semantics.
 
+Before producing a program, the compiler checks the completed static rule
+dependency graph, including executable defaults and rules already assigned as
+entry points. Cycles such as `default p := [x | x := q]` paired with
+`default q := [x | x := p]` are rejected. Shared acyclic dependencies remain
+valid. Dynamic namespace candidates are not unconditional dependencies, and
+functions do not contribute edges when materializing a namespace document.
+
 ---
 
 ## 2. Runtime Subsystems

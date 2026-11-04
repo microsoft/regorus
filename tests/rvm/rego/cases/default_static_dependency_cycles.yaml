@@ -1,0 +1,126 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: default_static_cycle_rejected_even_when_regular_rules_succeed
+    modules:
+      - |
+        package defaults
+        default p := [x | x := q]
+        default q := [x | x := p]
+        p := 1
+        q := 2
+    entry_points: [data.defaults.p, data.defaults.q]
+    query: data.defaults.p
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_mutual_cycle_single_entry
+    modules:
+      - |
+        package defaults
+        default p := [x | x := q]
+        default q := [x | x := p]
+    query: data.defaults.p
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_mutual_cycle_preassigned_entries
+    modules:
+      - |
+        package defaults
+        default p := [x | x := data.defaults.q]
+        default q := [x | x := data.defaults.p]
+    entry_points: [data.defaults.p, data.defaults.q]
+    query: data.defaults.p
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_direct_cycle
+    modules:
+      - |
+        package defaults
+        default p := [x | x := p]
+    query: data.defaults.p
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_raw_string_mutual_cycle
+    modules:
+      - |
+        package defaults
+        default p := [x | x := data.defaults[`q`]]
+        default q := [x | x := data.defaults[`p`]]
+    entry_points: [data.defaults.q, data.defaults.p]
+    query: data.defaults.q
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_three_rule_cycle_with_regular_body
+    modules:
+      - |
+        package defaults
+        default p := [x | x := q]
+        q := r
+        default r := {x | x := p}
+    entry_points: [data.defaults.p, data.defaults.q, data.defaults.r]
+    query: data.defaults.p
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: default_static_shared_acyclic_dependency
+    modules:
+      - |
+        package defaults
+        default p := [x | x := shared]
+        default q := [x | x := shared]
+        default shared := [x | x := input.value]
+    input: {value: 7}
+    entry_points: [data.defaults.p, data.defaults.q, data.defaults.shared]
+    query: data.defaults.p
+    strict: false
+    want_result: [[7]]
+
+  - note: default_static_dynamic_namespace_selection_is_not_a_cycle
+    modules:
+      - |
+        package defaults
+        default p := [x | x := data.defaults[input.key]]
+        default q := 7
+    input: {key: q}
+    entry_points: [data.defaults.p, data.defaults.q]
+    query: data.defaults.p
+    strict: false
+    want_result: [7]
+
+  - note: default_static_namespace_does_not_depend_on_functions
+    modules:
+      - |
+        package defaults
+        default p := [x | x := data.lib]
+      - |
+        package lib
+        value := 7
+        f(x) := data.defaults.p
+    query: data.defaults.p
+    strict: false
+    want_result: [{value: 7}]
+
+  - note: default_static_namespace_does_not_depend_on_default_functions
+    modules:
+      - |
+        package defaults
+        default p := [x | x := data.lib]
+      - |
+        package lib
+        default value := 7
+        default f(x) := [y | y := data.defaults.p]
+    query: data.defaults.p
+    strict: false
+    want_result: [{value: 7}]
