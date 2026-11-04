@@ -1,0 +1,77 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: dynamically_selected_default_can_suspend
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: &selected_default
+      - |
+        package defaults
+        default p := [lookup("x") | true]
+        result := data.defaults[input.name]
+    input: {name: p}
+    host_await_builtins: &lookup
+      - name: lookup
+        arg_count: 1
+    host_await_responses:
+      - id: lookup
+        args: ["x"]
+        value: 7
+    query: data.defaults.result
+    want_result: [7]
+
+  - note: dynamically_selected_default_accepts_rtc_response
+    strict: false
+    skip_interpreter: true
+    modules: *selected_default
+    input: {name: p}
+    host_await_builtins: *lookup
+    host_await_responses:
+      - id: lookup
+        value: 7
+    query: data.defaults.result
+    want_result: [7]
+
+  - note: selected_default_preserves_suffix_after_resume
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package defaults
+        default p := [lookup("x") | true]
+        result := data.defaults[input.name][0]
+    input: {name: p}
+    host_await_builtins: *lookup
+    host_await_responses:
+      - id: lookup
+        args: ["x"]
+        value: 7
+    query: data.defaults.result
+    want_result: 7
+
+  - note: namespace_defaults_preserve_multiple_resumes
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package library
+        default a := [lookup("a") | true]
+        default b := [lookup("b") | true]
+      - |
+        package defaults
+        result := data[input.package]
+    input: {package: library}
+    host_await_builtins: *lookup
+    host_await_responses:
+      - id: lookup
+        args: ["a"]
+        value: 11
+      - id: lookup
+        args: ["b"]
+        value: 13
+    query: data.defaults.result
+    want_result: {a: [11], b: [13]}

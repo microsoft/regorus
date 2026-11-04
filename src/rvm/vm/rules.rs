@@ -17,12 +17,27 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
+    fn check_rule_call(&self, rule_index: u16) -> Result<()> {
+        if self
+            .call_rule_stack
+            .iter()
+            .any(|context| context.rule_index == rule_index)
+        {
+            return Err(VmError::RecursiveRuleEvaluation {
+                rule_index,
+                pc: self.pc,
+            });
+        }
+        Ok(())
+    }
+
+    /// Returns true if the error represents a safety violation that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
             err,
             VmError::TimeLimitExceeded { .. }
+                | VmError::RecursiveRuleEvaluation { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
@@ -191,7 +206,7 @@ impl RegoVM {
             self.get_register(result_reg)?.clone()
         };
 
-        if final_result == Value::Undefined {
+        if !rule_failed_due_to_inconsistency && final_result == Value::Undefined {
             if let Some(entry_point) = rule_info.default_entry_point {
                 self.registers
                     .resize(num_retained_registers, Value::Undefined);
@@ -295,6 +310,7 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
         self.call_rule_stack.push(CallRuleContext {
             return_pc: self.pc,
             dest_reg: dest,
@@ -305,15 +321,20 @@ impl RegoVM {
             current_body_index: 0,
         });
 
-        let (final_result, rule_failed_due_to_inconsistency) = self
-            .execute_rule_definitions_common(&rule_definitions, &rule_info, function_call_params)?;
+        // Virtual-document lookup can enter here from suspendable execution.
+        // Nested calls must complete before this synchronous context is popped.
+        let previous_mode = mem::replace(&mut self.execution_mode, ExecutionMode::RunToCompletion);
+        let execution_result = self.execute_rule_definitions_common(
+            &rule_definitions,
+            &rule_info,
+            function_call_params,
+        );
+        self.execution_mode = previous_mode;
 
-        self.set_register(dest, Value::Undefined)?;
-
-        let call_context = self
-            .call_rule_stack
-            .pop()
-            .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
+        let call_context = self.call_rule_stack.pop();
+        // A cleanup diagnostic must not replace a fatal execution error.
+        let (final_result, rule_failed_due_to_inconsistency) = execution_result?;
+        let call_context = call_context.ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
         // Stack discipline: the context we just popped must belong to the
         // rule we are finalizing. A mismatch indicates a missing push or an
         // extra pop somewhere in this rule's execution and would otherwise
@@ -328,6 +349,7 @@ impl RegoVM {
             });
         }
         self.pc = call_context.return_pc;
+        self.set_register(dest, Value::Undefined)?;
 
         let result_from_rule = if !rule_failed_due_to_inconsistency {
             final_result
@@ -463,6 +485,7 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
         let num_registers = usize::from(rule_info.num_registers);
 
         let num_retained_registers = match function_call_params {

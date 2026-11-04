@@ -318,10 +318,6 @@ impl Program {
                 program.literals = literals;
                 program.rule_tree = rule_tree;
                 program.rego_v0 = rego_v0;
-                if version != 6 {
-                    program.needs_recompilation = false;
-                }
-
                 // Apply the same supported bounds as compilation and serialization.
                 program.validate_limits()?;
 

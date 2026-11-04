@@ -1,0 +1,40 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: dynamic_default_self_recursion_is_an_error
+    strict: false
+    skip_interpreter: true
+    modules: &dynamic_default
+      - |
+        package defaults
+        default p := [y | y := data.defaults[input.name]]
+        safe := 42
+        result := p
+    input: {name: p}
+    query: data.defaults.result
+    want_error: "Recursive evaluation of rule"
+
+  - note: dynamic_default_self_recursion_is_an_error_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *dynamic_default
+    input: {name: p}
+    query: data.defaults.result
+    want_error: "Recursive evaluation of rule"
+
+  - note: dynamic_default_namespace_access_remains_valid
+    strict: false
+    modules: *dynamic_default
+    input: {name: safe}
+    query: data.defaults.result
+    want_result: [42]
+
+  - note: dynamic_default_namespace_access_remains_valid_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *dynamic_default
+    input: {name: safe}
+    query: data.defaults.result
+    want_result: [42]

@@ -193,7 +193,9 @@ impl Program {
 
         let rule_infos: Vec<RuleInfo> = json_data
             .get("rule_infos")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Failed to deserialize rule_infos: {}", e))?
             .unwrap_or_default();
 
         let instruction_spans: Vec<Option<SpanInfo>> = json_data

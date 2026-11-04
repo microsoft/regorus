@@ -4574,8 +4574,9 @@ impl Interpreter {
                             };
                             self.record_rule(refr, rule.clone())?;
                             self.memory_check()?;
-                        } else if let Rule::Default { .. } = rule.as_ref() {
+                        } else if let Rule::Default { args, .. } = rule.as_ref() {
                             let (refr, index) = match refr.as_ref() {
+                                _ if !args.is_empty() => (refr, None),
                                 // TODO: Validate the index
                                 Expr::RefBrack { refr, index, .. } => {
                                     if !matches!(

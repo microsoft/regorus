@@ -265,11 +265,28 @@ impl<'a> Compiler<'a> {
         }
 
         let rule_path = format!("{}.{}", &self.current_package, var_name);
+        self.ensure_document_reference(&rule_path, span)?;
         let rule_index = self.get_or_assign_rule_index(&rule_path)?;
         let dest = self.alloc_register()?;
 
         self.emit_instruction(Instruction::CallRule { dest, rule_index }, span);
         Ok(dest)
+    }
+
+    pub(super) fn ensure_document_reference(&self, rule_path: &str, span: &Span) -> Result<()> {
+        if self
+            .policy
+            .inner
+            .functions
+            .get(rule_path)
+            .is_some_and(|function| function.1 != 0)
+        {
+            return Err(CompilerError::General {
+                message: format!("function '{rule_path}' used as reference, not called"),
+            }
+            .at(span));
+        }
+        Ok(())
     }
 
     pub fn emit_instruction(&mut self, instruction: Instruction, span: &Span) {

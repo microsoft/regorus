@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 
 use super::context::{ComprehensionContext, LoopContext};
 use super::errors::VmError;
+use super::virtual_data::VirtualLookupContinuation;
 
 /// Represents a single execution context (frame) in the VM
 #[derive(Debug, Clone)]
@@ -16,11 +17,17 @@ pub(super) struct ExecutionFrame {
     pub(super) pc: usize,
     /// Frame-specific payload
     pub(super) kind: FrameKind,
+    /// Lookup work that must finish before this frame's next instruction.
+    pub(super) virtual_lookup: Option<VirtualLookupContinuation>,
 }
 
 impl ExecutionFrame {
     pub(super) const fn new(pc: usize, kind: FrameKind) -> Self {
-        Self { pc, kind }
+        Self {
+            pc,
+            kind,
+            virtual_lookup: None,
+        }
     }
 
     pub(super) const fn main(pc: usize, return_register: u8) -> Self {
@@ -29,6 +36,7 @@ impl ExecutionFrame {
             kind: FrameKind::Main {
                 return_value_register: return_register,
             },
+            virtual_lookup: None,
         }
     }
 }

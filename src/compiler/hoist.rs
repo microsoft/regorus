@@ -503,9 +503,13 @@ impl LoopHoister {
                     }
                 }
             }
-            Rule::Default { value, .. } => {
-                // For default rules, just process the value expression
-                let context = self.create_scope_context(module_idx)?;
+            Rule::Default { args, value, .. } => {
+                let mut context = self.create_scope_context(module_idx)?;
+                for param in args {
+                    if let Expr::Var { span, .. } = param.as_ref() {
+                        context.bind_variable(span.text());
+                    }
+                }
                 self.populate_output_expr(module_idx, value, &context)?;
             }
         }
@@ -600,21 +604,18 @@ impl LoopHoister {
                 collection,
                 ..
             } => {
-                // `some .. in` may redeclare a variable bound by an enclosing
-                // `every` unless that binding is in the current scope.
-                let mut shadowing = None;
-                for var in &context.quantifier_vars {
-                    if !context.current_scope_bound_vars.contains(var) {
-                        shadowing
-                            .get_or_insert_with(|| context.clone())
-                            .add_unbound_variable(var);
+                // Explicit declarations may shadow inherited bindings, but not same-scope ones.
+                let mut binding_context = context.clone();
+                for name in &context.bound_vars {
+                    if !context.current_scope_bound_vars.contains(name) {
+                        binding_context.add_unbound_variable(name);
                     }
                 }
                 let binding_plan = super::destructuring_planner::create_some_in_binding_plan(
                     key,
                     value,
                     collection,
-                    shadowing.as_ref().unwrap_or(context),
+                    &binding_context,
                 )
                 .map_err(map_binding_error)?;
 

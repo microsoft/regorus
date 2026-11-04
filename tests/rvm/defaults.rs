@@ -339,6 +339,126 @@ fn default_functions_resume_in_their_parameter_window() {
 }
 
 #[test]
+fn dynamic_default_recursion_preserves_mode_and_allows_reuse() {
+    let module = r#"package defaults
+        default p := [y | y := data.defaults[input.name]]
+        safe := 42
+        result := p
+    "#;
+    for program in round_trips(compile(module, &[])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_strict_builtin_errors(false);
+            for _ in 0..2 {
+                vm.set_input(Value::from_json_str(r#"{"name":"p"}"#).unwrap());
+                assert!(matches!(
+                    vm.execute_entry_point_by_name(ENTRY),
+                    Err(VmError::RecursiveRuleEvaluation { .. })
+                ));
+                assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                assert_eq!(vm.get_execution_mode(), mode);
+                vm.set_input(Value::from_json_str(r#"{"name":"safe"}"#).unwrap());
+                assert_eq!(
+                    vm.execute_entry_point_by_name(ENTRY).unwrap(),
+                    Value::from_json_str("[42]").unwrap()
+                );
+                assert_eq!(vm.get_execution_mode(), mode);
+            }
+        }
+    }
+}
+
+#[test]
+fn dynamic_default_recursion_after_resume_allows_reuse() {
+    let module = r#"package defaults
+        default p := [y | name := lookup(input.name); y := data.defaults[name]]
+        safe := 42
+        result := p
+    "#;
+    for program in round_trips(compile(module, &[("lookup", 1)])) {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_strict_builtin_errors(false);
+        for (name, recursive) in [("p", true), ("safe", false)] {
+            vm.set_input(Value::from_json_str(&format!(r#"{{"name":"{name}"}}"#)).unwrap());
+            vm.execute_entry_point_by_name(ENTRY).unwrap();
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended {
+                    reason: SuspendReason::HostAwait { argument, .. },
+                    ..
+                } if argument == &Value::from_json_str(&format!(r#"["{name}"]"#)).unwrap()
+            ));
+            let result = vm.resume(Some(Value::from(name)));
+            if recursive {
+                assert!(matches!(
+                    result,
+                    Err(VmError::RecursiveRuleEvaluation { .. })
+                ));
+                assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+            } else {
+                assert_eq!(result.unwrap(), Value::from_json_str("[42]").unwrap());
+                assert!(matches!(
+                    vm.execution_state(),
+                    ExecutionState::Completed { result }
+                        if result == &Value::from_json_str("[42]").unwrap()
+                ));
+            }
+            assert_eq!(vm.get_execution_mode(), ExecutionMode::Suspendable);
+        }
+    }
+}
+
+#[test]
+fn namespace_selected_defaults_resume_after_loading_and_reuse() {
+    let module = r#"package defaults
+        x := "global"
+        default leaf := [lookup("leaf") | true]
+        default group.f(x) := 7
+        default group.a := [lookup(x) | true]
+        default group.b := [lookup("b") | true]
+        result := data.defaults[input.name]
+    "#;
+    for program in round_trips(compile(module, &[("lookup", 1)])) {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_strict_builtin_errors(false);
+        for (name, calls, expected) in [
+            ("leaf", vec![("leaf", 7)], "[7]"),
+            (
+                "group",
+                vec![("global", 11), ("b", 13)],
+                r#"{"a":[11],"b":[13]}"#,
+            ),
+            ("leaf", vec![("leaf", 17)], "[17]"),
+        ] {
+            vm.set_input(Value::from_json_str(&format!(r#"{{"name":"{name}"}}"#)).unwrap());
+            vm.execute_entry_point_by_name(ENTRY).unwrap();
+            for (argument, response) in calls {
+                assert!(matches!(
+                    vm.execution_state(),
+                    ExecutionState::Suspended {
+                        reason: SuspendReason::HostAwait { argument: actual, .. },
+                        ..
+                    } if actual == &Value::from_json_str(&format!(r#"["{argument}"]"#)).unwrap()
+                ));
+                vm.resume(Some(Value::from(response))).unwrap();
+            }
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Completed { result }
+                    if result == &Value::from_json_str(expected).unwrap()
+            ));
+            assert_eq!(vm.get_execution_mode(), ExecutionMode::Suspendable);
+        }
+    }
+}
+
+#[test]
 fn default_bytecode_metadata_is_validated() {
     let mut program = (*compile(
         "package defaults\ndefault result := [x | x := input.x]",
@@ -378,10 +498,16 @@ fn malformed_serialized_default_metadata_is_rejected() {
     );
     let mut json: serde_json::Value =
         serde_json::from_str(&program.serialize_json().unwrap()).unwrap();
-    json["rule_infos"][0]["default_entry_point"] = serde_json::json!(u32::MAX);
-    assert!(Program::deserialize_json(&json.to_string()).is_err());
-    json["rule_infos"][0]["default_entry_point"] = serde_json::json!(0);
-    assert!(Program::deserialize_json(&json.to_string()).is_err());
+    for invalid in [
+        serde_json::json!(u32::MAX),
+        serde_json::json!(0),
+        serde_json::json!(-1),
+        serde_json::json!("7"),
+        serde_json::json!(4294967296u64),
+    ] {
+        json["rule_infos"][0]["default_entry_point"] = invalid;
+        assert!(Program::deserialize_json(&json.to_string()).is_err());
+    }
 }
 
 #[test]
@@ -404,22 +530,31 @@ fn legacy_json_defaults_require_recompilation_before_execution() {
     let legacy = Arc::new(Program::deserialize_json(&json.to_string()).unwrap());
     assert!(legacy.needs_recompilation);
     assert_eq!(legacy.sources.len(), program.sources.len());
-    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-        for by_name in [true, false] {
-            let mut vm = RegoVM::new();
-            vm.load_program(legacy.clone());
-            vm.set_execution_mode(mode);
-            let result = if by_name {
-                vm.execute_entry_point_by_name(ENTRY)
-            } else {
-                vm.execute()
-            };
-            assert!(
-                matches!(result, Err(VmError::Internal { ref message, .. })
-                    if message == "program requires recompilation"),
-                "{mode:?}, by_name={by_name}: {result:?}"
-            );
-            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+    let repacked = match Program::deserialize_binary(&legacy.serialize_binary().unwrap()).unwrap() {
+        DeserializationResult::Partial(program) => Arc::new(program),
+        DeserializationResult::Complete(_) => {
+            panic!("reserialization must not bypass recompilation")
+        }
+    };
+    for legacy in [legacy, repacked] {
+        assert!(legacy.needs_recompilation);
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for by_name in [true, false] {
+                let mut vm = RegoVM::new();
+                vm.load_program(legacy.clone());
+                vm.set_execution_mode(mode);
+                let result = if by_name {
+                    vm.execute_entry_point_by_name(ENTRY)
+                } else {
+                    vm.execute()
+                };
+                assert!(
+                    matches!(result, Err(VmError::Internal { ref message, .. })
+                        if message == "program requires recompilation"),
+                    "{mode:?}, by_name={by_name}: {result:?}"
+                );
+                assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+            }
         }
     }
 }

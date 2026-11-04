@@ -169,6 +169,7 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            self.ensure_document_reference(&rule_candidate, span)?;
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
                 let rule_result_reg = self.alloc_register()?;
@@ -200,6 +201,13 @@ impl<'a> Compiler<'a> {
             .rules
             .keys()
             .chain(self.policy.inner.default_rules.keys())
+            .filter(|rule_path| {
+                self.policy
+                    .inner
+                    .functions
+                    .get(*rule_path)
+                    .is_none_or(|function| function.1 == 0)
+            })
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -309,6 +317,7 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
+            self.ensure_document_reference(&rule_candidate, span)?;
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 let rule_result_reg = self.alloc_register()?;
                 self.emit_instruction(

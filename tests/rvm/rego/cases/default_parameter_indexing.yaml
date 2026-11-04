@@ -1,0 +1,71 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: default_function_parameter_is_a_bound_array_index
+    strict: false
+    # Interpreter default-function parameter binding is a separate follow-up.
+    skip_interpreter: true
+    modules:
+      - |
+        package defaults
+        default f(x) := [y | y := input.items[x]]
+        result := [f(0), f(1), f(2)]
+    input:
+      items: [10, 20]
+    query: data.defaults.result
+    want_result: [[10], [20], []]
+
+  - note: default_function_parameters_are_bound_nested_object_keys
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package defaults
+        default f(group, key) := [y | y := input.items[group][key]]
+        result := [f("a", "first"), f("b", "second"), f("a", "missing")]
+    input:
+      items:
+        a:
+          first: 10
+          second: 20
+        b:
+          first: 30
+          second: 40
+    query: data.defaults.result
+    want_result: [[10], [40], []]
+
+  - note: default_function_comprehension_can_shadow_a_parameter
+    strict: false
+    modules:
+      - |
+        package defaults
+        default f(x) := [x | some x in [1, 2]]
+        result := f(99)
+    query: data.defaults.result
+    want_result: [1, 2]
+
+  - note: default_parameter_shadowing_overrides_a_module_global
+    strict: false
+    modules:
+      - |
+        package defaults
+        x := 99
+        default f(x) := [x | some x in [1, 2]]
+        result := f(99)
+    query: data.defaults.result
+    want_result: [1, 2]
+
+  - note: every_shadowing_overrides_a_module_global
+    strict: false
+    modules:
+      - |
+        package defaults
+        x := 99
+        result if {
+          every x in [0] {
+            [x | some x in [1, 2]] == [1, 2]
+          }
+        }
+    query: data.defaults.result
+    want_result: true

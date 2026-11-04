@@ -147,6 +147,10 @@ resolution is unchanged.
 Rust callers constructing `RuleInfo` directly must add `default_entry_point:
 None` to existing struct literals. The provided constructors already initialize
 that field. This source update is separate from the v7 artifact format change.
+JSON artifacts containing executable defaults require upgraded readers;
+older JSON readers ignore the new fallback metadata. Upgrade producers and
+consumers together, or use version-checked binary artifacts so older runtimes
+reject an unsupported format.
 Interpreter default-function parameter/module binding remains a follow-up; this
 change targets RVM non-strict execution.
 
@@ -155,6 +159,10 @@ as `default result := {"keep": 1}` with `default result.child := 3`, matching
 OPA 1.22.0. Use a single object default or defaults for disjoint sibling paths.
 This intentionally differs from the interpreter, which still accepts the
 overlapping definitions. RVM does not add parent-object overlay semantics.
+Static references to argument-bearing functions are also rejected, as in OPA;
+functions remain callable but are not virtual documents. Typed scalar keys in
+default paths follow OPA, independently of the interpreter's existing
+non-string intermediate-key handling.
 
 Before producing a program, the compiler checks the completed static rule
 dependency graph, including executable defaults and rules already assigned as
@@ -162,6 +170,12 @@ entry points. Cycles such as `default p := [x | x := q]` paired with
 `default q := [x | x := p]` are rejected. Shared acyclic dependencies remain
 valid. Dynamic namespace candidates are not unconditional dependencies, and
 functions do not contribute edges when materializing a namespace document.
+
+Dynamic default lookups are checked against active rule calls at runtime.
+Re-entering an unfinished rule returns `RecursiveRuleEvaluation` rather than
+falling back to undefined. This applies in both execution modes, including
+virtual-document lookups and resumed defaults, and failed executions release
+their active rule state before the VM is reused.
 
 ---
 

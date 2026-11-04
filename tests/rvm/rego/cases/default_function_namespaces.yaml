@@ -94,3 +94,58 @@ cases:
         result := data.test
     query: data.consumer.result
     want_result: {mixed: {value: 3}, sentinel: 1}
+
+  - note: bracket_named_default_function_is_callable
+    strict: false
+    modules:
+      - |
+        package test
+        default nested["f"](x) := 7
+        result := nested.f(1)
+    query: data.test.result
+    want_result: 7
+
+  - note: namespace_defaults_do_not_bind_child_function_parameters
+    strict: false
+    modules:
+      - |
+        package test
+        x := 99
+        default nested.f(x) := 7
+        default nested.value := [y | y := x]
+        result := nested
+    query: data.test.result
+    want_result: {value: [99]}
+
+  - note: qualified_function_document_reference_is_rejected
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default f(x) := 7
+        result := data.test.f
+    query: data.test.result
+    want_error: "used as reference, not called"
+
+  - note: local_function_document_reference_is_rejected
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default f(x) := 7
+        result := f
+    query: data.test.result
+    want_error: "used as reference, not called"
+
+  - note: dynamic_function_document_reference_remains_undefined
+    strict: false
+    modules:
+      - |
+        package test
+        default f(x) := 7
+        result := data.test[input.name]
+    input: {name: f}
+    query: data.test.result
+    want_result: "#undefined"

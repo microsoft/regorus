@@ -3,14 +3,142 @@
 
 use crate::rvm::instructions::LiteralOrRegister;
 use crate::value::Value;
+use alloc::collections::VecDeque;
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
 use super::errors::{Result, VmError};
+use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
 
+#[derive(Debug, Clone)]
+pub(super) struct VirtualLookupContinuation {
+    pc: usize,
+    dest: u8,
+    result: Value,
+    jobs: VecDeque<(Vec<Value>, u16)>,
+    pending_path: Option<Vec<Value>>,
+    root_path: Option<Vec<Value>>,
+    remainder: Vec<Value>,
+}
+
 impl RegoVM {
+    pub(super) fn continue_virtual_data_lookup(&mut self) -> Result<()> {
+        let mut lookup = self
+            .execution_stack
+            .last_mut()
+            .and_then(|frame| frame.virtual_lookup.take())
+            .ok_or(VmError::MissingExecutionFrame {
+                context: "continuing virtual data lookup",
+                pc: self.pc,
+            })?;
+        self.pc = lookup.pc;
+
+        if let Some(path) = lookup.pending_path.take() {
+            let value = self.get_register(lookup.dest)?.clone();
+            Self::set_nested_value(&mut lookup.result, &path, value.clone())?;
+            if let Some(ref root_path) = lookup.root_path {
+                let mut cache_path = root_path.clone();
+                cache_path.extend_from_slice(&path);
+                cache_path.push(Value::Undefined);
+                Self::set_nested_value(&mut self.evaluated, &cache_path, value)?;
+            }
+        }
+
+        if let Some((path, rule_index)) = lookup.jobs.pop_front() {
+            let dest = lookup.dest;
+            let cached = lookup
+                .root_path
+                .as_ref()
+                .and_then(|root| self.cached_virtual_rule(root, &path));
+            lookup.pending_path = Some(path);
+            self.save_virtual_lookup(lookup)?;
+            if let Some(value) = cached {
+                self.cache_hits = self.checked_add_one(self.cache_hits, "cache hits counter")?;
+                self.set_register(dest, value)?;
+            } else {
+                self.execute_call_rule_suspendable(dest, rule_index, None)?;
+            }
+        } else {
+            let mut result = &lookup.result;
+            for key in &lookup.remainder {
+                result = &result[key];
+            }
+            self.set_register(lookup.dest, result.clone())?;
+        }
+        Ok(())
+    }
+
+    fn save_virtual_lookup(&mut self, lookup: VirtualLookupContinuation) -> Result<()> {
+        let frame = self
+            .execution_stack
+            .last_mut()
+            .ok_or(VmError::MissingExecutionFrame {
+                context: "saving virtual data lookup",
+                pc: self.pc,
+            })?;
+        frame.virtual_lookup = Some(lookup);
+        Ok(())
+    }
+
+    fn schedule_virtual_subobject(
+        &mut self,
+        dest: u8,
+        root_path: Vec<Value>,
+        data: Value,
+        tree: Value,
+    ) -> Result<()> {
+        let mut jobs = VecDeque::new();
+        let mut nodes = alloc::vec![(Vec::new(), tree)];
+        while let Some((path, node)) = nodes.pop() {
+            self.memory_check()?;
+            match node {
+                Value::Number(index) => {
+                    let rule_index = index
+                        .as_u64()
+                        .and_then(|index| u16::try_from(index).ok())
+                        .ok_or(VmError::InvalidRuleIndex {
+                            rule_index: Value::Number(index),
+                            pc: self.pc,
+                        })?;
+                    jobs.push_back((path, rule_index));
+                }
+                Value::Object(object) => {
+                    let children: Vec<_> = object.iter().collect();
+                    for (key, child) in children.into_iter().rev() {
+                        self.memory_check()?;
+                        let mut child_path = path.clone();
+                        child_path.push(key.clone());
+                        nodes.push((child_path, child.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.save_virtual_lookup(VirtualLookupContinuation {
+            pc: self.pc,
+            dest,
+            result: if data == Value::Undefined {
+                Value::new_object()
+            } else {
+                data
+            },
+            jobs,
+            pending_path: None,
+            root_path: Some(root_path),
+            remainder: Vec::new(),
+        })
+    }
+
+    fn cached_virtual_rule(&self, root_path: &[Value], relative_path: &[Value]) -> Option<Value> {
+        let mut node = &self.evaluated;
+        for key in root_path.iter().chain(relative_path) {
+            node = node.as_object().ok()?.get(key)?;
+        }
+        node.as_object().ok()?.get(&Value::Undefined).cloned()
+    }
+
     pub(super) fn execute_virtual_data_document_lookup_subobject(
         &mut self,
         path_components: &[LiteralOrRegister],
@@ -101,34 +229,7 @@ impl RegoVM {
                 if let Some(rule_index) = rule_idx.as_u64() {
                     // Walk the evaluated cache using root_path then relative_path,
                     // without allocating a combined full_cache_path Vec.
-                    let cached_result = {
-                        let mut cache_lookup = &self.evaluated;
-                        let mut path_exists = true;
-
-                        for path_component in root_path.iter().chain(relative_path.iter()) {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                if let Some(next_value) = map.get(path_component) {
-                                    cache_lookup = next_value;
-                                } else {
-                                    path_exists = false;
-                                    break;
-                                }
-                            } else {
-                                path_exists = false;
-                                break;
-                            }
-                        }
-
-                        if path_exists {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                map.get(&Value::Undefined).cloned()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
+                    let cached_result = self.cached_virtual_rule(root_path, relative_path);
 
                     let rule_result = if let Some(cached) = cached_result {
                         self.cache_hits =
@@ -257,6 +358,24 @@ impl RegoVM {
                             pc: self.pc,
                         })?;
 
+                    if self.execution_mode == ExecutionMode::Suspendable {
+                        // Snapshot keys before a child rule can overwrite the destination.
+                        let remainder = params
+                            .path_components
+                            .iter()
+                            .skip(components_consumed)
+                            .map(|component| self.literal_or_register_value(component))
+                            .collect::<Result<Vec<_>>>()?;
+                        return self.save_virtual_lookup(VirtualLookupContinuation {
+                            pc: self.pc,
+                            dest: params.dest,
+                            result: Value::Undefined,
+                            jobs: [(Vec::new(), rule_index)].into_iter().collect(),
+                            pending_path: None,
+                            root_path: None,
+                            remainder,
+                        });
+                    }
                     self.execute_call_rule_common(params.dest, rule_index, None)?;
 
                     if components_consumed < params.path_components.len() {
@@ -311,6 +430,22 @@ impl RegoVM {
             Value::Object(_) => {
                 let rule_tree_subobject = current_node.clone();
                 let data_subobject = data_ref.clone();
+                if self.execution_mode == ExecutionMode::Suspendable {
+                    let mut root_path = Vec::new();
+                    for (index, component) in params.path_components.iter().enumerate() {
+                        let mut key = self.literal_or_register_value(component)?;
+                        if string_fallback_indices.contains(&index) {
+                            key = Value::from(key.to_string());
+                        }
+                        root_path.push(key);
+                    }
+                    return self.schedule_virtual_subobject(
+                        params.dest,
+                        root_path,
+                        data_subobject,
+                        rule_tree_subobject,
+                    );
+                }
                 let result = self.execute_virtual_data_document_lookup_subobject(
                     &params.path_components,
                     &string_fallback_indices,

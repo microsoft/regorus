@@ -129,3 +129,48 @@ cases:
     modules: *authorize_policy
     query: data.test.allow
     want_result: true
+
+  - note: conflicting_rules_do_not_consume_default_host_responses
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default p := [lookup("fallback") | true]
+        p := 1
+        p := 2
+        result := lookup("real") if not p
+    host_await_builtins:
+      - name: lookup
+        arg_count: 1
+    host_await_responses:
+      - id: lookup
+        value: false
+      - id: lookup
+        value: true
+    query: data.test.result
+    want_result: false
+
+  - note: boolean_intermediate_default_key_is_preserved
+    strict: false
+    # OPA preserves typed intermediate keys; the interpreter currently loses them.
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default r[true]["x"] := 7
+        result := r[true].x
+    query: data.test.result
+    want_result: 7
+
+  - note: numeric_intermediate_default_key_is_preserved
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default r[3]["x"] := [x | x := input.x]
+        result := r[3].x
+    input: {x: 8}
+    query: data.test.result
+    want_result: [8]

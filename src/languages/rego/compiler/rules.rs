@@ -24,6 +24,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
@@ -335,31 +336,8 @@ impl<'a> Compiler<'a> {
                     if !args.is_empty() {
                         continue;
                     }
-                    let mut components = get_rule_path_components(&module.package.refr)
-                        .map_err(CompilerError::from)?;
-                    components.extend(get_rule_path_components(refr).map_err(CompilerError::from)?);
-                    let path: Vec<Value> = components
-                        .into_iter()
-                        .map(|component| match component {
-                            PathComponent::String(key) => Ok(Value::from(key)),
-                            PathComponent::Raw(key) => match key.as_str() {
-                                "true" => Ok(Value::Bool(true)),
-                                "false" => Ok(Value::Bool(false)),
-                                "null" => Ok(Value::Null),
-                                _ => key
-                                    .parse::<crate::number::Number>()
-                                    .map(Value::Number)
-                                    .map_err(|_| {
-                                        CompilerError::General {
-                                            message: format!(
-                                                "invalid default path component '{key}'"
-                                            ),
-                                        }
-                                        .at(refr.span())
-                                    }),
-                            },
-                        })
-                        .collect::<Result<_>>()?;
+                    let mut path = Self::default_path_components(&module.package.refr)?;
+                    path.extend(Self::default_path_components(refr)?);
                     defaults.entry(path).or_insert(rule);
                 }
             }
@@ -377,6 +355,30 @@ impl<'a> Compiler<'a> {
             previous = Some(path);
         }
         Ok(())
+    }
+
+    fn default_path_components(refr: &ExprRef) -> Result<Vec<Value>> {
+        get_rule_path_components(refr)
+            .map_err(CompilerError::from)?
+            .into_iter()
+            .map(|component| match component {
+                PathComponent::String(key) => Ok(Value::from(key)),
+                PathComponent::Raw(key) => match key.as_str() {
+                    "true" => Ok(Value::Bool(true)),
+                    "false" => Ok(Value::Bool(false)),
+                    "null" => Ok(Value::Null),
+                    _ => key
+                        .parse::<crate::number::Number>()
+                        .map(Value::Number)
+                        .map_err(|_| {
+                            CompilerError::General {
+                                message: format!("invalid default path component '{key}'"),
+                            }
+                            .at(refr.span())
+                        }),
+                },
+            })
+            .collect()
     }
 
     fn compile_worklist_rules(
@@ -938,6 +940,7 @@ impl<'a> Compiler<'a> {
         let rule_index = self.rule_index_map[rule_path];
         let idx = usize::from(rule_index);
         let is_function = self.policy.inner.functions.contains_key(rule_path);
+        let args = if is_function { args.as_slice() } else { &[] };
         if is_function {
             if self.rule_function_param_count[idx].is_some_and(|count| count != args.len()) {
                 return Err(CompilerError::General {
@@ -967,41 +970,28 @@ impl<'a> Compiler<'a> {
                 let module = &self.policy.get_modules()[module_index as usize];
                 let package = get_path_string(&module.package.refr, Some("data"))
                     .map_err(CompilerError::from)?;
-                let (base, index) = match refr.as_ref() {
-                    Expr::RefBrack { refr, index, .. } => (refr, Some(index)),
-                    _ => (refr, None),
+                let keys = if !args.is_empty() {
+                    if get_path_string(refr, Some(&package)).map_err(CompilerError::from)?
+                        != rule_path
+                    {
+                        continue;
+                    }
+                    Vec::new()
+                } else {
+                    let mut components = vec![Value::from("data")];
+                    components.extend(Self::default_path_components(&module.package.refr)?);
+                    components.extend(Self::default_path_components(refr)?);
+                    let prefix: Vec<_> = self.policy.inner.rule_path_components[rule_path]
+                        .iter()
+                        .map(|key| Value::from(key.as_str()))
+                        .collect();
+                    components
+                        .strip_prefix(prefix.as_slice())
+                        .ok_or_else(|| CompilerError::General {
+                            message: format!("invalid default prefix '{rule_path}'"),
+                        })?
+                        .to_vec()
                 };
-                let full_path =
-                    get_path_string(base, Some(&package)).map_err(CompilerError::from)?;
-                if !args.is_empty() && (full_path != rule_path || index.is_some()) {
-                    continue;
-                }
-                let full_components = self
-                    .policy
-                    .inner
-                    .rule_path_components
-                    .get(&full_path)
-                    .ok_or_else(|| CompilerError::General {
-                        message: format!("missing default path components for '{full_path}'"),
-                    })?;
-                let prefix = &self.policy.inner.rule_path_components[rule_path];
-                let mut keys: Vec<Value> = full_components
-                    .get(prefix.len()..)
-                    .ok_or_else(|| CompilerError::General {
-                        message: format!("invalid default prefix '{rule_path}'"),
-                    })?
-                    .iter()
-                    .map(|key| Value::from(key.as_str()))
-                    .collect();
-                if let Some(index) = index {
-                    keys.push(
-                        super::expressions::try_eval_const(index.as_ref()).ok_or_else(|| {
-                            CompilerError::General {
-                                message: "default object key must be constant".to_string(),
-                            }
-                        })?,
-                    );
-                }
                 if paths_seen.insert(keys.clone()) {
                     values.push((value.clone(), keys, package, module_index));
                 }
