@@ -45,6 +45,7 @@ struct TestCase {
     pub allow_interpreter_incorrect_behavior: Option<bool>,
     pub skip_interpreter: Option<bool>,
     pub execution_mode: Option<String>,
+    pub strict_builtin_errors: Option<bool>,
     pub host_await_responses: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_run_to_completion: Option<Vec<HostAwaitResponseSpec>>,
     pub host_await_responses_suspendable: Option<Vec<HostAwaitResponseSpec>>,
@@ -78,6 +79,7 @@ type HostAwaitResponseMap = BTreeMap<Value, VecDeque<(Option<Value>, Value)>>;
 #[derive(Debug, Clone)]
 struct RvmExecutionOptions {
     execution_mode: ExecutionMode,
+    strict_builtin_errors: bool,
     host_await_responses_run_to_completion: Option<Vec<(Value, Vec<Value>)>>,
     host_await_responses_suspendable: Option<HostAwaitResponseMap>,
     host_await_builtins: Option<Vec<(String, usize)>>,
@@ -87,6 +89,7 @@ impl Default for RvmExecutionOptions {
     fn default() -> Self {
         Self {
             execution_mode: ExecutionMode::RunToCompletion,
+            strict_builtin_errors: false,
             host_await_responses_run_to_completion: None,
             host_await_responses_suspendable: None,
             host_await_builtins: None,
@@ -176,6 +179,7 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
 
     Ok(RvmExecutionOptions {
         execution_mode,
+        strict_builtin_errors: case.strict_builtin_errors.unwrap_or(false),
         host_await_responses_run_to_completion: rtc_responses,
         host_await_responses_suspendable: suspendable_responses,
         host_await_builtins: ha_builtins,
@@ -291,6 +295,7 @@ fn compile_and_run_rvm_with_all_entry_points(
     *listing_out = Some(render_program_listing(program.as_ref()));
 
     let mut vm = RegoVM::new();
+    vm.set_strict_builtin_errors(execution_options.strict_builtin_errors);
     vm.load_program(program);
     vm.set_data(data.clone())?;
     vm.set_input(input.clone());

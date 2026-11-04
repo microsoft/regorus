@@ -1,0 +1,110 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# RVM-only expected values: the interpreter missing-field fix is independent.
+# Share the scenarios across both execution modes and strict settings.
+cases:
+  - note: missing_field_yields_run_to_completion_non_strict
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    strict_builtin_errors: false
+    modules: &modules
+      - |
+        package test
+
+        defined_then_missing := x.k if some x in [{"k":1},{}]
+        missing_then_defined := x.k if some x in [{},{"k":1}]
+        repeated_defined := x.k if some x in [{},{"k":1},{},{"k":1},{}]
+        all_missing := x.k if some x in [{},{}]
+        false_then_missing := x.k if some x in [{"k":false},{}]
+        null_then_missing := x.k if some x in [{"k":null},{}]
+        missing := {}.missing
+
+        partial_object[x.key] := x.value if some x in [
+            {"key":"ok","value":false}, {"key":"ok"},
+            {"value":1}, {"key":"null","value":null}, {}
+        ]
+        empty_partial_object[x.key] := x.value if some x in [{},{"key":"absent"}]
+        partial_set contains x.k if some x in [{"k":false},{},{"k":null}]
+
+        array := [x.k | some x in [{},{"k":false},{},{"k":null}]]
+        set := {x.k | some x in [{},{"k":false},{},{"k":null}]}
+        object := {x.key:x.value | some x in [
+            {"key":"ok","value":false}, {"key":"ok"},
+            {"value":1}, {"key":"null","value":null}, {}
+        ]}
+
+        nested_array := [x.missing | true] if some x in [{}]
+        nested_set := {x.missing | true} if some x in [{}]
+        nested_object_key := {x.missing:false | true} if some x in [{}]
+        nested_object_value := {"key":x.missing | true} if some x in [{}]
+        nested_arrays := [[x.k | true] | some x in [{},{"k":false},{}]]
+        nested_loops := [[y.k | some y in x] | some x in [[{},{"k":false},{}],[{}]]]
+    query: data.test.defined_then_missing
+    entry_points: &entry_points
+      - data.test.defined_then_missing
+      - data.test.missing_then_defined
+      - data.test.repeated_defined
+      - data.test.all_missing
+      - data.test.false_then_missing
+      - data.test.null_then_missing
+      - data.test.missing
+      - data.test.partial_object
+      - data.test.empty_partial_object
+      - data.test.partial_set
+      - data.test.array
+      - data.test.set
+      - data.test.object
+      - data.test.nested_array
+      - data.test.nested_set
+      - data.test.nested_object_key
+      - data.test.nested_object_value
+      - data.test.nested_arrays
+      - data.test.nested_loops
+    want_results: &results
+      - 1
+      - 1
+      - 1
+      - "#undefined"
+      - false
+      - null
+      - "#undefined"
+      - {"ok": false, "null": null}
+      - {}
+      - {set!: [false, null]}
+      - [false, null]
+      - {set!: [false, null]}
+      - {"ok": false, "null": null}
+      - []
+      - {set!: []}
+      - {}
+      - {}
+      - [[], [false], []]
+      - [[false], []]
+
+  - note: missing_field_yields_run_to_completion_strict
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    strict_builtin_errors: true
+    modules: *modules
+    query: data.test.defined_then_missing
+    entry_points: *entry_points
+    want_results: *results
+
+  - note: missing_field_yields_suspendable_non_strict
+    skip_interpreter: true
+    execution_mode: suspendable
+    strict_builtin_errors: false
+    modules: *modules
+    query: data.test.defined_then_missing
+    entry_points: *entry_points
+    want_results: *results
+
+  - note: missing_field_yields_suspendable_strict
+    skip_interpreter: true
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules: *modules
+    query: data.test.defined_then_missing
+    entry_points: *entry_points
+    want_results: *results
