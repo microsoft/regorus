@@ -790,6 +790,93 @@ struct YamlTest {
     cases: Vec<TestCase>,
 }
 
+fn unavailable_builtin_feature(file: &str) -> Option<&'static str> {
+    let file = file.replace('\\', "/");
+    let fixture = file.strip_prefix("tests/interpreter/cases/builtins/")?;
+    if !cfg!(feature = "std") && fixture == "numbers/intn.yaml" {
+        return Some("std");
+    }
+    let (family, _) = fixture.split_once('/')?;
+    [
+        ("time", cfg!(feature = "time"), true),
+        ("semver", cfg!(feature = "semver"), false),
+        ("glob", cfg!(feature = "glob"), true),
+        ("uuid", cfg!(feature = "uuid"), true),
+        ("regex", cfg!(feature = "regex"), false),
+    ]
+    .into_iter()
+    .find_map(|(feature, enabled, needs_std)| {
+        if family != feature {
+            None
+        } else if !enabled {
+            Some(feature)
+        } else {
+            (needs_std && !cfg!(feature = "std")).then_some("std")
+        }
+    })
+}
+
+#[test]
+fn builtin_fixture_feature_gates_are_portable() {
+    for (feature, enabled, needs_std) in [
+        ("time", cfg!(feature = "time"), true),
+        ("semver", cfg!(feature = "semver"), false),
+        ("glob", cfg!(feature = "glob"), true),
+        ("uuid", cfg!(feature = "uuid"), true),
+        ("regex", cfg!(feature = "regex"), false),
+    ] {
+        let file = format!("tests/interpreter/cases/builtins/{feature}/new_fixture.yaml");
+        let expected = if !enabled {
+            Some(feature)
+        } else if needs_std && !cfg!(feature = "std") {
+            Some("std")
+        } else {
+            None
+        };
+        assert_eq!(unavailable_builtin_feature(&file), expected);
+        assert_eq!(
+            unavailable_builtin_feature(&file.replace('/', "\\")),
+            expected
+        );
+    }
+}
+
+#[test]
+fn core_builtin_fixtures_are_not_skipped() {
+    for fixture in [
+        "comparison/tests.yaml",
+        "types/tests.yaml",
+        "units/parse.yaml",
+        "units/parse_bytes.yaml",
+        "numbers/compare.yaml",
+    ] {
+        let file = format!("tests/interpreter/cases/builtins/{fixture}");
+        assert_eq!(unavailable_builtin_feature(&file), None);
+        assert_eq!(unavailable_builtin_feature(&file.replace('/', "\\")), None);
+    }
+    let file = "tests/interpreter/cases/builtins/numbers/intn.yaml";
+    let expected = (!cfg!(feature = "std")).then_some("std");
+    assert_eq!(unavailable_builtin_feature(file), expected);
+    assert_eq!(
+        unavailable_builtin_feature(&file.replace('/', "\\")),
+        expected
+    );
+}
+
+#[test]
+fn builtin_fixture_feature_gates_require_exact_path_components() {
+    for file in [
+        "tests/interpreter/cases/builtins/regex_examples/match.yaml",
+        "tests/interpreter/cases/builtins/my_regex/match.yaml",
+        "tests/interpreter/cases/regex/builtins_match.yaml",
+        "unrelated/builtins/regex/match.yaml",
+        "tests/interpreter/cases/builtins/numbers/intn.yaml.bak",
+    ] {
+        assert_eq!(unavailable_builtin_feature(file), None);
+        assert_eq!(unavailable_builtin_feature(&file.replace('/', "\\")), None);
+    }
+}
+
 fn yaml_test_impl(file: &str) -> Result<()> {
     let _limits_lock = acquire_limits_test_lock();
 
@@ -799,34 +886,9 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     #[cfg(feature = "azure_policy")]
     load_target_definitions::load().expect("Failed to load target definitions");
 
-    #[cfg(not(feature = "std"))]
-    {
-        // Skip tests that depend on bultins that need std feature.
-        let skip = [
-            "intn.yaml",
-            "is_valid.yaml",
-            "add_date.yaml",
-            "date.yaml",
-            "clock.yaml",
-            "compare.yaml",
-            "diff.yaml",
-            "format.yaml",
-            "globmatch.yaml",
-            "now_ns.yaml",
-            "parse_duration_ns.yaml",
-            "parse_ns.yaml",
-            "parse_rfc3339_ns.yaml",
-            "weekday.yaml",
-            "generate.yaml",
-            "parse.yaml",
-            "tests.yaml",
-        ];
-        for s in skip {
-            if file.contains(s) {
-                std::println!("skipped {file} in no_std mode.");
-                return Ok(());
-            }
-        }
+    if let Some(feature) = unavailable_builtin_feature(file) {
+        std::println!("skipped {file} without {feature} feature.");
+        return Ok(());
     }
     #[cfg(not(feature = "graph"))]
     {
