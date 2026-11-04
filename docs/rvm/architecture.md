@@ -118,14 +118,16 @@ window, including function arguments. They run only when ordinary definitions
 produce no defined result, in both execution modes; `false` is a defined result,
 and errors or conflicts must not select a default. Defaults read the current
 evaluation's input and data, and function defaults are not cached across calls.
-Both fields survive JSON and binary serialization. Binary version 6 artifacts
-without defaults migrate directly; those with folded defaults retain their
-sources and entry points but require recompilation to avoid frozen input/data.
-Legacy JSON defaults without the new metadata also set `needs_recompilation`;
+Both fields survive JSON and binary serialization. All binary version 6
+artifacts retain their sources and entry points but require recompilation:
+the old compiler could freeze defaults or omit them entirely.
+Legacy JSON rule tables missing the new metadata also set `needs_recompilation`;
 the VM rejects flagged programs rather than executing potentially frozen values.
 Both `execute()` and named/indexed entry-point execution check this flag and
 default metadata before dispatch in either execution mode; `resume()` continues
 the already-validated execution without restarting it.
+Loading another program releases the previous execution state and invalidates
+any pending suspension; it cannot be resumed against the replacement artifact.
 
 For example, this default must be evaluated against the current request:
 
@@ -160,9 +162,10 @@ OPA 1.22.0. Use a single object default or defaults for disjoint sibling paths.
 This intentionally differs from the interpreter, which still accepts the
 overlapping definitions. RVM does not add parent-object overlay semantics.
 Static references to argument-bearing functions are also rejected, as in OPA;
-functions remain callable but are not virtual documents. Typed scalar keys in
-default paths follow OPA, independently of the interpreter's existing
-non-string intermediate-key handling.
+functions remain callable but are not virtual documents. Default-path lowering
+retains scalar key types instead of flattening them into string components.
+Existing registration restrictions and interpreter handling of non-string
+intermediate keys remain unchanged.
 
 Before producing a program, the compiler checks the completed static rule
 dependency graph, including executable defaults and rules already assigned as

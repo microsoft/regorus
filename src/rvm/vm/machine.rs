@@ -304,12 +304,12 @@ impl RegoVM {
 
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
+        self.release_previous_execution_state();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         if matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::SuspendableExecution
         ) {
-            self.release_previous_execution_state();
             self.finish_active_memory_budget_execution();
         }
 

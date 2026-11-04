@@ -174,3 +174,69 @@ cases:
     input: {x: 8}
     query: data.test.result
     want_result: [8]
+
+  - note: typed_default_namespace_preserves_boolean_layer
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package library
+        default r[true]["x"] := 7
+      - |
+        package test
+        result := [ns.r[true].x, count(ns.r)] if {
+          ns := data.library
+        }
+    query: data.test.result
+    want_result: [7, 1]
+
+  - note: typed_default_namespace_preserves_numeric_layer
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package library
+        default r[3]["x"] := [x | x := input.x]
+      - |
+        package test
+        result := [ns.r[3].x, count(ns.r)] if {
+          ns := data.library
+        }
+    input: {x: 8}
+    query: data.test.result
+    want_result: [[8], 1]
+
+  - note: scalar_default_prefixes_do_not_alias_identifier_strings
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        default r[true]["x"] := 7
+        default s[false]["x"] := 8
+        default t[null]["x"] := 9
+        result := [
+          [v | v := data.test.r["true"].x],
+          [v | v := s["false"].x],
+          [v | v := data.test.t["null"].x],
+          r[true].x,
+          s[false].x,
+          t[null].x,
+        ]
+    query: data.test.result
+    want_result: [[], [], [], 7, 8, 9]
+
+  - note: boolean_and_string_default_prefixes_preserve_distinct_values
+    strict: false
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default r[true]["x"] := 7
+        default r["true"]["y"] := [v | v := input.y]
+        result := [r[true].x, r["true"].y, count(r)]
+    input: {y: 8}
+    query: data.test.result
+    want_result: [7, [8], 2]

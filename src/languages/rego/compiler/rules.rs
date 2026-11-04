@@ -985,12 +985,11 @@ impl<'a> Compiler<'a> {
                         .iter()
                         .map(|key| Value::from(key.as_str()))
                         .collect();
-                    components
-                        .strip_prefix(prefix.as_slice())
-                        .ok_or_else(|| CompilerError::General {
-                            message: format!("invalid default prefix '{rule_path}'"),
-                        })?
-                        .to_vec()
+                    // Scalar prefixes also have string registrations, but are not string keys.
+                    let Some(keys) = components.strip_prefix(prefix.as_slice()) else {
+                        continue;
+                    };
+                    keys.to_vec()
                 };
                 if paths_seen.insert(keys.clone()) {
                     values.push((value.clone(), keys, package, module_index));

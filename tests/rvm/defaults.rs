@@ -459,6 +459,52 @@ fn namespace_selected_defaults_resume_after_loading_and_reuse() {
 }
 
 #[test]
+fn replacing_program_invalidates_suspended_default_execution() {
+    let program = compile(
+        "package defaults\ndefault result := [lookup(\"value\") | true]",
+        &[("lookup", 1)],
+    );
+    let mut bytes = compile("package defaults\nresult := 7", &[])
+        .serialize_binary()
+        .unwrap();
+    bytes[4..8].copy_from_slice(&6u32.to_le_bytes());
+    let legacy = match Program::deserialize_binary(&bytes).unwrap() {
+        DeserializationResult::Partial(program) => Arc::new(program),
+        DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
+    };
+    for program in round_trips(program) {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.execute_entry_point_by_name(ENTRY).unwrap();
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Suspended { .. }
+        ));
+
+        vm.load_program(legacy.clone());
+        assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+        assert!(matches!(
+            vm.resume(Some(Value::Bool(true))),
+            Err(VmError::InvalidResumeState { .. })
+        ));
+        assert!(matches!(
+            vm.execute(),
+            Err(VmError::Internal { ref message, .. })
+                if message == "program requires recompilation"
+        ));
+
+        vm.load_program(program);
+        vm.execute_entry_point_by_name(ENTRY).unwrap();
+        assert_eq!(
+            vm.resume(Some(Value::Bool(false))).unwrap(),
+            Value::from_json_str("[false]").unwrap()
+        );
+        assert_eq!(vm.get_execution_mode(), ExecutionMode::Suspendable);
+    }
+}
+
+#[test]
 fn default_bytecode_metadata_is_validated() {
     let mut program = (*compile(
         "package defaults\ndefault result := [x | x := input.x]",
@@ -560,6 +606,32 @@ fn legacy_json_defaults_require_recompilation_before_execution() {
 }
 
 #[test]
+fn legacy_json_omitted_function_defaults_require_recompilation() {
+    let program = compile(
+        "package defaults\ndefault f(x) := 7\nf(x) := x if x > 10\nresult := f(3)",
+        &[],
+    );
+    let mut json: serde_json::Value =
+        serde_json::from_str(&program.serialize_json().unwrap()).unwrap();
+    for rule in json["rule_infos"].as_array_mut().unwrap() {
+        rule.as_object_mut().unwrap().remove("default_entry_point");
+        rule["default_literal_index"] = serde_json::Value::Null;
+    }
+    let legacy = Arc::new(Program::deserialize_json(&json.to_string()).unwrap());
+    assert!(legacy.needs_recompilation);
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(legacy.clone());
+        vm.set_execution_mode(mode);
+        assert!(matches!(
+            vm.execute_entry_point_by_name(ENTRY),
+            Err(VmError::Internal { ref message, .. })
+                if message == "program requires recompilation"
+        ));
+    }
+}
+
+#[test]
 fn default_only_functions_enforce_call_arity() {
     let mut engine = Engine::new();
     engine
@@ -576,15 +648,20 @@ fn default_only_functions_enforce_call_arity() {
 
 #[test]
 fn previous_binary_version_preserves_recompilation_artifacts() {
-    let program = compile("package defaults\ndefault result := true", &[]);
-    let mut bytes = program.serialize_binary().unwrap();
-    bytes[4..8].copy_from_slice(&6u32.to_le_bytes());
-    match Program::deserialize_binary(&bytes).unwrap() {
-        DeserializationResult::Partial(old) => {
-            assert!(old.needs_recompilation);
-            assert_eq!(old.sources.len(), program.sources.len());
-            assert_eq!(old.entry_points, program.entry_points);
+    for module in [
+        "package defaults\ndefault result := true",
+        "package defaults\nresult := 7",
+    ] {
+        let program = compile(module, &[]);
+        let mut bytes = program.serialize_binary().unwrap();
+        bytes[4..8].copy_from_slice(&6u32.to_le_bytes());
+        match Program::deserialize_binary(&bytes).unwrap() {
+            DeserializationResult::Partial(old) => {
+                assert!(old.needs_recompilation);
+                assert_eq!(old.sources.len(), program.sources.len());
+                assert_eq!(old.entry_points, program.entry_points);
+            }
+            DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
         }
-        DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
     }
 }

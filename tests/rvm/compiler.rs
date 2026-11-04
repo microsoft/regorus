@@ -589,7 +589,7 @@ fn registered_host_await_round_trip_preserves_array_payload() {
 }
 
 #[test]
-fn registered_host_await_legacy_program_keeps_raw_payload() {
+fn registered_host_await_legacy_program_requires_recompilation() {
     // Captured before array packing at e39a1d16; SHA-256:
     // 43DFCEED1CFD2761D385F9CAE518CDCBB385F04FB3AA1ADC7DF312E7884DD547.
     let program = match Program::deserialize_binary(include_bytes!(
@@ -597,28 +597,19 @@ fn registered_host_await_legacy_program_keeps_raw_payload() {
     ))
     .expect("failed to deserialize baseline program")
     {
-        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
-        DeserializationResult::Partial(_) => panic!("expected a complete baseline program"),
+        DeserializationResult::Partial(program) => std::sync::Arc::new(program),
+        DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
     };
-    let mut vm = RegoVM::new();
-    vm.set_execution_mode(ExecutionMode::Suspendable);
-    vm.load_program(program);
-    let _ = vm.execute().expect("failed to execute baseline program");
-
-    match vm.execution_state() {
-        ExecutionState::Suspended {
-            reason:
-                SuspendReason::HostAwait {
-                    identifier,
-                    argument,
-                    ..
-                },
-            ..
-        } => {
-            assert_eq!(identifier, &Value::from("lookup"));
-            assert_eq!(argument, &Value::from("legacy"));
-        }
-        state => panic!("expected raw-payload HostAwait suspension, got {state:?}"),
+    assert!(program.needs_recompilation);
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(mode);
+        vm.load_program(program.clone());
+        assert!(matches!(
+            vm.execute(),
+            Err(VmError::Internal { ref message, .. })
+                if message == "program requires recompilation"
+        ));
     }
 }
 

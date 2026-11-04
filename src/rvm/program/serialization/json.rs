@@ -120,18 +120,15 @@ impl Program {
             .get("has_host_await")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let legacy_defaults = json_data
+        let legacy_rule_metadata = json_data
             .get("rule_infos")
             .and_then(|rules| rules.as_array())
             .is_some_and(|rules| {
-                rules.iter().any(|rule| {
-                    rule.get("default_entry_point").is_none()
-                        && rule
-                            .get("default_literal_index")
-                            .is_some_and(|index| !index.is_null())
-                })
+                rules
+                    .iter()
+                    .any(|rule| rule.get("default_entry_point").is_none())
             });
-        let needs_recompilation = legacy_defaults
+        let needs_recompilation = legacy_rule_metadata
             || metadata
                 .get("needs_recompilation")
                 .and_then(|v| v.as_bool())
