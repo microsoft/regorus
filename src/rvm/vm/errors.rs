@@ -39,6 +39,9 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
+    #[error("Unit exponent too large (maximum {limit}, pc={pc})")]
+    UnitExponentLimitExceeded { limit: i64, pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 
@@ -342,6 +345,9 @@ impl From<anyhow::Error> for VmError {
                 }
                 crate::LimitError::RegexSizeLimitExceeded { limit } => {
                     VmError::RegexSizeLimitExceeded { limit, pc: 0 }
+                }
+                crate::LimitError::UnitExponentLimitExceeded { limit } => {
+                    VmError::UnitExponentLimitExceeded { limit, pc: 0 }
                 }
             };
         }

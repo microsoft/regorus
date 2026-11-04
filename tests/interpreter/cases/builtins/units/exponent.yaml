@@ -1,0 +1,236 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: parse-exponent-too-large
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse("1e9999999K")
+    query: data.test.x
+    error: "unit exponent too large"
+
+  - note: parse-bytes-exponent-too-large
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse_bytes("1e9999999Ki")
+    query: data.test.x
+    error: "unit exponent too large"
+
+  - note: parse-normal-exponent-ok
+    data: {}
+    modules:
+      - |
+        package test
+        x = units.parse("1e6K")
+    query: data.test.x
+    want_result: 1e9
+
+  - note: positive exponent boundary is inclusive
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4096")]))'
+    want_result:
+      x: 4097
+
+  - note: decimal suffix reaches the boundary exactly
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4093K")]))'
+    want_result:
+      x: 4097
+
+  - note: negative decimal suffix reduces effective exponent
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4099m")]))'
+    want_result:
+      x: 4097
+
+  - note: byte decimal suffix reaches the boundary exactly
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse_bytes("1e4093KB")]))'
+    want_result:
+      x: 4097
+
+  - note: binary suffix has bounded scaling at the boundary
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse_bytes("1e4096Ki")]))'
+    want_result:
+      x: 4100
+
+  - note: positive exponent above boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4097")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: decimal suffix crossing the boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4094K")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: byte decimal suffix crossing the boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4094KB")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: byte binary suffix above boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4097Ki")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: zero mantissa does not bypass growth guard
+    modules: []
+    query: 'x := units.parse("0e999999")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: leading zero exponent with explicit plus remains valid
+    modules: []
+    query: 'x := units.parse("1e+0000000006K")'
+    want_result:
+      x: 1000000000
+
+  - note: leading zero exponent in byte quantity remains valid
+    modules: []
+    query: 'x := units.parse_bytes("1e0000000006Ki")'
+    want_result:
+      x: 1024000000
+
+  - note: safe negative binary exponent underflows to zero
+    modules: []
+    query: 'x := units.parse_bytes("1e-9999999Ki")'
+    want_result:
+      x: 0
+
+  - note: negative decimal exponent beyond integer parser underflows safely
+    modules: []
+    query: 'x := units.parse("1e-999999999999999999999999999K")'
+    want_result:
+      x: 0
+
+  - note: negative byte decimal exponent beyond integer parser underflows safely
+    modules: []
+    query: 'x := units.parse_bytes("1e-999999999999999999999999999KB")'
+    want_result:
+      x: 0
+
+  - note: unknown suffix retains undefined behavior
+    modules: []
+    query: 'x := units.parse("1e9999999XYZ")'
+    no_result: true
+
+  - note: malformed exponent remains an error
+    modules: []
+    query: 'x := units.parse("1e++6K")'
+    error: "could not parse number"
+
+  - note: exponent limit is fatal in non-strict mode
+    strict: false
+    modules: []
+    query: 'x := units.parse_bytes("1e4097Ki")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: unit binary suffix reaches the boundary
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4096Ki")]))'
+    want_result:
+      x: 4100
+
+  - note: unit binary suffix above boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4097Ki")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: bare byte quantity above boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4097")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored bare unit exponent above boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4_097")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored bare byte exponent above boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4_097")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored decimal unit exponent crossing boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4_094K")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored decimal byte exponent crossing boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4_094KB")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored binary unit exponent above boundary is rejected
+    modules: []
+    query: 'x := units.parse("1e4_097Ki")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored binary byte exponent above boundary is rejected
+    modules: []
+    query: 'x := units.parse_bytes("1e4_097Ki")'
+    error: "exponent too large (maximum 4096)"
+
+  - note: underscored boundary remains inclusive
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4_096")]))'
+    want_result:
+      x: 4097
+
+  - note: underscored decimal suffix reaches boundary exactly
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4_093K")]))'
+    want_result:
+      x: 4097
+
+  - note: underscored byte decimal suffix reaches boundary exactly
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse_bytes("1e4_093KB")]))'
+    want_result:
+      x: 4097
+
+  - note: underscored negative suffix reduces effective exponent
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse("1e4_099m")]))'
+    want_result:
+      x: 4097
+
+  - note: underscored binary boundary retains bounded scaling
+    modules: []
+    query: 'x := count(sprintf("%d", [units.parse_bytes("1e4_096Ki")]))'
+    want_result:
+      x: 4100
+
+  - note: underscored signed padded exponent remains valid
+    modules: []
+    query: 'x := units.parse("1_e_+_0_0_0_0_0_0_6K")'
+    want_result:
+      x: 1000000000
+
+  - note: separators are removed before leading decimal normalization
+    modules: []
+    query: 'x := units.parse("_.5e_3")'
+    want_result:
+      x: 500
+
+  - note: underscored negative exponent underflows safely
+    modules: []
+    query: 'x := units.parse_bytes("1e-9_999_999Ki")'
+    want_result:
+      x: 0
+
+  - note: underscored unknown suffix stays undefined
+    modules: []
+    query: 'x := units.parse("1e4_097XYZ")'
+    no_result: true
+
+  - note: underscored exponent limit is fatal in non-strict mode
+    strict: false
+    modules: []
+    query: 'x := units.parse_bytes("1e4_097Ki")'
+    error: "exponent too large (maximum 4096)"

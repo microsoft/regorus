@@ -1,0 +1,95 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: units_exponent_runtime_boundaries_and_underflow
+    input:
+      boundary: "1e4096"
+      decimal_boundary: "1e4093K"
+      milli_boundary: "1e4099m"
+      bytes_boundary: "1e4093KB"
+      binary_boundary: "1e4096Ki"
+      padded: "1e+0000000006K"
+      padded_bytes: "1e0000000006Ki"
+      underflow: "1e-999999999999999999999999999K"
+      underflow_bytes: "1e-999999999999999999999999999KB"
+      underflow_binary: "1e-9999999Ki"
+    modules:
+      - |
+        package test
+
+        result := {
+          "boundary": [count(sprintf("%d", [units.parse(input.boundary)])), trim(sprintf("%d", [units.parse(input.boundary)]), "0")],
+          "decimal": [count(sprintf("%d", [units.parse(input.decimal_boundary)])), trim(sprintf("%d", [units.parse(input.decimal_boundary)]), "0")],
+          "milli": [count(sprintf("%d", [units.parse(input.milli_boundary)])), trim(sprintf("%d", [units.parse(input.milli_boundary)]), "0")],
+          "bytes": [count(sprintf("%d", [units.parse_bytes(input.bytes_boundary)])), trim(sprintf("%d", [units.parse_bytes(input.bytes_boundary)]), "0")],
+          "binary": [count(sprintf("%d", [units.parse_bytes(input.binary_boundary)])), trim(sprintf("%d", [units.parse_bytes(input.binary_boundary)]), "0")],
+          "binary_units": [count(sprintf("%d", [units.parse(input.binary_boundary)])), trim(sprintf("%d", [units.parse(input.binary_boundary)]), "0")],
+          "padded": units.parse(input.padded),
+          "padded_bytes": units.parse_bytes(input.padded_bytes),
+          "underflow": units.parse(input.underflow),
+          "underflow_bytes": units.parse_bytes(input.underflow_bytes),
+          "underflow_binary": units.parse_bytes(input.underflow_binary),
+        }
+    query: data.test.result
+    want_result:
+      boundary: [4097, "1"]
+      decimal: [4097, "1"]
+      milli: [4097, "1"]
+      bytes: [4097, "1"]
+      binary: [4100, "1024"]
+      binary_units: [4100, "1024"]
+      padded: 1000000000
+      padded_bytes: 1024000000
+      underflow: 0
+      underflow_bytes: 0
+      underflow_binary: 0
+
+  - note: units_exponent_unknown_suffix_remains_undefined
+    input:
+      quantity: "1e9999999XYZ"
+    modules:
+      - |
+        package test
+
+        result := units.parse(input.quantity)
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: units_underscored_exponent_runtime_boundaries
+    input:
+      bare: "1e4_096"
+      decimal: "1e4_093K"
+      milli: "1e4_099m"
+      bytes: "1e4_093KB"
+      binary: "1e4_096Ki"
+      padded: "1_e_+_0_0_0_0_0_0_6K"
+      leading_decimal: "_.5e_3"
+      underflow: "1e-9_999_999Ki"
+    modules:
+      - |
+        package test
+        result := {
+          "bare": [count(sprintf("%d", [units.parse(input.bare)])), trim(sprintf("%d", [units.parse(input.bare)]), "0")],
+          "bare_bytes": [count(sprintf("%d", [units.parse_bytes(input.bare)])), trim(sprintf("%d", [units.parse_bytes(input.bare)]), "0")],
+          "decimal": [count(sprintf("%d", [units.parse(input.decimal)])), trim(sprintf("%d", [units.parse(input.decimal)]), "0")],
+          "milli": [count(sprintf("%d", [units.parse(input.milli)])), trim(sprintf("%d", [units.parse(input.milli)]), "0")],
+          "bytes": [count(sprintf("%d", [units.parse_bytes(input.bytes)])), trim(sprintf("%d", [units.parse_bytes(input.bytes)]), "0")],
+          "binary": [count(sprintf("%d", [units.parse(input.binary)])), trim(sprintf("%d", [units.parse(input.binary)]), "0")],
+          "binary_bytes": [count(sprintf("%d", [units.parse_bytes(input.binary)])), trim(sprintf("%d", [units.parse_bytes(input.binary)]), "0")],
+          "padded": units.parse(input.padded),
+          "leading_decimal": units.parse(input.leading_decimal),
+          "underflow": units.parse_bytes(input.underflow),
+        }
+    query: data.test.result
+    want_result:
+      bare: [4097, "1"]
+      bare_bytes: [4097, "1"]
+      decimal: [4097, "1"]
+      milli: [4097, "1"]
+      bytes: [4097, "1"]
+      binary: [4100, "1024"]
+      binary_bytes: [4100, "1024"]
+      padded: 1000000000
+      leading_decimal: 500
+      underflow: 0

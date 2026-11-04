@@ -2985,8 +2985,14 @@ impl Interpreter {
                     // resolve paths through the wrong module's imports when
                     // the error is swallowed below in non-strict mode.
                     self.set_current_module(prev_module)?;
-                    errors.push(e);
                     self.scopes = scopes;
+                    if e.downcast_ref::<crate::LimitError>().is_some() {
+                        if let Some(with_functions) = with_functions_saved {
+                            self.with_functions = with_functions;
+                        }
+                        return Err(e);
+                    }
+                    errors.push(e);
                     continue;
                 }
             };
