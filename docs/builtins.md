@@ -193,6 +193,10 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
+  `urlquery.decode` decodes one query component, preserving literal `&`, `=`,
+  `#`, tabs, and newlines; `+` becomes a space. Parameter parsing remains the
+  responsibility of `urlquery.decode_object`.
+
 - [Time](https://www.openpolicyagent.org/docs/latest/policy-reference/#time)
    | Builtin                                                                                                                    | Feature |
    |----------------------------------------------------------------------------------------------------------------------------|---------|

@@ -45,6 +45,13 @@ The Rego VM uses a register-based architecture with the following traits:
 
 ## 1. Compilation Outputs
 
+Keyed membership (`key, value in collection`) checks the value at that specific
+object key or array index, not whether the value appears elsewhere. Missing or
+invalid keys produce `false`, as do keyed membership checks on sets and scalar
+values. For containers other than arrays and objects, the key expression is not
+evaluated, matching the interpreter. Unkeyed membership continues to search
+collection values.
+
 A successful compilation produces a `Program` (`src/rvm/program/core.rs`). The
 layout is deliberately split:
 
