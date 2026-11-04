@@ -266,26 +266,6 @@ fn urlquery_decode_object(
 }
 
 #[cfg(feature = "urlquery")]
-fn encode_query_component(string: &str, output: &mut String) -> Result<()> {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for byte in string.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                output.push(char::from(byte));
-            }
-            b' ' => output.push('+'),
-            _ => {
-                output.push('%');
-                output.push(char::from(HEX[usize::from(byte >> 4)]));
-                output.push(char::from(HEX[usize::from(byte & 0x0f)]));
-            }
-        }
-        enforce_limit()?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "urlquery")]
 fn urlquery_encode(
     span: &Span,
     params: &[Ref<Expr>],
@@ -296,9 +276,18 @@ fn urlquery_encode(
     ensure_args_count(span, name, params, args, 1)?;
 
     let s = ensure_string(name, &params[0], &args[0])?;
-    let mut encoded = String::new();
-    encode_query_component(&s, &mut encoded)?;
-    Ok(Value::String(encoded.into()))
+    let mut url = match url::Url::parse("https://non-existent") {
+        Ok(v) => v,
+        Err(_) => bail!(params[0].span().error("not a valid url query")),
+    };
+
+    url.query_pairs_mut().append_pair(&s, "");
+    let query_str = url.query().unwrap_or("");
+    if query_str.is_empty() {
+        Ok(Value::String("".into()))
+    } else {
+        Ok(Value::String(query_str[..query_str.len() - 1].into()))
+    }
 }
 
 #[cfg(feature = "urlquery")]
@@ -312,25 +301,34 @@ fn urlquery_encode_object(
     ensure_args_count(span, name, params, args, 1)?;
 
     let obj = ensure_object(name, &params[0], args[0].clone())?;
-    let mut encoded = String::new();
-    for (key, value) in obj.iter_sorted() {
-        let key = ensure_string(name, &params[0], key)?;
-        let values = match value {
-            Value::String(v) => alloc::vec![v.as_ref()],
-            _ => ensure_string_collection(name, &params[0], value)?,
-        };
-        for value in values {
-            if !encoded.is_empty() {
-                encoded.push('&');
+    let mut url = match url::Url::parse("https://non-existent") {
+        Ok(v) => v,
+        Err(_) => bail!(params[0].span().error("not a valid url query")),
+    };
+
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (key, value) in obj.iter_sorted() {
+            let key = ensure_string(name, &params[0], key)?;
+            match value {
+                Value::String(v) => {
+                    pairs.append_pair(key.as_ref(), v.as_ref());
+                    // Guard encoded parameter growth when serializing string fields.
+                    enforce_limit()?;
+                }
+                _ => {
+                    let values = ensure_string_collection(name, &params[0], value)?;
+                    for v in values {
+                        pairs.append_pair(key.as_ref(), v);
+                        // Guard encoded parameter growth when serializing multi-valued fields.
+                        enforce_limit()?;
+                    }
+                }
             }
-            encode_query_component(&key, &mut encoded)?;
-            encoded.push('=');
-            encode_query_component(value, &mut encoded)?;
-            enforce_limit()?;
         }
     }
 
-    Ok(Value::String(encoded.into()))
+    Ok(Value::String(url.query().unwrap_or("").into()))
 }
 
 #[cfg(feature = "yaml")]
