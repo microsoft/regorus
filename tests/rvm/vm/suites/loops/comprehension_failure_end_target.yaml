@@ -1,0 +1,216 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Auto-iterating comprehensions whose `comprehension_end` targets the
+# `ComprehensionEnd` instruction itself. When a failed condition exhausts the
+# iteration, execution lands on `ComprehensionEnd`, which must still find the
+# comprehension context and complete normally in every execution mode.
+
+cases:
+  - note: auto_iterate_failure_exhausts_into_end
+    description: A failed condition on the only element completes an empty comprehension
+    example_rego: |
+      [x | some x in [1]; false]  # []
+    literals:
+      - 1
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 4
+          comprehension_end: 7
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoadBool { dest: 4, value: false }"
+      - "AssertCondition { condition: 4 }"
+      - "ComprehensionYield { value_reg: 3 }"
+      - "ComprehensionEnd"
+      - "Return { value: 1 }"
+    want_result: []
+
+  - note: auto_iterate_success_exhausts_into_end
+    description: Passing twin of the failed-condition case collects the element
+    example_rego: |
+      [x | some x in [1]; true]  # [1]
+    literals:
+      - 1
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 4
+          comprehension_end: 7
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "LoadBool { dest: 4, value: true }"
+      - "AssertCondition { condition: 4 }"
+      - "ComprehensionYield { value_reg: 3 }"
+      - "ComprehensionEnd"
+      - "Return { value: 1 }"
+    want_result: [1]
+
+  - note: auto_iterate_failure_after_yield_exhausts_into_end
+    description: The last element fails after an earlier element was yielded
+    example_rego: |
+      [x | some x in [1, 2]; x == 1]  # [1]
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 6
+          comprehension_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "Load { dest: 7, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 7 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "Eq { dest: 4, left: 3, right: 6 }"
+      - "AssertCondition { condition: 4 }"
+      - "ComprehensionYield { value_reg: 3 }"
+      - "ComprehensionEnd"
+      - "Return { value: 1 }"
+    want_result: [1]
+
+  - note: auto_iterate_failure_then_yield_exhausts_into_end
+    description: Twin where the first element fails and the last one is yielded
+    example_rego: |
+      [x | some x in [2, 1]; x == 1]  # [1]
+    literals:
+      - 1
+      - 2
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 6
+          comprehension_end: 9
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 7, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 7 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "Eq { dest: 4, left: 3, right: 6 }"
+      - "AssertCondition { condition: 4 }"
+      - "ComprehensionYield { value_reg: 3 }"
+      - "ComprehensionEnd"
+      - "Return { value: 1 }"
+    want_result: [1]
+
+  # The cases below target the instruction after `ComprehensionEnd` (as
+  # compiled code does) from inside a loop body. An exhausted comprehension
+  # must not stay active and capture a later failure of the enclosing loop.
+
+  - note: yield_exhaustion_past_end_inside_loop
+    description: A comprehension finished by its last yield does not capture the loop's later failure
+    example_rego: |
+      # n counts loop iterations; the assertion fails for x == 1 only.
+      # some x in [1, 2]; _ := [y | some y in [1]]; n += 1; x == 2
+    literals:
+      - 1
+      - 2
+      - 0
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 1
+          result_reg: 2
+          key_reg: 3
+          value_reg: 4
+          body_start: 10
+          comprehension_end: 12
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 10
+          value_reg: 5
+          result_reg: 12
+          body_start: 9
+          loop_end: 16
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "Load { dest: 7, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 7 }"
+      - "ArrayNew { dest: 1 }"
+      - "ArrayPush { arr: 1, value: 6 }"
+      - "Load { dest: 8, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "ComprehensionYield { value_reg: 4 }"
+      - "ComprehensionEnd"
+      - "Add { dest: 8, left: 8, right: 6 }"
+      - "Eq { dest: 9, left: 5, right: 7 }"
+      - "AssertCondition { condition: 9 }"
+      - "LoopNext { body_start: 9, loop_end: 16 }"
+      - "Return { value: 8 }"
+    want_result: 2
+
+  - note: empty_collection_past_end_inside_loop
+    description: A comprehension over an empty collection does not capture the loop's later failure
+    example_rego: |
+      # some x in [1, 2]; _ := [y | some y in []]; n += 1; x == 2
+    literals:
+      - 1
+      - 2
+      - 0
+    instruction_params:
+      comprehension_begin_params:
+        - mode: "Array"
+          collection_reg: 1
+          result_reg: 2
+          key_reg: 3
+          value_reg: 4
+          body_start: 9
+          comprehension_end: 11
+      loop_params:
+        - mode: "ForEach"
+          collection: 0
+          key_reg: 10
+          value_reg: 5
+          result_reg: 12
+          body_start: 8
+          loop_end: 15
+    instructions:
+      - "ArrayNew { dest: 0 }"
+      - "Load { dest: 6, literal_idx: 0 }"
+      - "ArrayPush { arr: 0, value: 6 }"
+      - "Load { dest: 7, literal_idx: 1 }"
+      - "ArrayPush { arr: 0, value: 7 }"
+      - "ArrayNew { dest: 1 }"
+      - "Load { dest: 8, literal_idx: 2 }"
+      - "LoopStart { params_index: 0 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "ComprehensionYield { value_reg: 4 }"
+      - "ComprehensionEnd"
+      - "Add { dest: 8, left: 8, right: 6 }"
+      - "Eq { dest: 9, left: 5, right: 7 }"
+      - "AssertCondition { condition: 9 }"
+      - "LoopNext { body_start: 8, loop_end: 15 }"
+      - "Return { value: 8 }"
+    want_result: 2

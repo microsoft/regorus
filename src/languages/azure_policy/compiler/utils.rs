@@ -128,9 +128,9 @@ pub(super) fn has_unquoted_wildcard(path: &str) -> bool {
 /// [`QuotedSubscripts`] reads such a bracket as unquoted text, so a later
 /// `[*]` would count as a wildcard in one path and as part of a quoted key
 /// in a longer path that closes the quote.  Rejecting it in count field
-/// paths keeps the textual `prefix[*].` comparisons against count binding
-/// prefixes sound.  Other field paths keep reading such a bracket as
-/// unquoted text.
+/// paths keeps [`has_unquoted_wildcard`] consistent with the segment-based
+/// count binding matching in `binding_path` (`match_count_prefix`).  Other
+/// field paths keep reading such a bracket as unquoted text.
 fn ensure_quotes_closed(path: &str) -> Result<()> {
     let mut quoted = QuotedSubscripts::default();
     let mut pos = 0_usize;

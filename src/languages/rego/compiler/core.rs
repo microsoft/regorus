@@ -11,7 +11,7 @@ use super::{CompilationContext, Compiler, CompilerError, Register, Result, Scope
 use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
-use crate::lexer::Span;
+use crate::lexer::{Source, Span};
 use crate::rvm::program::{BuiltinInfo, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Value;
@@ -277,19 +277,18 @@ impl<'a> Compiler<'a> {
         }
         self.program.instructions.push(instruction);
 
-        let source_path = span.source.get_path().to_string();
-        let source_index = self.get_or_create_source_index(&source_path);
+        let source_index = self.get_or_create_source_index(&span.source);
 
         self.spans
             .push(SpanInfo::from_lexer_span(span, source_index));
     }
 
-    fn get_or_create_source_index(&mut self, source_path: &str) -> usize {
-        if let Some(&index) = self.source_to_index.get(source_path) {
+    fn get_or_create_source_index(&mut self, source: &Source) -> usize {
+        if let Some(&index) = self.source_to_index.get(source) {
             index
         } else {
             let index = self.source_to_index.len();
-            self.source_to_index.insert(source_path.to_string(), index);
+            self.source_to_index.insert(source.clone(), index);
             index
         }
     }

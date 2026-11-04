@@ -1,0 +1,478 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Rule kinds: complete, partial set, partial object, function; defaults,
+# else chains, multiple definitions and conflicts.
+
+cases:
+  - note: complete_rule_two_conditions
+    description: A boolean rule whose body has two input guards.
+    constructs: [complete_rule, undefined_vs_false, unknown_input]
+    unknowns: [input.user, input.action]
+    modules:
+      - |
+        package test
+        allow if {
+          input.user.role == "admin"
+          input.action == "delete"
+        }
+    query: data.test.allow
+    examples:
+      - note: both_match
+        input: {user: {role: admin}, action: delete}
+        want_result: true
+      - note: second_condition_fails
+        input: {user: {role: admin}, action: read}
+        want_result: "#undefined"
+      - note: first_condition_fails
+        input: {user: {role: guest}, action: delete}
+        want_result: "#undefined"
+      - note: missing_user
+        input: {action: delete}
+        want_result: "#undefined"
+
+  - note: complete_rule_value
+    description: A complete rule that produces a non-boolean value.
+    constructs: [complete_rule]
+    modules:
+      - |
+        package test
+        severity := "high" if input.score > 80
+    query: data.test.severity
+    examples:
+      - note: above_threshold
+        input: {score: 90}
+        want_result: high
+      - note: below_threshold
+        input: {score: 10}
+        want_result: "#undefined"
+
+  - note: default_boolean
+    description: A default false that applies when no definition succeeds.
+    constructs: [default, complete_rule, undefined_vs_false]
+    modules:
+      - |
+        package test
+        default allow := false
+        allow if input.role == "admin"
+    query: data.test.allow
+    examples:
+      - note: definition_succeeds
+        input: {role: admin}
+        want_result: true
+      - note: default_used
+        input: {role: guest}
+        want_result: false
+      - note: default_used_without_input
+        want_result: false
+
+  - note: default_value
+    description: A non-boolean default overridden by a conditional definition.
+    constructs: [default, complete_rule]
+    modules:
+      - |
+        package test
+        default limit := 10
+        limit := 100 if input.tier == "gold"
+    query: data.test.limit
+    examples:
+      - note: definition_succeeds
+        input: {tier: gold}
+        want_result: 100
+      - note: default_used
+        input: {tier: silver}
+        want_result: 10
+
+  - note: else_chain_with_final_else
+    description: An else chain whose last branch has no body.
+    constructs: [else, complete_rule, unknown_input]
+    unknowns: [input.role]
+    modules:
+      - |
+        package test
+        decision := "allow" if {
+          input.role == "admin"
+        } else := "review" if {
+          input.role == "auditor"
+        } else := "deny"
+    query: data.test.decision
+    examples:
+      - note: first_branch
+        input: {role: admin}
+        want_result: allow
+      - note: second_branch
+        input: {role: auditor}
+        want_result: review
+      - note: final_else
+        input: {role: guest}
+        want_result: deny
+      - note: final_else_without_input
+        want_result: deny
+
+  - note: else_chain_without_final_else
+    description: An else chain that can leave the rule Undefined.
+    constructs: [else, complete_rule]
+    modules:
+      - |
+        package test
+        tier := "gold" if {
+          input.points >= 1000
+        } else := "silver" if {
+          input.points >= 100
+        }
+    query: data.test.tier
+    examples:
+      - note: first_branch
+        input: {points: 1500}
+        want_result: gold
+      - note: second_branch
+        input: {points: 500}
+        want_result: silver
+      - note: no_branch
+        input: {points: 5}
+        want_result: "#undefined"
+
+  - note: else_after_default
+    description: A default alongside an else chain; the default applies only when every branch fails.
+    constructs: [else, default, complete_rule]
+    modules:
+      - |
+        package test
+        default rate := 0
+        rate := 5 if {
+          input.plan == "pro"
+        } else := 1 if {
+          input.plan == "basic"
+        }
+    query: data.test.rate
+    examples:
+      - note: first_branch
+        input: {plan: pro}
+        want_result: 5
+      - note: second_branch
+        input: {plan: basic}
+        want_result: 1
+      - note: default_used
+        input: {plan: none}
+        want_result: 0
+
+  - note: multiple_definitions_or
+    description: Two definitions of one boolean rule; either one is enough.
+    constructs: [multiple_bodies, complete_rule, unknown_input]
+    unknowns: [input.user, input.resource]
+    modules:
+      - |
+        package test
+        allow if input.user.role == "admin"
+        allow if {
+          input.user.role == "owner"
+          input.resource.owner == input.user.name
+        }
+    query: data.test.allow
+    examples:
+      - note: first_definition
+        input: {user: {role: admin, name: a}, resource: {owner: b}}
+        want_result: true
+      - note: second_definition
+        input: {user: {role: owner, name: b}, resource: {owner: b}}
+        want_result: true
+      - note: neither_definition
+        input: {user: {role: owner, name: a}, resource: {owner: b}}
+        want_result: "#undefined"
+
+  - note: multiple_definitions_same_value
+    description: Two definitions that both succeed with the same value, which is not a conflict.
+    constructs: [multiple_bodies, complete_rule, conflict]
+    modules:
+      - |
+        package test
+        level := "high" if input.a
+        level := "high" if input.b
+        level := "low" if input.c
+    query: data.test.level
+    examples:
+      - note: both_same_value
+        input: {a: true, b: true}
+        want_result: high
+      - note: different_values_conflict
+        input: {a: true, c: true}
+        want_error: "conflicts"
+        divergence:
+          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
+          engines: [rvm]
+          actual_result: "#undefined"
+      - note: none
+        input: {}
+        want_result: "#undefined"
+
+  - note: partial_set_two_definitions
+    description: A partial set built from two definitions, each iterating over input.
+    constructs: [partial_set, multiple_bodies, some_in, builtin, unknown_input]
+    unknowns: [input.containers]
+    modules:
+      - |
+        package test
+        deny contains msg if {
+          some c in input.containers
+          c.privileged == true
+          msg := sprintf("privileged: %s", [c.name])
+        }
+        deny contains msg if {
+          some c in input.containers
+          startswith(c.image, "untrusted/")
+          msg := sprintf("untrusted image: %s", [c.name])
+        }
+    query: data.test.deny
+    examples:
+      - note: both_definitions_contribute
+        input:
+          containers:
+            - {name: a, image: "untrusted/a", privileged: true}
+            - {name: b, image: "trusted/b", privileged: false}
+        want_result: {"set!": ["privileged: a", "untrusted image: a"]}
+      - note: one_contribution
+        input:
+          containers:
+            - {name: a, image: "trusted/a", privileged: false}
+            - {name: b, image: "untrusted/b"}
+        want_result: {"set!": ["untrusted image: b"]}
+      - note: no_contribution
+        input:
+          containers:
+            - {name: a, image: "trusted/a", privileged: false}
+        want_result: {"set!": []}
+      - note: missing_collection
+        input: {}
+        want_result: {"set!": []}
+
+  - note: partial_object
+    description: A partial object keyed by an input field.
+    constructs: [partial_object, some_in, unknown_input]
+    unknowns: [input.resources]
+    modules:
+      - |
+        package test
+        owners[name] := owner if {
+          some r in input.resources
+          name := r.name
+          owner := r.owner
+        }
+    query: data.test.owners
+    examples:
+      - note: two_keys
+        input: {resources: [{name: a, owner: alice}, {name: b, owner: bob}]}
+        want_result: {a: alice, b: bob}
+      - note: no_keys
+        input: {resources: []}
+        want_result: {}
+
+  - note: partial_object_key_conflict
+    description: Two contributions to one partial-object key with different values.
+    constructs: [partial_object, conflict, runtime_error]
+    modules:
+      - |
+        package test
+        owners[name] := owner if {
+          some r in input.resources
+          name := r.name
+          owner := r.owner
+        }
+    query: data.test.owners
+    examples:
+      - note: same_value_twice
+        input: {resources: [{name: a, owner: alice}, {name: a, owner: alice}]}
+        want_result: {a: alice}
+      - note: different_values
+        input: {resources: [{name: a, owner: alice}, {name: a, owner: bob}]}
+        want_error: "multiple outputs"
+        divergence:
+          reason: The RVM keeps the last value for a conflicting partial-object key (microsoft/regorus#719).
+          engines: [rvm]
+          actual_result: {a: bob}
+
+  - note: function_multiple_definitions
+    description: A function with two definitions selected by its argument.
+    constructs: [function, multiple_bodies, helper_rule]
+    modules:
+      - |
+        package test
+        risk(score) := "high" if score > 80
+        risk(score) := "low" if score <= 80
+        level := risk(input.score)
+    query: data.test.level
+    examples:
+      - note: first_definition
+        input: {score: 90}
+        want_result: high
+      - note: second_definition
+        input: {score: 10}
+        want_result: low
+      - note: undefined_argument
+        input: {}
+        want_result: "#undefined"
+
+  - note: function_else
+    description: A function whose definition is an else chain.
+    constructs: [function, else]
+    modules:
+      - |
+        package test
+        grade(n) := "A" if {
+          n >= 90
+        } else := "B" if {
+          n >= 80
+        } else := "C"
+        result := grade(input.n)
+    query: data.test.result
+    examples:
+      - note: first_branch
+        input: {n: 95}
+        want_result: A
+      - note: second_branch
+        input: {n: 85}
+        want_result: B
+      - note: final_else
+        input: {n: 1}
+        want_result: C
+
+  - note: function_conflict
+    description: Two function definitions that both succeed with different values.
+    constructs: [function, conflict, runtime_error]
+    modules:
+      - |
+        package test
+        f(x) := 1 if x > 0
+        f(x) := 2 if x > 5
+        result := f(input.x)
+    query: data.test.result
+    examples:
+      - note: one_definition
+        input: {x: 3}
+        want_result: 1
+      - note: both_definitions
+        input: {x: 10}
+        want_error: "multiple outputs"
+        divergence:
+          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
+          engines: [rvm]
+          actual_result: "#undefined"
+      - note: no_definition
+        input: {x: -1}
+        want_result: "#undefined"
+
+  - note: rego_v0_query_blocks
+    description: A Rego v0 rule with two query blocks in one definition.
+    constructs: [multiple_bodies, complete_rule]
+    rego_v0: true
+    modules:
+      - |
+        package test
+        allow {
+          input.role == "admin"
+        } {
+          input.role == "root"
+        }
+    query: data.test.allow
+    examples:
+      - note: first_block
+        input: {role: admin}
+        want_result: true
+      - note: second_block
+        input: {role: root}
+        want_result: true
+      - note: no_block
+        input: {role: guest}
+        want_result: "#undefined"
+
+  - note: allow_if_no_violations
+    description: A decision derived from an empty partial set, via count and via negation.
+    constructs: [partial_set, helper_rule, negation, default, builtin, unknown_input]
+    unknowns: [input.containers]
+    modules:
+      - |
+        package test
+        violations contains c.name if {
+          some c in input.containers
+          c.privileged
+        }
+        default allow := false
+        allow if count(violations) == 0
+        default allow_negated := false
+        allow_negated if not any_violation
+        any_violation if some _ in violations
+        decision := {"allow": allow, "allow_negated": allow_negated}
+    query: data.test.decision
+    examples:
+      - note: no_violations
+        input: {containers: [{name: a, privileged: false}]}
+        want_result: {allow: true, allow_negated: true}
+      - note: one_violation
+        input: {containers: [{name: a, privileged: true}, {name: b}]}
+        want_result: {allow: false, allow_negated: false}
+      - note: missing_collection
+        input: {}
+        want_result: {allow: true, allow_negated: true}
+
+  - note: partial_object_with_comprehension_values
+    description: A partial object whose values are comprehensions over another input collection.
+    constructs: [partial_object, comprehension, some_in]
+    modules:
+      - |
+        package test
+        members[team] := names if {
+          some team in input.teams
+          names := [u.name | some u in input.users; u.team == team]
+        }
+    query: data.test.members
+    examples:
+      - note: populated
+        input:
+          teams: [red, blue]
+          users: [{name: a, team: red}, {name: b, team: red}]
+        want_result: {red: [a, b], blue: []}
+      - note: no_teams
+        input: {teams: [], users: [{name: a, team: red}]}
+        want_result: {}
+
+  - note: every_with_helper_function
+    description: A universal quantifier whose body calls a helper function.
+    constructs: [every, function, helper_rule, builtin]
+    modules:
+      - |
+        package test
+        approved(img) if startswith(img, "registry.example.com/")
+        all_approved if {
+          every img in input.images {
+            approved(img)
+          }
+        }
+    query: data.test.all_approved
+    examples:
+      - note: all
+        input: {images: ["registry.example.com/a", "registry.example.com/b"]}
+        want_result: true
+      - note: not_all
+        input: {images: ["registry.example.com/a", "docker.io/b"]}
+        want_result: "#undefined"
+
+  - note: else_after_undefined_condition
+    description: An else branch taken because the first condition is Undefined rather than false.
+    constructs: [else, complete_rule, undefined_vs_false, unknown_input]
+    unknowns: [input.points]
+    modules:
+      - |
+        package test
+        tier := "gold" if {
+          input.points > 100
+        } else := "basic"
+    query: data.test.tier
+    examples:
+      - note: condition_true
+        input: {points: 200}
+        want_result: gold
+      - note: condition_false
+        input: {points: 5}
+        want_result: basic
+      - note: condition_undefined
+        input: {}
+        want_result: basic
