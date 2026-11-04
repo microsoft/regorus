@@ -166,6 +166,17 @@ impl RegoVM {
                 },
             )?;
 
+            // Guard failure can skip ComprehensionEnd. Unwind at the exclusive
+            // end before executing any instruction belonging to the parent.
+            while self.comprehension_stack.last().is_some_and(|context| {
+                context.iteration_state.is_none()
+                    && self.loop_stack.len() == context.loop_stack_depth
+                    && self.pc == usize::from(context.comprehension_end)
+            }) && !matches!(instruction, Instruction::ComprehensionEnd { .. })
+            {
+                self.comprehension_stack.pop();
+            }
+
             match self.execute_instruction(&program, instruction)? {
                 InstructionOutcome::Continue => {
                     self.pc = self.pc.saturating_add(1);

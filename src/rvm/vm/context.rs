@@ -117,6 +117,8 @@ pub(super) struct ComprehensionContext {
     pub(super) comprehension_end: u16,
     /// Iteration state when comprehension manages iteration itself (None when driven by LoopStart/LoopNext)
     pub(super) iteration_state: Option<IterationState>,
+    /// Run-to-completion loop stack depth when this comprehension was entered.
+    pub(super) loop_stack_depth: usize,
     /// Resume location for the parent frame once this comprehension completes
     pub(super) resume_pc: usize,
 }

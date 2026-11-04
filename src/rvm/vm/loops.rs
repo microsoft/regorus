@@ -598,6 +598,15 @@ impl RegoVM {
             return Ok(());
         }
 
+        if self
+            .comprehension_stack
+            .last()
+            .is_some_and(|context| self.loop_stack.len() == context.loop_stack_depth)
+        {
+            self.handle_comprehension_condition_failure_run_to_completion()?;
+            return Ok(());
+        }
+
         if !self.loop_stack.is_empty() {
             let (loop_mode, loop_next_pc, loop_end, result_reg) = {
                 let loop_ctx = self
@@ -632,8 +641,6 @@ impl RegoVM {
                     self.pc = usize::from(loop_next_pc.saturating_sub(1));
                 }
             }
-        } else if self.handle_comprehension_condition_failure_run_to_completion()? {
-            // handled by comprehension context
         } else {
             return Err(VmError::AssertionFailed { pc: self.pc });
         }

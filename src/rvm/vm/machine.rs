@@ -69,8 +69,7 @@ pub struct RegoVM {
     pub(super) context: Value,
 
     /// Loop execution stack
-    /// Note: Loops are either at the outermost level (rule body) or within the topmost comprehension.
-    /// Loops never contain comprehensions - it's always the other way around.
+    /// Loops and comprehensions can nest in either direction.
     pub(super) loop_stack: Vec<LoopContext>,
 
     /// Call rule execution stack for managing nested rule calls
@@ -80,8 +79,7 @@ pub struct RegoVM {
     pub(super) register_stack: Vec<Vec<Value>>,
 
     /// Comprehension execution stack for tracking active comprehensions
-    /// Note: Comprehensions can be nested within each other, forming a proper nesting hierarchy.
-    /// Any loops within a comprehension belong to the topmost (current) comprehension context.
+    /// Each context records its entry loop depth to identify the innermost scope.
     pub(super) comprehension_stack: Vec<ComprehensionContext>,
 
     /// Base register window size for the main execution context

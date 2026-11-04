@@ -93,6 +93,7 @@ impl RegoVM {
             body_start: params.body_start,
             comprehension_end: params.comprehension_end,
             iteration_state,
+            loop_stack_depth: self.loop_stack.len(),
             resume_pc,
         };
 
@@ -176,6 +177,7 @@ impl RegoVM {
             body_start: params.body_start,
             comprehension_end: params.comprehension_end,
             iteration_state,
+            loop_stack_depth: self.loop_stack.len(),
             resume_pc,
         };
 

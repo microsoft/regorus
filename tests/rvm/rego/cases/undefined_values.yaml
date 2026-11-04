@@ -161,3 +161,72 @@ cases:
         empty_array: []
         empty_object: {}
         "": ""
+
+  - note: undefined_nested_comprehensions
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "assignment": [true | _ := [true | _ := input.missing]],
+          "array_head": [count([input.missing | true]) | true],
+          "object_key": [count({input.missing: true | true}) | true],
+          "object_value": [count({"key": input.missing | true}) | true],
+          "loop_assignment": [count([true | _ := input.missing]) | some i in [1, 2]],
+          "loop_array_head": [count([input.missing | true]) | some i in [1, 2]],
+          "loop_object_key": [count({input.missing: true | true}) | some i in [1, 2]],
+          "loop_object_value": [count({"key": input.missing | true}) | some i in [1, 2]],
+          "inner_loop": [count([x | some x in [1, 2]; _ := input.missing]) | some i in [1, 2]],
+          "mixed": [count([x.value | some x in [{"value": false}, {}, {"value": null}]]) | some i in [1, 2]],
+          "every": [true | every i in [1, 2] { count([input.missing | true]) == 0 }],
+        }
+    query: data.test.main
+    want_result:
+      assignment: [true]
+      array_head: [0]
+      object_key: [0]
+      object_value: [0]
+      loop_assignment: [0, 0]
+      loop_array_head: [0, 0]
+      loop_object_key: [0, 0]
+      loop_object_value: [0, 0]
+      inner_loop: [0, 0]
+      mixed: [2, 2]
+      every: [true]
+
+  - note: undefined_nested_comprehensions_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "assignment": [true | _ := [true | _ := input.missing]],
+          "array_head": [count([input.missing | true]) | true],
+          "object_key": [count({input.missing: true | true}) | true],
+          "object_value": [count({"key": input.missing | true}) | true],
+          "loop_assignment": [count([true | _ := input.missing]) | some i in [1, 2]],
+          "loop_array_head": [count([input.missing | true]) | some i in [1, 2]],
+          "loop_object_key": [count({input.missing: true | true}) | some i in [1, 2]],
+          "loop_object_value": [count({"key": input.missing | true}) | some i in [1, 2]],
+          "inner_loop": [count([x | some x in [1, 2]; _ := input.missing]) | some i in [1, 2]],
+          "mixed": [count([x.value | some x in [{"value": false}, {}, {"value": null}]]) | some i in [1, 2]],
+          "every": [true | every i in [1, 2] { count([input.missing | true]) == 0 }],
+        }
+    query: data.test.main
+    want_result:
+      assignment: [true]
+      array_head: [0]
+      object_key: [0]
+      object_value: [0]
+      loop_assignment: [0, 0]
+      loop_array_head: [0, 0]
+      loop_object_key: [0, 0]
+      loop_object_value: [0, 0]
+      inner_loop: [0, 0]
+      mixed: [2, 2]
+      every: [true]
