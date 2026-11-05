@@ -114,6 +114,10 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [trim_suffix](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-trim_suffix)                          | _       |
   | [upper](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-strings-upper)                                      | _       |
 
+  `sprintf("%t", [value])` renders boolean values as `true` or `false`, following
+  Rust's boolean formatting convention rather than OPA's embedded formatter
+  diagnostics (such as `%!t(string=true)`).
+
   `strings.count` counts non-overlapping matches. An empty needle returns one
   plus the number of Unicode code points, not bytes or grapheme clusters.
 
@@ -188,6 +192,27 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlis_valid)                         | `yaml`      |
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
+
+  `urlquery.encode` and `urlquery.encode_object` retain the
+  `application/x-www-form-urlencoded` escaping used by Rust's `url` crate.
+  This intentionally differs from OPA's Go `net/url.QueryEscape` convention:
+
+  | Input | Regorus (Rust `url` crate) | OPA / Go `net/url.QueryEscape` |
+  |-------|---------------------------|-------------------------------|
+  | `"~"` | `"%7E"`                   | `"~"`                         |
+  | `"*"` | `"*"`                     | `"%2A"`                       |
+  | `" "` | `"+"`                     | `"+"`                         |
+  | `"+"` | `"%2B"`                   | `"%2B"`                       |
+  | `"~* "` | `"%7E*+"`               | `"~%2A+"`                     |
+
+  Object keys and values use the same escaping. This shared behavior applies
+  to both the interpreter and RVM. Policies comparing encoded strings with
+  OPA-generated output should account for the `~` and `*` differences;
+  they reflect different encoding conventions, not data loss.
+
+  `urlquery.decode` decodes one query component, preserving literal `&`, `=`,
+  `#`, tabs, and newlines; `+` becomes a space. Parameter parsing remains the
+  responsibility of `urlquery.decode_object`.
 
 - [Time](https://www.openpolicyagent.org/docs/latest/policy-reference/#time)
    | Builtin                                                                                                                    | Feature |

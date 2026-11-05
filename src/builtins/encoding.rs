@@ -218,21 +218,10 @@ fn urlquery_decode(
     ensure_args_count(span, name, params, args, 1)?;
 
     let string = ensure_string(name, &params[0], &args[0])?;
-    let url_string = "https://non-existent?".to_owned() + string.as_ref();
-    let url = match url::Url::parse(&url_string) {
-        Ok(v) => v,
-        Err(_) => bail!(params[0].span().error("not a valid url query")),
-    };
-
-    let mut query_str = "".to_owned();
-    for (k, v) in url.query_pairs() {
-        query_str += &k;
-        if !v.is_empty() {
-            query_str += "=";
-            query_str += &v;
-        }
-    }
-    Ok(Value::String(query_str.into()))
+    let component = string.replace('+', " ");
+    let decoded = percent_encoding::percent_decode_str(&component).decode_utf8_lossy();
+    enforce_limit()?;
+    Ok(Value::from(decoded.as_ref()))
 }
 
 #[cfg(feature = "urlquery")]

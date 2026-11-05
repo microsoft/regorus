@@ -258,11 +258,15 @@ impl RegoVM {
                 }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
@@ -374,11 +378,15 @@ impl RegoVM {
                 }
             }
             (&ComprehensionMode::Array, &mut Value::Array(ref mut arr)) => {
-                crate::Rc::make_mut(arr).push(value_to_add);
+                if !matches!(value_to_add, Value::Undefined) {
+                    crate::Rc::make_mut(arr).push(value_to_add);
+                }
             }
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
-                    crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    if key != Value::Undefined && value_to_add != Value::Undefined {
+                        crate::Rc::make_mut(obj).insert(key, value_to_add);
+                    }
                 } else {
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {

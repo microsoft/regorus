@@ -93,8 +93,11 @@ impl<'a> Compiler<'a> {
             }
             Expr::RefDot { .. } | Expr::RefBrack { .. } => self.compile_chained_ref(expr, span)?,
             Expr::Membership {
-                value, collection, ..
-            } => self.compile_membership(value, collection, span)?,
+                key,
+                value,
+                collection,
+                ..
+            } => self.compile_membership(key.as_ref(), value, collection, span)?,
             Expr::ArrayCompr { term, query, .. } => {
                 self.compile_array_comprehension(term, query, span)?
             }

@@ -85,6 +85,38 @@ fn default_comprehensions_read_current_input_and_data() {
 }
 
 #[test]
+fn default_comprehensions_skip_missing_yields_without_losing_iterations() {
+    for (expression, expected, empty) in [
+        ("[x.k | some x in input.items]", "[false,null]", "[]"),
+        (
+            "{x.key:x.k | some x in input.items}",
+            r#"{"ok":false,"null":null}"#,
+            "{}",
+        ),
+        (
+            "[[x.k | true] | some x in input.items]",
+            "[[],[false],[],[null],[]]",
+            "[]",
+        ),
+    ] {
+        let module = format!("package defaults\ndefault result := {expression}");
+        let input = r#"{"items":[{},{"key":"ok","k":false},{},{"key":"null","k":null},{}]}"#;
+        assert_reusable(
+            &module,
+            &[
+                (input, "{}", Value::from_json_str(expected).unwrap()),
+                (
+                    r#"{"items":[]}"#,
+                    "{}",
+                    Value::from_json_str(empty).unwrap(),
+                ),
+                (input, "{}", Value::from_json_str(expected).unwrap()),
+            ],
+        );
+    }
+}
+
+#[test]
 fn indexed_and_nested_defaults_preserve_their_object_shape() {
     for module in [
         r#"package defaults
