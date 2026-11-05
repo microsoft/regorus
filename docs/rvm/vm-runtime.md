@@ -75,6 +75,34 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Time checks inside comparisons
+
+When an execution timer is enabled, RVM checks that same timer while running
+`==`, `!=`, `<`, `<=`, `>`, `>=`, and `AssertEq`. It also checks during array
+membership and object-value membership. Both execution modes use this path.
+An expired timer returns `TimeLimitExceeded` at the current instruction,
+including when it expires while scanning nested values.
+
+The private RVM traversal preserves native value comparison semantics and
+equality's identity/length shortcuts. It checks when visiting values, including
+object keys/values and set elements, and between 256-byte string chunks. These
+steps count toward the existing timer's `check_interval`, not the VM instruction
+count. The deadline is not restarted for each comparison. With no timer, RVM
+uses native comparisons as before; native `Value` comparison implementations
+are unchanged.
+
+This traversal does not memoize shared substructures. Compact shared DAGs can
+still require exponential work to finish, but the covered comparisons can
+stop at a timer checkpoint instead of expanding the entire structure first.
+No comparison cache or new size/memory limit is introduced.
+
+This is not a hard interruption guarantee. Set membership, B-tree key lookups
+and insertions, builtins, and other internal VM comparisons are not wired to
+these checks. A numeric library call cannot be interrupted halfway through.
+Deeply nested values can still exhaust the native stack; the rule-call depth
+limit below does not bound value nesting. Interpreter comparisons do not gain
+timer checks here.
+
 ### Native rule-call depth limit
 
 By default, the VM allows at most 16 active rule calls that use the native thread
