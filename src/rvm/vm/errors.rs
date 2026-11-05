@@ -14,6 +14,9 @@ pub enum VmError {
     #[error("Recursive evaluation of rule {rule_index} (pc={pc})")]
     RecursiveRuleEvaluation { rule_index: u16, pc: usize },
 
+    #[error("Rule call depth exceeded limit {limit} (pc={pc})")]
+    RuleCallDepthExceeded { limit: usize, pc: usize },
+
     #[error("Execution stopped: exceeded maximum instruction limit of {limit} after {executed} instructions (pc={pc})")]
     InstructionLimitExceeded {
         limit: usize,

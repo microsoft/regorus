@@ -172,24 +172,12 @@ cases:
       - note: one_exceeds
         input: {limits: {cpu: 8, memory: 1}}
         want_result: "#undefined"
-        divergence:
-          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
-          engines: [rvm]
-          actual_result: true
       - note: exceeds_own_key_only
         input: {limits: {cpu: 5}}
         want_result: "#undefined"
-        divergence:
-          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
-          engines: [rvm]
-          actual_result: true
       - note: unknown_key
         input: {limits: {gpu: 1}}
         want_result: "#undefined"
-        divergence:
-          reason: The RVM accepts this `every` even when `v <= data.max[k]` fails for the current key `k` (or `k` is not in `data.max`).
-          engines: [rvm]
-          actual_result: true
 
   - note: membership_literal_collection
     description: Membership in a literal set used as a rule body condition.

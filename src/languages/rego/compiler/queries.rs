@@ -169,6 +169,25 @@ impl<'a> Compiler<'a> {
                 .map(|key_expr| self.compile_rego_expr(&key_expr))
                 .unwrap_or(Ok(value_register))?;
 
+            if matches!(context.context_type, ContextType::Rule(_)) {
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: value_register,
+                        mode: GuardMode::NotUndefined,
+                    },
+                    span,
+                );
+                if key_register != value_register {
+                    self.emit_instruction(
+                        Instruction::Guard {
+                            register: key_register,
+                            mode: GuardMode::NotUndefined,
+                        },
+                        span,
+                    );
+                }
+            }
+
             match context.context_type {
                 ContextType::Comprehension(ComprehensionType::Array) => {
                     self.emit_instruction(

@@ -181,15 +181,21 @@ impl<'a> Compiler<'a> {
         &mut self,
         key_plan: Option<&DestructuringPlan>,
         key_register: Option<Register>,
+        key_span: Option<&Span>,
         value_plan: &DestructuringPlan,
         value_register: Register,
-        span: &Span,
+        value_span: &Span,
     ) -> Result<()> {
         if let (Some(plan), Some(register)) = (key_plan, key_register) {
+            let span = key_span.unwrap_or(value_span);
             let _ = self.apply_destructuring_plan(plan, register, span, PlanContext::SomeIn)?;
         }
-        let _ =
-            self.apply_destructuring_plan(value_plan, value_register, span, PlanContext::SomeIn)?;
+        let _ = self.apply_destructuring_plan(
+            value_plan,
+            value_register,
+            value_span,
+            PlanContext::SomeIn,
+        )?;
         Ok(())
     }
 

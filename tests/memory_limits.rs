@@ -90,6 +90,12 @@ package limit
 quoted := sprintf("%q", [input])
 "#;
 
+const RANGE_STEP_MODULE: &str = r#"
+package limit
+
+result := numbers.range_step(0, input, 1)
+"#;
+
 #[cfg(feature = "rvm")]
 const SUSPENDABLE_HOST_AWAIT_MODULE: &str = r#"
 package limit
@@ -470,6 +476,307 @@ fn sprintf_quote_propagates_memory_limit_errors() {
         .eval_rule("data.limit.quoted".to_string())
         .expect_err("expected sprintf quoting to hit the memory limit");
     assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_nested_quote_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SPRINTF_QUOTE_MODULE);
+    engine.set_input(Value::from(vec![Value::String(
+        "\0".repeat(100_000).into(),
+    )]));
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("nested quoting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_bigint_checks_memory_before_decimal_conversion() {
+    assert_sprintf_bigint_peak_memory(false, 1_000_000, 16 * 1024, 0, 48 * 1024, ("", ""));
+}
+
+#[test]
+fn sprintf_nested_bigint_checks_memory_before_decimal_conversion() {
+    assert_sprintf_bigint_peak_memory(true, 1_000_000, 16 * 1024, 0, 48 * 1024, ("", ""));
+}
+
+#[test]
+fn sprintf_bigint_checks_binary_workspace_before_allocating() {
+    assert_sprintf_bigint_peak_memory(false, 100_000, 40 * 1024, 24 * 1024, 48 * 1024, ("", ""));
+}
+
+#[test]
+fn sprintf_nested_bigint_checks_second_quoting_allocation() {
+    assert_sprintf_bigint_peak_memory(true, 100_000, 48 * 1024, 40 * 1024, 64 * 1024, ("", ""));
+}
+
+#[test]
+fn sprintf_bigint_checks_escaped_percent_growth() {
+    assert_sprintf_bigint_peak_memory(false, 100_000, 48 * 1024, 40 * 1024, 52 * 1024, ("%%", ""));
+}
+
+#[test]
+fn sprintf_bigint_checks_following_diagnostic_growth() {
+    for suffix in [
+        ("%q", ", 1.5"),
+        ("%*q", ", true, \"x\""),
+        ("%.*q", ", true, \"x\""),
+        ("%[0]q", ""),
+    ] {
+        assert_sprintf_bigint_peak_memory(false, 100_000, 48 * 1024, 40 * 1024, 52 * 1024, suffix);
+    }
+}
+
+fn assert_sprintf_bigint_peak_memory(
+    nested: bool,
+    bits: u32,
+    budget: u64,
+    minimum_peak: i64,
+    maximum_peak: i64,
+    suffix: (&'static str, &'static str),
+) {
+    for negative in [false, true] {
+        std::thread::spawn(move || {
+            let mut guard = LimitGuard::lock();
+            let (format_suffix, args_suffix) = suffix;
+            let module = format!(
+                "package limit\nquoted := sprintf(\"%q{format_suffix}\", [input{args_suffix}])"
+            );
+            let mut engine = new_engine_with_module(&module);
+            engine.set_input(Value::from(1));
+            engine.eval_rule("data.limit.quoted".to_string()).unwrap();
+            // A shift creates a compact binary magnitude without first building
+            // a decimal string, keeping the setup peak below the tested limit.
+            let sign = if negative { "-1" } else { "1" };
+            let result = engine
+                .eval_query(format!("bits.lsh({sign}, {bits})"), false)
+                .unwrap();
+            let value = result.result[0].expressions[0].value.clone();
+            drop(result);
+            engine.set_input(if nested {
+                Value::from(vec![value])
+            } else {
+                value
+            });
+
+            let before = mimalloc::current_thread_allocation_stats();
+            assert!(
+                before.peak - before.allocated < maximum_peak,
+                "setup must not hide the formatting peak: {before:?}"
+            );
+            guard.set_with_additional_budget(budget);
+            let err = engine
+                .eval_rule("data.limit.quoted".to_string())
+                .expect_err("BigInt formatting must respect the limit");
+            let after = mimalloc::current_thread_allocation_stats();
+            guard.disable_limit();
+            assert_memory_limit_error(&err);
+            let peak = after.peak - before.allocated;
+            assert!(
+                peak >= minimum_peak && peak < maximum_peak,
+                "unexpected BigInt formatting peak: nested={nested}, negative={negative}, \
+                 budget={budget}, before={before:?}, after={after:?}"
+            );
+        })
+        .join()
+        .expect("BigInt memory test thread");
+    }
+}
+
+#[test]
+#[cfg(feature = "rvm")]
+fn sprintf_bigint_vm_checks_memory_before_decimal_conversion() {
+    for nested in [false, true] {
+        std::thread::spawn(move || {
+            let mut guard = LimitGuard::lock();
+            let mut engine = Engine::new();
+            let result = engine
+                .eval_query("bits.lsh(1, 1000000)".to_string(), false)
+                .unwrap();
+            let value = result.result[0].expressions[0].value.clone();
+            drop(result);
+            let program = compile_memory_budget_module(SPRINTF_QUOTE_MODULE, "data.limit.quoted");
+            let mut vm = RegoVM::new();
+            vm.load_program(program);
+            vm.set_input(Value::from(18446744073709551616u128));
+            let expected = Value::from("%!q(big.Int=18446744073709551616)");
+            guard.set_with_additional_budget(256 * 1024);
+            assert_eq!(vm.execute().unwrap(), expected);
+            guard.disable_limit();
+            vm.set_input(if nested { Value::from(vec![value]) } else { value });
+
+            let before = mimalloc::current_thread_allocation_stats();
+            assert!(before.peak - before.allocated < 96 * 1024,
+                "setup must not hide the VM formatting peak: {before:?}");
+            guard.set_with_additional_budget(16 * 1024);
+            let result = vm.execute();
+            let after = mimalloc::current_thread_allocation_stats();
+            guard.disable_limit();
+            assert!(matches!(result, Err(VmError::MemoryLimitExceeded { .. })),
+                "VM must preserve the typed memory-limit error");
+            assert!(after.peak - before.allocated < 96 * 1024,
+                "VM BigInt formatting exceeded its peak allowance: before={before:?}, after={after:?}");
+        }).join().expect("VM BigInt memory test thread");
+    }
+}
+
+#[test]
+fn sprintf_bigint_preserves_output_with_an_active_memory_limit() {
+    let mut guard = LimitGuard::lock();
+    let cases = [
+        (
+            r#"sprintf("%q", [18446744073709551616])"#,
+            "%!q(big.Int=18446744073709551616)",
+        ),
+        (
+            r#"sprintf("%q", [-18446744073709551616])"#,
+            "%!q(big.Int=-18446744073709551616)",
+        ),
+        (
+            r#"sprintf("%q", [1000000000000000000000000000000000001])"#,
+            "%!q(big.Int=1000000000000000000000000000000000001)",
+        ),
+        (
+            r#"sprintf("%q", [[18446744073709551616, null, true]])"#,
+            "\"[18446744073709551616, null, true]\"",
+        ),
+        (
+            r#"sprintf("%q", [{18446744073709551616: -18446744073709551616}])"#,
+            "\"{18446744073709551616: -18446744073709551616}\"",
+        ),
+        (
+            r#"sprintf("%q", [{18446744073709551616}])"#,
+            "\"{18446744073709551616}\"",
+        ),
+        (
+            r#"sprintf("%#q", [[-18446744073709551616]])"#,
+            "`[-18446744073709551616]`",
+        ),
+        (r#"sprintf("%.3q", [[18446744073709551616]])"#, "\"[18\""),
+        (
+            r#"sprintf("λ:%q:%q:end", [18446744073709551616, -18446744073709551616])"#,
+            "λ:%!q(big.Int=18446744073709551616):%!q(big.Int=-18446744073709551616):end",
+        ),
+        (
+            r#"sprintf("%q", [[18446744073709551616, "λ😀\n"]])"#,
+            "\"[18446744073709551616, \\\"λ😀\\\\n\\\"]\"",
+        ),
+    ];
+    for (query, expected) in cases {
+        let mut engine = new_engine_with_module(&format!("package limit\nquoted := {query}"));
+        // Compile and warm the same policy before enabling the memory ceiling.
+        let unlimited = engine.eval_rule("data.limit.quoted".to_string()).unwrap();
+        assert_eq!(unlimited.as_string().unwrap().as_ref(), expected);
+        guard.set_with_additional_budget(256 * 1024);
+        let limited = engine.eval_rule("data.limit.quoted".to_string()).unwrap();
+        guard.disable_limit();
+        assert_eq!(limited, unlimited, "{query}");
+    }
+}
+
+#[test]
+fn sprintf_bigint_large_conversion_matches_unlimited_output() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SPRINTF_QUOTE_MODULE);
+    // Exercise a complete conversion of more than 100,000 decimal digits,
+    // rather than just the early rejection path for an oversized operand.
+    let result = engine
+        .eval_query("bits.lsh(1, 332192)".to_string(), false)
+        .unwrap();
+    engine.set_input(result.result[0].expressions[0].value.clone());
+    drop(result);
+    let unlimited = engine.eval_rule("data.limit.quoted".to_string()).unwrap();
+    guard.set_with_additional_budget(2 * 1024 * 1024);
+    let limited = engine.eval_rule("data.limit.quoted".to_string()).unwrap();
+    guard.disable_limit();
+    assert_eq!(limited, unlimited);
+}
+
+#[test]
+fn sprintf_float_precision_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(
+        r#"package limit
+        quoted := sprintf("%#.60000q", [input])"#,
+    );
+    engine.set_input(Value::from(1.5));
+    guard.set_with_additional_budget(16 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("float formatting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_float_precision_checks_memory_during_formatting() {
+    std::thread::spawn(|| {
+        let mut guard = LimitGuard::lock();
+        let mut engine = new_engine_with_module(r#"package limit
+            quoted := sprintf("%#.60000q", [input])"#);
+        engine.set_input(Value::from(1.5));
+        let before = mimalloc::current_thread_allocation_stats();
+        guard.set_with_additional_budget(16 * 1024);
+        let err = engine.eval_rule("data.limit.quoted".to_string())
+            .expect_err("float formatting must respect the limit");
+        assert_memory_limit_error(&err);
+        let after = mimalloc::current_thread_allocation_stats();
+        assert!(after.peak - before.allocated < 48 * 1024,
+            "large formatting allocation occurred before the limit check: before={before:?}, after={after:?}");
+    }).join().expect("memory test thread");
+}
+
+#[test]
+fn range_step_interpreter_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(RANGE_STEP_MODULE);
+    engine.set_input(Value::from(3));
+    guard.set_with_additional_budget(64 * 1024);
+    assert_eq!(
+        engine
+            .eval_rule("data.limit.result".to_string())
+            .expect("small stepped range fits the budget"),
+        Value::from((0..=3).map(Value::from).collect::<Vec<_>>()),
+    );
+
+    guard.disable_limit();
+    engine.set_input(Value::from(i64::MAX));
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.result".to_string())
+        .expect_err("huge stepped range must hit the memory limit");
+    assert_memory_limit_error(&err);
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn range_step_vm_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(RANGE_STEP_MODULE);
+    let entrypoint = Rc::from("data.limit.result");
+    let compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("compile stepped range policy");
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+        .expect("compile stepped range VM program");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_input(Value::from(3));
+    guard.set_with_additional_budget(64 * 1024);
+    assert_eq!(
+        vm.execute().expect("small stepped range fits the budget"),
+        Value::from((0..=3).map(Value::from).collect::<Vec<_>>()),
+    );
+
+    guard.disable_limit();
+    vm.set_input(Value::from(i64::MAX));
+    guard.set_with_additional_budget(64 * 1024);
+    match vm.execute() {
+        Err(VmError::MemoryLimitExceeded { .. }) => {}
+        Err(other) => panic!("expected stepped range VM memory limit error, got {other}"),
+        Ok(value) => panic!("expected stepped range VM memory limit error, got {value:?}"),
+    }
 }
 
 #[cfg(feature = "jsonpatch")]

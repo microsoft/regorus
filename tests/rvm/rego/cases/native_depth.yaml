@@ -1,0 +1,446 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# The scenario runner isolates this file in a 2 MiB test-thread subprocess.
+# These are RVM resource limits, not Rego recursion or interpreter semantics.
+cases:
+  - note: native-depth/rules-16-succeed
+    skip_interpreter: true
+    strict: false
+    modules: &rules
+      - |
+        package probe
+        safe := 7
+        # This entry evaluates 82 rules, including itself.
+        default r82 := 99
+        r82 := r1
+        r1 := r2
+        r2 := r3
+        r3 := r4
+        r4 := r5
+        r5 := r6
+        r6 := r7
+        r7 := r8
+        r8 := r9
+        r9 := r10
+        r10 := r11
+        r11 := r12
+        r12 := r13
+        r13 := r14
+        r14 := r15
+        r15 := r16
+        r16 := r17
+        r17 := r18
+        r18 := r19
+        r19 := r20
+        r20 := r21
+        r21 := r22
+        r22 := r23
+        r23 := r24
+        r24 := r25
+        r25 := r26
+        r26 := r27
+        r27 := r28
+        r28 := r29
+        r29 := r30
+        r30 := r31
+        r31 := r32
+        r32 := r33
+        r33 := r34
+        r34 := r35
+        r35 := r36
+        r36 := r37
+        r37 := r38
+        r38 := r39
+        r39 := r40
+        r40 := r41
+        r41 := r42
+        r42 := r43
+        r43 := r44
+        r44 := r45
+        r45 := r46
+        r46 := r47
+        r47 := r48
+        r48 := r49
+        r49 := r50
+        r50 := r51
+        r51 := r52
+        r52 := r53
+        r53 := r54
+        r54 := r55
+        r55 := r56
+        r56 := r57
+        r57 := r58
+        r58 := r59
+        r59 := r60
+        r60 := r61
+        r61 := r62
+        r62 := r63
+        r63 := r64
+        r64 := r65
+        default r65 := 99
+        r65 := r66
+        r66 := r67
+        r67 := r68
+        r68 := r69
+        r69 := r70
+        r70 := r71
+        r71 := r72
+        r72 := r73
+        r73 := r74
+        r74 := r75
+        r75 := r76
+        r76 := r77
+        r77 := r78
+        r78 := r79
+        r79 := r80
+        r80 := r81
+        r81 := 42
+    query: data.probe.r66
+    want_result: 42
+
+  - note: native-depth/rules-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    modules: *rules
+    query: data.probe.r65
+    want_error: Rule call depth exceeded limit 16
+
+  - note: native-depth/rules-82-explicit-succeed
+    skip_interpreter: true
+    strict: false
+    modules: *rules
+    execution_mode: suspendable
+    query: data.probe.r82
+    want_result: 42
+
+  - note: native-depth/functions-16-succeed
+    skip_interpreter: true
+    strict: false
+    modules: &functions
+      - |
+        package probe
+        safe := 7
+        # This entry evaluates one rule and 81 functions.
+        r82 := f1(42)
+        default r65 := 99
+        r65 := f66(42)
+        r66 := f67(42)
+        f1(x) := f2(x)
+        f2(x) := f3(x)
+        f3(x) := f4(x)
+        f4(x) := f5(x)
+        f5(x) := f6(x)
+        f6(x) := f7(x)
+        f7(x) := f8(x)
+        f8(x) := f9(x)
+        f9(x) := f10(x)
+        f10(x) := f11(x)
+        f11(x) := f12(x)
+        f12(x) := f13(x)
+        f13(x) := f14(x)
+        f14(x) := f15(x)
+        f15(x) := f16(x)
+        f16(x) := f17(x)
+        f17(x) := f18(x)
+        f18(x) := f19(x)
+        f19(x) := f20(x)
+        f20(x) := f21(x)
+        f21(x) := f22(x)
+        f22(x) := f23(x)
+        f23(x) := f24(x)
+        f24(x) := f25(x)
+        f25(x) := f26(x)
+        f26(x) := f27(x)
+        f27(x) := f28(x)
+        f28(x) := f29(x)
+        f29(x) := f30(x)
+        f30(x) := f31(x)
+        f31(x) := f32(x)
+        f32(x) := f33(x)
+        f33(x) := f34(x)
+        f34(x) := f35(x)
+        f35(x) := f36(x)
+        f36(x) := f37(x)
+        f37(x) := f38(x)
+        f38(x) := f39(x)
+        f39(x) := f40(x)
+        f40(x) := f41(x)
+        f41(x) := f42(x)
+        f42(x) := f43(x)
+        f43(x) := f44(x)
+        f44(x) := f45(x)
+        f45(x) := f46(x)
+        f46(x) := f47(x)
+        f47(x) := f48(x)
+        f48(x) := f49(x)
+        f49(x) := f50(x)
+        f50(x) := f51(x)
+        f51(x) := f52(x)
+        f52(x) := f53(x)
+        f53(x) := f54(x)
+        f54(x) := f55(x)
+        f55(x) := f56(x)
+        f56(x) := f57(x)
+        f57(x) := f58(x)
+        f58(x) := f59(x)
+        f59(x) := f60(x)
+        f60(x) := f61(x)
+        f61(x) := f62(x)
+        f62(x) := f63(x)
+        f63(x) := f64(x)
+        f64(x) := f65(x)
+        f65(x) := f66(x)
+        f66(x) := f67(x)
+        f67(x) := f68(x)
+        f68(x) := f69(x)
+        f69(x) := f70(x)
+        f70(x) := f71(x)
+        f71(x) := f72(x)
+        f72(x) := f73(x)
+        f73(x) := f74(x)
+        f74(x) := f75(x)
+        f75(x) := f76(x)
+        f76(x) := f77(x)
+        f77(x) := f78(x)
+        f78(x) := f79(x)
+        f79(x) := f80(x)
+        f80(x) := f81(x)
+        f81(x) := x
+    query: data.probe.r66
+    want_result: 42
+
+  - note: native-depth/functions-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    modules: *functions
+    query: data.probe.r65
+    want_error: Rule call depth exceeded limit 16
+
+  - note: native-depth/functions-82-explicit-succeed
+    skip_interpreter: true
+    strict: false
+    modules: *functions
+    execution_mode: suspendable
+    query: data.probe.r82
+    want_result: 42
+
+  - note: native-depth/virtual-leaf-16-succeed
+    skip_interpreter: true
+    strict: false
+    input: &input
+      next: [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17]
+      seed: 0
+    modules: &leaf
+      - |
+        package probe
+        safe := 7
+        default r0 := 99
+        r0 := data.level1[input.next[0]]
+      - &leaf1 |
+        package level1
+        default r1 := 99
+        r1 := data.level2[input.next[1]]
+      - &leaf2 |
+        package level2
+        default r2 := 99
+        r2 := data.level3[input.next[2]]
+      - &leaf3 |
+        package level3
+        r3 := data.level4[input.next[3]]
+      - &leaf4 |
+        package level4
+        r4 := data.level5[input.next[4]]
+      - &leaf5 |
+        package level5
+        r5 := data.level6[input.next[5]]
+      - &leaf6 |
+        package level6
+        r6 := data.level7[input.next[6]]
+      - &leaf7 |
+        package level7
+        r7 := data.level8[input.next[7]]
+      - &leaf8 |
+        package level8
+        r8 := data.level9[input.next[8]]
+      - &leaf9 |
+        package level9
+        r9 := data.level10[input.next[9]]
+      - &leaf10 |
+        package level10
+        r10 := data.level11[input.next[10]]
+      - &leaf11 |
+        package level11
+        r11 := data.level12[input.next[11]]
+      - &leaf12 |
+        package level12
+        r12 := data.level13[input.next[12]]
+      - &leaf13 |
+        package level13
+        r13 := data.level14[input.next[13]]
+      - &leaf14 |
+        package level14
+        r14 := data.level15[input.next[14]]
+      - &leaf15 |
+        package level15
+        r15 := data.level16[input.next[15]]
+      - &leaf16 |
+        package level16
+        r16 := data.level17[input.next[16]]
+      - &last |
+        package level17
+        r17 := 42
+    query: data.level2.r2
+    want_result: 42
+
+  - note: native-depth/virtual-leaf-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *leaf
+    query: data.level1.r1
+    want_error: Rule call depth exceeded limit 16
+
+  # The entry rule uses an explicit frame: 17 total rules means 16 native calls.
+  - note: native-depth/virtual-leaf-suspendable-16-succeed
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *leaf
+    execution_mode: suspendable
+    query: data.level1.r1
+    want_result: 42
+
+  - note: native-depth/virtual-leaf-suspendable-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *leaf
+    execution_mode: suspendable
+    query: data.probe.r0
+    want_error: Rule call depth exceeded limit 16
+
+  - note: native-depth/virtual-object-16-succeed
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: &object
+      - |
+        package probe
+        safe := 7
+        default r0 := 99
+        r0 := object.get(data.level1, input.next[0], 99)
+      - &object1 |
+        package level1
+        default r1 := 99
+        r1 := object.get(data.level2, input.next[1], 99)
+      - &object2 |
+        package level2
+        default r2 := 99
+        r2 := object.get(data.level3, input.next[2], 99)
+      - &object3 |
+        package level3
+        r3 := object.get(data.level4, input.next[3], 99)
+      - &object4 |
+        package level4
+        r4 := object.get(data.level5, input.next[4], 99)
+      - &object5 |
+        package level5
+        r5 := object.get(data.level6, input.next[5], 99)
+      - &object6 |
+        package level6
+        r6 := object.get(data.level7, input.next[6], 99)
+      - &object7 |
+        package level7
+        r7 := object.get(data.level8, input.next[7], 99)
+      - &object8 |
+        package level8
+        r8 := object.get(data.level9, input.next[8], 99)
+      - &object9 |
+        package level9
+        r9 := object.get(data.level10, input.next[9], 99)
+      - &object10 |
+        package level10
+        r10 := object.get(data.level11, input.next[10], 99)
+      - &object11 |
+        package level11
+        r11 := object.get(data.level12, input.next[11], 99)
+      - &object12 |
+        package level12
+        r12 := object.get(data.level13, input.next[12], 99)
+      - &object13 |
+        package level13
+        r13 := object.get(data.level14, input.next[13], 99)
+      - &object14 |
+        package level14
+        r14 := object.get(data.level15, input.next[14], 99)
+      - &object15 |
+        package level15
+        r15 := object.get(data.level16, input.next[15], 99)
+      - &object16 |
+        package level16
+        r16 := object.get(data.level17, input.next[16], 99)
+      - *last
+    query: data.level2.r2
+    want_result: 42
+
+  - note: native-depth/virtual-object-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *object
+    query: data.level1.r1
+    want_error: Rule call depth exceeded limit 16
+
+  - note: native-depth/virtual-object-suspendable-16-succeed
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *object
+    execution_mode: suspendable
+    query: data.level1.r1
+    want_result: 42
+
+  - note: native-depth/virtual-object-suspendable-17-error-not-default
+    skip_interpreter: true
+    strict: false
+    input: *input
+    modules: *object
+    execution_mode: suspendable
+    query: data.probe.r0
+    want_error: Rule call depth exceeded limit 16
+
+  - note: native-depth/mixed-function-error-not-default
+    skip_interpreter: true
+    strict: false
+    input: *input
+    execution_mode: suspendable
+    modules:
+      - |
+        package probe
+        safe := 7
+        default r0 := 99
+        r0 := object.get(data.level1, input.next[0], 99)
+      - |
+        package level1
+        b(x) := x
+        default r1 := 99
+        r1 := [b(input.seed), object.get(data.level2, input.next[1], 99)][1]
+      - *object2
+      - *object3
+      - *object4
+      - *object5
+      - *object6
+      - *object7
+      - *object8
+      - *object9
+      - *object10
+      - *object11
+      - *object12
+      - *object13
+      - *object14
+      - *object15
+      - *object16
+      - *last
+    query: data.probe.r0
+    want_error: Rule call depth exceeded limit 16

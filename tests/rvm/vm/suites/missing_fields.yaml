@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# The VM harness runs every case in both execution modes.
+cases:
+  - note: automatic_array_comprehension_advances_after_missing_yields
+    literals: &literals
+      - [{}, {"k": "ok"}, {}]
+      - k
+    instruction_params:
+      comprehension_begin_params:
+        - mode: Array
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 3
+          comprehension_end: 6
+    instructions: &instructions
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 5, literal_idx: 1 }"
+      - "ComprehensionBegin { params_index: 0 }"
+      - "Index { dest: 4, container: 3, key: 5 }"
+      - "ComprehensionYield { value_reg: 4, key_reg: 4 }"
+      - "ComprehensionEnd"
+      - "Return { value: 1 }"
+    want_result: ["ok"]
+    want_result_strict: ["ok"]
+
+  - note: automatic_set_comprehension_advances_after_missing_yields
+    literals: *literals
+    instruction_params:
+      comprehension_begin_params:
+        - mode: Set
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 3
+          comprehension_end: 6
+    instructions: *instructions
+    want_result: {set!: ["ok"]}
+    want_result_strict: {set!: ["ok"]}
+
+  - note: automatic_object_comprehension_advances_after_missing_yields
+    literals: *literals
+    instruction_params:
+      comprehension_begin_params:
+        - mode: Object
+          collection_reg: 0
+          result_reg: 1
+          key_reg: 2
+          value_reg: 3
+          body_start: 3
+          comprehension_end: 6
+    instructions: *instructions
+    want_result: {"ok": "ok"}
+    want_result_strict: {"ok": "ok"}
+
+  - note: generic_index_move_object_set_keep_undefined_overwrite_semantics
+    literals:
+      - {"k": 1}
+      - absent
+      - k
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "LoadTrue { dest: 2 }"
+      - "Index { dest: 2, container: 0, key: 1 }"
+      - "LoadTrue { dest: 3 }"
+      - "Move { dest: 3, src: 2 }"
+      - "Load { dest: 1, literal_idx: 2 }"
+      - "ObjectSet { obj: 0, key: 1, value: 3 }"
+      - "LoadTrue { dest: 4 }"
+      - "Index { dest: 4, container: 0, key: 1 }"
+      - "ArrayNew { dest: 0 }"
+      - "ArrayPush { arr: 0, value: 2 }"
+      - "ArrayPush { arr: 0, value: 3 }"
+      - "ArrayPush { arr: 0, value: 4 }"
+      - "Return { value: 0 }"
+    want_result: ["#undefined", "#undefined", "#undefined"]
+    want_result_strict: ["#undefined", "#undefined", "#undefined"]

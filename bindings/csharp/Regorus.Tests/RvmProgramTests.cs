@@ -468,10 +468,10 @@ allow if { get_account(input.account_id) == "allow" }
         // The generated path is:
         // E: PC 0, 2, 3, 4, 5, 6 -> first HostAwait (6 dispatches).
         // R1: PC 7, 8 -> second HostAwait (2 dispatches).
-        // R2: PC 9, 10, 1 -> completion (3 dispatches).
+        // R2: PC 9, 10, 11, 1 -> completion (4 dispatches).
         const ulong executeToFirstSuspension = 6;
         const ulong firstResumeToSecondSuspension = 2;
-        const ulong secondResumeToCompletion = 3;
+        const ulong secondResumeToCompletion = 4;
         const ulong positiveLimit = 8;
 
         Assert.AreEqual(
@@ -485,7 +485,7 @@ allow if { get_account(input.account_id) == "allow" }
             firstResumeToSecondSuspension + secondResumeToCompletion <= positiveLimit);
 
         Console.WriteLine(
-            $"RVM budget path: entry_points=[data.demo.result], listing_instructions=11, "
+            $"RVM budget path: entry_points=[data.demo.result], listing_instructions=12, "
             + $"E={executeToFirstSuspension}, R1={firstResumeToSecondSuspension}, "
             + $"R2={secondResumeToCompletion}, N={positiveLimit}; "
             + "E+R1<=N<E+R1+R2 and R1+R2<=N.");
@@ -584,7 +584,7 @@ allow if { get_account(input.account_id) == "allow" }
     {
         var expectedInstructions = new[]
         {
-            "; RVM Assembly - 11 instructions, 3 literals, 0 builtins",
+            "; RVM Assembly - 12 instructions, 3 literals, 0 builtins",
             "000: CallRule",
             "001: Return",
             "002: RuleInit",
@@ -594,8 +594,9 @@ allow if { get_account(input.account_id) == "allow" }
             "006:     HostAwait",
             "007:     Load",
             "008:     HostAwait",
-            "009:     Move",
-            "010: } return from rule",
+            "009:     AssertNotUndefined",
+            "010:     Move",
+            "011: } return from rule",
         };
 
         foreach (var expectedInstruction in expectedInstructions)

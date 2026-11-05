@@ -1,0 +1,53 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: strings_count_runtime_boundaries_and_unicode
+    input:
+      haystack: "aaaa"
+      needle: "aa"
+      empty: ""
+      unicode: "\u4e16\u754c"
+      repeated_unicode: "\u4e16\u4e16\u4e16"
+      unicode_needle: "\u4e16\u4e16"
+      emoji: "a\U0001f600b"
+      combining: "e\u0301"
+      nul: "\0\0"
+    modules:
+      - |
+        package test
+
+        result := {
+          "non_overlapping": strings.count(input.haystack, input.needle),
+          "empty_haystack": strings.count(input.empty, input.needle),
+          "longer_needle": strings.count("a", input.haystack),
+          "empty_both": strings.count(input.empty, input.empty),
+          "empty_unicode": strings.count(input.unicode, input.empty),
+          "unicode_matches": strings.count(input.repeated_unicode, input.unicode_needle),
+          "emoji": strings.count(input.emoji, input.empty),
+          "combining": strings.count(input.combining, input.empty),
+          "nul_matches": strings.count(input.nul, "\u0000"),
+          "nul_empty": strings.count(input.nul, input.empty),
+        }
+    query: data.test.result
+    want_result:
+      non_overlapping: 2
+      empty_haystack: 0
+      longer_needle: 0
+      empty_both: 1
+      empty_unicode: 3
+      unicode_matches: 1
+      emoji: 4
+      combining: 3
+      nul_matches: 2
+      nul_empty: 3
+
+  - note: strings_count_undefined_input
+    input: {}
+    modules:
+      - |
+        package test
+
+        result := strings.count(input.missing, "")
+    query: data.test.result
+    want_result: "#undefined"
