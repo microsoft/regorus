@@ -84,9 +84,9 @@ impl IntoIterator for Set {
     type Item = Value;
     type IntoIter = IntoIter;
     #[inline]
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(mut self) -> Self::IntoIter {
         IntoIter {
-            inner: self.inner.into_iter(),
+            inner: core::mem::take(&mut self.inner).into_iter(),
         }
     }
 }

@@ -37,6 +37,7 @@ pub use iter::{IntoIter, Iter, IterMut};
 /// storage, mutable objects use `BTreeMap`, and read-mostly objects freeze to an
 /// exact-size boxed slice. The representation is private so it can change
 /// without touching call sites.
+/// Serde serialization follows the callback nesting budget documented on [`Value`].
 ///
 /// # Iteration
 ///
@@ -66,6 +67,16 @@ impl Default for Repr {
     #[inline]
     fn default() -> Self {
         Repr::Empty
+    }
+}
+
+impl Drop for Object {
+    fn drop(&mut self) {
+        if !self.is_empty() {
+            super::release_values(super::ReleaseFrame::Object(
+                core::mem::take(self).into_iter(),
+            ));
+        }
     }
 }
 
@@ -187,7 +198,7 @@ impl PartialEq for Object {
         if self.len() != other.len() {
             return false;
         }
-        self.iter_sorted().eq(other.iter_sorted())
+        self.cmp(other).is_eq()
     }
 }
 
@@ -195,7 +206,10 @@ impl Eq for Object {}
 
 impl Ord for Object {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.iter_sorted().cmp(other.iter_sorted())
+        super::compare_values(super::CompareFrame::Object(
+            self.iter_sorted(),
+            other.iter_sorted(),
+        ))
     }
 }
 
@@ -208,7 +222,7 @@ impl PartialOrd for Object {
 
 impl fmt::Debug for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.iter_sorted()).finish()
+        super::debug_values(super::DebugFrame::Object(self.iter_sorted(), true), f)
     }
 }
 

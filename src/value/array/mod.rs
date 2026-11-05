@@ -19,7 +19,8 @@ pub use iter::{ArrayIntoIter, ArrayIter, ArrayIterMut};
 ///
 /// The current backing storage is `Vec<Value>`. The inner field is private so
 /// the representation can change without touching call sites.
-#[derive(Default, Clone, Eq, PartialEq)]
+/// Serde serialization follows the callback nesting budget documented on [`Value`].
+#[derive(Default, Clone)]
 pub struct Array {
     inner: Vec<Value>,
 }
@@ -136,8 +137,8 @@ impl Array {
     }
 
     #[inline]
-    pub fn into_vec(self) -> Vec<Value> {
-        self.inner
+    pub fn into_vec(mut self) -> Vec<Value> {
+        core::mem::take(&mut self.inner)
     }
 
     /// Wrap into a `Value::Array`.
@@ -160,6 +161,16 @@ impl Array {
     }
 }
 
+impl Drop for Array {
+    fn drop(&mut self) {
+        if !self.inner.is_empty() {
+            super::release_values(super::ReleaseFrame::Array(
+                core::mem::take(self).into_iter(),
+            ));
+        }
+    }
+}
+
 /// Opaque resumable cursor over an [`Array`]'s elements.
 #[derive(Debug, Clone)]
 pub struct ArrayCursor {
@@ -168,9 +179,17 @@ pub struct ArrayCursor {
 
 impl Ord for Array {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.iter().cmp(other.iter())
+        super::compare_values(super::CompareFrame::Array(self.iter(), other.iter()))
     }
 }
+
+impl PartialEq for Array {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Array {}
 
 impl PartialOrd for Array {
     #[inline]
@@ -181,7 +200,7 @@ impl PartialOrd for Array {
 
 impl fmt::Debug for Array {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
+        super::debug_values(super::DebugFrame::Array(self.iter(), true), f)
     }
 }
 

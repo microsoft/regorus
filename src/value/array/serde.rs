@@ -9,11 +9,28 @@ use serde::de::{Deserialize, Deserializer, Error as _, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
 
 use super::Array;
-use crate::value::Value;
+use crate::value::{
+    serialization_child_budget, SerializeWithBudget, Value, MAX_SERIALIZATION_CONTAINERS,
+};
 
 impl Serialize for Array {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.iter())
+        SerializeWithBudget {
+            value: self,
+            remaining: MAX_SERIALIZATION_CONTAINERS,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for SerializeWithBudget<'_, Array> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let remaining = serialization_child_budget::<S::Error>(self.remaining)?;
+        serializer.collect_seq(
+            self.value
+                .iter()
+                .map(|value| SerializeWithBudget { value, remaining }),
+        )
     }
 }
 
