@@ -169,10 +169,7 @@ impl<'a> Compiler<'a> {
                 .map(|key_expr| self.compile_rego_expr(&key_expr))
                 .unwrap_or(Ok(value_register))?;
 
-            if matches!(
-                context.context_type,
-                ContextType::Rule(RuleType::Complete | RuleType::PartialObject)
-            ) {
+            if matches!(context.context_type, ContextType::Rule(_)) {
                 self.emit_instruction(
                     Instruction::Guard {
                         register: value_register,

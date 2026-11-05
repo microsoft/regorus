@@ -81,6 +81,12 @@ candidates are skipped before conflict-bearing accumulator writes, so they
 cannot erase an earlier defined answer. Object comprehensions skip missing keys
 and values locally rather than failing an enclosing loop.
 
+Rego rule yields guard against undefined values (and object keys) before
+updating the accumulator. A missing candidate contributes no answer and cannot
+overwrite an earlier result; `false` and `null` remain valid output values.
+These guards do not change the generic `Move`, `ObjectSet`, or `Index`
+instructions.
+
 ---
 
 ## Collection and indexing instructions
@@ -148,7 +154,7 @@ both execution modes. In suspendable mode, loops own their own `ExecutionFrame`.
 | Mnemonic             | Operands / Params       | Behaviour                                          |
 | :------------------- | :---------------------- | :------------------------------------------------- |
 | `ComprehensionBegin` | `params_index=pN`       | Allocates collection builder and iteration context. |
-| `ComprehensionYield` | `value_reg`, `key_reg?` | Emits value (and optional key) into builder.        |
+| `ComprehensionYield` | `value_reg`, `key_reg?` | Emits defined values/keys into builder; skips undefined candidates. |
 | `ComprehensionEnd`   | —                       | Finalises collection and stores result.             |
 
 `ComprehensionBeginParams` captures:
@@ -158,6 +164,12 @@ both execution modes. In suspendable mode, loops own their own `ExecutionFrame`.
 - `result_reg`: register that will hold the final collection
 - `key_reg` / `value_reg`: iteration registers
 - `body_start` / `comprehension_end`: branch targets
+
+Skipping an undefined comprehension yield still advances any automatic
+iteration. It does not fail an enclosing loop: for example,
+`p := [x.missing | true] if some x in [{}]` produces `[]`, not undefined.
+This yield-local handling applies in both execution modes and retains `false`
+and `null`.
 
 Comprehensions manage their own stack (`ComprehensionContext`) to maintain
 ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).

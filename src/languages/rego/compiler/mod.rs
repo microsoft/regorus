@@ -21,7 +21,7 @@ mod rules;
 pub use error::{CompilerError, Result, SpannedCompilerError};
 
 use crate::ast::ExprRef;
-use crate::lexer::Span;
+use crate::lexer::{Source, Span};
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::CompiledPolicy;
 use crate::Value;
@@ -135,7 +135,7 @@ pub struct Compiler<'a> {
     rule_num_registers: Vec<u8>,
     context_stack: Vec<CompilationContext>,
     loop_expr_register_map: BTreeMap<ExprRef, Register>,
-    source_to_index: BTreeMap<String, usize>,
+    source_to_index: BTreeMap<Source, usize>,
     builtin_index_map: BTreeMap<String, u16>,
     current_input_register: Option<Register>,
     current_data_register: Option<Register>,

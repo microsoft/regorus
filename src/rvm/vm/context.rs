@@ -119,6 +119,9 @@ pub(super) struct ComprehensionContext {
     pub(super) iteration_state: Option<IterationState>,
     /// Resume location for the parent frame once this comprehension completes
     pub(super) resume_pc: usize,
+    /// Length of the run-to-completion loop stack when this comprehension
+    /// began. Loops above this depth were started inside its body.
+    pub(super) loop_depth: usize,
 }
 
 #[cfg(test)]

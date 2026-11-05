@@ -76,9 +76,7 @@ pub struct Program {
     #[serde(default)]
     pub has_host_await: bool,
 
-    /// Flag indicating that recompilation is needed due to partial deserialization failure
-    /// This is set to true when the artifact section was successfully read but the extensible
-    /// section failed to deserialize (e.g., due to version incompatibility)
+    /// Flag indicating that a legacy binary format or unresolved builtin requires recompilation.
     #[serde(default)]
     pub needs_recompilation: bool,
 
@@ -414,7 +412,7 @@ impl Program {
         &self.entry_points
     }
 
-    /// Check if recompilation is needed due to partial deserialization failure
+    /// Check if a legacy binary format or unresolved builtin requires recompilation.
     pub const fn needs_recompilation(&self) -> bool {
         self.needs_recompilation
     }

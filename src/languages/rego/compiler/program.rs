@@ -9,6 +9,7 @@
 
 use super::{Compiler, CompilerError, Result};
 use crate::interpreter::Interpreter;
+use crate::lexer::Source;
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Rc;
@@ -168,10 +169,31 @@ impl<'a> Compiler<'a> {
 
         self.program.rule_infos = rule_infos_map.into_values().collect();
 
-        for module in self.policy.get_modules().iter() {
-            let source = &module.package.refr.span().source;
-            let source_path = source.get_path().to_string();
-            let source_content = source.get_contents().to_string();
+        // Spans refer to sources by the index assigned on first use, so the
+        // sources that spans refer to come first, in that order.
+        let mut referenced: Vec<(usize, &Source)> = self
+            .source_to_index
+            .iter()
+            .map(|(source, &index)| (index, source))
+            .collect();
+        referenced.sort_unstable_by_key(|&(index, _)| index);
+        let modules = self.policy.get_modules();
+        let unreferenced = modules
+            .iter()
+            .map(|module| &module.package.refr.span().source)
+            .filter(|source| !self.source_to_index.contains_key(*source));
+        let sources: Vec<(String, String)> = referenced
+            .into_iter()
+            .map(|(_, source)| source)
+            .chain(unreferenced)
+            .map(|source| {
+                (
+                    source.get_path().to_string(),
+                    source.get_contents().to_string(),
+                )
+            })
+            .collect();
+        for (source_path, source_content) in sources {
             self.program.add_source(source_path, source_content);
         }
 
