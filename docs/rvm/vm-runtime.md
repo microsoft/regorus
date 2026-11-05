@@ -75,6 +75,45 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Shared-array comparisons
+
+Arrays can reuse the same child without copying it. For example:
+
+```rego
+a0 := [input.seed_a]
+a1 := [a0, a0]
+a2 := [a1, a1]
+
+b0 := [input.seed_b]
+b1 := [b0, b0]
+b2 := [b1, b1]
+
+a2 == b2
+```
+
+With both seeds set to `1`, the arrays are equal. A simple recursive comparison
+checks `a1` against `b1` twice, then `a0` against `b0` four times. Each extra
+level doubles the repeated work, while adding only two arrays.
+
+The comparison helper remembers array pairs it has already checked and found
+equal. When the same pair appears again, it reuses that answer. It also follows
+arrays inside objects and sets, even when the two sides share children in
+different ways. Memory addresses identify cache entries, not whether two
+separately built arrays are equal.
+
+Equality still skips the contents when both values share the very same array,
+object, or set. Ordering continues to compare their contents.
+
+The helper lives in `Array::eq` and `Array::cmp`, so it serves the interpreter,
+both VM modes, and ordered collection lookups. The cache lasts for one
+comparison. Flat arrays and unshared array trees add no cache entries. For the
+pattern above, visited pairs and cache entries grow with depth instead of
+doubling at each level; cache lookups add logarithmic cost.
+
+This does not add a work budget or change instruction/time checks. One
+comparison still counts as one VM instruction. Large distinct values, deep
+nesting, and repeated object/set-only paths remain outside this optimization.
+
 ### Run-to-completion
 
 - Entry path: `execute()` or `execute_entry_point_by_*` when

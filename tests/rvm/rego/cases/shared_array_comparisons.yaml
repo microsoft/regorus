@@ -1,0 +1,218 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: shared_array_equal_rtc
+    execution_mode: run-to-completion
+    modules: &dag_modules
+      - |
+        package test
+
+        a0 := [input.left]
+        a1 := [a0, a0]
+        a2 := [a1, a1]
+        b0 := [input.right]
+        b1 := [b0, [b0[0]]]
+        b2 := [b1, b1]
+
+        result := {
+          "equal": a2 == b2,
+          "not_equal": a2 != b2,
+          "less_than": a2 < b2,
+          "less_or_equal": a2 <= b2,
+          "greater_than": a2 > b2,
+          "greater_or_equal": a2 >= b2,
+        }
+    input: &equal_input {left: 1, right: 1}
+    query: data.test.result
+    want_result: &equal_result
+      equal: true
+      not_equal: false
+      less_than: false
+      less_or_equal: true
+      greater_than: false
+      greater_or_equal: true
+
+  - note: shared_array_equal_suspendable
+    execution_mode: suspendable
+    modules: *dag_modules
+    input: *equal_input
+    query: data.test.result
+    want_result: *equal_result
+
+  - note: shared_array_less_rtc
+    execution_mode: run-to-completion
+    modules: *dag_modules
+    input: &less_input {left: 1, right: 2}
+    query: data.test.result
+    want_result: &less_result
+      equal: false
+      not_equal: true
+      less_than: true
+      less_or_equal: true
+      greater_than: false
+      greater_or_equal: false
+
+  - note: shared_array_less_suspendable
+    execution_mode: suspendable
+    modules: *dag_modules
+    input: *less_input
+    query: data.test.result
+    want_result: *less_result
+
+  - note: shared_array_greater_rtc
+    execution_mode: run-to-completion
+    modules: *dag_modules
+    input: &greater_input {left: 2, right: 1}
+    query: data.test.result
+    want_result: &greater_result
+      equal: false
+      not_equal: true
+      less_than: false
+      less_or_equal: false
+      greater_than: true
+      greater_or_equal: true
+
+  - note: shared_array_greater_suspendable
+    execution_mode: suspendable
+    modules: *dag_modules
+    input: *greater_input
+    query: data.test.result
+    want_result: *greater_result
+
+  - note: shared_array_prefix_and_length_rtc
+    execution_mode: run-to-completion
+    modules: &prefix_modules
+      - |
+        package test
+
+        a0 := [input.left]
+        a1 := [a0, a0]
+        b0 := [input.right]
+        b1 := [b0, b0]
+        left := [a1, a1, false]
+        right := [b1, b1, true]
+        short := [a1, a1]
+        long := [b1, b1, null]
+
+        result := {
+          "different_tails_equal": left == right,
+          "tail_orders_left_first": left < right,
+          "tail_orders_right_last": right > left,
+          "different_lengths_equal": short == long,
+          "shorter_array_first": short < long,
+          "longer_array_last": long > short,
+          "nested_different_lengths_equal": [short] == [long],
+          "nested_shorter_array_first": [short] < [long],
+          "nested_longer_array_last": [long] > [short],
+        }
+    input: *equal_input
+    query: data.test.result
+    want_result: &prefix_result
+      different_tails_equal: false
+      tail_orders_left_first: true
+      tail_orders_right_last: true
+      different_lengths_equal: false
+      shorter_array_first: true
+      longer_array_last: true
+      nested_different_lengths_equal: false
+      nested_shorter_array_first: true
+      nested_longer_array_last: true
+
+  - note: shared_array_prefix_and_length_suspendable
+    execution_mode: suspendable
+    modules: *prefix_modules
+    input: *equal_input
+    query: data.test.result
+    want_result: *prefix_result
+
+  - note: shared_array_nested_collections_and_keys_rtc
+    execution_mode: run-to-completion
+    modules: &collection_modules
+      - |
+        package test
+
+        a0 := [input.left]
+        a1 := [a0, a0]
+        b0 := [input.right]
+        b1 := [b0, b0]
+        left := [{"value": a1}, {a1}, {a1: "value"}]
+        right := [{"value": b1}, {b1}, {b1: "value"}]
+        different := [{"value": b1}, {b1}, {b1: "other"}]
+        keys := {a1: "found"}
+        members := {a1, b1}
+
+        result := {
+          "nested_collections_equal": left == right,
+          "different_object_values_unequal": left != different,
+          "object_value_decides_order": left > different,
+          "same_child_allocations_equal": left == [left[0], left[1], left[2]],
+          "equal_array_is_member": a1 in [b1],
+          "equal_set_element_is_member": b1 in members,
+          "deduplicated_set_size": count(members),
+          "lookup_with_equal_array_key": keys[b1],
+          "deduplicated_object_size": count({a1: "same", b1: "same"}),
+        }
+    input: *equal_input
+    query: data.test.result
+    want_result: &collection_result
+      nested_collections_equal: true
+      different_object_values_unequal: true
+      object_value_decides_order: true
+      same_child_allocations_equal: true
+      equal_array_is_member: true
+      equal_set_element_is_member: true
+      deduplicated_set_size: 1
+      lookup_with_equal_array_key: "found"
+      deduplicated_object_size: 1
+
+  - note: shared_array_nested_collections_and_keys_suspendable
+    execution_mode: suspendable
+    modules: *collection_modules
+    input: *equal_input
+    query: data.test.result
+    want_result: *collection_result
+
+  - note: shared_array_nested_value_semantics_rtc
+    execution_mode: run-to-completion
+    modules: &value_modules
+      - |
+        package test
+
+        a0 := [input.value]
+        a1 := [a0, a0]
+        b0 := [1.0]
+        b1 := [b0, b0]
+
+        result := {
+          "integer_and_float_children_equal": a1 == b1,
+          "equal_children_not_less": a1 < b1,
+          "null_before_false": [a1, null] < [b1, false],
+          "false_before_number": [a1, false] < [b1, input.value],
+          "number_before_string": [a1, input.value] < [b1, "a"],
+          "string_before_array": [a1, "a"] < [b1, []],
+          "array_before_object": [a1, []] < [b1, {}],
+          "array_before_set": [a1, []] < [b1, set()],
+          "set_before_object": [a1, set()] < [b1, {}],
+          "empty_arrays_equal": [a1, []] == [b1, []],
+        }
+    input: &value_input {value: 1}
+    query: data.test.result
+    want_result: &value_result
+      integer_and_float_children_equal: true
+      equal_children_not_less: false
+      null_before_false: true
+      false_before_number: true
+      number_before_string: true
+      string_before_array: true
+      array_before_object: true
+      array_before_set: true
+      set_before_object: true
+      empty_arrays_equal: true
+
+  - note: shared_array_nested_value_semantics_suspendable
+    execution_mode: suspendable
+    modules: *value_modules
+    input: *value_input
+    query: data.test.result
+    want_result: *value_result

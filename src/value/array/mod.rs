@@ -3,6 +3,7 @@
 
 //! See [`Array`].
 
+mod comparison;
 mod iter;
 mod serde;
 
@@ -19,7 +20,7 @@ pub use iter::{ArrayIntoIter, ArrayIter, ArrayIterMut};
 ///
 /// The current backing storage is `Vec<Value>`. The inner field is private so
 /// the representation can change without touching call sites.
-#[derive(Default, Clone, Eq, PartialEq)]
+#[derive(Default, Clone, Eq)]
 pub struct Array {
     inner: Vec<Value>,
 }
@@ -168,7 +169,15 @@ pub struct ArrayCursor {
 
 impl Ord for Array {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.iter().cmp(other.iter())
+        comparison::Comparison::default().arrays(self, other)
+    }
+}
+
+impl PartialEq for Array {
+    fn eq(&self, other: &Self) -> bool {
+        comparison::Comparison::equality()
+            .arrays(self, other)
+            .is_eq()
     }
 }
 
