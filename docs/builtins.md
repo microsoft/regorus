@@ -193,6 +193,23 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
+  `urlquery.encode` and `urlquery.encode_object` retain the
+  `application/x-www-form-urlencoded` escaping used by Rust's `url` crate.
+  This intentionally differs from OPA's Go `net/url.QueryEscape` convention:
+
+  | Input | Regorus (Rust `url` crate) | OPA / Go `net/url.QueryEscape` |
+  |-------|---------------------------|-------------------------------|
+  | `"~"` | `"%7E"`                   | `"~"`                         |
+  | `"*"` | `"*"`                     | `"%2A"`                       |
+  | `" "` | `"+"`                     | `"+"`                         |
+  | `"+"` | `"%2B"`                   | `"%2B"`                       |
+  | `"~* "` | `"%7E*+"`               | `"~%2A+"`                     |
+
+  Object keys and values use the same escaping. This shared behavior applies
+  to both the interpreter and RVM. Policies comparing encoded strings with
+  OPA-generated output should account for the `~` and `*` differences;
+  they reflect different encoding conventions, not data loss.
+
   `urlquery.decode` decodes one query component, preserving literal `&`, `=`,
   `#`, tabs, and newlines; `+` becomes a space. Parameter parsing remains the
   responsibility of `urlquery.decode_object`.
