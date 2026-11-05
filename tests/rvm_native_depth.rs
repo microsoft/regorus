@@ -178,6 +178,7 @@ fn check_configuration(scenarios: &Scenarios) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
 fn native_depth_lifecycle() {
     if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
         native_depth_support::run_in_subprocess("native_depth_lifecycle");

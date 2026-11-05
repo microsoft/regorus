@@ -102,6 +102,7 @@ patterns may behave differently. The limit does not guarantee stack safety.
 `tests/rvm/rego/cases/native_depth.yaml` covers results and errors. Rust tests
 reuse those cases to check typed errors, cleanup, VM reuse, and stepping. Both
 run in subprocesses with a timeout and a 2 MiB test-thread stack.
+These subprocess-backed tests are excluded under Miri.
 
 ### Run-to-completion
 
