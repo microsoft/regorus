@@ -29,6 +29,8 @@ impl RegoVM {
     pub fn execute_entry_point_by_index(&mut self, index: usize) -> Result<Value> {
         crate::utils::limits::without_memory_budget_scope(|| {
             Self::ensure_memory_budget_execution_mode()?;
+            self.check_program_recompilation()
+                .map_err(|error| self.fail_run_to_completion(error))?;
             let (entry_point_name, entry_point_pc) = {
                 let (name, &pc) = self.program.entry_points.get_index(index).ok_or(
                     VmError::InvalidEntryPointIndex {
@@ -86,6 +88,8 @@ impl RegoVM {
     pub fn execute_entry_point_by_name(&mut self, name: &str) -> Result<Value> {
         crate::utils::limits::without_memory_budget_scope(|| {
             Self::ensure_memory_budget_execution_mode()?;
+            self.check_program_recompilation()
+                .map_err(|error| self.fail_run_to_completion(error))?;
             let entry_point_pc =
                 self.program
                     .get_entry_point(name)

@@ -47,8 +47,14 @@ impl<'a> Compiler<'a> {
             key_value_loops_hoisted: false,
         };
         self.push_context(context);
-        self.compile_query(query)?;
+        let saved_input_register = self.current_input_register;
+        let saved_data_register = self.current_data_register;
+        self.reset_rule_definition_registers();
+        let result = self.compile_query(query);
         self.pop_context();
+        self.current_input_register = saved_input_register;
+        self.current_data_register = saved_data_register;
+        result?;
 
         self.emit_instruction(Instruction::ComprehensionEnd {}, span);
         let comprehension_end = self.program.instructions.len() as u16;

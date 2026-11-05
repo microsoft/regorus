@@ -14,7 +14,7 @@ use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
 use crate::rvm::Instruction;
-use crate::utils::{append_path_component, format_string_path};
+use crate::utils::{append_path_component, format_string_path, get_rule_path_components};
 use crate::Value;
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
@@ -169,6 +169,9 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            if i < chain.components.len() && self.is_default_namespace(&rule_candidate) {
+                continue;
+            }
             self.ensure_document_reference(&rule_candidate, span)?;
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
@@ -201,6 +204,7 @@ impl<'a> Compiler<'a> {
             .rules
             .keys()
             .chain(self.policy.inner.default_rules.keys())
+            .chain(self.default_documents.keys())
             .filter(|rule_path| {
                 self.policy
                     .inner
@@ -212,7 +216,22 @@ impl<'a> Compiler<'a> {
             .cloned()
             .collect();
 
-        if !matching_rules.is_empty() {
+        let mut matches_package = false;
+        for module in self.policy.get_modules() {
+            let mut package = vec!["data".to_string()];
+            package.extend(
+                get_rule_path_components(&module.package.refr)
+                    .map_err(CompilerError::from)?
+                    .iter()
+                    .map(|component| component.value().to_string()),
+            );
+            if Self::matches_components_pattern(&package, &path_pattern) {
+                matches_package = true;
+                break;
+            }
+        }
+
+        if !matching_rules.is_empty() || matches_package {
             // This path is a prefix of some rules - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
                 if chain
@@ -254,9 +273,23 @@ impl<'a> Compiler<'a> {
     /// Check if a rule path matches the given pattern with wildcards
     /// e.g., "data.test.users.alice_profile" matches "data.test.users.*"
     fn matches_path_pattern(&self, rule_path: &str, pattern: &[Option<String>]) -> bool {
-        let Some(rule_parts) = self.policy.inner.rule_path_components.get(rule_path) else {
-            return false;
+        let rule_parts = match self.default_documents.get(rule_path) {
+            Some((path, _)) => path
+                .iter()
+                .map(|value| match value {
+                    Value::String(key) => key.to_string(),
+                    value => value.to_string(),
+                })
+                .collect(),
+            None => match self.policy.inner.rule_path_components.get(rule_path) {
+                Some(parts) => parts.clone(),
+                None => return false,
+            },
         };
+        Self::matches_components_pattern(&rule_parts, pattern)
+    }
+
+    fn matches_components_pattern(rule_parts: &[String], pattern: &[Option<String>]) -> bool {
         // Check how many components of the pattern the rule can match
         let match_length = rule_parts.len().min(pattern.len());
 
@@ -317,6 +350,9 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
+            if i < chain.components.len() && self.is_default_namespace(&rule_candidate) {
+                continue;
+            }
             self.ensure_document_reference(&rule_candidate, span)?;
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 let rule_result_reg = self.alloc_register()?;
@@ -337,6 +373,24 @@ impl<'a> Compiler<'a> {
 
                 return Ok(rule_result_reg);
             }
+        }
+
+        if self.is_default_namespace(&current_pkg_prefix) {
+            let package = &self.policy.get_modules()[self.current_module_index as usize].package;
+            let mut components: Vec<_> = get_rule_path_components(&package.refr)
+                .map_err(CompilerError::from)?
+                .iter()
+                .map(|component| AccessComponent::Field(component.value().to_string()))
+                .collect();
+            components.push(AccessComponent::Field(root.to_string()));
+            components.extend(chain.components.iter().cloned());
+            return self.compile_data_chain(
+                &ReferenceChain {
+                    root: ReferenceRoot::Variable("data".to_string()),
+                    components,
+                },
+                span,
+            );
         }
 
         // No rule found; fall back to module-level imports.

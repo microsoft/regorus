@@ -39,6 +39,11 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
+        if self.default_documents.contains_key(rule_path)
+            && !self.policy.inner.rules.contains_key(rule_path)
+        {
+            return Ok(RuleType::Complete);
+        }
         let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
             // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
@@ -208,6 +213,24 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<(String, u32)> {
+        let default = self
+            .default_documents
+            .get(rule_path)
+            .map(|(_, rule)| rule)
+            .or_else(|| {
+                self.policy
+                    .inner
+                    .default_rules
+                    .get(rule_path)
+                    .and_then(|rules| rules.first().map(|(rule, _)| rule))
+            });
+        if let Some(rule) = default {
+            let module_index = self.find_module_index_for_rule(rule)?;
+            let module = &self.policy.get_modules()[module_index as usize];
+            let package =
+                get_path_string(&module.package.refr, Some("data")).map_err(CompilerError::from)?;
+            return Ok((package, module_index));
+        }
         if let Some(rule_definitions) = rules.get(rule_path) {
             if let Some(first_rule_ref) = rule_definitions.first() {
                 let rule = first_rule_ref.as_ref();
@@ -277,6 +300,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
         compiler.validate_default_rule_paths()?;
+        compiler.register_default_documents()?;
         for &(name, arg_count) in host_await_builtins {
             compiler.register_host_await_builtin(name, arg_count)?;
         }
@@ -332,7 +356,12 @@ impl<'a> Compiler<'a> {
         let mut defaults = BTreeMap::new();
         for module in self.policy.get_modules() {
             for rule in &module.policy {
-                if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                if let Rule::Default {
+                    refr, args, value, ..
+                } = rule.as_ref()
+                {
+                    crate::interpreter::Interpreter::check_default_value(value)
+                        .map_err(CompilerError::from)?;
                     if !args.is_empty() {
                         continue;
                     }
@@ -353,6 +382,53 @@ impl<'a> Compiler<'a> {
                 .at(rule.span()));
             }
             previous = Some(path);
+        }
+        Ok(())
+    }
+
+    fn register_default_documents(&mut self) -> Result<()> {
+        for module in self.policy.get_modules() {
+            let package =
+                get_path_string(&module.package.refr, Some("data")).map_err(CompilerError::from)?;
+            let mut package_path = vec![Value::from("data")];
+            package_path.extend(Self::default_path_components(&module.package.refr)?);
+            self.register_default_tree_path(&package_path, None)?;
+            for rule in &module.policy {
+                if let Rule::Default { refr, args, .. } = rule.as_ref() {
+                    if args.is_empty() {
+                        let name =
+                            get_path_string(refr, Some(&package)).map_err(CompilerError::from)?;
+                        let mut path = vec![Value::from("data")];
+                        path.extend(Self::default_path_components(&module.package.refr)?);
+                        path.extend(Self::default_path_components(refr)?);
+                        self.default_documents.insert(name, (path, rule.clone()));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn is_default_namespace(&self, path: &str) -> bool {
+        self.policy.inner.default_rules.contains_key(path)
+            && !self.default_documents.contains_key(path)
+            && !self.policy.inner.rules.contains_key(path)
+            && !self.policy.inner.functions.contains_key(path)
+    }
+
+    fn register_default_tree_path(&mut self, path: &[Value], index: Option<u16>) -> Result<()> {
+        let mut node = &mut self.program.rule_tree;
+        for key in path {
+            let object = node.as_object_mut().map_err(CompilerError::from)?;
+            if !object.contains_key(key) {
+                object.insert(key.clone(), Value::new_object());
+            }
+            node = object.get_mut(key).ok_or_else(|| CompilerError::General {
+                message: "missing default document tree entry".to_string(),
+            })?;
+        }
+        if let Some(index) = index {
+            *node = Value::from(usize::from(index));
         }
         Ok(())
     }
@@ -881,40 +957,11 @@ impl<'a> Compiler<'a> {
                 }
 
                 let is_function = self.policy.inner.functions.contains_key(rule_path);
-                let has_document_defaults = self
-                    .policy
-                    .inner
-                    .default_rules
-                    .get(rule_path)
-                    .is_some_and(|defaults| {
-                        defaults.iter().any(|(rule, _)| {
-                            matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
-                        })
-                    });
                 // Functions are callable but are not virtual data documents.
-                if !is_function && has_document_defaults {
-                    let components = self
-                        .policy
-                        .inner
-                        .rule_path_components
-                        .get(rule_path)
-                        .ok_or_else(|| CompilerError::General {
-                            message: format!(
-                                "missing components for registered rule path '{rule_path}'"
-                            ),
-                        })?;
-                    let (rule_name, package_parts) =
-                        components
-                            .split_last()
-                            .ok_or_else(|| CompilerError::General {
-                                message: format!("invalid registered rule path '{rule_path}'"),
-                            })?;
-                    let package_path = package_parts.to_vec();
-                    let _ = self.program.add_rule_to_tree(
-                        &package_path,
-                        rule_name,
-                        rule_index as usize,
-                    );
+                if !is_function {
+                    if let Some((path, _)) = self.default_documents.get(rule_path).cloned() {
+                        self.register_default_tree_path(&path, Some(rule_index))?;
+                    }
                 }
             }
 
@@ -928,8 +975,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_default_rule(&mut self, rule_path: &str) -> Result<()> {
-        let Some(defaults) = self.policy.inner.default_rules.get(rule_path).cloned() else {
-            return Ok(());
+        let defaults = match self.default_documents.get(rule_path) {
+            Some((_, rule)) => vec![(rule.clone(), None)],
+            None => match self.policy.inner.default_rules.get(rule_path).cloned() {
+                Some(defaults) => defaults,
+                None => return Ok(()),
+            },
         };
         let Some((rule_ref, _)) = defaults.first() else {
             return Ok(());
@@ -981,10 +1032,16 @@ impl<'a> Compiler<'a> {
                     let mut components = vec![Value::from("data")];
                     components.extend(Self::default_path_components(&module.package.refr)?);
                     components.extend(Self::default_path_components(refr)?);
-                    let prefix: Vec<_> = self.policy.inner.rule_path_components[rule_path]
-                        .iter()
-                        .map(|key| Value::from(key.as_str()))
-                        .collect();
+                    let prefix = self
+                        .default_documents
+                        .get(rule_path)
+                        .map(|(path, _)| path.clone())
+                        .unwrap_or_else(|| {
+                            self.policy.inner.rule_path_components[rule_path]
+                                .iter()
+                                .map(|key| Value::from(key.as_str()))
+                                .collect()
+                        });
                     // Scalar prefixes also have string registrations, but are not string keys.
                     let Some(keys) = components.strip_prefix(prefix.as_slice()) else {
                         continue;
@@ -992,14 +1049,20 @@ impl<'a> Compiler<'a> {
                     keys.to_vec()
                 };
                 if paths_seen.insert(keys.clone()) {
-                    values.push((value.clone(), keys, package, module_index));
+                    let leaf_path =
+                        get_path_string(refr, Some(&package)).map_err(CompilerError::from)?;
+                    values.push((value.clone(), keys, package, module_index, leaf_path));
                 }
             }
         }
 
+        if values.is_empty() {
+            return Ok(());
+        }
+
         let constants: Option<Vec<_>> = values
             .iter()
-            .map(|(value, keys, _, _)| {
+            .map(|(value, keys, _, _, _)| {
                 let mut constant = super::expressions::try_eval_const(value.as_ref())?;
                 for key in keys.iter().rev() {
                     let mut object = crate::value::Object::new();
@@ -1057,11 +1120,18 @@ impl<'a> Compiler<'a> {
         );
         let mut object_fields = BTreeMap::new();
         let mut direct_value = None;
-        for (value, keys, package, module_index) in values {
+        for (value, keys, package, module_index, leaf_path) in values {
             self.current_package = package;
             self.current_module_index = module_index;
             self.reset_rule_definition_registers();
-            let value_reg = self.compile_rego_expr(&value)?;
+            let value_reg = if keys.is_empty() {
+                self.compile_rego_expr(&value)?
+            } else {
+                let rule_index = self.get_or_assign_rule_index(&leaf_path)?;
+                let dest = self.alloc_register()?;
+                self.emit_instruction(Instruction::CallRule { dest, rule_index }, value.span());
+                dest
+            };
             if let Some((key, prefix)) = keys.split_last() {
                 object_fields
                     .entry(prefix.to_vec())

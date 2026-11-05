@@ -151,6 +151,252 @@ fn executable_defaults_respect_native_depth_and_allow_reuse() {
 }
 
 #[test]
+fn function_only_prefixes_remain_undefined_after_serialization() {
+    for expression in ["nested", "data.defaults.nested", "data.defaults[input.key]"] {
+        assert_reusable(
+            &format!("package defaults\ndefault nested.f(x) := 7\nresult := {expression}"),
+            &[(r#"{"key":"nested"}"#, "{}", Value::Undefined)],
+        );
+    }
+    assert_reusable(
+        "package defaults\ndefault nested.f(x) := 7\ndefault result := false\nresult if nested",
+        &[("{}", "{}", Value::Bool(false))],
+    );
+}
+
+#[test]
+fn invalid_default_expressions_are_rejected_before_lowering() {
+    for expression in [
+        "input.admin",
+        "[input.admin]",
+        r#"{"admin": input.admin}"#,
+        "count([])",
+        "1 + 2",
+    ] {
+        let mut engine = Engine::new();
+        let added = engine.add_policy(
+            "invalid.rego".into(),
+            format!("package defaults\ndefault result := {expression}"),
+        );
+        if expression == "1 + 2" {
+            assert!(added.is_err());
+            continue;
+        }
+        added.unwrap();
+        let policy = engine.compile_with_entrypoint(&Rc::from(ENTRY)).unwrap();
+        let error = Compiler::compile_from_policy(&policy, &[ENTRY]).unwrap_err();
+        assert!(error.to_string().contains("in default value"), "{error}");
+    }
+}
+
+#[test]
+fn sibling_default_comprehensions_have_independent_input_and_data_loads() {
+    for root in ["input", "data"] {
+        for (expression, expected) in [
+            (
+                format!("[[{root}.x | false], [{root}.x | true]]"),
+                "[[],[7]]",
+            ),
+            (
+                format!("[[[{root}.x | false], {root}.x] | true]"),
+                "[[[],7]]",
+            ),
+            (
+                format!("[[[{root}.x | false] | true], [{root}.x | true]]"),
+                "[[[]],[7]]",
+            ),
+        ] {
+            assert_reusable(
+                &format!("package defaults\ndefault result := {expression}"),
+                &[(
+                    r#"{"x":7}"#,
+                    r#"{"x":7}"#,
+                    Value::from_json_str(expected).unwrap(),
+                )],
+            );
+        }
+    }
+}
+
+#[test]
+fn namespace_and_leaf_defaults_share_one_host_response() {
+    for (expression, expected) in [
+        ("[nested.value, nested]", r#"[[7],{"value":[7]}]"#),
+        ("[nested, nested.value]", r#"[{"value":[7]},[7]]"#),
+        (
+            "[nested.value, data.defaults[input.key]]",
+            r#"[[7],{"value":[7]}]"#,
+        ),
+        (
+            "[data.defaults[input.key], nested.value]",
+            r#"[{"value":[7]},[7]]"#,
+        ),
+    ] {
+        let module = format!(
+            "package defaults\ndefault nested.value := [lookup(\"x\") | true]\nresult := {expression}"
+        );
+        for program in round_trips(compile(&module, &[("lookup", 1)])) {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_input(Value::from_json_str(r#"{"key":"nested"}"#).unwrap());
+                for _ in 0..2 {
+                    vm.set_host_await_responses([(
+                        Value::from("lookup"),
+                        [Value::from(7), Value::from(13)],
+                    )]);
+                    let mut result = vm.execute_entry_point_by_name(ENTRY).unwrap();
+                    if mode == ExecutionMode::Suspendable {
+                        assert!(matches!(
+                            vm.execution_state(),
+                            ExecutionState::Suspended {
+                                reason: SuspendReason::HostAwait { argument, identifier, .. },
+                                ..
+                            } if argument == &Value::from_json_str(r#"["x"]"#).unwrap()
+                                && identifier == &Value::from("lookup")
+                        ));
+                        result = vm.resume(Some(Value::from(7))).unwrap();
+                        assert!(matches!(
+                            vm.execution_state(),
+                            ExecutionState::Completed { .. }
+                        ));
+                    }
+                    assert_eq!(result, Value::from_json_str(expected).unwrap());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn declared_function_only_packages_remain_empty_documents() {
+    for declaration in ["default f(x) := 7", "default nested.f(x) := 7"] {
+        let mut engine = Engine::new();
+        engine
+            .add_policy("lib.rego".into(), format!("package lib\n{declaration}"))
+            .unwrap();
+        engine
+            .add_policy(
+                "consumer.rego".into(),
+                "package defaults\ndefault result := [x | x := data.lib]".into(),
+            )
+            .unwrap();
+        assert_eq!(
+            engine.eval_rule(ENTRY.into()).unwrap(),
+            Value::from_json_str("[{}]").unwrap()
+        );
+        let policy = engine.compile_with_entrypoint(&Rc::from(ENTRY)).unwrap();
+        for program in round_trips(Compiler::compile_from_policy(&policy, &[ENTRY]).unwrap()) {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_data(Value::new_object()).unwrap();
+                assert_eq!(
+                    vm.execute_entry_point_by_name(ENTRY).unwrap(),
+                    Value::from_json_str("[{}]").unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sibling_default_dependencies_preserve_leaf_identity() {
+    for module in [
+        r#"package defaults
+        default p["a"] := [v | v := p["b"]]
+        default p["b"] := 1
+        result := p
+        "#,
+        r#"package defaults
+        default p.a := [v | v := data.defaults.p[input.key]]
+        default p.b := 1
+        result := p
+        "#,
+        r#"package defaults
+        default p.a := [v | v := p[input.key]]
+        default p.b := 1
+        result := p
+        "#,
+    ] {
+        assert_reusable(
+            module,
+            &[(
+                r#"{"key":"b"}"#,
+                "{}",
+                Value::from_json_str(r#"{"a":[1],"b":1}"#).unwrap(),
+            )],
+        );
+    }
+}
+
+#[test]
+fn large_constant_namespaces_keep_the_literal_fast_path() {
+    let mut module = String::from("package defaults\n");
+    let mut expected = Value::new_object();
+    for index in 0..256 {
+        module.push_str(&format!("default p[\"key{index}\"] := {index}\n"));
+        expected
+            .as_object_mut()
+            .unwrap()
+            .insert(Value::from(format!("key{index}")), Value::from(index));
+    }
+    module.push_str("result := p");
+    let program = compile(&module, &[]);
+    let namespace = program
+        .rule_infos
+        .iter()
+        .find(|rule| rule.name == "data.defaults.p")
+        .unwrap();
+    assert!(namespace.default_literal_index.is_some());
+    assert!(namespace.default_entry_point.is_none());
+    for program in round_trips(program) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            assert_eq!(vm.execute_entry_point_by_name(ENTRY).unwrap(), expected);
+        }
+    }
+}
+
+#[test]
+fn nested_default_dynamic_reentry_is_not_sibling_recursion() {
+    let module = r#"package defaults
+        default p.a := [v | v := p[input.key]]
+        default p.b := 1
+        result := p
+    "#;
+    for program in round_trips(compile(module, &[])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            for key in ["b", "a", "b"] {
+                vm.set_input(Value::from_json_str(&format!(r#"{{"key":"{key}"}}"#)).unwrap());
+                let result = vm.execute_entry_point_by_name(ENTRY);
+                if key == "a" {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::RecursiveRuleEvaluation { .. })
+                    ));
+                    assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                } else {
+                    assert_eq!(
+                        result.unwrap(),
+                        Value::from_json_str(r#"{"a":[1],"b":1}"#).unwrap()
+                    );
+                }
+                assert!(vm.get_call_stack().is_empty());
+                assert_eq!(vm.get_execution_mode(), mode);
+            }
+        }
+    }
+}
+
+#[test]
 fn indexed_and_nested_defaults_preserve_their_object_shape() {
     for module in [
         r#"package defaults
@@ -726,6 +972,25 @@ fn previous_binary_version_preserves_recompilation_artifacts() {
                 assert!(old.needs_recompilation);
                 assert_eq!(old.sources.len(), program.sources.len());
                 assert_eq!(old.entry_points, program.entry_points);
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    for by_name in [true, false] {
+                        let mut vm = RegoVM::new();
+                        vm.load_program(Arc::new(old.clone()));
+                        vm.set_execution_mode(mode);
+                        let error = if by_name {
+                            vm.execute_entry_point_by_name(ENTRY)
+                        } else {
+                            vm.execute_entry_point_by_index(0)
+                        }
+                        .unwrap_err();
+                        assert!(matches!(
+                            error,
+                            VmError::Internal { ref message, .. }
+                                if message == "program requires recompilation"
+                        ));
+                        assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                    }
+                }
             }
             DeserializationResult::Complete(_) => panic!("version 6 must be recompiled"),
         }

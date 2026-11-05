@@ -281,13 +281,18 @@ impl RegoVM {
         self.register_window_pool.push(window);
     }
 
-    pub(super) fn validate_program_for_execution(&self) -> Result<()> {
+    pub(super) fn check_program_recompilation(&self) -> Result<()> {
         if self.program.needs_recompilation {
             return Err(VmError::Internal {
                 message: alloc::string::String::from("program requires recompilation"),
                 pc: self.pc,
             });
         }
+        Ok(())
+    }
+
+    pub(super) fn validate_program_for_execution(&self) -> Result<()> {
+        self.check_program_recompilation()?;
         self.program
             .validate_defaults()
             .map_err(|message| VmError::Internal {

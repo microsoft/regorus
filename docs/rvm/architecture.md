@@ -125,13 +125,29 @@ window, including function arguments. They run only when ordinary definitions
 produce no defined result, in both execution modes; `false` is a defined result,
 and errors or conflicts must not select a default. Defaults read the current
 evaluation's input and data, and function defaults are not cached across calls.
-Both fields survive JSON and binary serialization. All binary version 6
+Default expressions retain the interpreter's syntax restrictions: references,
+calls, and arithmetic may occur inside comprehensions, but are not accepted as
+bare default values. Input/data register loads are scoped to each comprehension
+so a skipped body cannot leave a later comprehension using an uninitialized
+cached register.
+
+Indexed and nested document defaults have canonical leaf-rule identities.
+Executable namespace fallbacks call these child rules rather than recompiling their
+expressions, so leaf and namespace reads share one cached value and one host
+response per evaluation. Proven constant namespaces retain the literal fast
+path. Sibling dependencies target leaves; dynamic namespace
+selection uses virtual lookup and still rejects actual runtime reentry.
+Declared packages remain present even when they contain only functions, while
+function-only rule prefixes do not become documents or Undefined literals.
+
+The default metadata fields survive JSON and binary serialization. All binary version 6
 artifacts retain their sources and entry points but require recompilation:
 the old compiler could freeze defaults or omit them entirely.
 Legacy JSON rule tables missing the new metadata also set `needs_recompilation`;
 the VM rejects flagged programs rather than executing potentially frozen values.
 Both `execute()` and named/indexed entry-point execution check this flag and
-default metadata before dispatch in either execution mode; `resume()` continues
+default metadata before entry-point bounds checks and dispatch in either
+execution mode; `resume()` continues
 the already-validated execution without restarting it.
 Loading another program releases the previous execution state and invalidates
 any pending suspension; it cannot be resumed against the replacement artifact.

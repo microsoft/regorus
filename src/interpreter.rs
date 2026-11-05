@@ -3872,7 +3872,7 @@ impl Interpreter {
         }
     }
 
-    fn check_default_value(expr: &ExprRef) -> Result<()> {
+    pub(crate) fn check_default_value(expr: &ExprRef) -> Result<()> {
         use Expr::*;
         let (kind, span) = match expr.as_ref() {
             // Scalars are supported
