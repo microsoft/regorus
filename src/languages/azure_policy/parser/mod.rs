@@ -41,6 +41,7 @@ use crate::lexer::{Source, TokenKind};
 
 use super::ast::{Constraint, FieldKind, OperatorKind, PolicyDefinition, PolicyRule};
 use super::expr::ExprParser;
+use super::tag::{classify_tag_field, TagField};
 
 use self::core::Parser;
 
@@ -164,15 +165,6 @@ fn unwrap(s: &str, prefix_len: usize, suffix_len: usize) -> &str {
     s.get(prefix_len..end).unwrap_or_default()
 }
 
-fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
-    s.strip_prefix('\'')
-        .and_then(|inner| inner.strip_suffix('\''))
-        .or_else(|| {
-            s.strip_prefix('"')
-                .and_then(|inner| inner.strip_suffix('"'))
-        })
-}
-
 /// Classify a field string into a [`FieldKind`].
 ///
 /// In bracket tag notation (`tags[...]`), whitespace surrounding the tag
@@ -180,11 +172,25 @@ fn strip_matching_outer_quotes(s: &str) -> Option<&str> {
 /// [`str::trim`] (characters with the Unicode `White_Space` property).
 /// Whitespace inside quotes is preserved, so `tags[ env ]` and
 /// `tags[ 'env' ]` name `env` while `tags[' env ']` names ` env `.
-/// Brackets that are empty or contain only whitespace are rejected.
+/// Brackets whose tag name is empty are rejected: empty or whitespace-only
+/// brackets (`tags[]`, `tags[ ]`), quoted empty names (`tags['']`,
+/// `tags[""]`), and a dotted tag path with an empty name (`tags.`).
 pub(super) fn classify_field(
     text: &str,
     span: &crate::lexer::Span,
 ) -> Result<FieldKind, ParseError> {
+    if let Some(tag_field) = classify_tag_field(text) {
+        return match tag_field {
+            TagField::Collection => Ok(FieldKind::Tags),
+            TagField::Key(tag) => Ok(FieldKind::Tag(tag)),
+            TagField::Wildcard => Ok(FieldKind::Alias(text.into())),
+            TagField::Empty => Err(ParseError::Custom {
+                span: span.clone(),
+                message: format!("empty tag name in field: {text:?}"),
+            }),
+        };
+    }
+
     let lower = text.to_lowercase();
     match lower.as_str() {
         "type" => Ok(FieldKind::Type),
@@ -193,38 +199,11 @@ pub(super) fn classify_field(
         "name" => Ok(FieldKind::Name),
         "location" => Ok(FieldKind::Location),
         "fullname" => Ok(FieldKind::FullName),
-        "tags" => Ok(FieldKind::Tags),
         "identity.type" => Ok(FieldKind::IdentityType),
         _ if lower.starts_with("identity.") => Ok(FieldKind::IdentityField(
             tail(text, "identity.".len()).into(),
         )),
         "apiversion" => Ok(FieldKind::ApiVersion),
-        _ if lower.starts_with("tags.") => Ok(FieldKind::Tag(tail(text, "tags.".len()).into())),
-        // Tags[tagName] — bracket notation without quotes.
-        // Tag name is everything between the first '[' and the LAST ']'.
-        // e.g. Tags[Dept.Name]] → tag name "Dept.Name]"
-        // Surrounding whitespace is trimmed; see the doc comment above.
-        _ if lower.starts_with("tags[") && text.ends_with(']') => {
-            let tag = unwrap(text, "tags[".len(), "]".len()).trim();
-            let quoted = strip_matching_outer_quotes(tag);
-            if quoted.unwrap_or(tag).is_empty() {
-                return Err(ParseError::Custom {
-                    span: span.clone(),
-                    message: format!("empty tag name in field: {text:?}"),
-                });
-            }
-            let kind = quoted.map_or_else(
-                || {
-                    if text.contains("[*]") {
-                        FieldKind::Alias(text.into())
-                    } else {
-                        FieldKind::Tag(tag.into())
-                    }
-                },
-                |quoted_tag| FieldKind::Tag(quoted_tag.into()),
-            );
-            Ok(kind)
-        }
         _ if is_template_expr(text) => {
             let inner = unwrap(text, 1, 1);
             let expr = ExprParser::parse_from_brackets(inner, span).map_err(|e| {

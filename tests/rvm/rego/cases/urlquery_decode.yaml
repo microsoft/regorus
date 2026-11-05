@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: urlquery-decode-preserves-component-text
+    strict: false
+    input: &inputs ["", "a=1&b=2", "a&b=c=#frag", "\tline\n", "a%26b%3Dc%3D%23frag", "+%2B", "%2520", "%", "%A", "%zz", "%FF", "%EF%BF%BD"]
+    modules: &modules
+      - |
+        package test
+        main := [urlquery.decode(s) | s := input[_]]
+    query: data.test.main
+    want_result: &results ["", "a=1&b=2", "a&b=c=#frag", "\tline\n", "a&b=c=#frag", " +", "%20", "%", "%A", "%zz", "\uFFFD", "\uFFFD"]
+
+  - note: urlquery-decode-preserves-component-text-suspendable
+    strict: false
+    execution_mode: suspendable
+    input: *inputs
+    modules: *modules
+    query: data.test.main
+    want_result: *results

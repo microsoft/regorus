@@ -80,14 +80,23 @@ public final class Program implements AutoCloseable {
      * Deserialize a program from binary format.
      *
      * @param data Serialized program bytes.
-     * @param isPartial Optional array to receive the partial flag (index 0).
+     * @param isPartial Optional array to receive the partial flag (index 0). Only
+     *                  blobs of a legacy format version, or a program whose builtins
+     *                  this build cannot resolve, come back partial; a blob of the
+     *                  current format version that does not decode is rejected.
      * @return Deserialized program instance.
+     * @throws RuntimeException if the blob is rejected (corrupt section, truncated
+     *                          tail, over-limit table, unsupported future version).
      */
     public static Program deserializeBinary(byte[] data, boolean[] isPartial) {
         if (data == null || data.length == 0) {
             throw new IllegalArgumentException("data must not be empty");
         }
         long ptr = nativeDeserializeBinary(data, isPartial);
+        if (ptr == 0) {
+            // Never construct a wrapper around a null native handle.
+            throw new IllegalStateException("regorus: could not deserialize program blob");
+        }
         return new Program(ptr);
     }
 

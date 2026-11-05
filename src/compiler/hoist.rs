@@ -600,8 +600,21 @@ impl LoopHoister {
                 collection,
                 ..
             } => {
+                // `some .. in` may redeclare a variable bound by an enclosing
+                // `every` unless that binding is in the current scope.
+                let mut shadowing = None;
+                for var in &context.quantifier_vars {
+                    if !context.current_scope_bound_vars.contains(var) {
+                        shadowing
+                            .get_or_insert_with(|| context.clone())
+                            .add_unbound_variable(var);
+                    }
+                }
                 let binding_plan = super::destructuring_planner::create_some_in_binding_plan(
-                    key, value, collection, context,
+                    key,
+                    value,
+                    collection,
+                    shadowing.as_ref().unwrap_or(context),
                 )
                 .map_err(map_binding_error)?;
 
@@ -620,10 +633,28 @@ impl LoopHoister {
             Expr { expr, .. } => {
                 self.analyze_expr(module_idx, expr, context, loops)?;
             }
-            Every { domain, query, .. } => {
+            Every {
+                key,
+                value,
+                domain,
+                query,
+                ..
+            } => {
                 self.analyze_expr(module_idx, domain, context, loops)?;
 
-                let every_context = context.child_with_output_exprs(ContextType::Every, None, None);
+                // The key and value variables are bound to the current element
+                // throughout the body, so references such as `m[k]` must index
+                // with them rather than hoist a new iteration.
+                let mut every_context =
+                    context.child_with_output_exprs(ContextType::Every, None, None);
+                if let Some(key) = key {
+                    every_context.bind_variable(key.text());
+                    every_context.quantifier_vars.insert(key.text().to_string());
+                }
+                every_context.bind_variable(value.text());
+                every_context
+                    .quantifier_vars
+                    .insert(value.text().to_string());
                 let populated_context =
                     self.populate_query(module_idx, query.as_ref(), &every_context)?;
                 self.lookup.ensure_query_capacity(module_idx, query.qidx);

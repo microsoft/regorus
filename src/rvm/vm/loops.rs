@@ -598,7 +598,15 @@ impl RegoVM {
             return Ok(());
         }
 
-        if !self.loop_stack.is_empty() {
+        // The failure belongs to the innermost active construct. A comprehension
+        // that began after every loop on the stack (e.g. inside a loop body)
+        // is innermost and must handle the failure itself.
+        let comprehension_is_innermost = self
+            .comprehension_stack
+            .last()
+            .is_some_and(|context| context.loop_depth >= self.loop_stack.len());
+
+        if !comprehension_is_innermost && !self.loop_stack.is_empty() {
             let (loop_mode, loop_next_pc, loop_end, result_reg) = {
                 let loop_ctx = self
                     .loop_stack

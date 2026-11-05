@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/microsoft/regorus/compare/regorus-v0.14.0...regorus-v0.14.1) - 2026-11-02
+
+### Added
+
+- *(explain)* add explanation report types and settings ([#876](https://github.com/microsoft/regorus/pull/876))
+- add default-off `explanations` cargo feature ([#873](https://github.com/microsoft/regorus/pull/873))
+
+### Fixed
+
+- *(number)* make equality and ordering exact ([#846](https://github.com/microsoft/regorus/pull/846))
+- *(azure_policy)* quote-aware [*] detection in field paths ([#875](https://github.com/microsoft/regorus/pull/875))
+- *(azure_policy)* trim whitespace around bracket tag names ([#877](https://github.com/microsoft/regorus/pull/877))
+- *(azure_policy)* keep value-count names out of field() resolution ([#874](https://github.com/microsoft/regorus/pull/874))
+- *(azure_policy)* support double-quoted tag keys and reject empty tag names ([#872](https://github.com/microsoft/regorus/pull/872))
+- *(azure_policy)* scope count field bindings to their resource ([#870](https://github.com/microsoft/regorus/pull/870))
+- *(azure_policy)* collect nested wildcards below a count-bound prefix ([#871](https://github.com/microsoft/regorus/pull/871))
+- *(azure_policy)* index only all-digit subscripts and saturate overflow ([#869](https://github.com/microsoft/regorus/pull/869))
+
+### Security
+
+- Updated the build-tool-only `zip` dependency from 9.0.4 to 9.1.3 to address [CVE-2026-115905 / GHSA-m665-v7pm-7grj](https://github.com/advisories/GHSA-m665-v7pm-7grj) ([#881](https://github.com/microsoft/regorus/pull/881)). Regorus's policy evaluation runtime is unaffected; its build tooling does not use the affected streaming-extraction workflow.
+
+### Other
+
+- add shared explanation corpus ([#885](https://github.com/microsoft/regorus/pull/885))
+- *(deps)* bump the github-actions group across 1 directory with 9 updates ([#880](https://github.com/microsoft/regorus/pull/880))
+- *(deps)* bump the rust-dependencies group across 6 directories with 12 updates ([#881](https://github.com/microsoft/regorus/pull/881))
+
 ## [0.14.0](https://github.com/microsoft/regorus/compare/regorus-v0.13.0...regorus-v0.14.0) - 2026-10-27
 
 ### Added
