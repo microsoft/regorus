@@ -10,42 +10,9 @@
 //! divide-and-conquer implementation.
 
 use crate::number::BigInt;
-use crate::utils::limits::{check_global_memory_limit, global_memory_limit, LimitError};
+use crate::utils::limits::{check_global_memory_limit, check_memory_allocation, reserve_string};
 use crate::*;
 use anyhow::Result;
-
-pub(super) fn check_allocation(bytes: usize) -> Result<()> {
-    if let Some(limit) = global_memory_limit() {
-        let live = mimalloc::global_allocation_stats_snapshot().allocated;
-        let usage = live.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
-        if usage > limit {
-            return Err(LimitError::MemoryLimitExceeded { usage, limit }.into());
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn reserve(out: &mut String, additional: usize) -> Result<()> {
-    if global_memory_limit().is_none() || additional <= out.capacity() - out.len() {
-        return Ok(());
-    }
-    let needed = out
-        .len()
-        .checked_add(additional)
-        .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?;
-    // Account for the full new block while the old block is still live. Prefer
-    // geometric growth, but use the exact request if only that fits the budget.
-    let growing = needed.max(out.capacity().saturating_mul(2));
-    let capacity = if check_allocation(growing).is_ok() {
-        growing
-    } else {
-        check_allocation(needed)?;
-        needed
-    };
-    out.try_reserve_exact(capacity - out.len())?;
-    check_global_memory_limit()?;
-    Ok(())
-}
 
 pub(super) fn append(out: &mut String, value: &BigInt) -> Result<()> {
     let negative = value.sign() == num_bigint::Sign::Minus;
@@ -53,14 +20,14 @@ pub(super) fn append(out: &mut String, value: &BigInt) -> Result<()> {
     // multiplication safe even for the full u64 range of BigInt::bits().
     let digits = u128::from(value.bits()) * 30_103 / 100_000 + 1;
     let additional = usize::try_from(digits + u128::from(negative))?;
-    reserve(out, additional)?;
+    reserve_string(out, additional)?;
 
     let limbs = value.iter_u32_digits();
     let bytes = limbs
         .len()
         .checked_mul(core::mem::size_of::<u32>())
         .ok_or_else(|| anyhow::anyhow!("sprintf BigInt workspace size overflow"))?;
-    check_allocation(bytes)?;
+    check_memory_allocation(bytes)?;
     let mut workspace = Vec::new();
     workspace.try_reserve_exact(limbs.len())?;
     workspace.extend(limbs);

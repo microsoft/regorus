@@ -279,7 +279,7 @@ const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
 
 fn reserve_sprintf(out: &mut String, additional: usize) -> Result<()> {
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    bigint_decimal::reserve(out, additional)?;
+    crate::utils::limits::reserve_string(out, additional)?;
     #[cfg(any(not(feature = "allocator-memory-limits"), miri))]
     let _ = (out, additional);
     Ok(())
@@ -928,7 +928,7 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     // Rc<str>/Arc<str> conversion copies the payload into a new allocation.
     // Include its two-word header and alignment while the String is still live.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-    bigint_decimal::check_allocation(
+    crate::utils::limits::check_memory_allocation(
         s.len()
             .checked_add(3 * core::mem::size_of::<usize>() - 1)
             .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?,
