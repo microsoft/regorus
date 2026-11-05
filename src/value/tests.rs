@@ -16,6 +16,9 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
+#[cfg(feature = "std")]
+use alloc::string::ToString;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use super::{Object, Set};
@@ -98,6 +101,416 @@ fn make_pairs(n: u64) -> Vec<(Value, Value)> {
 }
 
 const SIZES: &[u64] = &[0, 1, 2, 4, 8, 64, 256, 1024];
+
+#[cfg(feature = "std")]
+#[path = "../../tests/native_depth_support/mod.rs"]
+#[allow(clippy::std_instead_of_core)]
+mod native_depth_support;
+
+#[cfg(feature = "std")]
+fn nested_value(depth: usize, mut value: Value, kind: usize) -> Value {
+    for _ in 0..depth {
+        value = match kind {
+            0 => Value::from(vec![value]),
+            1 => Value::from(BTreeSet::from([value])),
+            2 => Value::from(BTreeMap::from([(Value::from("k"), value)])),
+            _ => Value::from(BTreeMap::from([(value, Value::Null)])),
+        };
+    }
+    value
+}
+
+#[test]
+fn value_output_and_ordering_compatibility() {
+    let value = Value::from(BTreeMap::from([
+        (Value::from("escaped\n\""), Value::Undefined),
+        (
+            Value::from(vec![Value::from(2)]),
+            Value::from(BTreeSet::from([Value::Bool(false), Value::Null])),
+        ),
+    ]));
+    assert_eq!(format!("{value}"), serde_json::to_string(&value).unwrap());
+    assert_eq!(
+        value.to_json_str().unwrap(),
+        serde_json::to_string_pretty(&value).unwrap()
+    );
+    assert_eq!(
+        format!("{value:?}"),
+        "Object({String(\"escaped\\n\\\"\"): Undefined, Array([Number(2)]): Set({Null, Bool(false)})})"
+    );
+    assert_eq!(
+        format!("{:#?}", Value::from(vec![Value::Bool(true)])),
+        "Array(\n    [\n        Bool(\n            true,\n        ),\n    ],\n)"
+    );
+    let values = [
+        Value::Null,
+        Value::Bool(false),
+        Value::from(1),
+        Value::from("a"),
+        Value::new_array(),
+        Value::new_set(),
+        Value::new_object(),
+        Value::Undefined,
+    ];
+    for pair in values.windows(2) {
+        assert!(pair[0] < pair[1]);
+    }
+    assert!(Value::from(vec![Value::from(0), Value::Null]) < Value::from(vec![Value::from(1)]));
+    assert!(Value::from(vec![Value::Null]) < Value::from(vec![Value::Null, Value::Null]));
+
+    // Object keys retain the same JSON-within-a-string encoding.
+    let key = Value::from(BTreeMap::from([(Value::from(1), value)]));
+    let outer = Value::from(BTreeMap::from([(key, Value::Bool(true))]));
+    assert_eq!(format!("{outer}"), serde_json::to_string(&outer).unwrap());
+    assert_eq!(
+        outer.to_json_str().unwrap(),
+        serde_json::to_string_pretty(&outer).unwrap()
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn value_traversal_lifecycle_1500000_byte_stack() {
+    if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+        native_depth_support::run_in_subprocess(
+            "value::tests::value_traversal_lifecycle_1500000_byte_stack",
+        );
+        return;
+    }
+    std::thread::Builder::new()
+        .stack_size(1_500_000)
+        .spawn(|| {
+            for kind in 0..4 {
+                let sentinel: crate::Rc<str> = crate::Rc::from("leaf");
+                let a = nested_value(2048, Value::String(sentinel.clone()), kind);
+                let b = nested_value(2048, Value::String(sentinel.clone()), kind);
+                let c = nested_value(2048, Value::from("next"), kind);
+                assert_eq!(a, b);
+                assert_eq!(a.cmp(&b), core::cmp::Ordering::Equal);
+                assert!(a < c);
+                assert!(c > b);
+
+                let mut shared = a.clone();
+                match &mut shared {
+                    Value::Array(a) => crate::Rc::make_mut(a).clear(),
+                    Value::Set(s) => crate::Rc::make_mut(s).clear(),
+                    Value::Object(o) => crate::Rc::make_mut(o).clear(),
+                    _ => panic!("expected container"),
+                }
+                assert_eq!(a, b);
+                drop((shared, a, b, c));
+                assert_eq!(crate::Rc::strong_count(&sentinel), 1);
+
+                let mut owned = super::Array::from(vec![
+                    Value::Null,
+                    nested_value(2048, Value::String(sentinel.clone()), kind),
+                ])
+                .into_iter();
+                assert_eq!(owned.next(), Some(Value::Null));
+                drop(owned);
+                assert_eq!(crate::Rc::strong_count(&sentinel), 1);
+            }
+
+            let a = nested_value(2048, Value::Null, 0);
+            let compact = format!("{a}");
+            assert_eq!(
+                compact,
+                format!("{}null{}", "[".repeat(2048), "]".repeat(2048))
+            );
+            assert_eq!(
+                format!("{a:?}"),
+                format!("{}Null{}", "Array([".repeat(2048), "])".repeat(2048))
+            );
+            let pretty = a.to_json_str().unwrap();
+            assert_eq!(pretty.replace([' ', '\n'], ""), compact);
+            for kind in [1, 2] {
+                let value = nested_value(512, Value::Null, kind);
+                let compact = format!("{value}");
+                let (prefix, suffix) = if kind == 1 {
+                    ("[", "]")
+                } else {
+                    ("{\"k\":", "}")
+                };
+                assert_eq!(
+                    compact,
+                    format!("{}null{}", prefix.repeat(512), suffix.repeat(512))
+                );
+                assert_eq!(
+                    value.to_json_str().unwrap().replace([' ', '\n'], ""),
+                    compact
+                );
+                assert!(!format!("{value:?}").is_empty());
+            }
+            let keyed = Value::from(BTreeMap::from([(a.clone(), Value::Bool(true))]));
+            // Direct collection serde uses the iterative key encoder.
+            let expected = format!("{{{}:true}}", serde_json::to_string(&compact).unwrap());
+            assert_eq!(serde_json::to_string(&keyed).unwrap(), expected);
+            assert_eq!(format!("{keyed}"), expected);
+            let mut array = super::Array::from(vec![a.clone(), a.clone()]);
+            drop(array.into_iter().next());
+            array = super::Array::from(vec![a.clone()]);
+            array.get_mut(0).unwrap().clone_from(&Value::Null);
+            drop(array);
+            let mut map = Object::new();
+            map.insert(a.clone(), a.clone());
+            assert_eq!(map.remove(&a), Some(a.clone()));
+            let mut set = Set::from(BTreeSet::from([a.clone()]));
+            assert!(set.remove(&a));
+            let owned = Object::from(BTreeMap::from([
+                (Value::from("a"), a.clone()),
+                (Value::from("b"), a.clone()),
+            ]));
+            drop(owned.into_iter().next());
+            drop(Set::from(BTreeSet::from([a.clone()])).into_iter());
+
+            let mut merged = Value::new_object();
+            merged
+                .deep_merge(Value::from(BTreeMap::from([(Value::from("k"), a.clone())])))
+                .unwrap();
+            assert_eq!(merged["k"], a);
+            let equal = Value::from(BTreeMap::from([(
+                Value::from("k"),
+                nested_value(2048, Value::Null, 0),
+            )]));
+            merged.deep_merge(equal).unwrap();
+            let unequal = nested_value(512, Value::Bool(true), 0);
+            let conflict = Value::from(BTreeMap::from([(Value::from("k"), unequal)]));
+            let expected = format!(
+                "value for key `\"k\"` generated multiple times: `{}` and `{}`",
+                a.to_json_str().unwrap(),
+                conflict["k"].to_json_str().unwrap()
+            );
+            #[cfg(not(feature = "allocator-memory-limits"))]
+            assert_eq!(
+                merged.check_mergeable(&conflict).unwrap_err().to_string(),
+                expected
+            );
+            assert_eq!(
+                merged.deep_merge(conflict).unwrap_err().to_string(),
+                expected
+            );
+            assert_eq!(merged["k"], a);
+
+            let mut engine = crate::Engine::new();
+            engine.set_input(a.clone());
+            assert!(engine
+                .eval_bool_query("input == input".into(), false)
+                .unwrap());
+            engine.set_strict_builtin_errors(true);
+            let error = engine
+                .eval_query("upper(input)".into(), false)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("expects string argument. Got `{compact}` instead")));
+            engine.set_input(Value::Null);
+
+            #[cfg(feature = "rvm")]
+            {
+                use crate::rvm::{Instruction, Program, RegoVM};
+                let mut program = Program::new();
+                program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+                program.add_instruction(Instruction::LoadTrue { dest: 1 }, None);
+                program.add_instruction(
+                    Instruction::Lt {
+                        dest: 0,
+                        left: 0,
+                        right: 1,
+                    },
+                    None,
+                );
+                program.add_instruction(Instruction::Return { value: 0 }, None);
+                let mut vm = RegoVM::new();
+                vm.load_program(alloc::sync::Arc::new(program));
+                vm.set_input(a.clone());
+                assert_eq!(vm.execute().unwrap(), Value::Bool(false));
+                vm.set_strict_builtin_errors(true);
+                let error = vm.execute().unwrap_err().to_string();
+                assert!(error.contains(&format!(
+                    "cannot compare values of different types (left={a:?}, right=Bool(true))"
+                )));
+                vm.set_input(Value::Null);
+            }
+            drop(a);
+
+            #[cfg(feature = "arc")]
+            {
+                let sentinel: crate::Rc<str> = crate::Rc::from("shared");
+                let shared = nested_value(2048, Value::String(sentinel.clone()), 2);
+                let left = Value::from(vec![shared.clone()]);
+                let right = Value::from(vec![shared]);
+                let barrier = alloc::sync::Arc::new(std::sync::Barrier::new(2));
+                let other_barrier = barrier.clone();
+                let other = std::thread::Builder::new()
+                    .stack_size(1_500_000)
+                    .spawn(move || {
+                        other_barrier.wait();
+                        drop(left);
+                    })
+                    .unwrap();
+                barrier.wait();
+                drop(right);
+                other.join().unwrap();
+                assert_eq!(crate::Rc::strong_count(&sentinel), 1);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[cfg(feature = "std")]
+fn check_serialization<T: serde::Serialize>(
+    value: &T,
+    expected: Option<(&str, &str, &str, &[u8])>,
+) {
+    let json = serde_json::to_string(value);
+    let pretty = serde_json::to_string_pretty(value);
+    let yaml = yaml_serde::to_string(value);
+    let json_dom = serde_json::to_value(value);
+    let yaml_dom = yaml_serde::to_value(value);
+    #[cfg(feature = "rvm")]
+    let binary = postcard::to_allocvec(value);
+    if let Some((compact, indented, yaml_text, binary_bytes)) = expected {
+        assert_eq!(json.unwrap(), compact);
+        assert_eq!(pretty.unwrap(), indented);
+        assert_eq!(yaml.unwrap(), yaml_text);
+        assert_eq!(serde_json::to_string(&json_dom.unwrap()).unwrap(), compact);
+        assert_eq!(
+            yaml_serde::to_string(&yaml_dom.unwrap()).unwrap(),
+            yaml_text
+        );
+        #[cfg(feature = "rvm")]
+        assert_eq!(binary.unwrap(), binary_bytes);
+        #[cfg(not(feature = "rvm"))]
+        let _ = binary_bytes;
+    } else {
+        let message = format!(
+            "value serialization exceeds {} nested containers",
+            super::MAX_SERIALIZATION_CONTAINERS
+        );
+        assert!(json.unwrap_err().to_string().contains(&message));
+        assert!(pretty.unwrap_err().to_string().contains(&message));
+        assert!(yaml.unwrap_err().to_string().contains(&message));
+        assert!(json_dom.unwrap_err().to_string().contains(&message));
+        assert!(yaml_dom.unwrap_err().to_string().contains(&message));
+        #[cfg(feature = "rvm")]
+        assert_eq!(binary.unwrap_err(), postcard::Error::SerdeSerCustom);
+    }
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn value_serialization_budget_1500000_byte_stack() {
+    if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+        native_depth_support::run_in_subprocess(
+            "value::tests::value_serialization_budget_1500000_byte_stack",
+        );
+        return;
+    }
+    std::thread::Builder::new()
+        .stack_size(1_500_000)
+        .spawn(|| {
+            let limit = super::MAX_SERIALIZATION_CONTAINERS;
+            for mode in 0..4 {
+                for depth in [limit, limit + 1] {
+                    let sentinel: crate::Rc<str> = crate::Rc::from("leaf");
+                    let mut value = Value::String(sentinel.clone());
+                    let mut yaml = yaml_serde::Value::String("leaf".into());
+                    for level in 0..depth {
+                        let kind = if mode == 3 { level % 3 } else { mode };
+                        value = nested_value(1, value, kind);
+                        yaml = if kind == 2 {
+                            let mut map = yaml_serde::Mapping::new();
+                            map.insert(yaml_serde::Value::String("k".into()), yaml);
+                            yaml_serde::Value::Mapping(map)
+                        } else {
+                            yaml_serde::Value::Sequence(vec![yaml])
+                        };
+                    }
+                    let mut binary = Vec::new();
+                    for level in (0..depth).rev() {
+                        let kind = if mode == 3 { level % 3 } else { mode };
+                        binary.push(1);
+                        if kind == 2 {
+                            binary.extend_from_slice(&[1, b'k']);
+                        }
+                    }
+                    binary.extend_from_slice(b"\x04leaf");
+                    let compact = format!("{value}");
+                    let pretty = value.to_json_str().unwrap();
+                    let yaml_text = yaml_serde::to_string(&yaml).unwrap();
+                    let expected = (depth == limit).then_some((
+                        compact.as_str(),
+                        pretty.as_str(),
+                        yaml_text.as_str(),
+                        binary.as_slice(),
+                    ));
+                    check_serialization(&value, expected);
+                    match &value {
+                        Value::Array(a) => check_serialization(a.as_ref(), expected),
+                        Value::Set(s) => check_serialization(s.as_ref(), expected),
+                        Value::Object(o) => check_serialization(o.as_ref(), expected),
+                        _ => panic!("expected container"),
+                    }
+                    assert_eq!(crate::Rc::strong_count(&sentinel), 2);
+                    drop(value);
+                    assert_eq!(crate::Rc::strong_count(&sentinel), 1);
+                }
+            }
+
+            // Each sibling receives the parent's remaining budget independently.
+            let branch = nested_value(limit - 1, Value::Bool(true), 0);
+            let siblings = Value::from(vec![branch.clone(), branch]);
+            assert_eq!(
+                serde_json::to_string(&siblings).unwrap(),
+                format!("{siblings}")
+            );
+            for empty in [Value::new_array(), Value::new_set(), Value::new_object()] {
+                let at_boundary = nested_value(limit - 1, empty, 0);
+                assert_eq!(
+                    serde_json::to_string(&at_boundary).unwrap(),
+                    format!("{at_boundary}")
+                );
+                let beyond = Value::from(vec![at_boundary]);
+                check_serialization(&beyond, None);
+            }
+
+            // A structured key is encoded iteratively, independently of value callbacks.
+            let key = nested_value(256, Value::Null, 0)
+                .json_string(false)
+                .unwrap();
+            let child = nested_value(limit - 1, Value::String(crate::Rc::from("leaf")), 0);
+            let keyed = Value::from(BTreeMap::from([(nested_value(256, Value::Null, 0), child)]));
+            let yaml_child = (0..limit - 1)
+                .fold(yaml_serde::Value::String("leaf".into()), |child, _| {
+                    yaml_serde::Value::Sequence(vec![child])
+                });
+            let mut yaml = yaml_serde::Mapping::new();
+            yaml.insert(yaml_serde::Value::String(key.clone()), yaml_child);
+            let yaml_text = yaml_serde::to_string(&yaml).unwrap();
+            let mut binary = vec![1];
+            #[cfg(feature = "rvm")]
+            binary.extend_from_slice(&postcard::to_allocvec(&key).unwrap());
+            binary.extend(core::iter::repeat_n(1, limit - 1));
+            binary.extend_from_slice(b"\x04leaf");
+            let compact = format!("{keyed}");
+            let pretty = keyed.to_json_str().unwrap();
+            let expected = Some((
+                compact.as_str(),
+                pretty.as_str(),
+                yaml_text.as_str(),
+                binary.as_slice(),
+            ));
+            check_serialization(&keyed, expected);
+            match &keyed {
+                Value::Object(o) => check_serialization(o.as_ref(), expected),
+                _ => panic!("expected object"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
 
 /// `iter_sorted` must yield entries in the same order as a `BTreeMap` oracle.
 #[test]

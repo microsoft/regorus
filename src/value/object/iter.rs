@@ -167,9 +167,9 @@ impl<'a> FusedIterator for IterMut<'a> {}
 impl IntoIterator for Object {
     type Item = (Value, Value);
     type IntoIter = IntoIter;
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(mut self) -> Self::IntoIter {
         IntoIter {
-            inner: match self.repr {
+            inner: match core::mem::take(&mut self.repr) {
                 Repr::Empty => IntoIterInner::Empty,
                 Repr::Frozen(v) => IntoIterInner::Frozen(Vec::from(v).into_iter()),
                 Repr::BTree(m) => IntoIterInner::BTree(m.into_iter()),

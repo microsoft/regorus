@@ -9,12 +9,29 @@ use serde::de::{Deserialize, Deserializer, Error as _, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
 
 use super::Set;
-use crate::value::Value;
+use crate::value::{
+    serialization_child_budget, SerializeWithBudget, Value, MAX_SERIALIZATION_CONTAINERS,
+};
 
 impl Serialize for Set {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        SerializeWithBudget {
+            value: self,
+            remaining: MAX_SERIALIZATION_CONTAINERS,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for SerializeWithBudget<'_, Set> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let remaining = serialization_child_budget::<S::Error>(self.remaining)?;
         // Sets serialize as JSON arrays. Sorted iteration: canonical output.
-        serializer.collect_seq(self.iter_sorted())
+        serializer.collect_seq(
+            self.value
+                .iter_sorted()
+                .map(|value| SerializeWithBudget { value, remaining }),
+        )
     }
 }
 
