@@ -22,6 +22,8 @@ pub use memory::{
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
     thread_memory_flush_threshold, MemoryBudgetConfig,
 };
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+pub(crate) use memory::{check_memory_allocation, reserve_string};
 #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
 pub(crate) use memory::{
     current_memory_budget_usage, current_thread_live_bytes, with_memory_budget_usage_scope,

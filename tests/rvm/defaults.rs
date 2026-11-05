@@ -117,6 +117,40 @@ fn default_comprehensions_skip_missing_yields_without_losing_iterations() {
 }
 
 #[test]
+fn executable_defaults_respect_native_depth_and_allow_reuse() {
+    let program = compile(
+        "package defaults\ndefault value := [x | x := input.x]\nresult := value",
+        &[],
+    );
+    for program in round_trips(program) {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_input(Value::from_json_str(r#"{"x":3}"#).unwrap());
+        vm.set_max_native_rule_call_depth(1);
+        for _ in 0..2 {
+            assert!(matches!(
+                vm.execute_entry_point_by_name(ENTRY),
+                Err(VmError::RuleCallDepthExceeded { limit: 1, .. })
+            ));
+            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+            assert!(vm.get_call_stack().is_empty());
+        }
+        vm.set_max_native_rule_call_depth(2);
+        assert_eq!(
+            vm.execute_entry_point_by_name(ENTRY).unwrap(),
+            Value::from_json_str("[3]").unwrap()
+        );
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_max_native_rule_call_depth(0);
+        assert_eq!(
+            vm.execute_entry_point_by_name(ENTRY).unwrap(),
+            Value::from_json_str("[3]").unwrap()
+        );
+        assert!(vm.get_call_stack().is_empty());
+    }
+}
+
+#[test]
 fn indexed_and_nested_defaults_preserve_their_object_shape() {
     for module in [
         r#"package defaults

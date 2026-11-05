@@ -38,6 +38,7 @@ impl RegoVM {
             err,
             VmError::TimeLimitExceeded { .. }
                 | VmError::RecursiveRuleEvaluation { .. }
+                | VmError::RuleCallDepthExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
@@ -311,6 +312,13 @@ impl RegoVM {
         }
 
         self.check_rule_call(rule_index)?;
+        // Explicit suspendable frames do not retain native dispatch frames.
+        if self.register_stack.len() >= self.max_native_rule_call_depth {
+            return Err(VmError::RuleCallDepthExceeded {
+                limit: self.max_native_rule_call_depth,
+                pc: self.pc,
+            });
+        }
         self.call_rule_stack.push(CallRuleContext {
             return_pc: self.pc,
             dest_reg: dest,

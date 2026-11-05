@@ -11,6 +11,9 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicI64, Ordering};
 use std::thread_local;
 
+mod allocation;
+pub use allocation::{check_allocation, try_reserve_string, MemoryLimitExceeded, ReservationError};
+
 // Total memory allocated through the global allocator.
 static GLOBAL_ALLOCATED: AtomicI64 = AtomicI64::new(0);
 
