@@ -545,41 +545,54 @@ Declares a function name that the compiler should treat as a host-await call.
 When the VM encounters a call to this function, it suspends (suspendable mode)
 or consumes a pre-loaded response (run-to-completion mode).
 
-`argCount` is the exact number of input arguments in the policy call. The
-optional Rego output parameter is not included. Registered calls pass an
-ordered array to the host: zero inputs produce `[]`, one input produces
-`[value]`, and multiple inputs produce `[value1, value2, ...]`. Values remain
-native Rego values inside that array, including nested arrays and objects.
-`GetHostAwaitArgument()` returns the JSON representation of the whole array;
-it does not unwrap one-input calls. An input that evaluates to undefined skips
-the registered HostAwait without consuming a response.
+This legacy registration accepts exactly one input and passes its raw Rego
+value to the host. Arrays and objects remain raw values; the payload is not
+wrapped based on shape. The existing `Program.CompileFromModules` overloads
+and `Compiler::compile_from_policy_with_host_await` retain this behavior.
 
 ```csharp
 public readonly struct HostAwaitBuiltin
 {
     public string Name { get; }
-    public int ArgCount { get; }
 
-    public HostAwaitBuiltin(string name, int argCount);
+    public HostAwaitBuiltin(string name);
 }
 ```
 
-The one-argument constructor was removed; pass the declared input count
-explicitly and reject negative counts. Removing `.ctor(string)` is a C# source
-and CLR binary break. This is a coordinated breaking change: update host
-handlers, managed and native packages, registrations, and recompiled programs
-together. New managed code with an older size-aware native library may have
-its count ignored and is unsupported; an old name-only caller with the new
-native library is rejected for non-empty registrations.
+For zero/one/multiple-input calls with an explicitly packed ordered array, use
+the separate v2 registration and compile method:
+
+```csharp
+public readonly struct HostAwaitBuiltinV2
+{
+    public string Name { get; }
+    public int ArgCount { get; }
+
+    public HostAwaitBuiltinV2(string name, int argCount);
+}
+
+public static Program CompileFromModulesWithHostAwaitV2(
+    string dataJson,
+    IReadOnlyList<PolicyModule> modules,
+    IReadOnlyList<string> entryPoints,
+    IReadOnlyList<HostAwaitBuiltin> legacyHostAwaitBuiltins,
+    IReadOnlyList<HostAwaitBuiltinV2> hostAwaitBuiltinsV2);
+```
+
+The v2 count is fixed and nonnegative; the optional Rego output parameter is
+excluded. The host receives `[]`, `[value]`, or `[value1, value2, ...]` in
+source order, retaining nested Rego values. Responses remain unwrapped. If any
+packed input is `Undefined`, that v2 invocation, response consumption, and
+output-binding epilogue are skipped. Legacy and v2 lists may be combined, but
+one name cannot have both contracts. Either registration list may be empty,
+but the v2 method always requires and calls its v2 native export. A missing
+native v2 export is reported; the managed binding does not retry using the
+legacy one-input contract.
 
 Explicit `__builtin_host_await(payload, identifier)` calls and previously
-compiled programs retain raw payloads, while new registered calls send an
-ordered input array. Old raw payloads can themselves be arrays, so a handler
-cannot reliably infer the program format from payload shape. Deploy matching
-program and handler versions together or use application-owned legacy routing;
-there is no runtime handshake or universal compatibility handler. Roll back
-the matching earlier managed/native package, host handler, and program bundle
-together.
+compiled programs retain their raw payloads. Because a legacy raw payload can
+itself be an array, handlers must not infer the registration contract from
+payload shape; the caller chooses the legacy or explicitly versioned v2 API.
 
 ### ExecutionMode
 

@@ -1,4 +1,111 @@
 cases:
+  - note: registered_host_await_legacy_raw_array_argument
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    legacy_host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := echo([1, 2])
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: [1, 2]
+        value: "returned"
+    want_result: "returned"
+
+  - note: registered_host_await_legacy_undefined_input_still_invokes_host
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    legacy_host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := echo(input.missing)
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: "#undefined"
+        value: "invoked"
+    want_result: "invoked"
+
+  - note: registered_host_await_legacy_values_remain_raw
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    legacy_host_await_builtins:
+      - name: echo
+        arg_count: 1
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := [
+          echo(7),
+          echo("text"),
+          echo(false),
+          echo(null),
+          echo([1, 2]),
+          echo({"id": "x"})
+        ]
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: 7
+        value: "scalar-response"
+      - id: "echo"
+        args: "text"
+        value: "string-response"
+      - id: "echo"
+        args: false
+        value: false
+      - id: "echo"
+        args: null
+        value: null
+      - id: "echo"
+        args: [1, 2]
+        value: [3, 4]
+      - id: "echo"
+        args:
+          id: "x"
+        value:
+          seen: true
+    want_result:
+      - "scalar-response"
+      - "string-response"
+      - false
+      - null
+      - [3, 4]
+      - {seen: true}
+
+  - note: registered_explicit_host_await_undefined_payload_still_invokes_host
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+        result := __builtin_host_await(input.missing, "echo")
+    query: data.demo.result
+    host_await_responses_suspendable:
+      - id: "echo"
+        args: "#undefined"
+        value: "invoked"
+    want_result: "invoked"
+
   - note: registered_builtin_suspendable
     data: {}
     input:

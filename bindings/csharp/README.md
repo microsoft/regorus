@@ -176,10 +176,15 @@ Terminal budget or runtime failures invalidate retained results and clear execut
 Host-await builtins let you register custom function names at compile time.
 When the VM encounters a call to one of these functions, it suspends execution
 so the host can resolve the call externally and resume with a value.
+The examples below use the explicitly packed v2 contract. The legacy
+`HostAwaitBuiltin(string)` registration and `CompileFromModules` overload remain
+available for one-input calls that pass the raw Rego value to the host.
 
 ### Suspendable mode (resolve one call at a time)
 
 ```csharp
+using System;
+using System.Collections.Generic;
 using Regorus;
 
 const string Policy = """
@@ -196,9 +201,14 @@ allow if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.allow" };
-var builtins = new[] { new HostAwaitBuiltin("get_account", 1) };
+var builtins = new[] { new HostAwaitBuiltinV2("get_account", 1) };
 
-using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
+using var program = Program.CompileFromModulesWithHostAwaitV2(
+    "{}",
+    modules,
+    entryPoints,
+    Array.Empty<HostAwaitBuiltin>(),
+    builtins);
 using var vm = new Rvm();
 vm.SetExecutionMode(ExecutionMode.Suspendable);
 vm.LoadProgram(program);
@@ -209,7 +219,7 @@ vm.Execute();
 
 // Inspect which builtin suspended and what argument was passed
 var identifier = vm.GetHostAwaitIdentifier();  // "get_account"
-var argument = vm.GetHostAwaitArgument();       // [{"id":"acct-42"}]
+var argument = vm.GetHostAwaitArgument();       // [{"id":"acct-42"}] (v2 packed payload)
 
 // Resolve externally, then resume
 var result = vm.Resume("""{"status": "active", "name": "Alice"}""");
@@ -219,6 +229,8 @@ Console.WriteLine($"allow: {result}");  // true
 ### Run-to-completion mode (pre-load responses)
 
 ```csharp
+using System;
+using System.Collections.Generic;
 using Regorus;
 
 const string Policy = """
@@ -234,9 +246,14 @@ greeting := msg if {
 
 var modules = new[] { new PolicyModule("demo.rego", Policy) };
 var entryPoints = new[] { "data.demo.greeting" };
-var builtins = new[] { new HostAwaitBuiltin("translate", 1) };
+var builtins = new[] { new HostAwaitBuiltinV2("translate", 1) };
 
-using var program = Program.CompileFromModules("{}", modules, entryPoints, builtins);
+using var program = Program.CompileFromModulesWithHostAwaitV2(
+    "{}",
+    modules,
+    entryPoints,
+    Array.Empty<HostAwaitBuiltin>(),
+    builtins);
 using var vm = new Rvm();
 vm.SetExecutionMode(ExecutionMode.RunToCompletion);
 vm.LoadProgram(program);
@@ -253,6 +270,13 @@ vm.SetHostAwaitResponses(new Dictionary<string, IReadOnlyList<string>>
 var result = vm.Execute();
 Console.WriteLine($"greeting: {result}");  // "hola"
 ```
+
+The legacy `HostAwaitBuiltin(string)` and `Program.CompileFromModules` overload
+remain available for one-input calls that pass their raw Rego value to the
+host, including arrays and objects. Use `HostAwaitBuiltinV2` and
+`CompileFromModulesWithHostAwaitV2` only when the host expects the explicitly
+packed ordered-array payload. The v2 compile method accepts separate legacy
+and v2 registration lists so both contracts can coexist under distinct names.
 
 ## Azure RBAC Condition Evaluation
 

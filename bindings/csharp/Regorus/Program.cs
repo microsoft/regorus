@@ -111,10 +111,10 @@ namespace Regorus
         /// <summary>
         /// Compile an RVM program from modules, entry points, and registered host-awaitable builtins.
         /// </summary>
-        /// <param name="hostAwaitBuiltins">Registrations with required input argument counts.</param>
+        /// <param name="hostAwaitBuiltins">Legacy name-only registrations; each call accepts one raw input value.</param>
         /// <remarks>
-        /// Newly compiled registered calls pass an ordered array of input values to the host.
-        /// The optional Rego output parameter is not included in the declared count.
+        /// This legacy path registers one-input calls and passes the raw input
+        /// value to the host, including arrays and objects.
         /// </remarks>
         public static Program CompileFromModules(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin> hostAwaitBuiltins)
         {
@@ -124,6 +124,77 @@ namespace Regorus
             }
 
             return CompileFromModulesInner(dataJson, modules, entryPoints, hostAwaitBuiltins);
+        }
+
+        /// <summary>
+        /// Compile an RVM program using separate legacy raw-value and explicitly
+        /// versioned packed-array host-await registrations.
+        /// </summary>
+        /// <param name="dataJson">JSON string containing static data for policy evaluation.</param>
+        /// <param name="modules">Policy modules to compile.</param>
+        /// <param name="entryPoints">Entry point rule paths.</param>
+        /// <param name="legacyHostAwaitBuiltins">Legacy one-input registrations that pass raw values.</param>
+        /// <param name="hostAwaitBuiltinsV2">Fixed-arity registrations that pass ordered arrays.</param>
+        public static Program CompileFromModulesWithHostAwaitV2(
+            string dataJson,
+            IReadOnlyList<PolicyModule> modules,
+            IReadOnlyList<string> entryPoints,
+            IReadOnlyList<HostAwaitBuiltin> legacyHostAwaitBuiltins,
+            IReadOnlyList<HostAwaitBuiltinV2> hostAwaitBuiltinsV2)
+        {
+            if (legacyHostAwaitBuiltins is null)
+            {
+                throw new ArgumentNullException(nameof(legacyHostAwaitBuiltins));
+            }
+
+            if (hostAwaitBuiltinsV2 is null)
+            {
+                throw new ArgumentNullException(nameof(hostAwaitBuiltinsV2));
+            }
+
+            if (modules is null)
+            {
+                throw new ArgumentNullException(nameof(modules));
+            }
+
+            if (entryPoints is null)
+            {
+                throw new ArgumentNullException(nameof(entryPoints));
+            }
+
+            if (entryPoints.Count == 0)
+            {
+                throw new ArgumentException("At least one entry point is required.", nameof(entryPoints));
+            }
+
+            using var pinnedModules = ModuleMarshalling.PinPolicyModules(modules);
+            using var pinnedEntryPoints = ModuleMarshalling.PinUtf8Strings(entryPoints);
+            using var pinnedLegacyBuiltins = ModuleMarshalling.PinHostAwaitBuiltins(legacyHostAwaitBuiltins);
+            using var pinnedV2Builtins = ModuleMarshalling.PinHostAwaitBuiltinsV2(hostAwaitBuiltinsV2);
+
+            return Utf8Marshaller.WithUtf8(dataJson, dataPtr =>
+            {
+                fixed (RegorusPolicyModule* modulesPtr = pinnedModules.Buffer)
+                fixed (IntPtr* entryPtr = pinnedEntryPoints.Buffer)
+                fixed (RegorusHostAwaitBuiltin* legacyBuiltinsPtr = pinnedLegacyBuiltins.Buffer)
+                fixed (RegorusHostAwaitBuiltinV2* v2BuiltinsPtr = pinnedV2Builtins.Buffer)
+                {
+                    var result = API.regorus_program_compile_from_modules_with_host_await_v2(
+                        (byte*)dataPtr,
+                        modulesPtr,
+                        (UIntPtr)pinnedModules.Length,
+                        (byte**)entryPtr,
+                        (UIntPtr)pinnedEntryPoints.Length,
+                        legacyBuiltinsPtr,
+                        (UIntPtr)pinnedLegacyBuiltins.Length,
+                        (UIntPtr)sizeof(RegorusHostAwaitBuiltin),
+                        v2BuiltinsPtr,
+                        (UIntPtr)pinnedV2Builtins.Length,
+                        (UIntPtr)sizeof(RegorusHostAwaitBuiltinV2));
+
+                    return GetProgramResult(result);
+                }
+            });
         }
 
         private static Program CompileFromModulesInner(string dataJson, IReadOnlyList<PolicyModule> modules, IReadOnlyList<string> entryPoints, IReadOnlyList<HostAwaitBuiltin>? hostAwaitBuiltins)

@@ -51,11 +51,6 @@ pub enum CompilerError {
     #[error("Unknown function: '{name}'")]
     UnknownFunction { name: String },
 
-    #[error(
-        "Register overflow: cannot allocate {additional} register(s) at register {current} within the 255-register window"
-    )]
-    RegisterOverflow { current: u8, additional: usize },
-
     #[error("Undefined variable: '{name}'")]
     UndefinedVariable { name: String },
 

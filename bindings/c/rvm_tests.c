@@ -17,15 +17,16 @@ static int assert_ok(RegorusResult r, const char* message) {
 }
 
 static int test_registered_host_await_wide_stride(void) {
-    typedef struct WiderHostAwaitBuiltin {
-        RegorusHostAwaitBuiltin prefix;
+    typedef struct WiderHostAwaitBuiltinV2 {
+        RegorusHostAwaitBuiltinV2 prefix;
         uintptr_t trailing;
-    } WiderHostAwaitBuiltin;
+    } WiderHostAwaitBuiltinV2;
 
     if (offsetof(RegorusHostAwaitBuiltin, name) != 0 ||
-        offsetof(RegorusHostAwaitBuiltin, arg_count) != sizeof(const char*) ||
-        sizeof(RegorusHostAwaitBuiltin) != sizeof(const char*) + sizeof(uintptr_t) ||
-        sizeof(WiderHostAwaitBuiltin) <= sizeof(RegorusHostAwaitBuiltin)) {
+        sizeof(RegorusHostAwaitBuiltin) != sizeof(const char*) ||
+        offsetof(RegorusHostAwaitBuiltinV2, name) != 0 ||
+        offsetof(RegorusHostAwaitBuiltinV2, arg_count) != sizeof(const char*) ||
+        sizeof(WiderHostAwaitBuiltinV2) <= sizeof(RegorusHostAwaitBuiltinV2)) {
         fprintf(stderr, "unexpected registered HostAwait ABI layout\n");
         return 1;
     }
@@ -45,20 +46,23 @@ static int test_registered_host_await_wide_stride(void) {
         "]";
     RegorusPolicyModule module = {"registered_host_await_stride.rego", module_text};
     const char* entry_points[] = {"data.demo.result"};
-    WiderHostAwaitBuiltin builtins[] = {
+    WiderHostAwaitBuiltinV2 builtins[] = {
         {{"unused", 0}, 0},
         {{"echo", 2}, 0},
     };
 
-    RegorusResult result = regorus_program_compile_from_modules_with_host_await(
+    RegorusResult result = regorus_program_compile_from_modules_with_host_await_v2(
         "{}",
         &module,
         1,
         entry_points,
         1,
+        NULL,
+        0,
+        sizeof(RegorusHostAwaitBuiltin),
         &builtins[0].prefix,
         2,
-        sizeof(WiderHostAwaitBuiltin));
+        sizeof(WiderHostAwaitBuiltinV2));
     bool result_valid = true;
     RegorusProgram* program = NULL;
     RegorusRvm* vm = NULL;
@@ -151,7 +155,103 @@ static int test_registered_host_await_wide_stride(void) {
     regorus_result_drop(result);
     result_valid = false;
 
-    printf("Registered HostAwait wide-stride C ABI test passed.\n");
+    printf("Registered HostAwait v2 wide-stride C ABI test passed.\n");
+    exit_code = 0;
+
+Cleanup:
+    if (result_valid) {
+        regorus_result_drop(result);
+    }
+    if (vm) {
+        regorus_rvm_drop(vm);
+    }
+    if (program) {
+        regorus_program_drop(program);
+    }
+    return exit_code;
+}
+
+static int test_legacy_host_await_raw_array(void) {
+    const char* module_text =
+        "package demo\n"
+        "import rego.v1\n"
+        "result := echo([1, 2])\n";
+    const char* expected_argument =
+        "[\n"
+        "  1,\n"
+        "  2\n"
+        "]";
+    RegorusPolicyModule module = {"legacy_host_await.rego", module_text};
+    const char* entry_points[] = {"data.demo.result"};
+    RegorusHostAwaitBuiltin builtin = {"echo"};
+    RegorusResult result = regorus_program_compile_from_modules_with_host_await(
+        "{}",
+        &module,
+        1,
+        entry_points,
+        1,
+        &builtin,
+        1,
+        sizeof(builtin));
+    RegorusProgram* program = NULL;
+    RegorusRvm* vm = NULL;
+    bool result_valid = true;
+    int exit_code = 1;
+
+    if (!assert_ok(result, "compile legacy name-only HostAwait")) {
+        goto Cleanup;
+    }
+    program = (RegorusProgram*)result.pointer_value;
+    regorus_result_drop(result);
+    result_valid = false;
+    if (!program) {
+        fprintf(stderr, "legacy HostAwait compile returned no program\n");
+        goto Cleanup;
+    }
+
+    vm = regorus_rvm_new();
+    if (!vm) {
+        fprintf(stderr, "failed to allocate legacy HostAwait VM\n");
+        goto Cleanup;
+    }
+    result = regorus_rvm_set_execution_mode(vm, 1);
+    result_valid = true;
+    if (!assert_ok(result, "set legacy HostAwait execution mode")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_load_program(vm, program);
+    result_valid = true;
+    if (!assert_ok(result, "load legacy HostAwait program")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_execute(vm);
+    result_valid = true;
+    if (!assert_ok(result, "execute legacy HostAwait program")) {
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    result = regorus_rvm_get_host_await_argument(vm);
+    result_valid = true;
+    if (!assert_ok(result, "get legacy HostAwait argument")) {
+        goto Cleanup;
+    }
+    if (!result.output || strcmp(result.output, expected_argument) != 0) {
+        fprintf(stderr, "unexpected legacy HostAwait argument: %s\n",
+            result.output ? result.output : "(null)");
+        goto Cleanup;
+    }
+    regorus_result_drop(result);
+    result_valid = false;
+
+    printf("Legacy name-only HostAwait C ABI test passed.\n");
     exit_code = 0;
 
 Cleanup:
@@ -468,6 +568,9 @@ int main() {
     result_valid = false;
 
     if (test_registered_host_await_wide_stride() != 0) {
+        goto Cleanup;
+    }
+    if (test_legacy_host_await_raw_array() != 0) {
         goto Cleanup;
     }
 

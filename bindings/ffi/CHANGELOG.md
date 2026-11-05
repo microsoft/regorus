@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [**breaking**] Append the required `arg_count` field to `RegorusHostAwaitBuiltin`. Non-empty registrations using the old name-only layout now fail ABI size validation; larger aligned caller strides remain supported.
+- Restore the name-only `RegorusHostAwaitBuiltin` layout and existing registered-HostAwait export, preserving the one-input raw-value contract. Add the separate `RegorusHostAwaitBuiltinV2` descriptor and `regorus_program_compile_from_modules_with_host_await_v2` export for fixed-arity packed-array calls; legacy and v2 descriptors use independent caller strides.
 
 ### Added
 

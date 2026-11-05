@@ -9,6 +9,7 @@ use crate::compiler::destructuring_planner::plans::{
 use crate::lexer::Span;
 use crate::rvm::instructions::{GuardMode, Instruction};
 use crate::value::Value;
+use alloc::string::ToString as _;
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug)]
@@ -91,7 +92,7 @@ impl<'a> Compiler<'a> {
             AssignmentPlan::EqualityCheck { lhs_expr, rhs_expr } => {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                let dest = self.alloc_register()?;
+                let dest = self.alloc_register_compat()?;
                 self.emit_instruction(
                     Instruction::Eq {
                         dest,
@@ -214,7 +215,7 @@ impl<'a> Compiler<'a> {
             DestructuringPlan::EqualityExpr(expected_expr) => {
                 let expected_reg =
                     self.compile_rego_expr_with_span(expected_expr, expected_expr.span(), false)?;
-                let cmp_reg = self.alloc_register()?;
+                let cmp_reg = self.alloc_register_compat()?;
                 self.emit_instruction(
                     Instruction::Eq {
                         dest: cmp_reg,
@@ -236,7 +237,7 @@ impl<'a> Compiler<'a> {
             }
             DestructuringPlan::EqualityValue(expected_value) => {
                 let expected_reg = self.load_literal_value(expected_value, span)?;
-                let cmp_reg = self.alloc_register()?;
+                let cmp_reg = self.alloc_register_compat()?;
                 self.emit_instruction(
                     Instruction::Eq {
                         dest: cmp_reg,
@@ -260,7 +261,7 @@ impl<'a> Compiler<'a> {
                 self.assert_array_length(value_register, element_plans.len(), span)?;
                 for (index, element_plan) in element_plans.iter().enumerate() {
                     let literal_idx = self.add_literal(Value::from(index));
-                    let element_reg = self.alloc_register()?;
+                    let element_reg = self.alloc_register_compat()?;
                     self.emit_instruction(
                         Instruction::IndexLiteral {
                             dest: element_reg,
@@ -288,7 +289,7 @@ impl<'a> Compiler<'a> {
             } => {
                 for (key, field_plan) in field_plans {
                     let literal_idx = self.add_literal(key.clone());
-                    let field_reg = self.alloc_register()?;
+                    let field_reg = self.alloc_register_compat()?;
                     self.emit_instruction(
                         Instruction::IndexLiteral {
                             dest: field_reg,
@@ -310,7 +311,7 @@ impl<'a> Compiler<'a> {
                 for (key_expr, field_plan) in dynamic_fields {
                     let key_reg =
                         self.compile_rego_expr_with_span(key_expr, key_expr.span(), false)?;
-                    let field_reg = self.alloc_register()?;
+                    let field_reg = self.alloc_register_compat()?;
                     self.emit_instruction(
                         Instruction::Index {
                             dest: field_reg,
@@ -349,7 +350,7 @@ impl<'a> Compiler<'a> {
             bail!("Variable '{var_name}' already defined in current scope");
         }
 
-        let dest = self.alloc_register()?;
+        let dest = self.alloc_register_compat()?;
         self.emit_instruction(
             Instruction::Move {
                 dest,
@@ -373,16 +374,25 @@ impl<'a> Compiler<'a> {
     }
 
     fn load_bool_literal(&mut self, value: bool, span: &Span) -> Result<Register> {
-        let dest = self.alloc_register()?;
+        let dest = self.alloc_register_compat()?;
         self.emit_instruction(Instruction::LoadBool { dest, value }, span);
         Ok(dest)
     }
 
     fn load_literal_value(&mut self, value: &Value, span: &Span) -> Result<Register> {
         let literal_idx = self.add_literal(value.clone());
-        let dest = self.alloc_register()?;
+        let dest = self.alloc_register_compat()?;
         self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
         Ok(dest)
+    }
+
+    /// Convert checked allocator errors to an anyhow-compatible message.
+    ///
+    /// CompilerError can contain source spans backed by `Rc` in the no-std,
+    /// non-`arc` configuration, which is not `Send + Sync` for `anyhow::Error`.
+    fn alloc_register_compat(&mut self) -> Result<Register> {
+        self.alloc_register()
+            .map_err(|error| anyhow::Error::msg(error.to_string()))
     }
 
     fn assert_array_length(
@@ -392,7 +402,7 @@ impl<'a> Compiler<'a> {
         span: &Span,
     ) -> Result<()> {
         let expected_literal = self.add_literal(Value::from(expected_length));
-        let actual_len_reg = self.alloc_register()?;
+        let actual_len_reg = self.alloc_register_compat()?;
         self.emit_instruction(
             Instruction::Count {
                 dest: actual_len_reg,
@@ -401,7 +411,7 @@ impl<'a> Compiler<'a> {
             span,
         );
 
-        let expected_len_reg = self.alloc_register()?;
+        let expected_len_reg = self.alloc_register_compat()?;
         self.emit_instruction(
             Instruction::Load {
                 dest: expected_len_reg,
@@ -410,7 +420,7 @@ impl<'a> Compiler<'a> {
             span,
         );
 
-        let cmp_reg = self.alloc_register()?;
+        let cmp_reg = self.alloc_register_compat()?;
         self.emit_instruction(
             Instruction::Eq {
                 dest: cmp_reg,

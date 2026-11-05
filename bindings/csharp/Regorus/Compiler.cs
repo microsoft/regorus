@@ -42,8 +42,8 @@ namespace Regorus
     /// rather than regular function calls.
     /// </summary>
     /// <remarks>
-    /// The declared argument count is the number of input arguments. A Rego
-    /// output parameter, when used, is not included in this count.
+    /// This legacy registration accepts exactly one input and passes its raw
+    /// Rego value to the host, including arrays and objects.
     ///
     /// Host-await builtins are not yet supported via the <c>CompileFromEngine</c>
     /// path; only <c>CompileFromModules</c> accepts them today.
@@ -56,19 +56,47 @@ namespace Regorus
         public string Name { get; }
 
         /// <summary>
+        /// Initializes a new instance of the HostAwaitBuiltin struct.
+        /// </summary>
+        /// <param name="name">The function name to register as host-awaitable.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+        /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> contains an embedded NUL ('\0').</exception>
+        public HostAwaitBuiltin(string name)
+        {
+            Name = name ?? throw new ArgumentNullException(nameof(name));
+            Utf8Marshaller.ThrowIfContainsNul(name, nameof(name));
+        }
+    }
+
+    /// <summary>
+    /// Represents an explicitly versioned fixed-arity packed-array
+    /// host-awaitable builtin registration for RVM compilation.
+    /// </summary>
+    /// <remarks>
+    /// The host receives an ordered array of the declared input values. A Rego
+    /// output parameter, when used, is not included in the declared count.
+    /// </remarks>
+    public readonly struct HostAwaitBuiltinV2
+    {
+        /// <summary>
+        /// Gets the function name to register as host-awaitable.
+        /// </summary>
+        public string Name { get; }
+
+        /// <summary>
         /// Gets the number of input arguments expected by the registered function.
         /// </summary>
         public int ArgCount { get; }
 
         /// <summary>
-        /// Initializes a new instance of the HostAwaitBuiltin struct.
+        /// Initializes a new instance of the HostAwaitBuiltinV2 struct.
         /// </summary>
         /// <param name="name">The function name to register as host-awaitable.</param>
-        /// <param name="argCount">The number of input arguments expected by the function.</param>
+        /// <param name="argCount">The fixed number of input arguments.</param>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
         /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> contains an embedded NUL ('\0').</exception>
         /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="argCount"/> is negative.</exception>
-        public HostAwaitBuiltin(string name, int argCount)
+        public HostAwaitBuiltinV2(string name, int argCount)
         {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             Utf8Marshaller.ThrowIfContainsNul(name, nameof(name));

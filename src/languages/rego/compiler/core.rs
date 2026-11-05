@@ -18,6 +18,14 @@ use crate::Value;
 use alloc::format;
 use alloc::string::{String, ToString};
 
+fn register_overflow_error(current: Register, additional: usize) -> CompilerError {
+    CompilerError::General {
+        message: format!(
+            "register overflow: cannot allocate {additional} register(s) at register {current} within the 255-register window"
+        ),
+    }
+}
+
 impl<'a> Compiler<'a> {
     /// Check if a function path is a builtin function (similar to interpreter's is_builtin)
     pub(super) fn is_builtin(&self, path: &str) -> bool {
@@ -74,13 +82,10 @@ impl<'a> Compiler<'a> {
     pub fn alloc_register(&mut self) -> Result<Register> {
         self.ensure_register_capacity(1)?;
         let reg = self.register_counter;
-        self.register_counter =
-            self.register_counter
-                .checked_add(1)
-                .ok_or(CompilerError::RegisterOverflow {
-                    current: self.register_counter,
-                    additional: 1,
-                })?;
+        self.register_counter = self
+            .register_counter
+            .checked_add(1)
+            .ok_or_else(|| register_overflow_error(self.register_counter, 1))?;
 
         Ok(reg)
     }
@@ -88,11 +93,7 @@ impl<'a> Compiler<'a> {
     pub(super) fn ensure_register_capacity(&self, additional: usize) -> Result<()> {
         let next_register = usize::from(self.register_counter).checked_add(additional);
         if next_register.is_none_or(|next| next > usize::from(u8::MAX)) {
-            return Err(CompilerError::RegisterOverflow {
-                current: self.register_counter,
-                additional,
-            }
-            .into());
+            return Err(register_overflow_error(self.register_counter, additional).into());
         }
         Ok(())
     }

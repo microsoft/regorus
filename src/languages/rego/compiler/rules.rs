@@ -263,9 +263,42 @@ impl<'a> Compiler<'a> {
         entry_points: &[&str],
         host_await_builtins: &[(&str, usize)],
     ) -> Result<Arc<Program>> {
+        Self::compile_from_policy_with_host_await_registrations(
+            policy,
+            entry_points,
+            host_await_builtins,
+            &[],
+        )
+    }
+
+    /// Compile a policy with separate legacy raw-value and v2 packed-array
+    /// host-await registrations.
+    pub fn compile_from_policy_with_host_await_v2(
+        policy: &CompiledPolicy,
+        entry_points: &[&str],
+        legacy_host_await_builtins: &[(&str, usize)],
+        host_await_builtins_v2: &[(&str, usize)],
+    ) -> Result<Arc<Program>> {
+        Self::compile_from_policy_with_host_await_registrations(
+            policy,
+            entry_points,
+            legacy_host_await_builtins,
+            host_await_builtins_v2,
+        )
+    }
+
+    fn compile_from_policy_with_host_await_registrations(
+        policy: &CompiledPolicy,
+        entry_points: &[&str],
+        legacy_host_await_builtins: &[(&str, usize)],
+        host_await_builtins_v2: &[(&str, usize)],
+    ) -> Result<Arc<Program>> {
         let mut compiler = Compiler::with_policy(policy);
-        for &(name, arg_count) in host_await_builtins {
+        for &(name, arg_count) in legacy_host_await_builtins {
             compiler.register_host_await_builtin(name, arg_count)?;
+        }
+        for &(name, arg_count) in host_await_builtins_v2 {
+            compiler.register_host_await_builtin_v2(name, arg_count)?;
         }
         compiler.current_rule_path = "".to_string();
         let rules = policy.get_rules();

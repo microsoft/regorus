@@ -147,6 +147,8 @@ pub struct Compiler<'a> {
     /// When the compiler encounters a call to one of these names, it emits a
     /// `HostAwait` instruction instead of a regular function or builtin call.
     host_await_builtins: BTreeMap<String, usize>,
+    /// Versioned opt-in registrations that receive ordered array payloads.
+    host_await_builtins_v2: BTreeMap<String, usize>,
 }
 
 impl<'a> Compiler<'a> {
@@ -183,6 +185,7 @@ impl<'a> Compiler<'a> {
             entry_points: IndexMap::new(),
             soft_assert_mode: false,
             host_await_builtins: BTreeMap::new(),
+            host_await_builtins_v2: BTreeMap::new(),
         }
     }
 
@@ -202,11 +205,11 @@ impl<'a> Compiler<'a> {
     /// at registration: it would intercept the qualified call too and silently
     /// shadow that rule/function.
     ///
-    /// The declared `arg_count` is checked against each call's input arity.
-    /// Registered calls pass an array containing those inputs to the host,
-    /// including a one-element array for a single input. The optional output
-    /// parameter supported by Rego is not included in `arg_count`. A call-site
-    /// arity mismatch is reported when the policy is compiled.
+    /// `arg_count` must be exactly 1. The host receives that single Rego value
+    /// unchanged, including when it is itself an array or object. The optional
+    /// output parameter supported by Rego is not included in `arg_count`.
+    /// Use [`Compiler::register_host_await_builtin_v2`] for ordered array
+    /// payloads with a fixed arity other than one.
     ///
     /// Returns `Err` when:
     /// - `name` is the reserved identifier `__builtin_host_await`,
@@ -219,7 +222,36 @@ impl<'a> Compiler<'a> {
     ///   user-defined rule/function at that path,
     /// - `name` is already registered (duplicate registration is rejected
     ///   rather than silently overwritten).
+    /// - `arg_count` is not exactly 1.
     pub fn register_host_await_builtin(&mut self, name: &str, arg_count: usize) -> Result<()> {
+        self.validate_host_await_builtin_name(name)?;
+        if arg_count != 1 {
+            return Err(CompilerError::General {
+                message: format!(
+                    "registered host-await builtin '{name}' must have arg_count == 1, got {arg_count}; \
+                     use register_host_await_builtin_v2 for fixed-arity array payloads"
+                ),
+            }
+            .into());
+        }
+        self.host_await_builtins.insert(name.to_string(), arg_count);
+        Ok(())
+    }
+
+    /// Register an explicitly versioned host-await builtin using an ordered
+    /// array payload, including `[]` for zero inputs and `[value]` for one.
+    ///
+    /// Calls pass their input values in source order; nested arrays stay nested
+    /// and the optional Rego output parameter is excluded from `arg_count`.
+    pub fn register_host_await_builtin_v2(&mut self, name: &str, arg_count: usize) -> Result<()> {
+        self.validate_host_await_builtin_name(name)?;
+        self.ensure_register_capacity(arg_count)?;
+        self.host_await_builtins_v2
+            .insert(name.to_string(), arg_count);
+        Ok(())
+    }
+
+    fn validate_host_await_builtin_name(&self, name: &str) -> Result<()> {
         if name == "__builtin_host_await" {
             return Err(CompilerError::General {
                 message: "__builtin_host_await is a reserved name and cannot be registered as a host-await builtin"
@@ -245,7 +277,9 @@ impl<'a> Compiler<'a> {
             }
             .into());
         }
-        if self.host_await_builtins.contains_key(name) {
+        if self.host_await_builtins.contains_key(name)
+            || self.host_await_builtins_v2.contains_key(name)
+        {
             return Err(CompilerError::General {
                 message: format!(
                     "host-await builtin '{name}' is already registered; \
@@ -254,7 +288,6 @@ impl<'a> Compiler<'a> {
             }
             .into());
         }
-        self.host_await_builtins.insert(name.to_string(), arg_count);
         Ok(())
     }
 
