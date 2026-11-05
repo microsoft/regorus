@@ -75,6 +75,35 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Native rule-call depth limit
+
+By default, the VM allows at most 16 active rule calls that use the native thread
+stack. The next call returns `VmError::RuleCallDepthExceeded`, not undefined or a
+rule default. The VM clears the failed execution's state and can be used again.
+
+The limit applies to run-to-completion calls and synchronous virtual-document
+lookups in either mode, including during resume. Explicit suspendable rule
+frames do not count toward it.
+
+Rust callers can change the per-VM limit with
+`vm.set_max_native_rule_call_depth(max)` and read it with
+`vm.max_native_rule_call_depth()`. It is checked before each new native rule
+evaluation, including during resume, and survives evaluation resets and program
+loads. Zero rejects calls that need a native rule frame; cached results and
+default-only rules can still return without one. There is no new binding API.
+Raising the limit does not enlarge the host thread's stack and can cause stack
+overflow.
+
+This VM resource limit can reject valid, nonrecursive policies. It is separate
+from instruction, time, and memory limits. Depth 16 was tested on Windows in
+debug and release with a 2 MiB test-thread stack; other stack sizes and call
+patterns may behave differently. The limit does not guarantee stack safety.
+
+`tests/rvm/rego/cases/native_depth.yaml` covers results and errors. Rust tests
+reuse those cases to check typed errors, cleanup, VM reuse, and stepping. Both
+run in subprocesses with a timeout and a 2 MiB test-thread stack.
+These subprocess-backed tests are excluded under Miri.
+
 ### Run-to-completion
 
 - Entry path: `execute()` or `execute_entry_point_by_*` when

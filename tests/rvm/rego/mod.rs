@@ -19,6 +19,8 @@ use test_generator::test_resources;
 
 mod comprehension_failure_differential;
 mod every_binding_differential;
+#[path = "../../native_depth_support/mod.rs"]
+mod native_depth_support;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
@@ -1432,6 +1434,18 @@ fn keyed_membership_loaded_artifacts_preserve_pairs() -> Result<()> {
 
 #[test_resources("tests/rvm/rego/cases/*.yaml")]
 fn run_rego_compiler_yaml(file: &str) {
+    if std::path::Path::new(file).file_name() == Some(std::ffi::OsStr::new("native_depth.yaml")) {
+        if cfg!(miri) {
+            eprintln!(
+                "Skipping native-depth scenarios: Miri does not support subprocess isolation"
+            );
+            return;
+        }
+        if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+            native_depth_support::run_in_subprocess(std::thread::current().name().unwrap());
+            return;
+        }
+    }
     yaml_test_impl(file).unwrap();
 }
 
