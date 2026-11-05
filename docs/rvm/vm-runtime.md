@@ -77,26 +77,22 @@ fields to responsibilities.
 
 ### Native rule-call depth limit
 
-Synchronous rule evaluation permits at most 16 simultaneously active native rule
-calls. A deeper call raises `VmError::RuleCallDepthExceeded`, which propagates as
-an execution error rather than undefined or a rule default. This applies to
-run-to-completion execution and synchronous virtual-document lookups in either
-mode, including after suspension and resume. Purely explicit suspendable rule
-frames do not consume this allowance. A failed evaluation releases its execution
-state so the VM can evaluate another entrypoint.
+The VM allows at most 16 active rule calls that use the native thread stack.
+The next call returns `VmError::RuleCallDepthExceeded`, not undefined or a rule
+default. The VM clears the failed execution's state and can be used again.
 
-This is a temporary, intentional safety/resource restriction: valid policies
-with deep native rule nesting may now error. It is not a Rego or Rust language
-requirement, nor a portable stack-safety guarantee for arbitrary host stack sizes
-or other native nesting. The conservative limit of 16 was checked in debug and
-release on Windows with a 2 MiB test-thread stack; this does not imply that depth
-17 is intrinsically unsafe. Existing instruction, time, and memory limits remain
-unchanged.
+The limit applies to run-to-completion calls and synchronous virtual-document
+lookups in either mode, including during resume. Explicit suspendable rule
+frames do not count toward it.
 
-Behavioral depth boundaries, default rejection, and deep explicit suspendable
-calls are covered by `tests/rvm/rego/cases/native_depth.yaml`. Rust lifecycle
-checks reuse those policies for typed errors, cleanup, VM reuse, and stepping.
-Both run in bounded subprocesses with a 2 MiB test-thread stack.
+This VM resource limit can reject valid, nonrecursive policies. It is separate
+from instruction, time, and memory limits. Depth 16 was tested on Windows in
+debug and release with a 2 MiB test-thread stack; other stack sizes and call
+patterns may behave differently. The limit does not guarantee stack safety.
+
+`tests/rvm/rego/cases/native_depth.yaml` covers results and errors. Rust tests
+reuse those cases to check typed errors, cleanup, VM reuse, and stepping. Both
+run in subprocesses with a timeout and a 2 MiB test-thread stack.
 
 ### Run-to-completion
 

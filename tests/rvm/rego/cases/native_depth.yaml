@@ -11,8 +11,9 @@ cases:
       - |
         package probe
         safe := 7
-        default r0 := 99
-        r0 := r1
+        # This entry evaluates 82 rules, including itself.
+        default r82 := 99
+        r82 := r1
         r1 := r2
         r2 := r3
         r3 := r4
@@ -103,14 +104,14 @@ cases:
     strict: false
     modules: *rules
     query: data.probe.r65
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   - note: native-depth/rules-82-explicit-succeed
     skip_interpreter: true
     strict: false
     modules: *rules
     execution_mode: suspendable
-    query: data.probe.r0
+    query: data.probe.r82
     want_result: 42
 
   - note: native-depth/functions-16-succeed
@@ -120,7 +121,8 @@ cases:
       - |
         package probe
         safe := 7
-        r0 := f1(42)
+        # This entry evaluates one rule and 81 functions.
+        r82 := f1(42)
         default r65 := 99
         r65 := f66(42)
         r66 := f67(42)
@@ -213,14 +215,14 @@ cases:
     strict: false
     modules: *functions
     query: data.probe.r65
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   - note: native-depth/functions-82-explicit-succeed
     skip_interpreter: true
     strict: false
     modules: *functions
     execution_mode: suspendable
-    query: data.probe.r0
+    query: data.probe.r82
     want_result: 42
 
   - note: native-depth/virtual-leaf-16-succeed
@@ -297,7 +299,7 @@ cases:
     input: *input
     modules: *leaf
     query: data.level1.r1
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   # The entry rule uses an explicit frame: 17 total rules means 16 native calls.
   - note: native-depth/virtual-leaf-suspendable-16-succeed
@@ -316,7 +318,7 @@ cases:
     modules: *leaf
     execution_mode: suspendable
     query: data.probe.r0
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   - note: native-depth/virtual-object-16-succeed
     skip_interpreter: true
@@ -388,7 +390,7 @@ cases:
     input: *input
     modules: *object
     query: data.level1.r1
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   - note: native-depth/virtual-object-suspendable-16-succeed
     skip_interpreter: true
@@ -406,7 +408,7 @@ cases:
     modules: *object
     execution_mode: suspendable
     query: data.probe.r0
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
 
   - note: native-depth/mixed-function-error-not-default
     skip_interpreter: true
@@ -441,4 +443,4 @@ cases:
       - *object16
       - *last
     query: data.probe.r0
-    want_error: Rule call depth exceeded safety limit 16
+    want_error: Rule call depth exceeded limit 16
