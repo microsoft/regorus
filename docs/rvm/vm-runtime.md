@@ -199,6 +199,11 @@ undefined, including wildcard assignments. Array comprehension values and object
 comprehension keys and values must also be defined before yielding; `false`,
 `null`, and empty collections remain valid values.
 
+Under `not`, a directly negated assignment preserves its undefined result for
+negation instead of failing early. Nested comprehension bodies still use normal
+guards, so their failed iterations produce empty collections rather than leak
+undefined values into the negated expression.
+
 An empty inner comprehension is a defined collection, not a failure of its
 parent. When a guard skips `ComprehensionEnd`, the completed context is unwound
 before parent instructions run, in both execution modes.
@@ -220,8 +225,10 @@ before parent instructions run, in both execution modes.
 - `execute_rule_init` writes the rule result register to `Value::Undefined`
   (or initialises sets/objects) before running the bodies and records the
   result register in the active `CallRuleContext`.
-- `execute_rule_return` lets the scheduler finalise the frame and propagate the
-  cached value to the caller.
+- `execute_rule_return` rejects complete-rule bodies that yielded no defined
+  result, allowing the scheduler to try the next `else` branch even when a loop
+  exhausted without an escaping guard failure. Otherwise it lets the scheduler
+  finalise the frame and propagate the cached value to the caller.
 - `functions.rs::execute_function_call` prepares argument registers and delegates
   to `execute_call_rule*`, enforcing arity via `BuiltinInfo` metadata.
 

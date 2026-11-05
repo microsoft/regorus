@@ -43,13 +43,15 @@ impl<'a> Compiler<'a> {
                 rhs_expr, lhs_plan, ..
             } => {
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                self.emit_instruction(
-                    Instruction::Guard {
-                        register: rhs_reg,
-                        mode: GuardMode::NotUndefined,
-                    },
-                    span,
-                );
+                if !self.soft_assert_mode {
+                    self.emit_instruction(
+                        Instruction::Guard {
+                            register: rhs_reg,
+                            mode: GuardMode::NotUndefined,
+                        },
+                        span,
+                    );
+                }
                 let _ = self.apply_destructuring_plan(
                     lhs_plan,
                     rhs_reg,

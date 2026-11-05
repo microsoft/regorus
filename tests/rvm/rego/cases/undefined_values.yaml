@@ -196,6 +196,136 @@ cases:
       mixed: [2, 2]
       every: [true]
 
+  - note: undefined_loop_else
+    data: {}
+    input:
+      items: [{}]
+    modules:
+      - |
+        package test
+
+        p := 1 if { some x in input.items; _ := x.missing } else := 2
+        f(items) := 1 if { some x in items; _ := x.missing } else := 2
+        false_fallback := 1 if { some x in input.items; _ := x.missing } else := false
+        null_fallback := 1 if { some x in input.items; _ := x.missing } else := null
+        empty_fallback := 1 if { some x in input.items; _ := x.missing } else := []
+        found(items) := x.value if { some x in items; _ := x.value } else := "fallback"
+
+        main := {
+          "rule": p,
+          "function": f(input.items),
+          "empty": f([]),
+          "false": false_fallback,
+          "null": null_fallback,
+          "array": empty_fallback,
+          "defined": found([{}, {"value": false}, {}]),
+          "mixed": f([{}, {"missing": false}, {}]),
+        }
+    query: data.test.main
+    want_result:
+      rule: 2
+      function: 2
+      empty: 2
+      "false": false
+      "null": null
+      array: []
+      defined: false
+      mixed: 1
+
+  - note: undefined_loop_else_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      items: [{}]
+    modules:
+      - |
+        package test
+
+        p := 1 if { some x in input.items; _ := x.missing } else := 2
+        f(items) := 1 if { some x in items; _ := x.missing } else := 2
+        false_fallback := 1 if { some x in input.items; _ := x.missing } else := false
+        null_fallback := 1 if { some x in input.items; _ := x.missing } else := null
+        empty_fallback := 1 if { some x in input.items; _ := x.missing } else := []
+        found(items) := x.value if { some x in items; _ := x.value } else := "fallback"
+
+        main := {
+          "rule": p,
+          "function": f(input.items),
+          "empty": f([]),
+          "false": false_fallback,
+          "null": null_fallback,
+          "array": empty_fallback,
+          "defined": found([{}, {"value": false}, {}]),
+          "mixed": f([{}, {"missing": false}, {}]),
+        }
+    query: data.test.main
+    want_result:
+      rule: 2
+      function: 2
+      empty: 2
+      "false": false
+      "null": null
+      array: []
+      defined: false
+      mixed: 1
+
+  - note: undefined_negated_assignments
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing": [true | not _ := input.missing],
+          "nested_assignment": [true | not _ := [true | _ := input.missing]],
+          "nested_head": [true | not _ := [input.missing | true]],
+          "nested_condition": [true | not _ := [true | input.missing == 1]],
+          "nested_assignment_count": [true | not count([true | _ := input.missing]) > 0],
+          "nested_condition_count": [true | not count([true | input.missing == 1]) > 0],
+          "object": [true | not _ := {"key": input.missing | true}],
+          "loop": [i | some i in [1, 2]; not _ := input.missing],
+        }
+    query: data.test.main
+    want_result:
+      missing: [true]
+      nested_assignment: []
+      nested_head: []
+      nested_condition: []
+      nested_assignment_count: [true]
+      nested_condition_count: [true]
+      object: []
+      loop: [1, 2]
+
+  - note: undefined_negated_assignments_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing": [true | not _ := input.missing],
+          "nested_assignment": [true | not _ := [true | _ := input.missing]],
+          "nested_head": [true | not _ := [input.missing | true]],
+          "nested_condition": [true | not _ := [true | input.missing == 1]],
+          "nested_assignment_count": [true | not count([true | _ := input.missing]) > 0],
+          "nested_condition_count": [true | not count([true | input.missing == 1]) > 0],
+          "object": [true | not _ := {"key": input.missing | true}],
+          "loop": [i | some i in [1, 2]; not _ := input.missing],
+        }
+    query: data.test.main
+    want_result:
+      missing: [true]
+      nested_assignment: []
+      nested_head: []
+      nested_condition: []
+      nested_assignment_count: [true]
+      nested_condition_count: [true]
+      object: []
+      loop: [1, 2]
+
   - note: undefined_nested_comprehensions_suspendable
     execution_mode: suspendable
     data: {}
