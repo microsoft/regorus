@@ -1785,3 +1785,43 @@ fn get_policy_parameters() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn sprintf_copilot_regressions() -> Result<()> {
+    let cases = [
+        (r#"sprintf("%q", [1.23456789])"#, "%!q(float64=1.23456789)"),
+        (r#"sprintf("%#q", [1.23456789])"#, "%!q(float64=1.23456789)"),
+        (r#"sprintf("%08q", [-65.5])"#, "%!q(float64=-00065.5)"),
+        (r#"sprintf("%+q", [65.5])"#, "%!q(float64=+65.5)"),
+        (r#"sprintf("%#q", [0.0])"#, "%!q(float64=0.00000)"),
+        (r#"sprintf("%.1q", [9.99])"#, "%!q(float64=1e+01)"),
+        (r#"sprintf("%.2q", [0.000099999])"#, "%!q(float64=0.0001)"),
+        (r#"sprintf("%#.1q", [1.5])"#, "%!q(float64=2.)"),
+        (r#"sprintf("%q", [set()])"#, "\"set()\""),
+        (r#"sprintf("%q", [["\u0007"]])"#, "\"[\\\"\\\\a\\\"]\""),
+        (r#"sprintf("%[3]*q", [])"#, "%!(BADWIDTH)%!q(BADINDEX)"),
+        (r#"sprintf("%.[3]*q", [])"#, "%!(BADPREC)%!q(BADINDEX)"),
+        (
+            r#"sprintf("%[3]*.[4]*q", [])"#,
+            "%!(BADWIDTH)%!(BADPREC)%!q(BADINDEX)",
+        ),
+        (r#"sprintf("%[0]q %q", ["x"])"#, "%!q(BADINDEX) \"x\""),
+        (r#"sprintf("%[2]q %q", ["x"])"#, "%!q(BADINDEX) \"x\""),
+        (r#"sprintf("%*q", ["wide", "x"])"#, "%!(BADWIDTH)\"x\""),
+        (r#"sprintf("%.*q", [true, "x"])"#, "%!(BADPREC)\"x\""),
+        (r#"sprintf("%[2]2q %q", ["x", "y"])"#, "%!q(BADINDEX) \"y\""),
+    ];
+    let mut engine = Engine::new();
+    for (query, expected) in cases {
+        let result = engine.eval_query(query.to_string(), false)?;
+        assert_eq!(
+            result.result[0].expressions[0].value.as_string()?.as_ref(),
+            expected,
+            "{query}"
+        );
+    }
+    assert!(engine
+        .eval_query(r#"sprintf("%.70000q", [65.5])"#.to_string(), false)
+        .is_err());
+    Ok(())
+}

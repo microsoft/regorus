@@ -1,0 +1,242 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: keyed_membership_admin_rtc
+    strict: false
+    modules: &authorization
+      - |
+        package membership
+        default result := false
+        result if { input.subject, "admin" in data.roles }
+    data: &roles {roles: {alice: admin, bob: user}}
+    input: {subject: alice}
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_non_admin_rtc
+    strict: false
+    modules: *authorization
+    data: *roles
+    input: {subject: bob}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_missing_subject_rtc
+    strict: false
+    modules: *authorization
+    data: *roles
+    input: {subject: missing}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_admin_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *authorization
+    data: *roles
+    input: {subject: alice}
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_non_admin_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *authorization
+    data: *roles
+    input: {subject: bob}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_missing_subject_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *authorization
+    data: *roles
+    input: {subject: missing}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_container_and_boolean_controls_rtc
+    strict: false
+    modules: &controls
+      - |
+        package membership
+        result := {
+          "object_null_value": ("alice", null in {"alice": null}),
+          "object_missing_key": ("missing", null in {"alice": null}),
+          "object_numeric_key_false_value": (7, false in {7: false}),
+          "object_wrong_key_type": ("7", false in {7: false}),
+          "array_matching_index": (0, "admin" in ["admin", "user"]),
+          "array_wrong_value_at_index": (1, "admin" in ["admin", "user"]),
+          "array_out_of_bounds": (2, "admin" in ["admin", "user"]),
+          "array_negative_index": (-1, "admin" in ["admin", "user"]),
+          "array_fractional_index": (0.5, "admin" in ["admin", "user"]),
+          "array_string_index": ("0", "admin" in ["admin", "user"]),
+          "keyed_set": ("admin", "admin" in {"admin", "user"}),
+          "empty_set": (0, 0 in set()),
+          "empty_array": (0, null in []),
+          "empty_object": ("missing", null in {}),
+          "string_container": (0, "admin" in "admin"),
+          "number_container": (0, 7 in 7),
+          "null_container": (0, null in null),
+          "boolean_container": (0, false in false),
+          "undefined_container": (0, null in input.missing),
+          "missing_key_equals_false": ("missing", "admin" in {"alice": "admin"}) == false,
+          "mismatched_value_equals_false": ("bob", "admin" in {"alice": "admin", "bob": "user"}) == false,
+          "keyed_set_equals_false": ("admin", "admin" in {"admin"}) == false,
+          "unkeyed_object": "admin" in {"alice": "admin"},
+          "unkeyed_array": "admin" in ["admin"],
+          "unkeyed_set": "admin" in {"admin"},
+        }
+    query: data.membership.result
+    want_result: &controls_result
+      object_null_value: true
+      object_missing_key: false
+      object_numeric_key_false_value: true
+      object_wrong_key_type: false
+      array_matching_index: true
+      array_wrong_value_at_index: false
+      array_out_of_bounds: false
+      array_negative_index: false
+      array_fractional_index: false
+      array_string_index: false
+      keyed_set: false
+      empty_set: false
+      empty_array: false
+      empty_object: false
+      string_container: false
+      number_container: false
+      null_container: false
+      boolean_container: false
+      undefined_container: false
+      missing_key_equals_false: true
+      mismatched_value_equals_false: true
+      keyed_set_equals_false: true
+      unkeyed_object: true
+      unkeyed_array: true
+      unkeyed_set: true
+
+  - note: keyed_membership_container_and_boolean_controls_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *controls
+    query: data.membership.result
+    want_result: *controls_result
+
+  - note: keyed_membership_dynamic_operands_rtc
+    strict: false
+    modules: &dynamic
+      - |
+        package membership
+        result := input.key, input.value in input.collection
+    input: &dynamic_input {key: 1, value: admin, collection: [admin, user]}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_dynamic_operands_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *dynamic
+    input: *dynamic_input
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_large_array_key_rtc
+    strict: false
+    modules: *dynamic
+    input: &large_key_input {key: 4294967296, value: admin, collection: [admin]}
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_large_array_key_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *dynamic
+    input: *large_key_input
+    query: data.membership.result
+    want_result: false
+
+  - note: keyed_membership_missing_pair_can_be_negated
+    strict: false
+    modules:
+      - |
+        package membership
+        result := true if {
+          not "bob", "admin" in {"alice": "admin", "bob": "user"}
+        }
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_invalid_container_skips_key_rtc
+    strict: false
+    modules: &invalid_container
+      - |
+        package membership
+        result := {
+          "null_container": ((input.bad + data.bad), "admin" in null),
+          "set_container": ((input.bad + 1), "admin" in {"admin"}),
+          "string_container": ((input.bad + 1), "admin" in "admin"),
+          "number_container": ((input.bad + 1), "admin" in 7),
+          "boolean_container": ((input.bad + 1), "admin" in false),
+          "undefined_container": ((input.bad + 1), "admin" in input.missing),
+          "input_after_skipped_key": input.marker,
+          "data_after_skipped_key": data.marker,
+        }
+    input: &invalid_key_input {bad: x, marker: input_loaded}
+    data: &invalid_key_data {bad: y, marker: data_loaded}
+    query: data.membership.result
+    want_result: &invalid_container_result
+      null_container: false
+      set_container: false
+      string_container: false
+      number_container: false
+      boolean_container: false
+      undefined_container: false
+      input_after_skipped_key: input_loaded
+      data_after_skipped_key: data_loaded
+
+  - note: keyed_membership_invalid_container_skips_key_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *invalid_container
+    input: *invalid_key_input
+    data: *invalid_key_data
+    query: data.membership.result
+    want_result: *invalid_container_result
+
+  - note: keyed_membership_array_evaluates_key_rtc
+    strict: false
+    modules: &computed_key
+      - |
+        package membership
+        result := count(input.key), "admin" in input.collection
+    input: &computed_array_key {key: "", collection: [admin]}
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_array_evaluates_key_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *computed_key
+    input: *computed_array_key
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_object_evaluates_key_rtc
+    strict: false
+    modules: &computed_object_key
+      - |
+        package membership
+        result := lower(input.key), "admin" in input.collection
+    input: &computed_object_input {key: ALICE, collection: {alice: admin}}
+    query: data.membership.result
+    want_result: true
+
+  - note: keyed_membership_object_evaluates_key_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *computed_object_key
+    input: *computed_object_input
+    query: data.membership.result
+    want_result: true

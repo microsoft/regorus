@@ -347,7 +347,8 @@ pub enum Instruction {
         params_index: u16,
     },
 
-    /// Yield a value to the current comprehension result
+    /// Yield a value to the current comprehension result, skipping undefined
+    /// values or object keys without failing the enclosing iteration.
     ComprehensionYield {
         /// Register containing the value to yield to the comprehension
         value_reg: u8,

@@ -1,0 +1,762 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Count binding for bracket-suffix paths.
+#
+# Inside a `count` over `items[*]`, a where-clause path that continues after
+# the counted wildcard with a bracket (`items[*]['state']`, `items[*][0]`,
+# `items[*]['subs'][*]`) selects from the current element, exactly like the
+# dotted spelling `items[*].state`.  Binding paths are compared segment by
+# segment, so dotted and quoted-bracket spellings of the same path match,
+# while different quoted keys (including a quoted key containing a dot) do
+# not.
+#
+# Each `_no_match` twin is chosen so that a wrong binding flips it to deny:
+# leaving the where path unbound (an implicit allOf over the whole array),
+# reading a different key or index, or binding a path that must stay
+# unbound.  Where no resource can separate those readings under the same
+# count target, the twin changes the target (or wraps the where in `not`)
+# instead.
+
+cases:
+  # =========================================================================
+  # Quoted-key suffix
+  # =========================================================================
+
+  - note: bracket_quoted_key_suffix_binds_to_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*]['state']", "equals": "on" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_effect: "deny"
+
+  - note: bracket_quoted_key_suffix_binds_to_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*]['state']", "equals": "on" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_undefined: true
+
+  - note: bracket_double_quoted_key_suffix_binds_to_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*][\"state\"]", "equals": "on" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_effect: "deny"
+
+  - note: bracket_double_quoted_key_suffix_binds_to_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*][\"state\"]", "equals": "on" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_undefined: true
+
+  # Existence-pattern lowering (`greater: 0` → Any loop) binds the same way.
+  - note: bracket_quoted_key_suffix_any_lowering_binds
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*]['state']", "equals": "on" }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_effect: "deny"
+
+  - note: bracket_quoted_key_suffix_any_lowering_binds_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "not": {
+                "anyOf": [
+                  { "field": "items[*]['state']", "equals": "on" },
+                  { "field": "items[*]['gate']", "equals": "yes" }
+                ]
+              }
+            }
+          },
+          "greater": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - { state: "on", gate: "no" }
+        - { state: "off", gate: "yes" }
+    want_undefined: true
+
+  # =========================================================================
+  # Index suffix
+  # =========================================================================
+
+  - note: bracket_index_suffix_binds_to_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*][0]", "equals": "a" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - ["a", "x"]
+        - ["b", "x"]
+    want_effect: "deny"
+
+  - note: bracket_index_suffix_binds_to_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*][0]", "equals": "a" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - ["a", "x"]
+        - ["b", "x"]
+    want_undefined: true
+
+  # =========================================================================
+  # Wildcard below a bracket suffix: implicit allOf over the current element
+  # =========================================================================
+
+  - note: bracket_suffix_inner_wildcard_is_allof_over_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*]['subs'][*]", "equals": "x" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: ["x", "x"]
+        - subs: ["x", "y"]
+    want_effect: "deny"
+
+  - note: bracket_suffix_inner_wildcard_is_allof_over_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[*]['subs'][*]", "equals": "x" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: ["x", "x"]
+        - subs: ["x", "y"]
+    want_undefined: true
+
+  # =========================================================================
+  # field() / current() with a bracket suffix
+  # =========================================================================
+
+  - note: field_fn_bracket_suffix_is_single_member_array
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*][''state'']')]",
+              "equals": ["on"]
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_effect: "deny"
+
+  - note: field_fn_bracket_suffix_is_single_member_array_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[field('items[*][''state'']')]",
+              "equals": ["on"]
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_undefined: true
+
+  - note: current_bracket_suffix_reads_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[current('items[*][''state'']')]",
+              "equals": "on"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_effect: "deny"
+
+  - note: current_bracket_suffix_reads_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "value": "[current('items[*][''state'']')]",
+              "equals": "on"
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "off"
+    want_undefined: true
+
+  # =========================================================================
+  # Nested counts whose prefix continues with a bracket suffix
+  # =========================================================================
+
+  # Generic count lowering for the inner count.
+  - note: nested_count_bracket_suffix_prefix_counts_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*]['subs'][*]['v']", "equals": "x" }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }]
+        - subs: [{ v: "y" }]
+    want_effect: "deny"
+
+  - note: nested_count_bracket_suffix_prefix_counts_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*]['subs'][*]['v']", "equals": "x" }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }]
+        - subs: [{ v: "y" }]
+    want_undefined: true
+
+  # Existence-pattern lowering (`greater: 0`) for the inner count.
+  - note: nested_count_any_bracket_suffix_prefix_counts_current_element
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*]['subs'][*]['v']", "equals": "x" }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }]
+        - subs: [{ v: "y" }]
+    want_effect: "deny"
+
+  - note: nested_count_any_bracket_suffix_prefix_counts_current_element_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*]['subs'][*]['v']", "equals": "x" }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }]
+        - subs: [{ v: "y" }]
+    want_undefined: true
+
+  # The inner where uses the dotted spelling of the bracket-built inner
+  # prefix: it must still bind to the inner element.
+  - note: nested_count_bracket_prefix_dotted_inner_where_binds
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*].subs[*].v", "equals": "x" }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }, { v: "y" }]
+        - subs: [{ v: "y" }, { v: "x" }]
+    want_effect: "deny"
+
+  - note: nested_count_bracket_prefix_dotted_inner_where_binds_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": {
+              "count": {
+                "field": "items[*]['subs'][*]",
+                "where": { "field": "items[*].subs[*].v", "equals": "x" }
+              },
+              "equals": 1
+            }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - subs: [{ v: "x" }, { v: "y" }]
+        - subs: [{ v: "y" }, { v: "x" }]
+    want_undefined: true
+
+  # =========================================================================
+  # Dotted and quoted-bracket spellings of the counted prefix
+  # =========================================================================
+
+  - note: bracket_prefix_count_binds_dotted_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props['rules'][*]",
+            "where": { "field": "props.rules[*].state", "equals": "on" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - state: "on"
+          - state: "off"
+    want_effect: "deny"
+
+  - note: bracket_prefix_count_binds_dotted_where_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props['rules'][*]",
+            "where": { "field": "props.rules[*].state", "equals": "on" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - state: "on"
+          - state: "off"
+    want_undefined: true
+
+  - note: dotted_prefix_count_binds_bracket_where
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props.rules[*]",
+            "where": { "field": "props[\"rules\"][*]['state']", "equals": "on" }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - state: "on"
+          - state: "off"
+    want_effect: "deny"
+
+  - note: dotted_prefix_count_binds_bracket_where_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props.rules[*]",
+            "where": { "field": "props[\"rules\"][*]['state']", "equals": "on" }
+          },
+          "equals": 0
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - state: "on"
+          - state: "off"
+    want_undefined: true
+
+  # Nested count: the outer prefix is spelled with brackets, the inner
+  # count path with dots.
+  - note: nested_count_prefix_spelling_mismatch_binds
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props['rules'][*]",
+            "where": {
+              "count": {
+                "field": "props.rules[*].ports[*]",
+                "where": { "field": "props.rules[*].ports[*]", "equals": 22 }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - ports: [22, 80]
+          - ports: [443]
+    want_effect: "deny"
+
+  - note: nested_count_prefix_spelling_mismatch_binds_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "props['rules'][*]",
+            "where": {
+              "count": {
+                "field": "props.rules[*].ports[*]",
+                "where": { "field": "props.rules[*].ports[*]", "equals": 22 }
+              },
+              "greater": 0
+            }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      props:
+        rules:
+          - ports: [22, 80]
+          - ports: [443]
+    want_undefined: true
+
+  # =========================================================================
+  # Paths that are NOT the counted array stay unbound
+  # =========================================================================
+
+  # A quoted key containing a dot is a single segment: `m['a.b'][*]` is not
+  # `m.a.b[*]`, so the where field reads the other array (implicit allOf).
+  - note: quoted_dotted_key_prefix_does_not_bind_dotted_path
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "m['a.b'][*]",
+            "where": { "field": "m.a.b[*].state", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m:
+        "a.b":
+          - state: "on"
+          - state: "off"
+        a:
+          b:
+            - state: "on"
+    want_effect: "deny"
+
+  - note: quoted_dotted_key_prefix_does_not_bind_dotted_path_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "m['a.b'][*]",
+            "where": { "field": "m.a.b[*].state", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m:
+        "a.b":
+          - state: "on"
+          - state: "on"
+        a:
+          b:
+            - state: "off"
+    want_undefined: true
+
+  # Different quoted keys never collide.
+  - note: different_quoted_keys_do_not_bind
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "m['a'][*]",
+            "where": { "field": "m['b'][*]['state']", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m:
+        a:
+          - state: "on"
+          - state: "off"
+        b:
+          - state: "on"
+    want_effect: "deny"
+
+  - note: different_quoted_keys_do_not_bind_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "m['a'][*]",
+            "where": { "field": "m['b'][*]['state']", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      m:
+        a:
+          - state: "on"
+          - state: "on"
+        b:
+          - state: "off"
+    want_undefined: true
+
+  # An index right after the counted prefix (no `[*]`) names a fixed array
+  # member, not the current element: it stays a resource-level read.  The
+  # elements are arrays, so reading `[0][0]` of the current element instead
+  # changes the count.
+  - note: fixed_index_after_prefix_stays_unbound
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[0][0]", "equals": "on" }
+          },
+          "equals": 3
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: [["on"], ["off"], ["off"]]
+    want_effect: "deny"
+
+  - note: fixed_index_after_prefix_stays_unbound_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "items[0][0]", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items: [["off"], [["on"]], [["on"]]]
+    want_undefined: true
+
+  # A sibling array whose name extends the counted one is unrelated.
+  - note: sibling_array_with_shared_name_prefix_stays_unbound
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "itemsold[*]['state']", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "off"
+        - state: "off"
+      itemsold:
+        - state: "on"
+    want_effect: "deny"
+
+  - note: sibling_array_with_shared_name_prefix_stays_unbound_no_match
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "field": "items[*]",
+            "where": { "field": "itemsold[*]['state']", "equals": "on" }
+          },
+          "equals": 2
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      items:
+        - state: "on"
+        - state: "on"
+      itemsold:
+        - state: "off"
+    want_undefined: true

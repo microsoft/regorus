@@ -421,7 +421,10 @@ pub struct ResolvedEntry {
     pub metadata: Option<AliasPathMetadata>,
 
     // ── Precomputed fields (derived at registry-load time) ──────────────
-    /// Whether `short_name` contains `[*]` (i.e., this is a wildcard/array alias).
+    /// Whether the parsed `short_name` contains an array wildcard segment.
+    ///
+    /// Quoted keys such as `['[*]']` are not wildcards. A short name that does
+    /// not parse falls back to a textual `[*]` check.
     pub is_wildcard: bool,
     /// Pre-lowercased short name as `Rc<str>` for allocation-free common-case inserts.
     pub(crate) short_name_lc: Rc<str>,
@@ -440,7 +443,10 @@ impl ResolvedEntry {
         versioned_paths: Vec<(String, String)>,
         metadata: Option<AliasPathMetadata>,
     ) -> Self {
-        let is_wildcard = short_name.contains("[*]");
+        let is_wildcard = super::path::parse(&short_name).map_or_else(
+            || short_name.contains("[*]"),
+            |path| path.segments.contains(&super::path::Segment::Wildcard),
+        );
         let short_name_lc = if short_name.bytes().all(|b| !b.is_ascii_uppercase()) {
             Rc::from(short_name.as_str())
         } else {

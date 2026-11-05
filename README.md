@@ -327,6 +327,7 @@ Regorus uses a small companion CLI under the `xtask` package to keep CI and loca
 The commands mirror our GitHub Actions jobs, making it easy to dry-run CI steps before sending a pull request.
 
 - Run the full release pipeline with `cargo xtask ci-release` and the debug checks with `cargo xtask ci-debug`.
+- `cargo xtask test-ffi` runs ordinary FFI tests in parallel and four shared-state-sensitive tests in separate processes. These cover process-wide memory limits and poison-gate concurrency; all tests still run without changing their limits or assertions. Keep the isolation list in `xtask/src/tasks/bindings/ffi.rs` current when adding or renaming shared-state tests.
 - Exercise language bindings through focused helpers such as `cargo xtask test-java --release --frozen` or `cargo xtask test-go`.
 - Use `cargo xtask test-musl --release --frozen` for the cross-compilation matrix and `cargo xtask test-no-std` for embedded targets.
 - Formatting (`cargo xtask fmt`) and linting (`cargo xtask clippy --sarif`) wrap the usual Cargo tooling while matching CI defaults.

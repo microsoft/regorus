@@ -18,39 +18,55 @@ use alloc::vec::Vec;
 /// redacted.
 pub fn complete_rule_report() -> ExplanationReport {
     let role = ConditionExplanation {
-        text: String::from(r#"input.role == "admin""#),
+        site_id: 0,
+        owner: owner("data.test.allow", 0),
         outcome: Outcome::Failure,
-        kind: ConditionKind::Comparison,
-        location: Some(location(4, 5)),
-        operator: Some(Operator::Eq),
         left: Some(known(Value::from("guest"), Some("input.role"))),
         right: Some(known(Value::from("admin"), None)),
         witness: None,
         binding: None,
     };
     let token = ConditionExplanation {
-        text: String::from("input.user.token == data.tokens[input.user.name]"),
+        site_id: 1,
+        owner: owner("data.test.allow", 0),
         outcome: Outcome::Success,
-        kind: ConditionKind::Comparison,
-        location: Some(location(8, 5)),
-        operator: Some(Operator::Eq),
         left: Some(redacted("input.user.token")),
         right: Some(redacted("data.tokens[input.user.name]")),
         witness: None,
         binding: None,
     };
     ExplanationReport {
+        query: query("data.test.allow"),
         query_result: Value::from(true),
         rules: vec![RuleExplanation {
             name: String::from("data.test.allow"),
+            call_instance: 0,
             kind: RuleKind::Complete,
+            outcome: RuleOutcome::Matched,
             result: ReportedValue::Known(Value::from(true)),
             emissions: Vec::new(),
             definitions: vec![
                 definition(0, 0, Outcome::Failure, 3, vec![role]),
                 definition(1, 1, Outcome::Success, 7, vec![token]),
             ],
+            results: None,
         }],
+        checks: vec![
+            ConditionSite {
+                site_id: 0,
+                text: String::from(r#"input.role == "admin""#),
+                kind: ConditionKind::Comparison,
+                location: Some(location(4, 5)),
+                operator: Some(Operator::Eq),
+            },
+            ConditionSite {
+                site_id: 1,
+                text: String::from("input.user.token == data.tokens[input.user.name]"),
+                kind: ConditionKind::Comparison,
+                location: Some(location(8, 5)),
+                operator: Some(Operator::Eq),
+            },
+        ],
     }
 }
 
@@ -59,11 +75,9 @@ pub fn complete_rule_report() -> ExplanationReport {
 pub fn partial_set_report() -> ExplanationReport {
     let names: BTreeSet<Value> = [Value::from("bob")].into_iter().collect();
     let in_users = ConditionExplanation {
-        text: String::from("some name in input.users"),
+        site_id: 0,
+        owner: owner("data.test.deny", 0),
         outcome: Outcome::Success,
-        kind: ConditionKind::Iteration,
-        location: None,
-        operator: None,
         left: None,
         right: None,
         witness: Some(LoopWitness {
@@ -75,13 +89,24 @@ pub fn partial_set_report() -> ExplanationReport {
         binding: Some(String::from("name")),
     };
     ExplanationReport {
+        query: query("data.test.deny"),
         query_result: Value::from(names.clone()),
         rules: vec![RuleExplanation {
             name: String::from("data.test.deny"),
+            call_instance: 0,
             kind: RuleKind::PartialSet,
+            outcome: RuleOutcome::Matched,
             result: ReportedValue::Known(Value::from(names)),
             emissions: vec![emission(None, Value::from("bob"), vec![in_users.clone()])],
             definitions: vec![definition(0, 0, Outcome::Success, 3, vec![in_users])],
+            results: None,
+        }],
+        checks: vec![ConditionSite {
+            site_id: 0,
+            text: String::from("some name in input.users"),
+            kind: ConditionKind::Iteration,
+            location: None,
+            operator: None,
         }],
     }
 }
@@ -94,11 +119,9 @@ pub fn partial_object_report() -> ExplanationReport {
         .collect();
     let labels = Value::from(labels);
     let in_tags = ConditionExplanation {
-        text: String::from("some k, v in input.tags"),
+        site_id: 0,
+        owner: owner("data.test.labels", 0),
         outcome: Outcome::Success,
-        kind: ConditionKind::Iteration,
-        location: Some(location(4, 5)),
-        operator: None,
         left: None,
         right: None,
         witness: Some(LoopWitness {
@@ -110,10 +133,13 @@ pub fn partial_object_report() -> ExplanationReport {
         binding: None,
     };
     ExplanationReport {
+        query: query("data.test.labels"),
         query_result: labels.clone(),
         rules: vec![RuleExplanation {
             name: String::from("data.test.labels"),
+            call_instance: 0,
             kind: RuleKind::PartialObject,
+            outcome: RuleOutcome::Matched,
             result: ReportedValue::Known(labels),
             emissions: vec![emission(
                 Some(Value::from("env")),
@@ -121,7 +147,141 @@ pub fn partial_object_report() -> ExplanationReport {
                 vec![in_tags.clone()],
             )],
             definitions: vec![definition(0, 0, Outcome::Success, 3, vec![in_tags])],
+            results: None,
         }],
+        checks: vec![ConditionSite {
+            site_id: 0,
+            text: String::from("some k, v in input.tags"),
+            kind: ConditionKind::Iteration,
+            location: Some(location(4, 5)),
+            operator: None,
+        }],
+    }
+}
+
+/// Per-result attribution of
+///
+/// ```rego
+/// deny contains "public" if {
+///     some r in input.resources
+///     some t in r.tags
+///     t == "public"
+/// }
+/// ```
+///
+/// over two resources whose tags are each `["public"]`. Both derivations
+/// produce `"public"`; a proof budget of one keeps the first. The inner loop
+/// iterates two different collections, so its elements at index 0 are
+/// counted separately per collection rather than merged. The outer
+/// iteration value of the retained proof was elided; definitions and
+/// emissions are omitted for brevity.
+pub fn attributed_report() -> ExplanationReport {
+    let public: BTreeSet<Value> = [Value::from("public")].into_iter().collect();
+    let distinct = |site_id, loop_name: &str, collection, count| DistinctElements {
+        site_id,
+        loop_name: String::from(loop_name),
+        collection,
+        count: Some(Count::Exact(count)),
+    };
+    let proof = Derivation {
+        definition: 0,
+        body: 0,
+        conditions: vec![ConditionExplanation {
+            site_id: 2,
+            owner: owner("data.test.deny", 0),
+            outcome: Outcome::Success,
+            left: Some(known(Value::from("public"), Some("t"))),
+            right: Some(known(Value::from("public"), None)),
+            witness: None,
+            binding: None,
+        }],
+        bindings: vec![
+            IterationBinding {
+                site_id: 0,
+                collection: 0,
+                key: ReportedValue::Known(Value::from(0_u64)),
+                value: ReportedValue::Elided,
+            },
+            IterationBinding {
+                site_id: 1,
+                collection: 1,
+                key: ReportedValue::Known(Value::from(0_u64)),
+                value: ReportedValue::Known(Value::from("public")),
+            },
+        ],
+    };
+    let result = ResultExplanation {
+        key: None,
+        value: ReportedValue::Known(Value::from("public")),
+        derivations_total: Count::Exact(2),
+        distinct_elements: vec![
+            distinct(0, "input.resources[_]", 0, 2),
+            distinct(1, "r.tags[_]", 1, 1),
+            distinct(1, "r.tags[_]", 2, 1),
+        ],
+        proofs: vec![proof],
+    };
+    let iteration = |site_id, text: &str| ConditionSite {
+        site_id,
+        text: String::from(text),
+        kind: ConditionKind::Iteration,
+        location: None,
+        operator: None,
+    };
+    ExplanationReport {
+        query: query("data.test.deny"),
+        query_result: Value::from(public.clone()),
+        rules: vec![RuleExplanation {
+            name: String::from("data.test.deny"),
+            call_instance: 0,
+            kind: RuleKind::PartialSet,
+            outcome: RuleOutcome::Matched,
+            result: ReportedValue::Known(Value::from(public)),
+            emissions: Vec::new(),
+            definitions: Vec::new(),
+            results: Some(vec![result]),
+        }],
+        checks: vec![
+            iteration(0, "some r in input.resources"),
+            iteration(1, "some t in r.tags"),
+            ConditionSite {
+                site_id: 2,
+                text: String::from(r#"t == "public""#),
+                kind: ConditionKind::Comparison,
+                location: None,
+                operator: Some(Operator::Eq),
+            },
+        ],
+    }
+}
+
+/// `allow := true if input.x` and `allow := false if input.y` with both
+/// `input.x` and `input.y` true, queried with `with input.y as true`. The
+/// definitions conflict, so evaluation fails. This report accompanies that
+/// error: `query_result` is absent because there is no result, not because
+/// it is undefined, and the rule's outcome identifies the conflict.
+pub fn conflict_report() -> ExplanationReport {
+    let mut target = query("data.test.allow");
+    target.with_overrides = true;
+    ExplanationReport {
+        query: target,
+        query_result: Value::Undefined,
+        rules: vec![RuleExplanation {
+            name: String::from("data.test.allow"),
+            call_instance: 0,
+            kind: RuleKind::Complete,
+            outcome: RuleOutcome::Conflict {
+                values: vec![
+                    ReportedValue::Known(Value::from(true)),
+                    ReportedValue::Known(Value::from(false)),
+                ],
+            },
+            result: ReportedValue::Known(Value::Undefined),
+            emissions: Vec::new(),
+            definitions: Vec::new(),
+            results: None,
+        }],
+        checks: Vec::new(),
     }
 }
 
@@ -280,6 +440,7 @@ pub fn known(value: Value, path: Option<&str>) -> Operand {
     Operand {
         value: ReportedValue::Known(value),
         path: path.map(String::from),
+        concrete_path: ConcretePath::NotCaptured,
     }
 }
 
@@ -287,6 +448,39 @@ pub fn redacted(path: &str) -> Operand {
     Operand {
         value: ReportedValue::Redacted,
         path: Some(String::from(path)),
+        concrete_path: ConcretePath::NotCaptured,
+    }
+}
+
+/// A query naming `rule`, whose top-level evaluation is call instance 0.
+pub fn query(rule: &str) -> QueryTarget {
+    QueryTarget {
+        entry_point: String::from(rule),
+        rule: Some(String::from(rule)),
+        call_instance: Some(0),
+        with_overrides: false,
+    }
+}
+
+pub fn owner(rule: &str, call_instance: u64) -> ConditionOwner {
+    ConditionOwner {
+        rule: String::from(rule),
+        call_instance,
+    }
+}
+
+/// Contract fixture for a collection whose nested set loses its type in
+/// JSON: `input.x in [{1, 2}]` cannot be applied exactly by a JSON consumer.
+/// A future producer must detect this recursively before creating residuals.
+pub fn partial_eval_nested_collection_unsupported() -> PartialEvalResult {
+    PartialEvalResult {
+        kind: RuleKind::Complete,
+        status: ResidualStatus::Unsupported,
+        result: Value::Undefined,
+        residual_queries: Vec::new(),
+        warnings: vec![String::from(
+            "input.x in [{1, 2}]: nested set is not JSON-lossless",
+        )],
     }
 }
 

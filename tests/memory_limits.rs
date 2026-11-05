@@ -90,6 +90,12 @@ package limit
 quoted := sprintf("%q", [input])
 "#;
 
+const RANGE_STEP_MODULE: &str = r#"
+package limit
+
+result := numbers.range_step(0, input, 1)
+"#;
+
 #[cfg(feature = "rvm")]
 const SUSPENDABLE_HOST_AWAIT_MODULE: &str = r#"
 package limit
@@ -470,6 +476,105 @@ fn sprintf_quote_propagates_memory_limit_errors() {
         .eval_rule("data.limit.quoted".to_string())
         .expect_err("expected sprintf quoting to hit the memory limit");
     assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_nested_quote_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(SPRINTF_QUOTE_MODULE);
+    engine.set_input(Value::from(vec![Value::String(
+        "\0".repeat(100_000).into(),
+    )]));
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("nested quoting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_float_precision_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(
+        r#"package limit
+        quoted := sprintf("%#.60000q", [input])"#,
+    );
+    engine.set_input(Value::from(1.5));
+    guard.set_with_additional_budget(16 * 1024);
+    let err = engine
+        .eval_rule("data.limit.quoted".to_string())
+        .expect_err("float formatting must respect the limit");
+    assert_memory_limit_error(&err);
+}
+
+#[test]
+fn sprintf_float_precision_checks_memory_during_formatting() {
+    std::thread::spawn(|| {
+        let mut guard = LimitGuard::lock();
+        let mut engine = new_engine_with_module(r#"package limit
+            quoted := sprintf("%#.60000q", [input])"#);
+        engine.set_input(Value::from(1.5));
+        let before = mimalloc::current_thread_allocation_stats();
+        guard.set_with_additional_budget(16 * 1024);
+        let err = engine.eval_rule("data.limit.quoted".to_string())
+            .expect_err("float formatting must respect the limit");
+        assert_memory_limit_error(&err);
+        let after = mimalloc::current_thread_allocation_stats();
+        assert!(after.peak - before.allocated < 48 * 1024,
+            "large formatting allocation occurred before the limit check: before={before:?}, after={after:?}");
+    }).join().expect("memory test thread");
+}
+
+#[test]
+fn range_step_interpreter_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(RANGE_STEP_MODULE);
+    engine.set_input(Value::from(3));
+    guard.set_with_additional_budget(64 * 1024);
+    assert_eq!(
+        engine
+            .eval_rule("data.limit.result".to_string())
+            .expect("small stepped range fits the budget"),
+        Value::from((0..=3).map(Value::from).collect::<Vec<_>>()),
+    );
+
+    guard.disable_limit();
+    engine.set_input(Value::from(i64::MAX));
+    guard.set_with_additional_budget(64 * 1024);
+    let err = engine
+        .eval_rule("data.limit.result".to_string())
+        .expect_err("huge stepped range must hit the memory limit");
+    assert_memory_limit_error(&err);
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn range_step_vm_propagates_memory_limit_errors() {
+    let mut guard = LimitGuard::lock();
+    let mut engine = new_engine_with_module(RANGE_STEP_MODULE);
+    let entrypoint = Rc::from("data.limit.result");
+    let compiled = engine
+        .compile_with_entrypoint(&entrypoint)
+        .expect("compile stepped range policy");
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+        .expect("compile stepped range VM program");
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_input(Value::from(3));
+    guard.set_with_additional_budget(64 * 1024);
+    assert_eq!(
+        vm.execute().expect("small stepped range fits the budget"),
+        Value::from((0..=3).map(Value::from).collect::<Vec<_>>()),
+    );
+
+    guard.disable_limit();
+    vm.set_input(Value::from(i64::MAX));
+    guard.set_with_additional_budget(64 * 1024);
+    match vm.execute() {
+        Err(VmError::MemoryLimitExceeded { .. }) => {}
+        Err(other) => panic!("expected stepped range VM memory limit error, got {other}"),
+        Ok(value) => panic!("expected stepped range VM memory limit error, got {value:?}"),
+    }
 }
 
 #[cfg(feature = "jsonpatch")]
