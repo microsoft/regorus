@@ -94,6 +94,9 @@ pub struct RegoVM {
     /// Maximum number of instructions to execute (default: 25000)
     pub(super) max_instructions: usize,
 
+    /// Maximum number of active native rule calls (default: 16).
+    pub(super) max_native_rule_call_depth: usize,
+
     /// Current count of executed instructions
     pub(super) executed_instructions: usize,
 
@@ -253,6 +256,7 @@ impl RegoVM {
             base_register_count: 2, // Default to 2 registers for basic operations
             register_window_pool: Vec::new(), // Initialize register window pool
             max_instructions: 25000, // Default maximum instruction limit
+            max_native_rule_call_depth: 16,
             executed_instructions: 0,
             #[cfg(test)]
             memory_check_count: 0,
@@ -346,6 +350,24 @@ impl RegoVM {
     /// Set the maximum number of instructions that can be executed
     pub const fn set_max_instructions(&mut self, max: usize) {
         self.max_instructions = max;
+    }
+
+    /// Set the maximum number of active native rule calls (default: 16).
+    ///
+    /// Checked before each uncached synchronous rule evaluation, including during
+    /// resume. Zero rejects calls that need a native rule frame; cached results,
+    /// default-only rules, and explicit suspendable frames do not count.
+    /// The setting survives evaluation resets and program loads.
+    ///
+    /// Raising the limit can exhaust the host thread's stack. This does not resize
+    /// that stack or guarantee stack safety.
+    pub const fn set_max_native_rule_call_depth(&mut self, max: usize) {
+        self.max_native_rule_call_depth = max;
+    }
+
+    /// Return the configured native rule-call depth limit.
+    pub const fn max_native_rule_call_depth(&self) -> usize {
+        self.max_native_rule_call_depth
     }
 
     /// Set the base register count for the main execution context
