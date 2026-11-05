@@ -1,0 +1,182 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: recursion_direct_source_rejected
+    modules:
+      - |
+        package probe
+        result := result
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_indirect_source_rejected
+    modules:
+      - |
+        package probe
+        p := p
+        result := p
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_unreachable_source_allowed
+    modules:
+      - |
+        package probe
+        p := p
+        result := 42
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_result: 42
+
+  - note: recursion_mutual_source_rejected
+    modules:
+      - |
+        package probe
+        p := q
+        q := p
+        result := p
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_mutual_function_source_rejected
+    modules:
+      - |
+        package probe
+        f(x) := g(x)
+        g(x) := f(x)
+        result := f(1)
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_direct_function_source_rejected
+    modules:
+      - |
+        package probe
+        f(x) := f(x)
+        result := f(1)
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_package_materialization_source_rejected
+    modules:
+      - |
+        package probe
+        result := data.probe
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_raw_string_field_source_rejected
+    modules:
+      - |
+        package probe
+        result := data.probe[`result`]
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_quoted_field_source_rejected
+    modules:
+      - |
+        package probe
+        result := data.probe["result"]
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_already_indexed_cross_worklist_edges_rejected
+    modules:
+      - |
+        package probe
+        result := [p, q]
+        p := q
+        q := p
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_nested_package_source_rejected
+    modules:
+      - |
+        package probe
+        result := data.probe.nested
+        nested.p := nested.q
+        nested.q := nested.p
+    query: data.probe.result
+    strict: false
+    skip_interpreter: true
+    want_error: "Compile-time recursion detected"
+
+  - note: recursion_package_excludes_uncalled_self_recursive_function
+    modules:
+      - |
+        package app
+        result := data.lib
+      - |
+        package lib
+        safe := 42
+        f(x) := f(x)
+    query: data.app.result
+    strict: false
+    skip_interpreter: true
+    want_result: {safe: 42}
+
+  - note: recursion_package_excludes_uncalled_cross_root_function
+    modules:
+      - |
+        package app
+        result := data.lib
+      - |
+        package lib
+        safe := 42
+        f(x) := data.app.result
+    query: data.app.result
+    strict: false
+    skip_interpreter: true
+    want_result: {safe: 42}
+
+  - note: recursion_package_excludes_uncalled_self_recursive_function_suspendable
+    modules:
+      - |
+        package app
+        result := data.lib
+      - |
+        package lib
+        safe := 42
+        f(x) := f(x)
+    query: data.app.result
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    want_result: {safe: 42}
+
+  - note: recursion_package_excludes_uncalled_cross_root_function_suspendable
+    modules:
+      - |
+        package app
+        result := data.lib
+      - |
+        package lib
+        safe := 42
+        f(x) := data.app.result
+    query: data.app.result
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    want_result: {safe: 42}

@@ -20,7 +20,7 @@ use crate::rvm::Instruction;
 use crate::utils::{format_string_path, get_path_string};
 use crate::Map;
 use crate::{CompiledPolicy, Value};
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -138,6 +138,17 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn get_or_assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
+        let index = self.assign_rule_index(rule_path)?;
+        if let Some(&caller) = self.current_call_stack.last() {
+            self.rule_dependencies
+                .entry(caller)
+                .or_default()
+                .insert(index);
+        }
+        Ok(index)
+    }
+
+    pub(super) fn assign_rule_index(&mut self, rule_path: &str) -> Result<u16> {
         if let Some(&index) = self.rule_index_map.get(rule_path) {
             return Ok(index);
         }
@@ -320,38 +331,10 @@ impl<'a> Compiler<'a> {
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<()> {
         let mut compiled_rules = BTreeSet::new();
-        let mut call_stack = Vec::new();
+        let entry_point_indices: BTreeSet<u16> = self.rule_index_map.values().copied().collect();
 
         while !self.rule_worklist.is_empty() {
             let entry = self.rule_worklist.remove(0);
-
-            if let Some(&target_rule_index) = self.rule_index_map.get(&entry.rule_path) {
-                if entry.call_stack.contains(&target_rule_index) {
-                    let mut chain = Vec::new();
-                    let mut found_start = false;
-                    for &rule_idx in &entry.call_stack {
-                        if rule_idx == target_rule_index {
-                            found_start = true;
-                        }
-                        if found_start {
-                            if let Some((rule_path, _)) =
-                                self.rule_index_map.iter().find(|(_, &idx)| idx == rule_idx)
-                            {
-                                chain.push(rule_path.clone());
-                            }
-                        }
-                    }
-                    chain.push(entry.rule_path.clone());
-
-                    return Err(CompilerError::General {
-                        message: format!(
-                            "Compile-time recursion detected in rule call chain: {}",
-                            chain.join(" -> ")
-                        ),
-                    }
-                    .into());
-                }
-            }
 
             if compiled_rules.contains(&entry.rule_path) {
                 continue;
@@ -366,8 +349,6 @@ impl<'a> Compiler<'a> {
                 .into());
             };
 
-            call_stack.push(entry.rule_path.clone());
-
             let old_rule_path = self.current_rule_path.clone();
             let old_call_stack = self.current_call_stack.clone();
             self.current_rule_path = entry.rule_path.clone();
@@ -379,12 +360,68 @@ impl<'a> Compiler<'a> {
             self.current_rule_path = old_rule_path;
             self.current_call_stack = old_call_stack;
 
-            call_stack.pop();
-
             result?;
             compiled_rules.insert(entry.rule_path);
         }
-        Ok(())
+        self.validate_rule_dependencies(entry_point_indices)
+    }
+
+    fn validate_rule_dependencies(&self, roots: BTreeSet<u16>) -> Result<()> {
+        // Dynamic lookup candidates are compiled, but are not necessarily reachable.
+        let mut remaining = BTreeSet::new();
+        let mut pending: Vec<u16> = roots.into_iter().collect();
+        while let Some(index) = pending.pop() {
+            if remaining.insert(index) {
+                if let Some(callees) = self.rule_dependencies.get(&index) {
+                    pending.extend(callees);
+                }
+            }
+        }
+
+        // Topological elimination catches cycles even when both targets were
+        // already indexed before their worklist entries were compiled.
+        let mut dependencies = self.rule_dependencies.clone();
+        let mut callers = BTreeMap::<u16, Vec<u16>>::new();
+        for (&caller, callees) in &dependencies {
+            if remaining.contains(&caller) {
+                for &callee in callees {
+                    callers.entry(callee).or_default().push(caller);
+                }
+            }
+        }
+        let mut ready: Vec<u16> = remaining
+            .iter()
+            .filter(|index| dependencies.get(index).is_none_or(BTreeSet::is_empty))
+            .copied()
+            .collect();
+        while let Some(index) = ready.pop() {
+            remaining.remove(&index);
+            if let Some(parents) = callers.get(&index) {
+                for &caller in parents {
+                    if let Some(callees) = dependencies.get_mut(&caller) {
+                        if callees.remove(&index) && callees.is_empty() {
+                            ready.push(caller);
+                        }
+                    }
+                }
+            }
+        }
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        let paths: Vec<&str> = self
+            .rule_index_map
+            .iter()
+            .filter(|(_, index)| remaining.contains(index))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        Err(CompilerError::General {
+            message: format!(
+                "Compile-time recursion detected in rule dependencies: {}",
+                paths.join(", ")
+            ),
+        }
+        .into())
     }
 
     fn compile_worklist_rule(

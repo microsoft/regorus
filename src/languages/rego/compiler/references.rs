@@ -8,7 +8,7 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::{Compiler, CompilerError, Register, Result, WorklistEntry};
+use super::{Compiler, CompilerError, Register, Result};
 use crate::lexer::Span;
 use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
@@ -88,7 +88,7 @@ pub(super) fn parse_reference_chain(expr: &ExprRef) -> Result<ReferenceChain> {
             Expr::RefBrack { refr, index, .. } => {
                 // Bracket access - check if it's a string literal or dynamic
                 match index.as_ref() {
-                    Expr::String { value, .. } => {
+                    Expr::String { value, .. } | Expr::RawString { value, .. } => {
                         // String literal - treat as static field
                         components.push(AccessComponent::Field(
                             value
@@ -200,6 +200,7 @@ impl<'a> Compiler<'a> {
             .rules
             .keys()
             .chain(self.policy.inner.default_rules.keys())
+            .filter(|rule_path| !self.policy.inner.functions.contains_key(*rule_path))
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -207,16 +208,15 @@ impl<'a> Compiler<'a> {
         if !matching_rules.is_empty() {
             // This path is a prefix of some rules - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
-                if !self
-                    .rule_worklist
+                if chain
+                    .components
                     .iter()
-                    .any(|entry| entry.rule_path == *rule_path)
+                    .all(|component| matches!(component, AccessComponent::Field(_)))
                 {
-                    // Assign a rule index for this rule before adding to worklist
                     self.get_or_assign_rule_index(rule_path)?;
-                    let entry =
-                        WorklistEntry::new(rule_path.clone(), self.current_call_stack.clone());
-                    self.rule_worklist.push(entry);
+                } else {
+                    // Selection is dynamic; only the selected rule is a runtime dependency.
+                    self.assign_rule_index(rule_path)?;
                 }
             }
 
