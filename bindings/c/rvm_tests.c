@@ -34,15 +34,7 @@ static int test_registered_host_await_wide_stride(void) {
         "package demo\n"
         "import rego.v1\n"
         "result := echo(input.left, input.right)\n";
-    const char* expected_argument =
-        "[\n"
-        "  \"first\",\n"
-        "  {\n"
-        "    \"nested\": [\n"
-        "      2\n"
-        "    ]\n"
-        "  }\n"
-        "]";
+    const char* expected_argument = "[\"first\",{\"nested\":[2]}]";
     RegorusPolicyModule module = {"registered_host_await_stride.rego", module_text};
     const char* entry_points[] = {"data.demo.result"};
     WiderHostAwaitBuiltin builtins[] = {
