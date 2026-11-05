@@ -101,15 +101,22 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Res
         _ => (),
     }
 
-    let (incr, num_elements) = match v2.sub(&v1)?.as_i64() {
-        Some(v) if v >= 0 => (1i64, v as usize + 1),
-        Some(v) => (-1i64, (-v + 1) as usize),
-        _ => bail!(span.error("could not determine number of elements")),
-    };
+    let distance = v2
+        .sub(&v1)?
+        .as_i64()
+        .ok_or_else(|| span.error("could not determine number of elements"))?;
+    let num_elements = distance
+        .unsigned_abs()
+        .checked_add(1)
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or_else(|| span.error("could not determine number of elements"))?;
 
-    let mut values = Vec::with_capacity(num_elements);
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(num_elements)
+        .map_err(|err| span.error(&format!("could not allocate range: {err}")))?;
     let mut v = v1;
-    let incr = Number::from(incr);
+    let incr = Number::from(if distance < 0 { -1i64 } else { 1i64 });
     while v != v2 {
         values.push(Value::from(v.clone()));
         v.add_assign(&incr)?;
