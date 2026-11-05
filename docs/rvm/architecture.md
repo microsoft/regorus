@@ -128,11 +128,6 @@ default metadata before dispatch in either execution mode; `resume()` continues
 the already-validated execution without restarting it.
 Loading another program releases the previous execution state and invalidates
 any pending suspension; it cannot be resumed against the replacement artifact.
-With strict builtin errors enabled, arithmetic and builtin failures propagate
-through enclosing rules in both modes instead of selecting another body or
-default. Failed strict executions release retained state before reuse, including
-failures after a host resume. Non-strict builtin failures retain their undefined
-semantics; a failed division inside an array comprehension yields an empty array.
 
 For example, this default must be evaluated against the current request:
 
@@ -158,9 +153,8 @@ JSON artifacts containing executable defaults require upgraded readers;
 older JSON readers ignore the new fallback metadata. Upgrade producers and
 consumers together, or use version-checked binary artifacts so older runtimes
 reject an unsupported format.
-Interpreter default-function parameter/module binding remains a follow-up.
-The RVM also preserves strict builtin errors through enclosing rules; other
-interpreter differences are not changed here.
+Interpreter default-function parameter/module binding remains a follow-up; this
+change targets RVM non-strict execution.
 
 The compiler rejects defaults for both a path and one of its descendants, such
 as `default result := {"keep": 1}` with `default result.child := 3`, matching

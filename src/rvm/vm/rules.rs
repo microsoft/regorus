@@ -46,24 +46,6 @@ impl RegoVM {
         )
     }
 
-    pub(super) const fn is_strict_builtin_error(&self, err: &VmError) -> bool {
-        self.strict_builtin_errors
-            && matches!(
-                err,
-                VmError::InvalidAddition { .. }
-                    | VmError::InvalidSubtraction { .. }
-                    | VmError::InvalidMultiplication { .. }
-                    | VmError::InvalidDivision { .. }
-                    | VmError::InvalidModulo { .. }
-                    | VmError::ModuloOnFloat { .. }
-                    | VmError::ArithmeticError { .. }
-            )
-    }
-
-    pub(super) const fn should_propagate_rule_error(&self, err: &VmError) -> bool {
-        Self::is_fatal_vm_error(err) || self.is_strict_builtin_error(err)
-    }
-
     /// Restore VM state that was swapped out for rule execution.
     /// Must be called before returning an error from `execute_rule_definitions_common`
     /// to avoid leaving the VM in an inconsistent state.
@@ -144,7 +126,7 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
-                        Err(e) if self.should_propagate_rule_error(&e) => {
+                        Err(e) if Self::is_fatal_vm_error(&e) => {
                             self.restore_rule_state(
                                 &mut previous_loop_stack,
                                 &mut previous_comprehension_stack,
@@ -200,7 +182,7 @@ impl RegoVM {
                             break;
                         }
                     }
-                    Err(e) if self.should_propagate_rule_error(&e) => {
+                    Err(e) if Self::is_fatal_vm_error(&e) => {
                         self.restore_rule_state(
                             &mut previous_loop_stack,
                             &mut previous_comprehension_stack,
