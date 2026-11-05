@@ -23,6 +23,7 @@ impl RegoVM {
             err,
             VmError::EvaluationConflict { .. }
                 | VmError::TimeLimitExceeded { .. }
+                | VmError::RuleCallDepthExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
                 | VmError::RegexSizeLimitExceeded { .. }
@@ -280,6 +281,13 @@ impl RegoVM {
             return Ok(());
         }
 
+        // Explicit suspendable frames do not retain native dispatch frames.
+        if self.register_stack.len() >= self.max_native_rule_call_depth {
+            return Err(VmError::RuleCallDepthExceeded {
+                limit: self.max_native_rule_call_depth,
+                pc: self.pc,
+            });
+        }
         self.call_rule_stack.push(CallRuleContext {
             return_pc: self.pc,
             dest_reg: dest,
@@ -290,16 +298,16 @@ impl RegoVM {
             current_body_index: 0,
         });
 
-        let result = self.execute_rule_definitions_common(
+        let execution_result = self.execute_rule_definitions_common(
             &rule_definitions,
             &rule_info,
             function_call_params,
         );
 
-        let call_context = self
-            .call_rule_stack
-            .pop()
-            .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
+        let call_context = self.call_rule_stack.pop();
+        // A cleanup diagnostic must not replace a fatal execution error.
+        let final_result = execution_result?;
+        let call_context = call_context.ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
         // Stack discipline: the context we just popped must belong to the
         // rule we are finalizing. A mismatch indicates a missing push or an
         // extra pop somewhere in this rule's execution and would otherwise
@@ -314,8 +322,7 @@ impl RegoVM {
             });
         }
         self.pc = call_context.return_pc;
-
-        self.set_register(dest, result?)?;
+        self.set_register(dest, final_result)?;
 
         if self.get_register(dest)? == &Value::Undefined {
             match call_context.rule_type {
