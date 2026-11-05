@@ -93,6 +93,11 @@ release on Windows with a 2 MiB test-thread stack; this does not imply that dept
 17 is intrinsically unsafe. Existing instruction, time, and memory limits remain
 unchanged.
 
+Behavioral depth boundaries, default rejection, and deep explicit suspendable
+calls are covered by `tests/rvm/rego/cases/native_depth.yaml`. Rust lifecycle
+checks reuse those policies for typed errors, cleanup, VM reuse, and stepping.
+Both run in bounded subprocesses with a 2 MiB test-thread stack.
+
 ### Run-to-completion
 
 - Entry path: `execute()` or `execute_entry_point_by_*` when

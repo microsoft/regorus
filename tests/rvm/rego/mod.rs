@@ -17,6 +17,9 @@ use std::fs;
 use std::sync::Arc;
 use test_generator::test_resources;
 
+#[path = "../../native_depth_support/mod.rs"]
+mod native_depth_support;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,
@@ -1340,6 +1343,12 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
 
 #[test_resources("tests/rvm/rego/cases/*.yaml")]
 fn run_rego_compiler_yaml(file: &str) {
+    if std::path::Path::new(file).file_name() == Some(std::ffi::OsStr::new("native_depth.yaml"))
+        && std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none()
+    {
+        native_depth_support::run_in_subprocess(std::thread::current().name().unwrap());
+        return;
+    }
     yaml_test_impl(file).unwrap();
 }
 
