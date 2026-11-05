@@ -650,6 +650,28 @@ allow if {
     }
 
     [TestMethod]
+    [DataRow("\"abc\"", "[\"abc\"]")]
+    [DataRow("\"\\\"\\\\\\n\\r\\t\\u0000\"", "[\"\\\"\\\\\\n\\r\\t\\u0000\"]")]
+    [DataRow("\"  a  b \\t\\n \"", "[\"  a  b \\t\\n \"]")]
+    [DataRow("{\"items\":[1,true,null,{\"text\":\" a \\\"b\\\" \"}]}", "[{\"items\":[1,true,null,{\"text\":\" a \\\"b\\\" \"}]}]")]
+    public void RegisteredHostAwait_ArgumentJson_IsCompactAndPreservesContents(
+        string inputJson, string expectedArgument)
+    {
+        var modules = new[] { new PolicyModule("echo.rego", "package demo\nresult := echo(input)") };
+        var hostAwaitBuiltins = new[] { new HostAwaitBuiltin("echo", 1) };
+        using var program = Program.CompileFromModules(
+            "{}", modules, new[] { "data.demo.result" }, hostAwaitBuiltins);
+        using var vm = new Rvm();
+        vm.SetExecutionMode(ExecutionMode.Suspendable);
+        vm.LoadProgram(program);
+        vm.SetInputJson(inputJson);
+
+        vm.Execute();
+
+        Assert.AreEqual(expectedArgument, vm.GetHostAwaitArgument());
+    }
+
+    [TestMethod]
     public void RegisteredHostAwait_MultipleInputs_ArePackedInOrder()
     {
         const string policy = """

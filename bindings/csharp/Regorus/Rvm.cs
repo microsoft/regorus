@@ -277,7 +277,7 @@ namespace Regorus
         }
 
         /// <summary>
-        /// Get the HostAwait argument as a JSON string. Newly compiled registered
+        /// Get the HostAwait argument as a compact JSON string. Newly compiled registered
         /// calls return the complete ordered input array; explicit raw calls and
         /// previously compiled programs retain their payload shape.
         /// Returns null if the VM is not in a HostAwait-suspended state.
