@@ -550,7 +550,7 @@ optional Rego output parameter is not included. Registered calls pass an
 ordered array to the host: zero inputs produce `[]`, one input produces
 `[value]`, and multiple inputs produce `[value1, value2, ...]`. Values remain
 native Rego values inside that array, including nested arrays and objects.
-`GetHostAwaitArgument()` returns the JSON representation of the whole array;
+`GetHostAwaitArgument()` returns the compact JSON representation of the whole array;
 it does not unwrap one-input calls. An input that evaluates to undefined skips
 the registered HostAwait without consuming a response.
 
