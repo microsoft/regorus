@@ -1,0 +1,96 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: regex_template_prefix_boundaries
+    input:
+      short: ""
+      multibyte: "\u00e9"
+      matching: "ab\u00e9"
+    modules:
+      - |
+        package test
+        result := {
+          "short": regex.template_match("abc<.*>", input.short, "<", ">"),
+          "multibyte": regex.template_match("a<.*>", input.multibyte, "<", ">"),
+          "matching": regex.template_match("ab<.*>", input.matching, "<", ">"),
+          "literal": regex.template_match("\u00e9", input.multibyte, "<", ">"),
+        }
+    query: data.test.result
+    want_result:
+      short: false
+      multibyte: false
+      matching: true
+      literal: true
+
+  - note: regex_template_overlapping_delimiters
+    input:
+      template: ab
+      value: ""
+      start: ab
+      end: b
+    modules:
+      - |
+        package test
+        result := regex.template_match(input.template, input.value, input.start, input.end)
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: object_subset_empty_arrays
+    input: [1, 2]
+    modules:
+      - |
+        package test
+        result := {
+          "empty_subset": object.subset(input, []),
+          "both_empty": object.subset([], []),
+          "empty_superset": object.subset([], input),
+          "nonempty_subset": object.subset(input, [1]),
+        }
+    query: data.test.result
+    want_result:
+      empty_subset: true
+      both_empty: true
+      empty_superset: false
+      nonempty_subset: true
+
+  - note: time_unicode_layout_round_trip
+    input:
+      layout: "\u00e92006-01-02\U0001f600"
+      value: "\u00e91970-01-01\U0001f600"
+    modules:
+      - |
+        package test
+        result := {
+          "formatted": time.format([0, "UTC", input.layout]),
+          "parsed": time.parse_ns(input.layout, input.value),
+        }
+    query: data.test.result
+    want_result:
+      formatted: "\u00e91970-01-01\U0001f600"
+      parsed: 0
+
+  - note: numbers_range_extreme_ascending_is_undefined
+    input:
+      start: 0
+      end: 9223372036854775807
+    modules:
+      - |
+        package test
+        result := numbers.range(input.start, input.end)
+    query: data.test.result
+    want_result: "#undefined"
+    # The strict interpreter error is covered by numbers_range_extremes_return_errors.
+    skip_interpreter: true
+
+  - note: numbers_range_extreme_descending_is_undefined
+    input:
+      start: 0
+      end: -9223372036854775808
+    modules:
+      - |
+        package test
+        result := numbers.range(input.start, input.end)
+    query: data.test.result
+    want_result: "#undefined"
+    skip_interpreter: true
