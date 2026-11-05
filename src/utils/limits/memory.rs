@@ -161,14 +161,37 @@ pub fn thread_memory_flush_threshold() -> Option<u64> {
 /// check_global_memory_limit().unwrap();
 /// ```
 pub fn check_global_memory_limit() -> Result<(), LimitError> {
+    check_memory_allocation(0)
+}
+
+/// Preflight a new allocation using the allocator wrapper's accounting.
+pub fn check_memory_allocation(bytes: usize) -> Result<(), LimitError> {
     if let Some(limit) = global_memory_limit() {
-        let (stats, _) = mimalloc::allocation_stats_snapshot();
-        let usage = stats.allocated;
-        if usage > limit {
-            return Err(LimitError::MemoryLimitExceeded { usage, limit });
-        }
+        mimalloc::limits::check_allocation(bytes, limit).map_err(allocation_limit_error)?;
     }
     Ok(())
+}
+
+/// Reserve string capacity through the allocator wrapper while a limit is active.
+pub fn reserve_string(output: &mut crate::String, additional: usize) -> anyhow::Result<()> {
+    if let Some(limit) = global_memory_limit() {
+        mimalloc::limits::try_reserve_string(output, additional, limit).map_err(
+            |error| match error {
+                mimalloc::limits::ReservationError::LimitExceeded(error) => {
+                    anyhow::Error::new(allocation_limit_error(error))
+                }
+                error => anyhow::Error::new(error),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+const fn allocation_limit_error(error: mimalloc::limits::MemoryLimitExceeded) -> LimitError {
+    LimitError::MemoryLimitExceeded {
+        usage: error.usage,
+        limit: error.limit,
+    }
 }
 
 /// Enforces the currently configured memory ceiling, if any.

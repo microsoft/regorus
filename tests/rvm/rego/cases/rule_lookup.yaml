@@ -353,7 +353,7 @@ cases:
         r19 := data.probe.r20
         r20 := 7
     query: data.probe.r0
-    want_error: "Rule call depth exceeded safety limit 16"
+    want_error: "Rule call depth exceeded limit 16"
 
   - note: suspendable_rule_depth_uses_explicit_frames
     strict: false

@@ -20,6 +20,8 @@ use crate::*;
 
 use anyhow::{bail, Result};
 
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+mod bigint_decimal;
 mod go_is_print;
 mod sprintf_format;
 
@@ -275,6 +277,30 @@ fn apply_width(w: Width, s: String) -> String {
 
 const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
 
+fn reserve_sprintf(out: &mut String, additional: usize) -> Result<()> {
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    crate::utils::limits::reserve_string(out, additional)?;
+    #[cfg(any(not(feature = "allocator-memory-limits"), miri))]
+    let _ = (out, additional);
+    Ok(())
+}
+
+fn append_sprintf(out: &mut String, text: &str) -> Result<()> {
+    reserve_sprintf(out, text.len())?;
+    out.push_str(text);
+    enforce_limit()
+}
+
+fn append_decimal(out: &mut String, number: &Number) -> Result<()> {
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    if crate::utils::limits::global_memory_limit().is_some() {
+        if let Number::BigInt(value) = number {
+            return bigint_decimal::append(out, value);
+        }
+    }
+    append_sprintf(out, &number.format_decimal())
+}
+
 // Append a string quoted like Go's fmt `%q`. Precision truncates the input by
 // Unicode scalar values before quoting, while width pads the quoted result by
 // Unicode scalar values. `%+q` forces ASCII escapes and `%#q` uses a raw string
@@ -301,6 +327,13 @@ fn append_go_quoted(out: &mut String, input: &str, spec: FormatSpec) -> Result<(
     }
 
     if raw {
+        reserve_sprintf(
+            out,
+            input
+                .len()
+                .checked_add(2)
+                .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?,
+        )?;
         out.push('`');
         for c in input.chars() {
             out.push(c);
@@ -324,6 +357,19 @@ fn append_go_quoted_body(
     ascii_only: bool,
     quote: char,
 ) -> Result<()> {
+    // Reserve the complete UTF-8/escaped representation before copying. This
+    // also protects the second quoting pass over a rendered BigInt collection.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    if crate::utils::limits::global_memory_limit().is_some() {
+        let bytes = input
+            .chars()
+            .try_fold(2usize, |len, c| {
+                let escaped = go_quoted_len(c.encode_utf8(&mut [0; 4]), ascii_only, quote) - 2;
+                len.checked_add(if escaped == 1 { c.len_utf8() } else { escaped })
+            })
+            .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?;
+        reserve_sprintf(out, bytes)?;
+    }
     out.push(quote);
     for c in input.chars() {
         match c {
@@ -354,6 +400,12 @@ fn append_padding(out: &mut String, count: usize, padding_char: char) -> Result<
     if count > MAX_SPRINTF_WIDTH_OR_PRECISION {
         bail!("sprintf padding is outside the supported range");
     }
+    reserve_sprintf(
+        out,
+        count
+            .checked_mul(padding_char.len_utf8())
+            .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?,
+    )?;
     for _ in 0..count {
         out.push(padding_char);
         enforce_limit()?;
@@ -419,16 +471,14 @@ fn append_go_quoted_value(out: &mut String, value: &Value, spec: FormatSpec) -> 
             append_go_quoted_rune(out, *value as i64, spec)
         }
         Value::Number(number @ (Number::UInt(_) | Number::BigInt(_))) => {
-            out.push_str("%!q(big.Int=");
-            out.push_str(&number.format_decimal());
-            out.push(')');
-            enforce_limit()
+            append_sprintf(out, "%!q(big.Int=")?;
+            append_decimal(out, number)?;
+            append_sprintf(out, ")")
         }
         Value::Number(Number::Float(value)) => {
-            out.push_str("%!q(float64=");
+            append_sprintf(out, "%!q(float64=")?;
             append_go_float_value(out, value, spec)?;
-            out.push(')');
-            enforce_limit()
+            append_sprintf(out, ")")
         }
         value => {
             let mut rendered = String::new();
@@ -463,7 +513,7 @@ fn append_go_float_value(out: &mut String, value: &f64, spec: FormatSpec) -> Res
     if !spec.flags.minus && padding_char == ' ' {
         append_padding(out, padding, ' ')?;
     }
-    out.push_str(sign);
+    append_sprintf(out, sign)?;
     if !spec.flags.minus && padding_char == '0' {
         append_padding(out, padding, '0')?;
     }
@@ -484,8 +534,7 @@ fn append_float_checked(out: &mut String, text: &str) -> Result<()> {
         while !text.is_char_boundary(end) {
             end -= 1;
         }
-        out.push_str(&text[start..end]);
-        enforce_limit()?;
+        append_sprintf(out, &text[start..end])?;
         start = end;
     }
     Ok(())
@@ -625,51 +674,50 @@ fn append_value_string(
         bail!("sprintf value nesting limit exceeded");
     }
     match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(value) => out.push_str(&value.to_string()),
+        Value::Null => append_sprintf(out, "null")?,
+        Value::Bool(value) => append_sprintf(out, if *value { "true" } else { "false" })?,
         Value::String(value) if unescape => append_go_quoted_body(out, value.as_ref(), false, '"')?,
-        Value::String(value) => out.push_str(value.as_ref()),
-        Value::Number(value) => out.push_str(&value.format_decimal()),
+        Value::String(value) => append_sprintf(out, value.as_ref())?,
+        Value::Number(value) => append_decimal(out, value)?,
         Value::Array(values) => {
-            out.push('[');
+            append_sprintf(out, "[")?;
             for (index, value) in values.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    append_sprintf(out, ", ")?;
                 }
                 append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
-            out.push(']');
+            append_sprintf(out, "]")?;
         }
         Value::Set(values) => {
             if values.is_empty() {
-                out.push_str("set()");
-                return enforce_limit();
+                return append_sprintf(out, "set()");
             }
-            out.push('{');
+            append_sprintf(out, "{")?;
             for (index, value) in values.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    append_sprintf(out, ", ")?;
                 }
                 append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
-            out.push('}');
+            append_sprintf(out, "}")?;
         }
         Value::Object(values) => {
-            out.push('{');
+            append_sprintf(out, "{")?;
             for (index, (key, value)) in values.iter_sorted().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    append_sprintf(out, ", ")?;
                 }
                 append_value_string(out, key, true, depth + 1)?;
-                out.push_str(": ");
+                append_sprintf(out, ": ")?;
                 append_value_string(out, value, true, depth + 1)?;
                 enforce_limit()?;
             }
-            out.push('}');
+            append_sprintf(out, "}")?;
         }
-        Value::Undefined => out.push_str("#undefined"),
+        Value::Undefined => append_sprintf(out, "#undefined")?,
     }
     enforce_limit()
 }
@@ -697,13 +745,11 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     let format_span = params[0].span();
     loop {
         let Some(percent_offset) = fmt[cursor..].find('%') else {
-            s.push_str(&fmt[cursor..]);
-            enforce_limit()?;
+            append_sprintf(&mut s, &fmt[cursor..])?;
             break;
         };
         let percent = cursor + percent_offset;
-        s.push_str(&fmt[cursor..percent]);
-        enforce_limit()?;
+        append_sprintf(&mut s, &fmt[cursor..percent])?;
 
         let (spec, verb, next_cursor) = sprintf_format::parse(
             fmt.as_ref(),
@@ -717,24 +763,20 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         cursor = next_cursor;
 
         if verb == '%' {
-            s.push('%');
-            enforce_limit()?;
+            append_sprintf(&mut s, "%")?;
             continue;
         }
 
         if spec.bad_width {
-            s.push_str("%!(BADWIDTH)");
-            enforce_limit()?;
+            append_sprintf(&mut s, "%!(BADWIDTH)")?;
         }
         if spec.bad_precision {
-            s.push_str("%!(BADPREC)");
-            enforce_limit()?;
+            append_sprintf(&mut s, "%!(BADPREC)")?;
         }
         if spec.bad_index {
-            s.push_str("%!");
-            s.push(verb);
-            s.push_str("(BADINDEX)");
-            enforce_limit()?;
+            append_sprintf(&mut s, "%!")?;
+            append_sprintf(&mut s, verb.encode_utf8(&mut [0; 4]))?;
+            append_sprintf(&mut s, "(BADINDEX)")?;
             continue;
         }
 
@@ -884,7 +926,18 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         ));
     }
 
-    Ok(Value::String(s.into()))
+    // Rc<str>/Arc<str> conversion copies the payload into a new allocation.
+    // Include its two-word header and alignment while the String is still live.
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    crate::utils::limits::check_memory_allocation(
+        s.len()
+            .checked_add(3 * core::mem::size_of::<usize>() - 1)
+            .ok_or_else(|| anyhow::anyhow!("sprintf output size overflow"))?,
+    )?;
+    let value = Value::String(s.into());
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    crate::utils::limits::check_global_memory_limit()?;
+    Ok(value)
 }
 
 fn any_prefix_match(

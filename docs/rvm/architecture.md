@@ -74,7 +74,7 @@ For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in
 existing undefined result for this same-namespace form is unchanged. Selecting
 an active rule instead produces `VmError::RecursiveRuleEvaluation`, in either VM
 mode, rather than undefined or unbounded recursion. Synchronous native rule
-calls are additionally limited to 16 retained register windows and report
+calls additionally use the configurable native-depth limit (16 by default) and report
 `VmError::RuleCallDepthExceeded`; explicit suspendable rule frames are not subject
 to that native-stack limit. These errors are fatal to rule evaluation, including
 rules with defaults, and failed execution state is released before reuse.
