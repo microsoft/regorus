@@ -321,6 +321,55 @@ Benchmark 1: opa eval -b tests/aci -d tests/aci/data.json -i tests/aci/input.jso
 
 ```
 
+### Cedar benchmark comparison
+
+**Regorus RVM achieved 1.35-2.15x faster median authorization than Cedar**
+on adapted GDrive, GitHub, and TinyTodo benchmarks from
+[Cutler et al., *Cedar: A New Language for Expressive, Fast, Safe, and
+Analyzable Authorization* (2024)](https://arxiv.org/abs/2403.04651).
+These results use the Regorus Virtual Machine, not the interpreter.
+
+**5-50 entities per type**
+
+![Cedar and Regorus RVM median and p99 authorization latency for 5-50 entities per type](docs/benchmarks/cedar-vs-rvm-5-50.png)
+
+**100-500 entities per type**
+
+![Cedar and Regorus RVM median and p99 authorization latency for 100-500 entities per type](docs/benchmarks/cedar-vs-rvm-100-500.png)
+
+| Entities per type | GDrive speedup | GitHub speedup | TinyTodo speedup |
+|---|---:|---:|---:|
+| 5-50 | 2.15x | 2.02x | 1.86x |
+| 100-500 | 1.97x | 1.65x | 1.35x |
+
+Speedup is the arithmetic average of Cedar's per-size medians divided by the
+arithmetic average of RVM's per-size medians, not the largest per-size or p99
+gap. Each point measures 200 datastores with 500 requests each; all **3.6 million
+paired decisions matched**, with zero evaluation errors across the two runs.
+**Setup costs are excluded**: policies and data are prepared before timing,
+including RVM compilation, loading, and warm-up.
+
+Compared with the paper's benchmark configuration, we updated engine versions,
+corrected GDrive permission-generation and translation defects, and optimized
+Rego policies to prepare reusable permissions and graph closures before timed
+evaluation. The harness uses symmetric one-request warm-up, rotating engine
+order, and exact empirical quantiles. The paper's main Rego comparison instead
+computes graph reachability during authorization. These are optimized
+steady-state measurements on different hardware, not an exact reproduction of
+the paper or a direct RVM-versus-OPA comparison.
+
+Measurements used Regorus revision
+[`1423851`](https://github.com/microsoft/regorus/commit/1423851f608e2ca809727fa32c54a8d46c297c08)
+and Cedar revision
+[`062c8fe`](https://github.com/cedar-policy/cedar/commit/062c8fe71016723883b3ae31298720363a1e14c8)
+on a virtualized AMD Ryzen 9 8945HX Linux system. They are pinned-revision
+results, not measurements of the latest `main`; workloads and machine
+conditions affect timings. See the
+[reproduction repository](https://github.com/anakrish/cedar-examples/tree/6c68e3ff06d3bfffeecdae3e092f86a1a8bfc520),
+[reproduction instructions](https://github.com/anakrish/cedar-examples/blob/6c68e3ff06d3bfffeecdae3e092f86a1a8bfc520/README.md#reproduce),
+and [detailed methodology](https://github.com/anakrish/cedar-examples/blob/6c68e3ff06d3bfffeecdae3e092f86a1a8bfc520/oopsla2024-benchmarks/README.md)
+for source changes, raw CSV results, setup summaries, and source provenance.
+
 ## Contributor Workflow
 
 Regorus uses a small companion CLI under the `xtask` package to keep CI and local development in sync.
