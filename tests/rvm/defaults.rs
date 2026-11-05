@@ -174,6 +174,191 @@ fn dynamic_defaults_only_run_after_undefined_not_false() {
 }
 
 #[test]
+fn strict_default_errors_propagate_through_callers_and_allow_reuse() {
+    for (expression, invalid_input) in [
+        ("1 / input.divisor", r#"{"divisor":0}"#),
+        ("5 % input.divisor", r#"{"divisor":0}"#),
+        ("to_number(input.divisor)", r#"{"divisor":"invalid"}"#),
+    ] {
+        for module in [
+            format!("package defaults\ndefault result := [x | x := {expression}]"),
+            format!(
+                "package defaults\ndefault value := [x | x := {expression}]\nresult := value"
+            ),
+            format!(
+                "package defaults\ndefault value := [x | x := {expression}]\nforward := value\nresult := forward"
+            ),
+        ] {
+            for program in round_trips(compile(&module, &[])) {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    for strict in [true, false] {
+                        let mut vm = RegoVM::new();
+                        vm.load_program(program.clone());
+                        vm.set_execution_mode(mode);
+                        vm.set_strict_builtin_errors(strict);
+                        for input in [invalid_input, r#"{"divisor":1}"#, invalid_input] {
+                            vm.set_input(Value::from_json_str(input).unwrap());
+                            let result = vm.execute_entry_point_by_name(ENTRY);
+                            if input == invalid_input && strict {
+                                assert!(
+                                    matches!(
+                                        result,
+                                        Err(VmError::InvalidDivision { .. }
+                                            | VmError::InvalidModulo { .. }
+                                            | VmError::ArithmeticError { .. })
+                                    ),
+                                    "{mode:?}, expression={expression}, module={module}, result={result:?}"
+                                );
+                                assert!(matches!(
+                                    vm.execution_state(),
+                                    ExecutionState::Error { .. }
+                                ));
+                                assert!(matches!(
+                                    vm.resume(None),
+                                    Err(VmError::InvalidResumeState { .. })
+                                ));
+                            } else {
+                                let expected = if input == invalid_input {
+                                    Value::new_array()
+                                } else if expression.starts_with("5 %") {
+                                    Value::from_json_str("[0]").unwrap()
+                                } else {
+                                    Value::from_json_str("[1]").unwrap()
+                                };
+                                assert_eq!(result.unwrap(), expected, "{mode:?}, strict={strict}");
+                            }
+                            assert_eq!(vm.get_execution_mode(), mode);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strict_default_error_after_host_resume_releases_suspension() {
+    let module = r#"package defaults
+        default f(divisor) := [x | lookup("ready"); x := 1 / divisor]
+        value := f(input.divisor)
+        default result := false
+        result := value
+    "#;
+    for program in round_trips(compile(module, &[("lookup", 1)])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for strict in [true, false] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(strict);
+                for divisor in [0, 1, 0] {
+                    vm.set_input(
+                        Value::from_json_str(&format!(r#"{{"divisor":{divisor}}}"#)).unwrap(),
+                    );
+                    let result = if mode == ExecutionMode::RunToCompletion {
+                        vm.set_host_await_responses([(
+                            Value::from("lookup"),
+                            vec![Value::Bool(true)],
+                        )]);
+                        vm.execute_entry_point_by_name(ENTRY)
+                    } else {
+                        vm.execute_entry_point_by_name(ENTRY).unwrap();
+                        assert!(matches!(
+                            vm.execution_state(),
+                            ExecutionState::Suspended {
+                                reason: SuspendReason::HostAwait { identifier, argument, .. },
+                                ..
+                            } if identifier == &Value::from("lookup")
+                                && argument == &Value::from_json_str(r#"["ready"]"#).unwrap()
+                        ));
+                        vm.resume(Some(Value::Bool(true)))
+                    };
+                    if divisor == 0 && strict {
+                        assert!(matches!(result, Err(VmError::InvalidDivision { .. })));
+                        assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                        assert!(matches!(
+                            vm.resume(Some(Value::Bool(true))),
+                            Err(VmError::InvalidResumeState { .. })
+                        ));
+                    } else {
+                        let expected = if divisor == 0 { "[]" } else { "[1]" };
+                        assert_eq!(result.unwrap(), Value::from_json_str(expected).unwrap());
+                    }
+                    assert_eq!(vm.get_execution_mode(), mode);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strict_function_errors_do_not_select_another_default() {
+    let module = r#"package defaults
+        default f(v) := 7
+        f(v) := 1 / v
+        default result := false
+        result := f(input.divisor)
+    "#;
+    for program in round_trips(compile(module, &[])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for strict in [true, false] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(strict);
+                for divisor in [0, 1, 0] {
+                    vm.set_input(
+                        Value::from_json_str(&format!(r#"{{"divisor":{divisor}}}"#)).unwrap(),
+                    );
+                    let result = vm.execute_entry_point_by_name(ENTRY);
+                    if divisor == 0 && strict {
+                        assert!(matches!(result, Err(VmError::InvalidDivision { .. })));
+                    } else {
+                        assert_eq!(
+                            result.unwrap(),
+                            Value::from(if divisor == 0 { 7 } else { 1 })
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strict_errors_preserve_failed_conditions_and_destructuring() {
+    let module = r#"package defaults
+        default f(v) := 7
+        f([x, x]) := x
+        default result := false
+        result := f(input.pair) if input.enabled
+    "#;
+    for program in round_trips(compile(module, &[])) {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for strict in [true, false] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(strict);
+                for (input, expected) in [
+                    ("{}", Value::Bool(false)),
+                    (r#"{"enabled":false,"pair":[3,3]}"#, Value::Bool(false)),
+                    (r#"{"enabled":true,"pair":[3,4]}"#, Value::from(7)),
+                    (r#"{"enabled":true,"pair":[3,3]}"#, Value::from(3)),
+                ] {
+                    vm.set_input(Value::from_json_str(input).unwrap());
+                    assert_eq!(
+                        vm.execute_entry_point_by_name(ENTRY).unwrap(),
+                        expected,
+                        "{mode:?}, strict={strict}, input={input}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn conflicts_never_select_literal_or_executable_defaults() {
     for default in ["7", "[x | x := input.x]"] {
         let module =

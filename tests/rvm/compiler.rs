@@ -922,8 +922,8 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
         );
         assert_eq!(
             registered.0,
-            StrictProbeOutcome::Value(Value::Bool(false)),
-            "the default-false rule should absorb the output-expression failure"
+            StrictProbeOutcome::DivisionError,
+            "strict output-expression errors must propagate rather than select the default"
         );
         assert_eq!(
             registered.1,

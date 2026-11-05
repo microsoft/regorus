@@ -78,10 +78,12 @@ impl RegoVM {
 
     /// Release state after a failed budgeted suspendable execution.
     ///
-    /// Unbudgeted executions preserve their legacy state except on recursion.
+    /// Unbudgeted executions preserve their legacy state except on recursion or strict errors.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(error, VmError::RecursiveRuleEvaluation { .. }) {
+        if matches!(error, VmError::RecursiveRuleEvaluation { .. })
+            || self.is_strict_builtin_error(&error)
+        {
             return self.fail_run_to_completion(error);
         }
         if self.active_memory_budget_config.is_none() {
@@ -98,7 +100,9 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(error, VmError::RecursiveRuleEvaluation { .. }) {
+        if matches!(error, VmError::RecursiveRuleEvaluation { .. })
+            || self.is_strict_builtin_error(&error)
+        {
             return self.fail_run_to_completion(error);
         }
         error
