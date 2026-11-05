@@ -52,19 +52,21 @@ suffixes remain undefined; namespace lookups merge virtual descendants with base
 data. Candidate selection compares every shared path component, so a lookup
 under a nested namespace does not include unrelated sibling rules.
 
-For example, with `package tenant; a := {"deny": true}`, the reference
-`data.tenant[input.tenant].deny` must read the value of rule `data.tenant.a`
+For example, with `package tenant; tenants.a := {"deny": true}`, the reference
+`data.tenant.tenants[input.tenant].deny` must read the value of rule `data.tenant.tenants.a`
 before indexing `deny`. For input `{"tenant":"a"}`, negating that reference
-must fail, just as negating `data.tenant.a.deny` does. Treating the shorter
+must fail, just as negating `data.tenant.tenants.a.deny` does. Treating the shorter
 rule head as absent incorrectly makes `not` succeed and can grant access.
 The RVM compiler retains that actual head and leaves the suffix for the VM,
 including when the selected rule suspends for a host response.
 
-When `default allow := false; allow if { not data.tenant[input.tenant].deny }`
-is defined in that same `tenant` package, the RVM returns `false` in both modes.
-The interpreter currently returns `true` for this same-package case; its
-`false` result for an equivalent rule in a separate `auth` package does not
-establish same-package parity. This interpreter drift remains deferred.
+With `default allow := false` and that negated reference in the same package,
+OPA and the interpreter return `false`, as does the corrected RVM in both modes.
+The separate-package form (`tenant.a` with the lookup in `auth.allow`) has the
+same expected result. These are the AUD02 lookup regressions. An unscoped
+same-package lookup through `data.tenant[input.tenant]` could select `allow`
+itself: OPA rejects that policy for recursion regardless of the supplied input.
+Regorus's different validation behavior for that form is outside this fix.
 
 Dynamic candidates are scheduled without treating them as proven recursive calls.
 For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in

@@ -388,22 +388,20 @@ cases:
 
   - note: same_package_tenant_deny_true_rtc
     strict: false
-    allow_interpreter_incorrect_behavior: true
     data: {}
     input: {tenant: a}
     modules: &same_package_tenant_modules
       - |
         package tenant
         import rego.v1
-        a := {"deny": true}
+        tenants.a := {"deny": true}
         default allow := false
-        allow if { not data.tenant[input.tenant].deny }
+        allow if { not data.tenant.tenants[input.tenant].deny }
     query: data.tenant.allow
     want_result: false
 
   - note: same_package_tenant_deny_true_suspendable
     strict: false
-    allow_interpreter_incorrect_behavior: true
     execution_mode: suspendable
     data: {}
     input: {tenant: a}
@@ -419,9 +417,9 @@ cases:
       - |
         package tenant
         import rego.v1
-        a := {"deny": false}
+        tenants.a := {"deny": false}
         default allow := false
-        allow if { not data.tenant[input.tenant].deny }
+        allow if { not data.tenant.tenants[input.tenant].deny }
     query: data.tenant.allow
     want_result: true
 
@@ -459,9 +457,9 @@ cases:
       - |
         package tenant
         import rego.v1
-        a := {}
+        tenants.a := {}
         default allow := false
-        allow if { not data.tenant[input.tenant].deny }
+        allow if { not data.tenant.tenants[input.tenant].deny }
     query: data.tenant.allow
     want_result: true
 

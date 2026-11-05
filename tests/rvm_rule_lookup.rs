@@ -20,15 +20,11 @@ fn same_namespace_selection_and_reuse() -> anyhow::Result<()> {
         let mut engine = Engine::new();
         engine.set_strict_builtin_errors(false);
         engine.add_policy("probe.rego".into(), module)?;
-        engine.set_input(Value::from_json_str(r#"{"key":"p"}"#)?);
-        // Preserve the interpreter's existing same-namespace behavior.
         let missing = if default.is_empty() {
             Value::Undefined
         } else {
             Value::from(99)
         };
-        assert_eq!(engine.eval_rule("data.probe.result".into())?, missing);
-
         let compiled = engine.compile_with_entrypoint(&Rc::from("data.probe.result"))?;
         let original = Compiler::compile_from_policy(&compiled, &["data.probe.result"])?;
         let bytes = original.serialize_binary().map_err(anyhow::Error::msg)?;
