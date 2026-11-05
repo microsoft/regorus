@@ -139,6 +139,9 @@ These subprocess-backed tests are excluded under Miri.
   remaining indexing and object assembly run only after the selected rule
   completes. Lookup keys are captured before switching register windows, and
   incomplete rule results are never cached as defaults.
+  Namespace assembly discovers rules incrementally using object cursors and one
+  active path rather than retaining a complete path for every descendant.
+  Cursor advancement checks execution time and memory limits.
 - Suspension: `InstructionOutcome::Suspend` records a `SuspendReason` (host
   await, breakpoint, step) and stores the last result snapshot. Host code calls
   `resume(resume_value)` to continue.

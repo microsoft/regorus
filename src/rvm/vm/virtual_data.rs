@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::rvm::instructions::LiteralOrRegister;
-use crate::value::Value;
-use alloc::collections::VecDeque;
+use crate::value::{Object, ObjectCursor, Value};
+use crate::Rc;
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::convert::TryFrom as _;
@@ -17,7 +17,9 @@ pub(super) struct VirtualLookupContinuation {
     pc: usize,
     dest: u8,
     result: Value,
-    jobs: VecDeque<(Vec<Value>, u16)>,
+    nodes: Vec<(Rc<Object>, ObjectCursor)>,
+    path: Vec<Value>,
+    next_node: Option<Value>,
     pending_path: Option<Vec<Value>>,
     root_path: Option<Vec<Value>>,
     remainder: Vec<Value>,
@@ -46,7 +48,7 @@ impl RegoVM {
             }
         }
 
-        if let Some((path, rule_index)) = lookup.jobs.pop_front() {
+        if let Some((path, rule_index)) = self.next_virtual_lookup_rule(&mut lookup)? {
             let dest = lookup.dest;
             let cached = lookup
                 .root_path
@@ -70,6 +72,49 @@ impl RegoVM {
         Ok(())
     }
 
+    fn next_virtual_lookup_rule(
+        &mut self,
+        lookup: &mut VirtualLookupContinuation,
+    ) -> Result<Option<(Vec<Value>, u16)>> {
+        loop {
+            self.execution_timer_tick(1)?;
+            self.memory_check()?;
+            if let Some(node) = lookup.next_node.take() {
+                match node {
+                    Value::Number(index) => {
+                        let rule_index = index
+                            .as_u64()
+                            .and_then(|index| u16::try_from(index).ok())
+                            .ok_or(VmError::InvalidRuleIndex {
+                                rule_index: Value::Number(index),
+                                pc: self.pc,
+                            })?;
+                        let path = lookup.path.clone();
+                        lookup.path.pop();
+                        return Ok(Some((path, rule_index)));
+                    }
+                    Value::Object(object) => {
+                        let cursor = object.cursor();
+                        lookup.nodes.push((object, cursor));
+                    }
+                    _ => {
+                        lookup.path.pop();
+                    }
+                }
+            }
+            let Some(&mut (ref object, ref mut cursor)) = lookup.nodes.last_mut() else {
+                return Ok(None);
+            };
+            if let Some((key, child)) = object.next(cursor) {
+                lookup.path.push(key.clone());
+                lookup.next_node = Some(child.clone());
+            } else {
+                lookup.nodes.pop();
+                lookup.path.pop();
+            }
+        }
+    }
+
     fn save_virtual_lookup(&mut self, lookup: VirtualLookupContinuation) -> Result<()> {
         let frame = self
             .execution_stack
@@ -89,33 +134,6 @@ impl RegoVM {
         data: Value,
         tree: Value,
     ) -> Result<()> {
-        let mut jobs = VecDeque::new();
-        let mut nodes = alloc::vec![(Vec::new(), tree)];
-        while let Some((path, node)) = nodes.pop() {
-            self.memory_check()?;
-            match node {
-                Value::Number(index) => {
-                    let rule_index = index
-                        .as_u64()
-                        .and_then(|index| u16::try_from(index).ok())
-                        .ok_or(VmError::InvalidRuleIndex {
-                            rule_index: Value::Number(index),
-                            pc: self.pc,
-                        })?;
-                    jobs.push_back((path, rule_index));
-                }
-                Value::Object(object) => {
-                    let children: Vec<_> = object.iter().collect();
-                    for (key, child) in children.into_iter().rev() {
-                        self.memory_check()?;
-                        let mut child_path = path.clone();
-                        child_path.push(key.clone());
-                        nodes.push((child_path, child.clone()));
-                    }
-                }
-                _ => {}
-            }
-        }
         self.save_virtual_lookup(VirtualLookupContinuation {
             pc: self.pc,
             dest,
@@ -124,7 +142,9 @@ impl RegoVM {
             } else {
                 data
             },
-            jobs,
+            nodes: Vec::new(),
+            path: Vec::new(),
+            next_node: Some(tree),
             pending_path: None,
             root_path: Some(root_path),
             remainder: Vec::new(),
@@ -370,7 +390,9 @@ impl RegoVM {
                             pc: self.pc,
                             dest: params.dest,
                             result: Value::Undefined,
-                            jobs: [(Vec::new(), rule_index)].into_iter().collect(),
+                            nodes: Vec::new(),
+                            path: Vec::new(),
+                            next_node: Some(Value::from(u64::from(rule_index))),
                             pending_path: None,
                             root_path: None,
                             remainder,
@@ -480,5 +502,52 @@ impl RegoVM {
         };
 
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::collections::BTreeMap;
+
+    #[test]
+    #[allow(clippy::panic_in_result_fn)]
+    fn virtual_namespace_cursor_retains_only_active_path() -> Result<()> {
+        let leaves = (0..4096)
+            .map(|index| (Value::from(index), Value::from(0)))
+            .collect::<BTreeMap<_, _>>();
+        let mut tree = Value::from(leaves);
+        for _ in 0..24 {
+            tree = Value::from(
+                [(Value::from("prefix"), tree)]
+                    .into_iter()
+                    .collect::<BTreeMap<_, _>>(),
+            );
+        }
+        let mut lookup = VirtualLookupContinuation {
+            pc: 0,
+            dest: 0,
+            result: Value::new_object(),
+            nodes: Vec::new(),
+            path: Vec::new(),
+            next_node: Some(tree),
+            pending_path: None,
+            root_path: Some(Vec::new()),
+            remainder: Vec::new(),
+        };
+        assert!(lookup.nodes.is_empty());
+        let mut vm = RegoVM::new();
+        let mut count = 0_usize;
+        while let Some((path, rule_index)) = vm.next_virtual_lookup_rule(&mut lookup)? {
+            assert_eq!(path.len(), 25);
+            assert_eq!(rule_index, 0);
+            assert!(lookup.nodes.len() <= 25);
+            assert_eq!(lookup.path.len(), 24);
+            count = count.saturating_add(1);
+        }
+        assert_eq!(count, 4096);
+        assert!(lookup.nodes.is_empty());
+        assert!(lookup.path.is_empty());
+        Ok(())
     }
 }

@@ -17,6 +17,7 @@ use crate::rvm::Instruction;
 use crate::utils::{append_path_component, format_string_path};
 use crate::Value;
 use alloc::collections::BTreeSet;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -204,6 +205,13 @@ impl<'a> Compiler<'a> {
             .inner
             .rule_paths
             .iter()
+            .filter(|rule_path| {
+                self.policy
+                    .inner
+                    .functions
+                    .get(*rule_path)
+                    .is_none_or(|(_, arity, _)| *arity == 0)
+            })
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
@@ -324,6 +332,9 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
+            if !self.policy.inner.rule_paths.contains(&rule_candidate) {
+                continue;
+            }
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 let rule_result_reg = self.alloc_register()?;
                 self.emit_instruction(
@@ -343,6 +354,36 @@ impl<'a> Compiler<'a> {
 
                 return Ok(rule_result_reg);
             }
+        }
+
+        if self.policy.inner.rules.contains_key(&current_pkg_prefix)
+            || self
+                .policy
+                .inner
+                .default_rules
+                .contains_key(&current_pkg_prefix)
+        {
+            let mut components = self
+                .policy
+                .inner
+                .rule_path_components
+                .get(&current_pkg_prefix)
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("missing components for namespace '{current_pkg_prefix}'"),
+                })?
+                .iter()
+                .skip(1)
+                .cloned()
+                .map(AccessComponent::Field)
+                .collect::<Vec<_>>();
+            components.extend_from_slice(&chain.components);
+            return self.compile_data_chain(
+                &ReferenceChain {
+                    root: ReferenceRoot::Variable("data".to_string()),
+                    components,
+                },
+                span,
+            );
         }
 
         // No rule found; fall back to module-level imports.

@@ -6,6 +6,7 @@ use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::{DeserializationResult, Program};
 use regorus::rvm::vm::{ExecutionMode, RegoVM, VmError};
 use regorus::{Engine, Rc, Value};
+use std::sync::Arc;
 
 #[test]
 fn same_namespace_selection_and_reuse() -> anyhow::Result<()> {
@@ -34,7 +35,7 @@ fn same_namespace_selection_and_reuse() -> anyhow::Result<()> {
             anyhow::bail!("expected a complete serialized lookup program");
         };
 
-        for program in [original, Rc::new(restored)] {
+        for program in [original, Arc::new(restored)] {
             for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
                 let mut vm = RegoVM::new();
                 vm.load_program(program.clone());
