@@ -48,10 +48,12 @@ cases:
 
         mixed := sprintf("String: %s, Number: %d, Percent: %%", ["hello", 123])
         verbose := sprintf("Value: %v", [{"key": "value"}])
+        booleans := sprintf("%t %t", [true, false])
     query: data.test
     want_result:
       mixed: "String: hello, Number: 123, Percent: %"
       verbose: "Value: {\"key\": \"value\"}"
+      booleans: "true false"
 
   - note: width formatting
     data: {}

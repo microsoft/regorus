@@ -45,3 +45,22 @@ cases:
       float_rounds_to_integer: "%!q(float64=10)"
       float_scientific_threshold: "%!q(float64=1e-05)"
       bad_index: "%!q(BADINDEX)"
+
+  - note: sprintf_boolean_run_to_completion
+    data: {}
+    modules:
+      - |
+        package test
+        result := sprintf("%t %t", [true, false])
+    query: data.test.result
+    want_result: "true false"
+
+  - note: sprintf_boolean_suspendable
+    execution_mode: suspendable
+    data: {}
+    modules:
+      - |
+        package test
+        result := sprintf("%t %t", [true, false])
+    query: data.test.result
+    want_result: "true false"
