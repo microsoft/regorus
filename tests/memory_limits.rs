@@ -96,6 +96,15 @@ package limit
 result := numbers.range_step(0, input, 1)
 "#;
 
+const RANGE_MODULE: &str = r#"
+package limit
+
+result := numbers.range(0, input)
+negated if {
+    not numbers.range(0, input)
+}
+"#;
+
 #[cfg(feature = "rvm")]
 const SUSPENDABLE_HOST_AWAIT_MODULE: &str = r#"
 package limit
@@ -725,6 +734,80 @@ fn sprintf_float_precision_checks_memory_during_formatting() {
         assert!(after.peak - before.allocated < 48 * 1024,
             "large formatting allocation occurred before the limit check: before={before:?}, after={after:?}");
     }).join().expect("memory test thread");
+}
+
+#[test]
+fn range_interpreter_preserves_memory_errors() {
+    let mut guard = LimitGuard::lock();
+    for strict in [false, true] {
+        for rule in ["data.limit.result", "data.limit.negated"] {
+            let mut engine = new_engine_with_module(RANGE_MODULE);
+            engine.set_strict_builtin_errors(strict);
+            for endpoint in [isize::MAX as i64, isize::MIN as i64] {
+                engine.set_input(Value::from(endpoint));
+                guard.set_with_additional_budget(64 * 1024);
+                let error = engine
+                    .eval_rule(rule.to_string())
+                    .expect_err("range evaluation must preserve the memory error");
+                guard.disable_limit();
+                assert_memory_limit_error(&error);
+            }
+
+            engine.set_input(Value::from(3));
+            guard.set_with_additional_budget(64 * 1024);
+            let value = engine
+                .eval_rule(rule.to_string())
+                .expect("reuse engine with a small range");
+            guard.disable_limit();
+            let expected = if rule == "data.limit.result" {
+                Value::from((0..=3).map(Value::from).collect::<Vec<_>>())
+            } else {
+                Value::Undefined
+            };
+            assert_eq!(value, expected);
+        }
+    }
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn range_vm_preserves_memory_errors() {
+    let mut guard = LimitGuard::lock();
+    for strict in [false, true] {
+        for rule in ["data.limit.result", "data.limit.negated"] {
+            let mut engine = new_engine_with_module(RANGE_MODULE);
+            let entrypoint = Rc::from(rule);
+            let compiled = engine
+                .compile_with_entrypoint(&entrypoint)
+                .expect("compile range policy");
+            let program = Compiler::compile_from_policy(&compiled, &[entrypoint.as_ref()])
+                .expect("compile range VM program");
+            let mut vm = RegoVM::new();
+            vm.load_program(program);
+            vm.set_strict_builtin_errors(strict);
+            for endpoint in [isize::MAX as i64, isize::MIN as i64] {
+                vm.set_input(Value::from(endpoint));
+                guard.set_with_additional_budget(64 * 1024);
+                let result = vm.execute();
+                guard.disable_limit();
+                assert!(
+                    matches!(result, Err(VmError::MemoryLimitExceeded { .. })),
+                    "range evaluation must preserve the VM memory error: {result:?}"
+                );
+            }
+
+            vm.set_input(Value::from(3));
+            guard.set_with_additional_budget(64 * 1024);
+            let value = vm.execute().expect("reuse VM with a small range");
+            guard.disable_limit();
+            let expected = if rule == "data.limit.result" {
+                Value::from((0..=3).map(Value::from).collect::<Vec<_>>())
+            } else {
+                Value::Undefined
+            };
+            assert_eq!(value, expected);
+        }
+    }
 }
 
 #[test]

@@ -111,6 +111,10 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Res
         .and_then(|count| usize::try_from(count).ok())
         .ok_or_else(|| span.error("could not determine number of elements"))?;
 
+    #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+    crate::utils::limits::check_memory_allocation(
+        num_elements.saturating_mul(core::mem::size_of::<Value>()),
+    )?;
     let mut values = Vec::new();
     values
         .try_reserve_exact(num_elements)
