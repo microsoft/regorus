@@ -476,8 +476,8 @@ impl<'a> Iterator for GoTimeFormatItems<'a> {
                 token!(&literal, Space(literal));
             }
 
-            Some(_) => {
-                let literal = &self.reminder[..1];
+            Some(c) => {
+                let literal = &self.reminder[..c.len_utf8()];
                 token!(&literal, Literal(literal));
             }
 

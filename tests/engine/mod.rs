@@ -5,6 +5,19 @@ use anyhow::{bail, Result};
 use regorus::*;
 
 #[test]
+fn numbers_range_extremes_return_errors() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.set_strict_builtin_errors(true);
+    for endpoint in [i64::MAX, i64::MIN] {
+        let error = engine
+            .eval_query(format!("numbers.range(0, {endpoint})"), false)
+            .expect_err("an unrepresentable range must return an error");
+        assert!(error.to_string().contains("could not"), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
 fn package_components_distinguish_literal_dots_from_nested_namespaces() -> Result<()> {
     let mut engine = Engine::new();
     let literal = engine.add_policy(
