@@ -16,19 +16,21 @@ fn artifacts_without_namespace_metadata_preserve_legacy_assembly() {
     engine
         .add_policy(
             "catalog.rego".into(),
-            "package catalog.nested\np := 7 if false".into(),
+            "package catalog.nested\np.q := 7 if false".into(),
         )
         .unwrap();
     engine
         .add_policy(
             "probe.rego".into(),
-            "package probe\nresult := count(data.catalog)".into(),
+            "package probe\nresult := count(data.catalog)\nprefix := data.catalog.nested.p".into(),
         )
         .unwrap();
     let policy = engine
         .compile_with_entrypoint(&Rc::from("data.probe.result"))
         .unwrap();
-    let mut program = Compiler::compile_from_policy(&policy, &["data.probe.result"]).unwrap();
+    let mut program =
+        Compiler::compile_from_policy(&policy, &["data.probe.result", "data.probe.prefix"])
+            .unwrap();
     // For ordinary rules, removing this additive metadata recreates the prior representation.
     Arc::make_mut(&mut program)
         .metadata
@@ -49,6 +51,15 @@ fn artifacts_without_namespace_metadata_preserve_legacy_assembly() {
                 Value::from(1),
                 "{mode:?}"
             );
+            assert_eq!(
+                vm.execute_entry_point_by_name("data.probe.prefix").unwrap(),
+                Value::from(
+                    [(Value::from("q"), Value::Undefined)]
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>()
+                ),
+                "{mode:?}"
+            );
         }
     }
 }
@@ -61,7 +72,10 @@ fn undefined_documents_preserve_only_package_namespaces_after_roundtrip() {
         ("catalog.rego", "package catalog\np.q.r := 7 if false"),
         (
             "probe.rego",
-            "package probe\nresult := [count(data.catalog), data.catalog]",
+            "package probe\n\
+             default prefix := 99\n\
+             prefix := data.catalog.p\n\
+             result := [count(data.catalog), data.catalog, prefix, data.catalog.nested]",
         ),
     ] {
         engine.add_policy(name.into(), source.into()).unwrap();
@@ -75,7 +89,7 @@ fn undefined_documents_preserve_only_package_namespaces_after_roundtrip() {
         DeserializationResult::Partial(_) => panic!("current program must not need recompilation"),
     };
     let json = Arc::new(Program::deserialize_json(&program.serialize_json().unwrap()).unwrap());
-    let expected = Value::from_json_str(r#"[1,{"nested":{}}]"#).unwrap();
+    let expected = Value::from_json_str(r#"[1,{"nested":{}},99,{}]"#).unwrap();
     assert_eq!(
         engine.eval_rule("data.probe.result".into()).unwrap(),
         expected
@@ -91,6 +105,78 @@ fn undefined_documents_preserve_only_package_namespaces_after_roundtrip() {
                     expected,
                     "{mode:?}"
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_argument_document_cache_is_per_execution_after_roundtrip() {
+    const ENTRY: &str = "data.probe.result";
+    let mut engine = Engine::new();
+    for (name, source) in [
+        (
+            "catalog.rego",
+            "package catalog\np() := __builtin_host_await(null, \"p\")",
+        ),
+        (
+            "probe.rego",
+            "package probe\n\
+             result := [data.catalog.p(), data.catalog.p, data.catalog[input.key],\n\
+                        data.catalog, data.catalog.p()]",
+        ),
+    ] {
+        engine.add_policy(name.into(), source.into()).unwrap();
+    }
+    let policy = engine.compile_with_entrypoint(&Rc::from(ENTRY)).unwrap();
+    let program = Compiler::compile_from_policy(&policy, &[ENTRY]).unwrap();
+    let json = Arc::new(Program::deserialize_json(&program.serialize_json().unwrap()).unwrap());
+    let binary = match Program::deserialize_binary(&program.serialize_binary().unwrap()).unwrap() {
+        DeserializationResult::Complete(program) => Arc::new(program),
+        DeserializationResult::Partial(_) => panic!("current program must round-trip"),
+    };
+
+    for program in [program, json, binary] {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_input(Value::from_json_str(r#"{"key":"p"}"#).unwrap());
+            if mode == ExecutionMode::RunToCompletion {
+                vm.set_host_await_responses([(Value::from("p"), [Value::from(7), Value::from(8)])]);
+            }
+            for response in [Value::from(7), Value::from(8)] {
+                let result = vm.execute_entry_point_by_name(ENTRY).unwrap();
+                let result = if mode == ExecutionMode::Suspendable {
+                    assert!(matches!(
+                        vm.execution_state(),
+                        ExecutionState::Suspended {
+                            reason: SuspendReason::HostAwait { identifier, argument, .. }, ..
+                        } if identifier == &Value::from("p") && argument == &Value::Null
+                    ));
+                    vm.resume(Some(response.clone())).unwrap()
+                } else {
+                    result
+                };
+                let namespace = Value::from(
+                    [(Value::from("p"), response.clone())]
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>(),
+                );
+                let expected = Value::from(vec![
+                    response.clone(),
+                    response.clone(),
+                    response.clone(),
+                    namespace,
+                    response,
+                ]);
+                assert_eq!(result, expected, "{mode:?}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: expected }
+                    );
+                }
             }
         }
     }

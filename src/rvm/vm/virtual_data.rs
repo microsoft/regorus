@@ -149,14 +149,11 @@ impl RegoVM {
         data: Value,
         tree: Value,
     ) -> Result<()> {
+        let result = self.initial_virtual_subobject(data, &root_path)?;
         self.save_virtual_lookup(VirtualLookupContinuation {
             pc: self.pc,
             dest,
-            result: if data == Value::Undefined {
-                Value::new_object()
-            } else {
-                data
-            },
+            result,
             nodes: Vec::new(),
             path: Vec::new(),
             next_node: Some(tree),
@@ -195,14 +192,26 @@ impl RegoVM {
             root_path.push(key_value);
         }
 
-        let mut result_subobject = match data_subobject {
-            Value::Undefined => Value::new_object(),
-            subobject => subobject,
-        };
+        let mut result_subobject = self.initial_virtual_subobject(data_subobject, &root_path)?;
 
         self.traverse_rule_tree_subobject(rule_tree_subobject, &mut result_subobject, &root_path)?;
 
         Ok(result_subobject)
+    }
+
+    fn initial_virtual_subobject(&self, data: Value, root_path: &[Value]) -> Result<Value> {
+        if data == Value::Undefined
+            && (!self
+                .program
+                .metadata
+                .annotations
+                .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+                || self.is_virtual_namespace(root_path, &[])?)
+        {
+            Ok(Value::new_object())
+        } else {
+            Ok(data)
+        }
     }
 
     fn set_nested_value(target: &mut Value, path: &[Value], value: Value) -> Result<()> {

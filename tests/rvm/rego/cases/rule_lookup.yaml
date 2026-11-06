@@ -2,6 +2,188 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: undefined_selected_document_prefix
+    strict: false
+    input: &selected_prefix_input {key: p}
+    modules: &undefined_selected_prefix_modules
+      - |
+        package catalog
+        p.q.r := 7 if false
+      - &selected_prefix_probe |
+        package probe
+        default allow := false
+        allow if { data.catalog.p }
+        default direct := 99
+        direct := data.catalog.p
+        default nested := 99
+        nested := data.catalog.p.q
+        default dynamic := 99
+        dynamic := data.catalog[input.key]
+        result := [allow, direct, nested, dynamic]
+    query: data.probe.result
+    want_result: [false, 99, 99, 99]
+
+  - note: undefined_selected_document_prefix_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *undefined_selected_prefix_modules
+    query: data.probe.result
+    want_result: [false, 99, 99, 99]
+
+  - note: defined_selected_document_prefix
+    strict: false
+    input: *selected_prefix_input
+    modules: &defined_selected_prefix_modules
+      - |
+        package catalog
+        p.q.r := 7
+      - *selected_prefix_probe
+    query: data.probe.result
+    want_result: [true, {q: {r: 7}}, {r: 7}, {q: {r: 7}}]
+
+  - note: defined_selected_document_prefix_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *defined_selected_prefix_modules
+    query: data.probe.result
+    want_result: [true, {q: {r: 7}}, {r: 7}, {q: {r: 7}}]
+
+  - note: base_data_at_undefined_selected_document_prefix
+    strict: false
+    input: *selected_prefix_input
+    data: &selected_prefix_base {catalog: {p: {base: 8}}}
+    modules: *undefined_selected_prefix_modules
+    query: data.probe.result
+    want_result: [true, {base: 8}, 99, {base: 8}]
+
+  - note: base_data_at_undefined_selected_document_prefix_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    data: *selected_prefix_base
+    modules: *undefined_selected_prefix_modules
+    query: data.probe.result
+    want_result: [true, {base: 8}, 99, {base: 8}]
+
+  - note: undefined_selected_package_is_preserved
+    strict: false
+    input: *selected_prefix_input
+    modules: &undefined_selected_package_modules
+      - |
+        package catalog.p
+        q.r := 7 if false
+      - *selected_prefix_probe
+    query: data.probe.result
+    want_result: [true, {}, 99, {}]
+
+  - note: undefined_selected_package_is_preserved_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *undefined_selected_package_modules
+    query: data.probe.result
+    want_result: [true, {}, 99, {}]
+
+  - note: zero_argument_document_cache_dynamic_first
+    strict: false
+    skip_interpreter: true
+    input: *selected_prefix_input
+    modules: &zero_argument_document_cache_modules
+      - |
+        package catalog
+        p() := __builtin_host_await(null, "p")
+        f(x) := __builtin_host_await(x, "f")
+      - |
+        package probe
+        dynamic_first := [data.catalog[input.key], data.catalog[input.key],
+                          data.catalog.p, data.catalog, data.catalog.p(),
+                          data.catalog.f(1), data.catalog.f(2)]
+        direct_first := [data.catalog.p, data.catalog.p, data.catalog[input.key],
+                         data.catalog, data.catalog.p()]
+        namespace_first := [data.catalog, data.catalog, data.catalog.p,
+                            data.catalog[input.key], data.catalog.p()]
+        function_first := [data.catalog.p(), data.catalog.p(), data.catalog.p,
+                           data.catalog[input.key], data.catalog]
+    query: data.probe.dynamic_first
+    host_await_responses: &zero_argument_document_responses
+      - {id: p, value: 7}
+      - {id: f, value: 8}
+      - {id: f, value: 9}
+    want_result: [7, 7, 7, {p: 7}, 7, 8, 9]
+
+  - note: zero_argument_document_cache_dynamic_first_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.dynamic_first
+    host_await_responses_suspendable:
+      - {id: p, args: null, value: 7}
+      - {id: f, args: 1, value: 8}
+      - {id: f, args: 2, value: 9}
+    want_result: [7, 7, 7, {p: 7}, 7, 8, 9]
+
+  - note: zero_argument_document_cache_direct_first
+    strict: false
+    skip_interpreter: true
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.direct_first
+    host_await_responses: *zero_argument_document_responses
+    want_result: [7, 7, 7, {p: 7}, 7]
+
+  - note: zero_argument_document_cache_direct_first_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.direct_first
+    host_await_responses_suspendable: &zero_argument_document_suspendable_responses
+      - {id: p, args: null, value: 7}
+    want_result: [7, 7, 7, {p: 7}, 7]
+
+  - note: zero_argument_document_cache_namespace_first
+    strict: false
+    skip_interpreter: true
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.namespace_first
+    host_await_responses: *zero_argument_document_responses
+    want_result: [{p: 7}, {p: 7}, 7, 7, 7]
+
+  - note: zero_argument_document_cache_namespace_first_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.namespace_first
+    host_await_responses_suspendable: *zero_argument_document_suspendable_responses
+    want_result: [{p: 7}, {p: 7}, 7, 7, 7]
+
+  - note: zero_argument_document_cache_function_first
+    strict: false
+    skip_interpreter: true
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.function_first
+    host_await_responses: *zero_argument_document_responses
+    want_result: [7, 7, 7, 7, {p: 7}]
+
+  - note: zero_argument_document_cache_function_first_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *selected_prefix_input
+    modules: *zero_argument_document_cache_modules
+    query: data.probe.function_first
+    host_await_responses_suspendable: *zero_argument_document_suspendable_responses
+    want_result: [7, 7, 7, 7, {p: 7}]
+
   - note: undefined_nested_zero_argument_rule_preserves_package
     strict: false
     modules: &undefined_nested_zero_argument_modules

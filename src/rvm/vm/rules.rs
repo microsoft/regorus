@@ -17,6 +17,13 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    fn is_cacheable_rule_result(rule_info: &RuleInfo) -> bool {
+        rule_info
+            .function_info
+            .as_ref()
+            .is_none_or(|info| info.num_params == 0)
+    }
+
     fn check_rule_call(&self, rule_index: u16) -> Result<()> {
         if self
             .call_rule_stack
@@ -249,9 +256,9 @@ impl RegoVM {
             })?
             .clone();
 
-        let is_function_rule = rule_info.function_info.is_some();
+        let should_cache = Self::is_cacheable_rule_result(&rule_info);
 
-        if !is_function_rule {
+        if should_cache {
             let (ref computed, ref cached_result) =
                 *self
                     .rule_cache
@@ -278,7 +285,7 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
-            if !is_function_rule {
+            if should_cache {
                 let available = self.rule_cache.len();
                 let entry =
                     self.rule_cache
@@ -376,7 +383,7 @@ impl RegoVM {
         }
 
         let final_value = self.get_register(dest)?.clone();
-        if !is_function_rule {
+        if should_cache {
             let available = self.rule_cache.len();
             let entry = self
                 .rule_cache
@@ -427,8 +434,9 @@ impl RegoVM {
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
+        let should_cache = Self::is_cacheable_rule_result(&rule_info);
 
-        if !is_function_rule {
+        if should_cache {
             let (ref computed, ref cached_result) =
                 *self
                     .rule_cache
@@ -450,7 +458,7 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
-            if !is_function_rule {
+            if should_cache {
                 let available = self.rule_cache.len();
                 let entry =
                     self.rule_cache
@@ -778,7 +786,6 @@ impl RegoVM {
             rule_failed_due_to_inconsistency,
             rule_type,
             result_reg,
-            is_function_rule,
             saved_registers,
             saved_loop_stack,
             saved_comprehension_stack,
@@ -897,7 +904,7 @@ impl RegoVM {
                     register_count,
                 })?;
 
-        if !is_function_rule {
+        if Self::is_cacheable_rule_result(&rule_info) {
             let available = self.rule_cache.len();
             let entry = self
                 .rule_cache
