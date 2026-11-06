@@ -94,6 +94,9 @@ impl RegoVM {
                         return Ok(Some((path, rule_index)));
                     }
                     Value::Object(object) => {
+                        if object.is_empty() {
+                            Self::materialize_virtual_namespace(&mut lookup.result, &lookup.path)?;
+                        }
                         let cursor = object.cursor();
                         lookup.nodes.push((object, cursor));
                     }
@@ -192,6 +195,17 @@ impl RegoVM {
 
     fn set_nested_value(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
         Self::set_nested_value_static(target, path, value)
+    }
+
+    fn materialize_virtual_namespace(target: &mut Value, path: &[Value]) -> Result<()> {
+        let mut current = &*target;
+        for key in path {
+            current = &current[key];
+        }
+        if *current == Value::Undefined {
+            Self::set_nested_value(target, path, Value::new_object())?;
+        }
+        Ok(())
     }
 
     fn set_nested_value_static(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
@@ -308,6 +322,9 @@ impl RegoVM {
                 }
             }
             Value::Object(ref obj) => {
+                if obj.is_empty() {
+                    Self::materialize_virtual_namespace(result_subobject, relative_path)?;
+                }
                 for (key, value) in obj.iter() {
                     relative_path.push(key.clone());
                     self.traverse_rule_tree_subobject_with_path(

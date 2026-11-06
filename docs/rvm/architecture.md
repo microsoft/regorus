@@ -53,7 +53,9 @@ data. Candidate selection compares every shared path component, so a lookup
 under a nested namespace does not include unrelated sibling rules.
 Package-local namespace references use the same resolution as fully qualified
 `data` references, while local variables retain precedence. Parameterized
-functions are not virtual-document values and are excluded from lookup candidates.
+functions, including default-only functions, are not virtual-document values and
+are excluded from lookup candidates. Their package namespaces still exist as
+objects, even when the package has no document rules.
 
 For example, with `package tenant; tenants.a := {"deny": true}`, the reference
 `data.tenant.tenants[input.tenant].deny` must read the value of rule `data.tenant.tenants.a`

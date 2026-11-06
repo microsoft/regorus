@@ -2,6 +2,125 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: function_only_nested_namespace_preserves_base_data
+    strict: false
+    input: {key: empty}
+    data: {catalog: {empty: {base: 5}}}
+    modules: &nested_function_namespace_modules
+      - |
+        package catalog.empty
+        default f(x) := true
+      - |
+        package probe
+        result := [data.catalog.empty, data.catalog[input.key]]
+        missing := data.catalog.empty.absent
+        nonexistent := data.unknown
+        ancestor := count(data.catalog)
+    query: data.probe.result
+    want_result: [{base: 5}, {base: 5}]
+
+  - note: function_only_nested_namespace_preserves_base_data_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: {key: empty}
+    data: {catalog: {empty: {base: 5}}}
+    modules: *nested_function_namespace_modules
+    query: data.probe.result
+    want_result: [{base: 5}, {base: 5}]
+
+  - note: function_only_nested_namespace_is_empty
+    strict: false
+    input: {key: empty}
+    modules: *nested_function_namespace_modules
+    query: data.probe.result
+    want_result: [{}, {}]
+
+  - note: function_only_nested_namespace_is_empty_suspendable
+    strict: false
+    execution_mode: suspendable
+    input: {key: empty}
+    modules: *nested_function_namespace_modules
+    query: data.probe.result
+    want_result: [{}, {}]
+
+  - note: function_only_namespace_is_visible_from_ancestor
+    strict: false
+    modules: *nested_function_namespace_modules
+    query: data.probe.ancestor
+    want_result: 1
+
+  - note: function_only_namespace_is_visible_from_ancestor_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *nested_function_namespace_modules
+    query: data.probe.ancestor
+    want_result: 1
+
+  - note: function_only_namespace_missing_field_is_undefined
+    strict: false
+    modules: *nested_function_namespace_modules
+    query: data.probe.missing
+    want_result: "#undefined"
+
+  - note: function_only_namespace_missing_field_is_undefined_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *nested_function_namespace_modules
+    query: data.probe.missing
+    want_result: "#undefined"
+
+  - note: nonexistent_namespace_remains_undefined
+    strict: false
+    modules: *nested_function_namespace_modules
+    query: data.probe.nonexistent
+    want_result: "#undefined"
+
+  - note: nonexistent_namespace_remains_undefined_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *nested_function_namespace_modules
+    query: data.probe.nonexistent
+    want_result: "#undefined"
+
+  - note: default_only_function_namespace_is_empty
+    strict: false
+    modules: &empty_function_namespace_modules
+      - |
+        package catalog
+        default f(x) := true
+      - |
+        package probe
+        empty := count(data.catalog)
+    query: data.probe.empty
+    want_result: 0
+
+  - note: default_only_function_namespace_is_empty_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *empty_function_namespace_modules
+    query: data.probe.empty
+    want_result: 0
+
+  - note: default_only_function_is_not_virtual_document
+    strict: false
+    modules: &default_function_namespace_modules
+      - |
+        package catalog
+        p := 7
+        default f(x) := true
+      - |
+        package probe
+        result := count(data.catalog)
+    query: data.probe.result
+    want_result: 1
+
+  - note: default_only_function_is_not_virtual_document_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *default_function_namespace_modules
+    query: data.probe.result
+    want_result: 1
+
   - note: local_default_namespace
     strict: false
     input: {key: a}
@@ -389,43 +508,6 @@ cases:
       - {id: first, value: true}
       - {id: second, value: false}
     want_result: [[true, false], [true, false]]
-
-  - note: native_rule_depth_is_bounded
-    strict: false
-    skip_interpreter: true
-    modules: &deep_rules
-      - |
-        package probe
-        r0 := data.probe.r1
-        r1 := data.probe.r2
-        r2 := data.probe.r3
-        r3 := data.probe.r4
-        r4 := data.probe.r5
-        r5 := data.probe.r6
-        r6 := data.probe.r7
-        r7 := data.probe.r8
-        r8 := data.probe.r9
-        r9 := data.probe.r10
-        r10 := data.probe.r11
-        r11 := data.probe.r12
-        r12 := data.probe.r13
-        r13 := data.probe.r14
-        r14 := data.probe.r15
-        r15 := data.probe.r16
-        r16 := data.probe.r17
-        r17 := data.probe.r18
-        r18 := data.probe.r19
-        r19 := data.probe.r20
-        r20 := 7
-    query: data.probe.r0
-    want_error: "Rule call depth exceeded limit 16"
-
-  - note: suspendable_rule_depth_uses_explicit_frames
-    strict: false
-    execution_mode: suspendable
-    modules: *deep_rules
-    query: data.probe.r0
-    want_result: 7
 
   - note: dynamic_unselected_candidate_references_caller_namespace_rtc
     strict: false

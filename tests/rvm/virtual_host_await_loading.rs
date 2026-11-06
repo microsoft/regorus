@@ -10,6 +10,53 @@ use regorus::{Engine, Rc, Value};
 use std::sync::Arc;
 
 #[test]
+fn namespace_assembly_failure_preserves_rule_fallback() {
+    let mut engine = Engine::new();
+    engine.set_strict_builtin_errors(false);
+    engine
+        .add_policy(
+            "probe.rego".into(),
+            "package probe\n\
+             default result := 99\n\
+             result := data.catalog\n\
+             safe := 7"
+                .into(),
+        )
+        .unwrap();
+    engine
+        .add_policy("catalog.rego".into(), "package catalog\np := 7".into())
+        .unwrap();
+    let policy = engine
+        .compile_with_entrypoint(&Rc::from("data.probe.result"))
+        .unwrap();
+    let program =
+        Compiler::compile_from_policy(&policy, &["data.probe.result", "data.probe.safe"]).unwrap();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.set_data(Value::from_json_str(r#"{"catalog":1}"#).unwrap())
+            .unwrap();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_strict_builtin_errors(false);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.probe.result").unwrap(),
+            Value::from(99),
+            "{mode:?}"
+        );
+        if mode == ExecutionMode::Suspendable {
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Completed { .. }
+            ));
+        }
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.probe.safe").unwrap(),
+            Value::from(7)
+        );
+    }
+}
+
+#[test]
 fn loaded_dynamic_lookup_preserves_host_resume_contract() {
     const ENTRY: &str = "data.framework.result";
     let mut engine = Engine::new();

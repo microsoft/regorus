@@ -14,7 +14,7 @@ use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
 use crate::rvm::Instruction;
-use crate::utils::{append_path_component, format_string_path};
+use crate::utils::{append_path_component, format_string_path, get_rule_path_components};
 use crate::Value;
 use alloc::collections::BTreeSet;
 use alloc::format;
@@ -211,12 +211,56 @@ impl<'a> Compiler<'a> {
                     .functions
                     .get(*rule_path)
                     .is_none_or(|(_, arity, _)| *arity == 0)
+                    && self
+                        .policy
+                        .inner
+                        .default_rules
+                        .get(*rule_path)
+                        .is_none_or(|rules| {
+                            !rules.iter().any(|(rule, _)| {
+                                matches!(rule.as_ref(), crate::ast::Rule::Default { args, .. } if !args.is_empty())
+                            })
+                        })
             })
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
 
-        if !matching_rules.is_empty() {
+        let mut matches_namespace = false;
+        for module in self.policy.inner.modules.iter() {
+            let mut namespace = vec!["data".to_string()];
+            namespace.extend(
+                get_rule_path_components(&module.package.refr)
+                    .map_err(CompilerError::from)?
+                    .iter()
+                    .map(|component| component.value().to_string()),
+            );
+            if !path_pattern
+                .iter()
+                .zip(&namespace)
+                .all(|(pattern, component)| pattern.as_ref().is_none_or(|value| value == component))
+            {
+                continue;
+            }
+            if namespace.len() > crate::rvm::Program::MAX_PATH_DEPTH {
+                return Err(CompilerError::General {
+                    message: "Package path exceeds maximum rule path depth".to_string(),
+                }
+                .at(span));
+            }
+            let path: Vec<&str> = namespace.iter().map(String::as_str).collect();
+            let namespace_node = self
+                .program
+                .rule_tree
+                .make_or_get_value_mut(&path)
+                .map_err(CompilerError::from)?;
+            if matches!(namespace_node, Value::Undefined) {
+                *namespace_node = Value::new_object();
+            }
+            matches_namespace = true;
+        }
+
+        if !matching_rules.is_empty() || matches_namespace {
             // This path is a prefix of some rules - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
                 if chain
