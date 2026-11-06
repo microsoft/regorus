@@ -3067,7 +3067,16 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
-                                Err(e) => errors.push(e),
+                                Err(e) => {
+                                    if e.downcast_ref::<crate::LimitError>().is_some() {
+                                        self.scopes = scopes;
+                                        if let Some(with_functions) = with_functions_saved {
+                                            self.with_functions = with_functions;
+                                        }
+                                        return Err(e);
+                                    }
+                                    errors.push(e);
+                                }
                             }
                         }
                     }

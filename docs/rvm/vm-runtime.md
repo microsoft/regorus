@@ -100,9 +100,10 @@ encoder. Generic Serde callbacks have a separate 64-container nesting budget;
 this is not an input admission limit.
 
 Serialization-budget errors retain typed resource identity through builtin
-calls and interpreter function alternatives. They cannot select a successful
-alternative, default, or negated branch in non-strict mode. Ordinary builtin
-type errors keep their existing strict/non-strict semantics.
+calls and interpreter function evaluation, including default-function
+comprehensions. They cannot select a successful alternative, default, or
+negated branch in non-strict mode. Ordinary builtin type errors keep their
+existing strict/non-strict semantics.
 
 Collection destruction uses the upstream iterative final-owner drain. Shared
 owners are not cloned to release them, and exhausted object iterators are freed

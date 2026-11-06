@@ -126,6 +126,28 @@ fn interpreter_function_alternatives_preserve_resource_errors() {
 }
 
 #[test]
+fn interpreter_default_function_comprehension_preserves_resource_errors() {
+    for strict in [false, true] {
+        let mut engine = engine(
+            "package test\ndefault f(_) := [s | s := json.marshal(input)]\np := f(0)".into(),
+            strict,
+            nested(LIMIT + 1, 0),
+        );
+        let error = engine.eval_rule("data.test.p".into()).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<LimitError>(),
+            Some(&LimitError::SerializationDepthExceeded { limit: LIMIT }),
+            "{strict}: {error:?}"
+        );
+        engine.set_input(Value::Null);
+        assert_eq!(
+            engine.eval_rule("data.test.p".into()).unwrap(),
+            Value::from(vec![Value::from("null")])
+        );
+    }
+}
+
+#[test]
 fn interpreter_function_type_errors_remain_ordinary() {
     for strict in [false, true] {
         let mut engine = engine(
