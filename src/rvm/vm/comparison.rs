@@ -3,7 +3,7 @@
 
 use core::cmp::Ordering;
 
-use crate::value::compare_checked;
+use crate::value::{compare_checked, compare_unchecked};
 use crate::Value;
 
 use super::errors::{Result, VmError};
@@ -40,7 +40,11 @@ impl RegoVM {
         equality: bool,
     ) -> Result<Ordering> {
         if !self.needs_checked_comparison() {
-            return Ok(self.get_register(left)?.cmp(self.get_register(right)?));
+            return Ok(compare_unchecked(
+                self.get_register(left)?,
+                self.get_register(right)?,
+                equality,
+            ));
         }
 
         let pc = self.pc;
