@@ -83,14 +83,24 @@ the traversal checkpoints each value and each 256-byte string chunk, including
 same-type comparisons and array, object-value, and set membership. Deadline
 errors remain errors in strict and non-strict execution, including resumed
 segments, which publish terminal error state and release execution values.
-Traversal work does not increment the instruction count.
+Traversal work counts toward the existing timer's `check_interval`, not the
+instruction count. The deadline is not restarted for each comparison.
+Equality retains its identity/length shortcuts; when the timer is disabled,
+comparison instructions use native iterative Value comparisons.
+
+The traversal does not memoize shared substructures. Compact shared DAGs can
+still require exponential work to finish, but covered comparisons can stop
+at a timer checkpoint instead of expanding the entire structure first.
 
 Timed set membership uses a sorted scan rather than B-tree lookup, since a
 B-tree comparator cannot return a deadline error. This is O(n) in set size only
 when the timer is enabled. Untimed membership retains the native lookup.
 Other implicit B-tree comparisons remain infallible: iterative Value traits
 prevent nesting-dependent stack growth but do not checkpoint the execution timer.
-Scalar number comparison is also an indivisible checkpoint unit.
+Scalar number comparison is also an indivisible checkpoint unit. This is not
+a hard interruption guarantee: builtins and other internal VM comparisons
+are not wired to these checks, and interpreter comparisons do not gain timer
+checks here.
 
 Strict comparison and shared builtin argument diagnostics report structural
 summaries such as `Array(len=1)` or `String(bytes=4096)`, without rendering the

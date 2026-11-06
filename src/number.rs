@@ -437,28 +437,12 @@ impl FromStr for Number {
 impl Number {
     #[verus_spec(result =>
         ensures
-            result == match ordering {
-                Ordering::Less => Ordering::Greater,
-                Ordering::Equal => Ordering::Equal,
-                Ordering::Greater => Ordering::Less,
-            },
-    )]
-    const fn reverse_ordering(ordering: Ordering) -> Ordering {
-        match ordering {
-            Ordering::Less => Ordering::Greater,
-            Ordering::Equal => Ordering::Equal,
-            Ordering::Greater => Ordering::Less,
-        }
-    }
-
-    #[verus_verify(external_body)]
-    #[verus_spec(result =>
-        ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
-    // Pinned Verus cannot prove the exact bridge from primitive f64 casts/comparisons to the
-    // bit-level scaled-integer `NumberView` model; trust only this executable helper's contract.
     fn cmp_float_uint(f: f64, n: u64) -> Ordering {
+        proof! {
+            lemma_cmp_float_uint(f, n);
+        }
         if f.is_nan() {
             return Ordering::Greater;
         }
@@ -488,14 +472,14 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n as int), result),
     )]
-    // Pinned Verus cannot prove the exact bridge from primitive f64 casts/comparisons to the
-    // scaled-integer `NumberView` model; this is the smallest executable helper using them.
     fn cmp_float_sint(f: f64, n: i64) -> Ordering {
+        proof! {
+            lemma_cmp_float_sint(f, n);
+        }
         if f.is_nan() {
             return Ordering::Greater;
         }
@@ -615,15 +599,14 @@ impl Number {
     // mantissa and compare it with the borrowed BigInt; fractional values compare their bounded
     // integer part first and use the fraction only as a tie-break. Neither operand is rounded
     // through f64, and the stored BigInt is never cloned or shifted.
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         ensures
             NumberView::Float(f).cmp_ensures(NumberView::Integer(n@), result),
     )]
-    // Pinned Verus cannot connect `integer_decode`, primitive f64 casts/comparisons, and
-    // BigInt construction/negation/shift to the bit-level scaled-integer model. Keeping the
-    // exact contract on this one executable helper avoids any global comparison axiom.
     fn cmp_float_int(f: f64, n: &BigInt) -> Ordering {
+        proof! {
+            lemma_cmp_float_int(f, n);
+        }
         if f.is_nan() {
             return Ordering::Greater;
         }
@@ -659,7 +642,6 @@ impl Number {
         }
     }
 
-    #[verus_verify(external_body)]
     #[verus_spec(result =>
         requires
             !a.is_nan_spec(),
@@ -667,9 +649,10 @@ impl Number {
         ensures
             NumberView::Float(a).cmp_ensures(NumberView::Float(b), result),
     )]
-    // Pinned Verus has no proved bridge from primitive f64 ordering to the bit-level float
-    // predicates used by `NumberView`; trust only this exact three-way executable helper.
     fn cmp_non_nan_float(a: f64, b: f64) -> Ordering {
+        proof! {
+            lemma_cmp_non_nan_float(a, b);
+        }
         if a < b {
             Ordering::Less
         } else if a > b {
@@ -744,30 +727,18 @@ impl Ord for Number {
             (Number::Float(a), Number::UInt(b)) => Self::cmp_float_uint(*a, *b),
             (Number::Float(a), Number::Int(b)) => Self::cmp_float_sint(*a, *b),
             (Number::Float(a), Number::BigInt(b)) => Self::cmp_float_int(*a, b),
-            (Number::UInt(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_uint(*b, *a))
-            }
-            (Number::Int(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_sint(*b, *a))
-            }
-            (Number::BigInt(a), Number::Float(b)) => {
-                Self::reverse_ordering(Self::cmp_float_int(*b, a))
-            }
+            (Number::UInt(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_uint(*b, *a)),
+            (Number::Int(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_sint(*b, *a)),
+            (Number::BigInt(a), Number::Float(b)) => Ordering::reverse(Self::cmp_float_int(*b, a)),
             (Number::UInt(a), Number::UInt(b)) => Self::cmp_uint(*a, *b),
             (Number::Int(a), Number::Int(b)) => Self::cmp_sint(*a, *b),
             (Number::UInt(a), Number::Int(b)) => Self::cmp_uint_sint(*a, *b),
-            (Number::Int(a), Number::UInt(b)) => {
-                Self::reverse_ordering(Self::cmp_uint_sint(*b, *a))
-            }
+            (Number::Int(a), Number::UInt(b)) => Ordering::reverse(Self::cmp_uint_sint(*b, *a)),
             (Number::BigInt(a), Number::BigInt(b)) => Self::cmp_bigint(a, b),
             (Number::BigInt(a), Number::UInt(b)) => Self::cmp_bigint_uint(a, *b),
-            (Number::UInt(a), Number::BigInt(b)) => {
-                Self::reverse_ordering(Self::cmp_bigint_uint(b, *a))
-            }
+            (Number::UInt(a), Number::BigInt(b)) => Ordering::reverse(Self::cmp_bigint_uint(b, *a)),
             (Number::BigInt(a), Number::Int(b)) => Self::cmp_bigint_sint(a, *b),
-            (Number::Int(a), Number::BigInt(b)) => {
-                Self::reverse_ordering(Self::cmp_bigint_sint(b, *a))
-            }
+            (Number::Int(a), Number::BigInt(b)) => Ordering::reverse(Self::cmp_bigint_sint(b, *a)),
         }
     }
 }
