@@ -1466,9 +1466,6 @@ impl Interpreter {
 
                     if target_is_function {
                         match self.eval_expr(&wm.r#as) {
-                            Err(error) if error.downcast_ref::<crate::LimitError>().is_some() => {
-                                return Err(error);
-                            }
                             Ok(v) if v != Value::Undefined => {
                                 // Function replaced by value.
                                 self.with_functions

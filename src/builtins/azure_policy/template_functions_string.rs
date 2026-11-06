@@ -191,14 +191,14 @@ fn fn_format(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
         .unwrap_or_default()
         .iter()
         .map(|v| match *v {
-            Value::String(ref s) => Ok(s.to_string()),
-            Value::Number(ref n) => Ok(n.format_decimal()),
-            Value::Bool(true) => Ok("True".into()),
-            Value::Bool(false) => Ok("False".into()),
-            Value::Null => Ok(String::new()),
-            _ => v.to_json_str_compact(),
+            Value::String(ref s) => s.to_string(),
+            Value::Number(ref n) => n.format_decimal(),
+            Value::Bool(true) => "True".into(),
+            Value::Bool(false) => "False".into(),
+            Value::Null => String::new(),
+            _ => v.to_string(),
         })
-        .collect::<Result<_>>()?;
+        .collect();
 
     let format_args_values = args.get(1..).unwrap_or_default();
 

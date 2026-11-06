@@ -17,9 +17,6 @@ mod effect_registry;
 mod engine;
 mod limits;
 mod lock;
-#[cfg(all(test, feature = "std"))]
-#[path = "../../../tests/native_depth_support/mod.rs"]
-mod native_depth_support;
 mod panic_guard;
 #[cfg(feature = "rbac")]
 mod rbac;

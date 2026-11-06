@@ -179,19 +179,13 @@ pub struct ArrayCursor {
 
 impl Ord for Array {
     fn cmp(&self, other: &Self) -> Ordering {
-        super::compare_values(super::CompareFrame::Array(self.iter(), other.iter()), None)
+        super::compare_values(super::CompareFrame::Array(self.iter(), other.iter()))
     }
 }
 
 impl PartialEq for Array {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self, other)
-            || (self.len() == other.len()
-                && super::compare_values(
-                    super::CompareFrame::Array(self.iter(), other.iter()),
-                    Some(true),
-                )
-                .is_eq())
+        self.len() == other.len() && self.cmp(other).is_eq()
     }
 }
 

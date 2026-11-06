@@ -62,13 +62,13 @@ fn fn_join(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool) -
     let parts: Vec<String> = arr
         .iter()
         .map(|v| match *v {
-            Value::String(ref s) => Ok(s.to_string()),
-            Value::Number(ref n) => Ok(n.format_decimal()),
-            Value::Bool(b) => Ok(b.to_string()),
-            Value::Null => Ok("null".to_string()),
-            _ => v.to_json_str_compact(),
+            Value::String(ref s) => s.to_string(),
+            Value::Number(ref n) => n.format_decimal(),
+            Value::Bool(b) => b.to_string(),
+            Value::Null => "null".to_string(),
+            _ => v.to_string(),
         })
-        .collect::<Result<_>>()?;
+        .collect();
     Ok(Value::from(parts.join(delim)))
 }
 

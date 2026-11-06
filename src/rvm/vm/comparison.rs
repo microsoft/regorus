@@ -3,7 +3,7 @@
 
 use core::cmp::Ordering;
 
-use crate::value::{compare_checked, compare_unchecked};
+use crate::value::compare_checked;
 use crate::Value;
 
 use super::errors::{Result, VmError};
@@ -20,53 +20,6 @@ fn operands(registers: &[Value], pc: usize, left: u8, right: u8) -> Result<(&Val
             })
     };
     Ok((get(left)?, get(right)?))
-}
-
-fn contains_checked<E>(
-    collection: &Value,
-    value: &Value,
-    memory_only: bool,
-    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
-) -> core::result::Result<bool, E> {
-    if memory_only && !matches!(value, Value::Array(_) | Value::Set(_) | Value::Object(_)) {
-        if let Value::Set(ref items) = *collection {
-            // A scalar probe cannot descend into stored containers. Keep the
-            // logarithmic lookup when no timer needs to interrupt comparisons.
-            checkpoint()?;
-            let found = items.contains(value);
-            checkpoint()?;
-            return Ok(found);
-        }
-    }
-
-    let mut equals =
-        |item: &Value| compare_checked(item, value, true, checkpoint).map(Ordering::is_eq);
-    match *collection {
-        Value::Array(ref items) => {
-            for item in items.iter() {
-                if equals(item)? {
-                    return Ok(true);
-                }
-            }
-        }
-        Value::Object(ref items) => {
-            for item in items.values() {
-                if equals(item)? {
-                    return Ok(true);
-                }
-            }
-        }
-        // A B-tree comparator cannot return a resource error mid-traversal.
-        Value::Set(ref items) => {
-            for item in items.iter_sorted() {
-                if equals(item)? {
-                    return Ok(true);
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(false)
 }
 
 impl RegoVM {
@@ -87,11 +40,7 @@ impl RegoVM {
         equality: bool,
     ) -> Result<Ordering> {
         if !self.needs_checked_comparison() {
-            return Ok(compare_unchecked(
-                self.get_register(left)?,
-                self.get_register(right)?,
-                equality,
-            ));
+            return Ok(self.get_register(left)?.cmp(self.get_register(right)?));
         }
 
         let pc = self.pc;
@@ -116,15 +65,39 @@ impl RegoVM {
         }
 
         let (value, collection) = (value.clone(), collection.clone());
-        contains_checked(
-            &collection,
-            &value,
-            self.execution_timer.config().is_none(),
-            &mut || {
+        let mut equals = |item: &Value| {
+            compare_checked(item, &value, true, &mut || {
                 Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
                 self.check_initial_memory_limit()
-            },
-        )
+            })
+            .map(Ordering::is_eq)
+        };
+        match collection {
+            Value::Array(ref items) => {
+                for item in items.iter() {
+                    if equals(item)? {
+                        return Ok(true);
+                    }
+                }
+            }
+            Value::Object(ref items) => {
+                for item in items.values() {
+                    if equals(item)? {
+                        return Ok(true);
+                    }
+                }
+            }
+            // B-tree lookup cannot interrupt its comparator. A checked scan can.
+            Value::Set(ref items) => {
+                for item in items.iter_sorted() {
+                    if equals(item)? {
+                        return Ok(true);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
     }
 }
 
@@ -576,96 +549,6 @@ mod tests {
             }
         }
         Ok(())
-    }
-
-    #[test]
-    fn memory_only_scalar_membership_has_constant_checkpoint_work() -> anyhow::Result<()> {
-        for width in [16, 1024, 16384] {
-            let mut items = Set::from_iter((0..width).map(Value::from));
-            items.extend([
-                Value::Null,
-                Value::Bool(true),
-                Value::from("scalar"),
-                Value::Undefined,
-                dag(20, core::convert::identity),
-                Value::new_set(),
-                Value::new_object(),
-            ]);
-            let collection = items.into_value();
-            for needle in [
-                Value::Null,
-                Value::Bool(false),
-                Value::Bool(true),
-                Value::from(width - 1),
-                Value::from(width),
-                Value::from(1.0_f64),
-                Value::from(f64::NAN),
-                Value::from_numeric_string("1234567890123456789012345678901234567890")?,
-                Value::from("scalar"),
-                Value::from("missing"),
-                Value::Undefined,
-            ] {
-                let expected = collection.as_set()?.contains(&needle);
-                let mut checkpoints = 0;
-                let found = contains_checked(&collection, &needle, true, &mut || {
-                    checkpoints += 1;
-                    Ok::<(), Infallible>(())
-                });
-                assert_eq!(found, Ok(expected));
-                assert_eq!(checkpoints, 2, "width={width}, needle={needle:?}");
-                for fail_at in [1, 2] {
-                    let mut failure_checkpoints = 0;
-                    assert_eq!(
-                        contains_checked(&collection, &needle, true, &mut || {
-                            failure_checkpoints += 1;
-                            if failure_checkpoints == fail_at {
-                                Err("memory")
-                            } else {
-                                Ok(())
-                            }
-                        }),
-                        Err("memory")
-                    );
-                    assert_eq!(failure_checkpoints, fail_at);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn checked_set_membership_retains_string_and_compound_checkpoints() {
-        for (collection, needle, memory_only) in [
-            (
-                Set::from_iter([Value::from("x".repeat(4096))]).into_value(),
-                Value::from("x".repeat(4096)),
-                false,
-            ),
-            (
-                Set::from_iter([dag(8, core::convert::identity)]).into_value(),
-                dag(8, core::convert::identity),
-                false,
-            ),
-            (
-                Set::from_iter([dag(8, core::convert::identity)]).into_value(),
-                dag(8, core::convert::identity),
-                true,
-            ),
-        ] {
-            let mut checkpoints = 0;
-            assert_eq!(
-                contains_checked(&collection, &needle, memory_only, &mut || {
-                    checkpoints += 1;
-                    if checkpoints == 4 {
-                        Err("resource")
-                    } else {
-                        Ok(())
-                    }
-                }),
-                Err("resource")
-            );
-            assert_eq!(checkpoints, 4);
-        }
     }
 
     #[test]

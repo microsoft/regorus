@@ -232,22 +232,16 @@ enum SetCursorInner {
 
 impl Ord for Set {
     fn cmp(&self, other: &Self) -> Ordering {
-        super::compare_values(
-            super::CompareFrame::Set(self.iter_sorted(), other.iter_sorted()),
-            None,
-        )
+        super::compare_values(super::CompareFrame::Set(
+            self.iter_sorted(),
+            other.iter_sorted(),
+        ))
     }
 }
 
 impl PartialEq for Set {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self, other)
-            || (self.len() == other.len()
-                && super::compare_values(
-                    super::CompareFrame::Set(self.iter_sorted(), other.iter_sorted()),
-                    Some(true),
-                )
-                .is_eq())
+        self.len() == other.len() && self.cmp(other).is_eq()
     }
 }
 

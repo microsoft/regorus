@@ -19,7 +19,7 @@ impl Serialize for Object {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
-            limit_error: None,
+            limit_exceeded: None,
         }
         .serialize(serializer)
     }
@@ -28,36 +28,28 @@ impl Serialize for Object {
 impl Serialize for SerializeWithBudget<'_, Object> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::Error;
-        let remaining = serialization_child_budget::<S::Error>(self.remaining, self.limit_error)?;
+        let remaining =
+            serialization_child_budget::<S::Error>(self.remaining, self.limit_exceeded)?;
         let mut map = serializer.serialize_map(Some(self.value.len()))?;
         // Sorted iteration: canonical JSON.
         for (k, v) in self.value.iter_sorted() {
             let value = SerializeWithBudget {
                 value: v,
                 remaining,
-                limit_error: self.limit_error,
+                limit_exceeded: self.limit_exceeded,
             };
             match *k {
                 Value::String(_) => map.serialize_entry(
                     &SerializeWithBudget {
                         value: k,
                         remaining,
-                        limit_error: self.limit_error,
+                        limit_exceeded: self.limit_exceeded,
                     },
                     &value,
                 )?,
                 _ => {
                     // Non-string keys retain their compact JSON string encoding.
-                    let key_str = k.json_string(false).map_err(|error| {
-                        if let (Some(witness), Some(limit)) =
-                            (self.limit_error, error.downcast_ref::<crate::LimitError>())
-                        {
-                            if witness.get().is_none() {
-                                witness.set(Some(*limit));
-                            }
-                        }
-                        Error::custom(error)
-                    })?;
+                    let key_str = k.json_string(false).map_err(Error::custom)?;
                     map.serialize_entry(&key_str, &value)?;
                 }
             }

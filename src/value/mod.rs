@@ -174,22 +174,11 @@ enum CompareFrame<'a> {
     Object(Iter<'a>, Iter<'a>),
 }
 
-fn compare_values(first: CompareFrame<'_>, equality: Option<bool>) -> core::cmp::Ordering {
-    match compare_frames(first, equality, &mut || {
-        Ok::<(), core::convert::Infallible>(())
-    }) {
+fn compare_values(first: CompareFrame<'_>) -> core::cmp::Ordering {
+    match compare_frames(first, None, &mut || Ok::<(), core::convert::Infallible>(())) {
         Ok(order) => order,
         Err(never) => match never {},
     }
-}
-
-#[cfg(feature = "rvm")]
-pub(crate) fn compare_unchecked(
-    left: &Value,
-    right: &Value,
-    equality: bool,
-) -> core::cmp::Ordering {
-    compare_values(CompareFrame::Value(left, right), equality.then_some(true))
 }
 
 #[cfg(feature = "rvm")]
@@ -356,7 +345,7 @@ const fn value_rank(value: &Value) -> u8 {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        compare_values(CompareFrame::Value(self, other), Some(true)).is_eq()
+        self.cmp(other).is_eq()
     }
 }
 
@@ -364,7 +353,7 @@ impl Eq for Value {}
 
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        compare_values(CompareFrame::Value(self, other), None)
+        compare_values(CompareFrame::Value(self, other))
     }
 }
 
@@ -382,12 +371,6 @@ enum JsonFrame<'a> {
     Key(&'a Value),
     EndKey(Vec<u8>),
     Text(&'static str),
-    QueryResults(&'a QueryResults),
-    Results(core::slice::Iter<'a, QueryResult>, bool),
-    Result(&'a QueryResult),
-    Expressions(core::slice::Iter<'a, Expression>, bool),
-    Expression(&'a Expression),
-    ExpressionMetadata(&'a Expression),
 }
 
 struct JsonOutput<'a, E> {
@@ -493,20 +476,13 @@ impl Value {
         pretty: bool,
         checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
     ) -> core::result::Result<String, E> {
-        Self::json_frames_with_checkpoint(JsonFrame::Value(self, pretty.then_some(0)), checkpoint)
-    }
-
-    fn json_frames_with_checkpoint<E: From<anyhow::Error>>(
-        first: JsonFrame<'_>,
-        checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
-    ) -> core::result::Result<String, E> {
         let mut output = JsonOutput {
             bytes: Vec::new(),
             checkpoint,
             #[cfg(feature = "std")]
             error: None,
         };
-        let mut pending = vec![first];
+        let mut pending = vec![JsonFrame::Value(self, pretty.then_some(0))];
         while let Some(frame) = pending.pop() {
             (output.checkpoint)()?;
             match frame {
@@ -589,99 +565,12 @@ impl Value {
                     output.scalar(&key)?;
                 }
                 JsonFrame::Text(text) => output.append(text.as_bytes())?,
-                // Query wrappers keep Serde's field order and omit-empty rules;
-                // their Value fields share the iterative encoder and resource checks.
-                JsonFrame::QueryResults(results) => {
-                    output.append(b"{")?;
-                    if results.result.is_empty() {
-                        output.append(b"}")?;
-                    } else {
-                        output.indent(Some(1))?;
-                        output.append(b"\"result\": [")?;
-                        pending.push(JsonFrame::Text("\n}"));
-                        pending.push(JsonFrame::Results(results.result.iter(), true));
-                    }
-                }
-                JsonFrame::Results(mut iter, first) => {
-                    if let Some(result) = iter.next() {
-                        if !first {
-                            output.append(b",")?;
-                        }
-                        output.indent(Some(2))?;
-                        pending.push(JsonFrame::Results(iter, false));
-                        pending.push(JsonFrame::Result(result));
-                    } else {
-                        if !first {
-                            output.indent(Some(1))?;
-                        }
-                        output.append(b"]")?;
-                    }
-                }
-                JsonFrame::Result(result) => {
-                    output.append(b"{")?;
-                    output.indent(Some(3))?;
-                    output.append(b"\"expressions\": [")?;
-                    pending.push(JsonFrame::Text("\n    }"));
-                    if !result.bindings.is_empty_object() {
-                        pending.push(JsonFrame::Value(&result.bindings, Some(3)));
-                        pending.push(JsonFrame::Text(",\n      \"bindings\": "));
-                    }
-                    pending.push(JsonFrame::Expressions(result.expressions.iter(), true));
-                }
-                JsonFrame::Expressions(mut iter, first) => {
-                    if let Some(expression) = iter.next() {
-                        if !first {
-                            output.append(b",")?;
-                        }
-                        output.indent(Some(4))?;
-                        pending.push(JsonFrame::Expressions(iter, false));
-                        pending.push(JsonFrame::Expression(expression));
-                    } else {
-                        if !first {
-                            output.indent(Some(3))?;
-                        }
-                        output.append(b"]")?;
-                    }
-                }
-                JsonFrame::Expression(expression) => {
-                    output.append(b"{")?;
-                    output.indent(Some(5))?;
-                    output.append(b"\"value\": ")?;
-                    pending.push(JsonFrame::ExpressionMetadata(expression));
-                    pending.push(JsonFrame::Value(&expression.value, Some(5)));
-                }
-                JsonFrame::ExpressionMetadata(expression) => {
-                    output.append(b",")?;
-                    output.indent(Some(5))?;
-                    output.append(b"\"text\": ")?;
-                    output.scalar(expression.text.as_ref())?;
-                    output.append(b",")?;
-                    output.indent(Some(5))?;
-                    output.append(b"\"location\": {")?;
-                    output.indent(Some(6))?;
-                    output.append(b"\"row\": ")?;
-                    output.scalar(&expression.location.row)?;
-                    output.append(b",")?;
-                    output.indent(Some(6))?;
-                    output.append(b"\"col\": ")?;
-                    output.scalar(&expression.location.col)?;
-                    output.indent(Some(5))?;
-                    output.append(b"}")?;
-                    output.indent(Some(4))?;
-                    output.append(b"}")?;
-                }
             }
         }
         String::from_utf8(output.bytes)
             .map_err(anyhow::Error::new)
             .map_err(E::from)
     }
-}
-
-pub(crate) fn query_results_to_json(results: &QueryResults) -> Result<String> {
-    Value::json_frames_with_checkpoint(JsonFrame::QueryResults(results), &mut || {
-        crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)
-    })
 }
 
 enum DebugFrame<'a> {
@@ -946,23 +835,20 @@ const MAX_SERIALIZATION_CONTAINERS: usize = 64;
 pub(crate) struct SerializeWithBudget<'a, T> {
     value: &'a T,
     remaining: usize,
-    limit_error: Option<&'a core::cell::Cell<Option<crate::LimitError>>>,
+    limit_exceeded: Option<&'a core::cell::Cell<bool>>,
 }
 
 fn serialization_child_budget<E: serde::ser::Error>(
     remaining: usize,
-    limit_error: Option<&core::cell::Cell<Option<crate::LimitError>>>,
+    limit_exceeded: Option<&core::cell::Cell<bool>>,
 ) -> Result<usize, E> {
     remaining.checked_sub(1).ok_or_else(|| {
-        let error = crate::LimitError::SerializationDepthExceeded {
-            limit: MAX_SERIALIZATION_CONTAINERS,
-        };
-        if let Some(witness) = limit_error {
-            if witness.get().is_none() {
-                witness.set(Some(error));
-            }
+        if let Some(exceeded) = limit_exceeded {
+            exceeded.set(true);
         }
-        E::custom(error)
+        E::custom(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        })
     })
 }
 
@@ -975,15 +861,17 @@ pub(crate) fn serialize_with_limits<T, E>(
 where
     E: core::error::Error + Send + Sync + 'static,
 {
-    let limit_error = core::cell::Cell::new(None);
+    let limit_exceeded = core::cell::Cell::new(false);
     let value = SerializeWithBudget {
         value,
         remaining: MAX_SERIALIZATION_CONTAINERS,
-        limit_error: Some(&limit_error),
+        limit_exceeded: Some(&limit_exceeded),
     };
     let result = serialize(&value);
-    if let Some(error) = limit_error.get() {
-        Err(anyhow!(error))
+    if limit_exceeded.get() {
+        Err(anyhow!(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        }))
     } else {
         result.map_err(anyhow::Error::new)
     }
@@ -998,7 +886,7 @@ impl Serialize for Value {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
-            limit_error: None,
+            limit_exceeded: None,
         }
         .serialize(serializer)
     }
@@ -1014,19 +902,19 @@ impl Serialize for SerializeWithBudget<'_, Value> {
             Value::Array(a) => SerializeWithBudget {
                 value: a.as_ref(),
                 remaining: self.remaining,
-                limit_error: self.limit_error,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
             Value::Object(fields) => SerializeWithBudget {
                 value: fields.as_ref(),
                 remaining: self.remaining,
-                limit_error: self.limit_error,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
             Value::Set(s) => SerializeWithBudget {
                 value: s.as_ref(),
                 remaining: self.remaining,
-                limit_error: self.limit_error,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
 
@@ -1458,14 +1346,6 @@ impl Value {
     /// ```
     pub fn to_json_str(&self) -> Result<String> {
         self.json_string(true)
-    }
-
-    /// Serialize a value as compact JSON using iterative traversal.
-    ///
-    /// Unlike generic Serde serialization, this has no container nesting budget.
-    /// Resource failures are returned as errors rather than Display diagnostics.
-    pub fn to_json_str_compact(&self) -> Result<String> {
-        self.json_string(false)
     }
 
     #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]

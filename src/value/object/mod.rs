@@ -195,17 +195,10 @@ impl Object {
 
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
-        if core::ptr::eq(self, other) {
-            return true;
-        }
         if self.len() != other.len() {
             return false;
         }
-        super::compare_values(
-            super::CompareFrame::Object(self.iter_sorted(), other.iter_sorted()),
-            Some(true),
-        )
-        .is_eq()
+        self.cmp(other).is_eq()
     }
 }
 
@@ -213,10 +206,10 @@ impl Eq for Object {}
 
 impl Ord for Object {
     fn cmp(&self, other: &Self) -> Ordering {
-        super::compare_values(
-            super::CompareFrame::Object(self.iter_sorted(), other.iter_sorted()),
-            None,
-        )
+        super::compare_values(super::CompareFrame::Object(
+            self.iter_sorted(),
+            other.iter_sorted(),
+        ))
     }
 }
 

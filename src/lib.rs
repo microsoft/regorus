@@ -516,16 +516,6 @@ pub struct QueryResults {
     pub result: Vec<QueryResult>,
 }
 
-impl QueryResults {
-    /// Serialize query results as pretty JSON, preserving the Serde field layout.
-    ///
-    /// Value fields are encoded iteratively without Serde's container nesting
-    /// budget. Resource failures are returned as errors.
-    pub fn to_json_str(&self) -> anyhow::Result<String> {
-        crate::value::query_results_to_json(self)
-    }
-}
-
 /// A user defined builtin function implementation.
 ///
 /// It is not necessary to implement this trait directly.

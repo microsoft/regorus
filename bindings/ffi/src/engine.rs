@@ -58,10 +58,6 @@ impl Clone for RegorusEngine {
     }
 }
 
-#[cfg(all(test, feature = "std"))]
-#[path = "engine_value_safety_tests.rs"]
-mod value_safety_tests;
-
 #[cfg(all(test, feature = "contention_checks", feature = "std"))]
 mod tests {
     use super::RegorusEngine;
@@ -809,7 +805,7 @@ pub extern "C" fn regorus_engine_eval_query(
             let engine = to_shared_ref(engine as *const RegorusEngine)?;
             let mut guard = engine.try_write()?;
             let results = guard.eval_query(from_c_str(query)?, false)?;
-            results.to_json_str()
+            Ok(serde_json::to_string_pretty(&results)?)
         }();
         match output {
             Ok(out) => RegorusResult::ok_string(out),
