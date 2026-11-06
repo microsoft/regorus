@@ -106,9 +106,53 @@ impl<T> NodeRef<T> {
 
 pub type Ref<T> = NodeRef<T>;
 
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub enum Expr {
+// Keep the field order shared by the enum and its checked diagnostic/serde entry points.
+macro_rules! define_expr {
+    ($( $(#[$attribute:meta])* $variant:ident { $( $field:ident: $ty:ty, )* }, )*) => {
+        pub enum Expr {
+            $( $(#[$attribute])* $variant { $( $field: $ty, )* }, )*
+        }
+
+        impl fmt::Debug for Expr {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                if let Err(error) = self.check_depth() {
+                    return write!(formatter, "<Expr cannot be formatted: {error}>");
+                }
+                match *self {
+                    $( $(#[$attribute])* Self::$variant { $( ref $field, )* } => {
+                        formatter.debug_struct(stringify!($variant))
+                            $(.field(stringify!($field), $field))*
+                            .finish()
+                    }, )*
+                }
+            }
+        }
+
+        #[cfg(feature = "ast")]
+        impl serde::Serialize for Expr {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.check_depth().map_err(<S::Error as serde::ser::Error>::custom)?;
+                let variants = [$( $(#[$attribute])* stringify!($variant), )*];
+                match *self {
+                    $( $(#[$attribute])* Self::$variant { $( ref $field, )* } => {
+                        let index = variants.iter().position(|name| *name == stringify!($variant))
+                            .and_then(|index| u32::try_from(index).ok())
+                            .ok_or_else(|| <S::Error as serde::ser::Error>::custom("invalid expression variant"))?;
+                        let mut node = serializer.serialize_struct_variant(
+                            "Expr", index, stringify!($variant), [$(stringify!($field)),*].len()
+                        )?;
+                        $(serde::ser::SerializeStructVariant::serialize_field(
+                            &mut node, stringify!($field), $field
+                        )?;)*
+                        serde::ser::SerializeStructVariant::end(node)
+                    }, )*
+                }
+            }
+        }
+    };
+}
+
+define_expr! {
     // Simple items that only have a span as content.
     String {
         span: Span,
@@ -268,35 +312,298 @@ pub enum Expr {
 }
 
 impl Expr {
-    fn detach_reference_children(&mut self, pending: &mut Vec<Ref<Expr>>) {
+    pub(crate) const MAX_DEPTH: usize = 32;
+
+    pub(crate) fn check_depth(&self) -> anyhow::Result<()> {
+        check_ast_depth(AstNode::Expr(self))
+    }
+
+    fn detach_children(&mut self, pending: &mut Vec<OwnedAstNode>) {
+        fn expression(child: &mut Ref<Expr>, pending: &mut Vec<OwnedAstNode>) {
+            let placeholder = Ref::new(Expr::Null {
+                span: child.span().clone(),
+                value: Value::Null,
+                eidx: 0,
+            });
+            pending.push(OwnedAstNode::Expr(core::mem::replace(child, placeholder)));
+        }
+        fn query(child: &mut Ref<Query>, pending: &mut Vec<OwnedAstNode>) {
+            let placeholder = Ref::new(Query {
+                span: child.span.clone(),
+                stmts: Vec::new(),
+                qidx: 0,
+            });
+            pending.push(OwnedAstNode::Query(core::mem::replace(child, placeholder)));
+        }
         match *self {
-            Self::RefDot {
-                ref span,
-                ref mut refr,
+            Self::Array { ref mut items, .. } | Self::Set { ref mut items, .. } => {
+                pending.extend(core::mem::take(items).into_iter().map(OwnedAstNode::Expr));
+            }
+            Self::Object { ref mut fields, .. } => {
+                for (_, key, value) in core::mem::take(fields) {
+                    pending.push(OwnedAstNode::Expr(key));
+                    pending.push(OwnedAstNode::Expr(value));
+                }
+            }
+            Self::Call {
+                ref mut fcn,
+                ref mut params,
                 ..
             } => {
-                let placeholder = Ref::new(Self::Null {
-                    span: span.clone(),
-                    value: Value::Null,
-                    eidx: 0,
-                });
-                pending.push(core::mem::replace(refr, placeholder));
+                expression(fcn, pending);
+                pending.extend(core::mem::take(params).into_iter().map(OwnedAstNode::Expr));
             }
+            Self::UnaryExpr { ref mut expr, .. } => expression(expr, pending),
+            Self::RefDot { ref mut refr, .. } => expression(refr, pending),
             Self::RefBrack {
-                ref span,
                 ref mut refr,
                 ref mut index,
                 ..
             } => {
-                let placeholder = Ref::new(Self::Null {
-                    span: span.clone(),
-                    value: Value::Null,
-                    eidx: 0,
-                });
-                pending.push(core::mem::replace(refr, placeholder.clone()));
-                pending.push(core::mem::replace(index, placeholder));
+                expression(refr, pending);
+                expression(index, pending);
+            }
+            Self::BinExpr {
+                ref mut lhs,
+                ref mut rhs,
+                ..
+            }
+            | Self::BoolExpr {
+                ref mut lhs,
+                ref mut rhs,
+                ..
+            }
+            | Self::ArithExpr {
+                ref mut lhs,
+                ref mut rhs,
+                ..
+            }
+            | Self::AssignExpr {
+                ref mut lhs,
+                ref mut rhs,
+                ..
+            } => {
+                expression(lhs, pending);
+                expression(rhs, pending);
+            }
+            #[cfg(feature = "rego-extensions")]
+            Self::OrExpr {
+                ref mut lhs,
+                ref mut rhs,
+                ..
+            } => {
+                expression(lhs, pending);
+                expression(rhs, pending);
+            }
+            Self::Membership {
+                ref mut key,
+                ref mut value,
+                ref mut collection,
+                ..
+            } => {
+                if let Some(key) = key.take() {
+                    pending.push(OwnedAstNode::Expr(key));
+                }
+                expression(value, pending);
+                expression(collection, pending);
+            }
+            Self::ArrayCompr {
+                ref mut term,
+                query: ref mut child_query,
+                ..
+            }
+            | Self::SetCompr {
+                ref mut term,
+                query: ref mut child_query,
+                ..
+            } => {
+                expression(term, pending);
+                query(child_query, pending);
+            }
+            Self::ObjectCompr {
+                ref mut key,
+                ref mut value,
+                query: ref mut child_query,
+                ..
+            } => {
+                expression(key, pending);
+                expression(value, pending);
+                query(child_query, pending);
             }
             _ => {}
+        }
+    }
+}
+
+enum AstNode<'a> {
+    Expr(&'a Expr),
+    Query(&'a Query),
+}
+
+fn check_ast_depth(root: AstNode<'_>) -> anyhow::Result<()> {
+    let mut pending = alloc::vec![(root, 1_usize)];
+    while let Some((node, depth)) = pending.pop() {
+        let span = match node {
+            AstNode::Expr(expr) => expr.span(),
+            AstNode::Query(query) => &query.span,
+        };
+        if depth > Expr::MAX_DEPTH {
+            anyhow::bail!(span.error("expression nesting too deep (>32)"));
+        }
+        let next = depth.saturating_add(1);
+        match node {
+            AstNode::Expr(expr) => {
+                let mut expression = |child| pending.push((AstNode::Expr(child), next));
+                match *expr {
+                    Expr::Array { ref items, .. } | Expr::Set { ref items, .. } => {
+                        for item in items {
+                            expression(item);
+                        }
+                    }
+                    Expr::Object { ref fields, .. } => {
+                        for field in fields {
+                            expression(&field.1);
+                            expression(&field.2);
+                        }
+                    }
+                    Expr::Call {
+                        ref fcn,
+                        ref params,
+                        ..
+                    } => {
+                        expression(fcn);
+                        for param in params {
+                            expression(param);
+                        }
+                    }
+                    Expr::UnaryExpr { ref expr, .. } => expression(expr),
+                    Expr::RefDot { ref refr, .. } => expression(refr),
+                    Expr::RefBrack {
+                        ref refr,
+                        ref index,
+                        ..
+                    } => {
+                        expression(refr);
+                        expression(index);
+                    }
+                    Expr::BinExpr {
+                        ref lhs, ref rhs, ..
+                    }
+                    | Expr::BoolExpr {
+                        ref lhs, ref rhs, ..
+                    }
+                    | Expr::ArithExpr {
+                        ref lhs, ref rhs, ..
+                    }
+                    | Expr::AssignExpr {
+                        ref lhs, ref rhs, ..
+                    } => {
+                        expression(lhs);
+                        expression(rhs);
+                    }
+                    #[cfg(feature = "rego-extensions")]
+                    Expr::OrExpr {
+                        ref lhs, ref rhs, ..
+                    } => {
+                        expression(lhs);
+                        expression(rhs);
+                    }
+                    Expr::Membership {
+                        ref key,
+                        ref value,
+                        ref collection,
+                        ..
+                    } => {
+                        if let Some(ref key) = *key {
+                            expression(key);
+                        }
+                        expression(value);
+                        expression(collection);
+                    }
+                    Expr::ArrayCompr {
+                        ref term,
+                        ref query,
+                        ..
+                    }
+                    | Expr::SetCompr {
+                        ref term,
+                        ref query,
+                        ..
+                    } => {
+                        expression(term);
+                        pending.push((AstNode::Query(query), next));
+                    }
+                    Expr::ObjectCompr {
+                        ref key,
+                        ref value,
+                        ref query,
+                        ..
+                    } => {
+                        expression(key);
+                        expression(value);
+                        pending.push((AstNode::Query(query), next));
+                    }
+                    _ => {}
+                }
+            }
+            AstNode::Query(root_query) => {
+                for stmt in &root_query.stmts {
+                    for modifier in &stmt.with_mods {
+                        pending.push((AstNode::Expr(&modifier.refr), next));
+                        pending.push((AstNode::Expr(&modifier.r#as), next));
+                    }
+                    match stmt.literal {
+                        Literal::Expr { ref expr, .. } | Literal::NotExpr { ref expr, .. } => {
+                            pending.push((AstNode::Expr(expr), next));
+                        }
+                        Literal::SomeIn {
+                            ref key,
+                            ref value,
+                            ref collection,
+                            ..
+                        } => {
+                            if let Some(ref key) = *key {
+                                pending.push((AstNode::Expr(key), next));
+                            }
+                            pending.push((AstNode::Expr(value), next));
+                            pending.push((AstNode::Expr(collection), next));
+                        }
+                        Literal::Every {
+                            ref domain,
+                            ref query,
+                            ..
+                        } => {
+                            pending.push((AstNode::Expr(domain), next));
+                            pending.push((AstNode::Query(query), next));
+                        }
+                        Literal::SomeVars { .. } => {}
+                    }
+                }
+            }
+        }
+        crate::utils::limits::check_memory_limit_if_needed()?;
+    }
+    Ok(())
+}
+
+enum OwnedAstNode {
+    Expr(Ref<Expr>),
+    Query(Ref<Query>),
+}
+
+fn release_ast(pending: &mut Vec<OwnedAstNode>) {
+    while let Some(node) = pending.pop() {
+        match node {
+            OwnedAstNode::Expr(reference) => {
+                if let Some(mut expression) = reference.into_inner() {
+                    expression.detach_children(pending);
+                }
+            }
+            OwnedAstNode::Query(reference) => {
+                if let Some(mut query) = reference.into_inner() {
+                    query.detach_children(pending);
+                }
+            }
         }
     }
 }
@@ -304,15 +611,8 @@ impl Expr {
 impl Drop for Expr {
     fn drop(&mut self) {
         let mut pending = Vec::new();
-        self.detach_reference_children(&mut pending);
-
-        while let Some(reference) = pending.pop() {
-            // `into_inner` elects exactly one final owner during concurrent Arc releases.
-            if let Some(mut expression) = reference.into_inner() {
-                expression.detach_reference_children(&mut pending);
-                drop(expression);
-            }
-        }
+        self.detach_children(&mut pending);
+        release_ast(&mut pending);
     }
 }
 
@@ -587,12 +887,82 @@ pub struct LiteralStmt {
     pub sidx: u32,
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
 pub struct Query {
     pub span: Span,
     pub stmts: Vec<LiteralStmt>,
     pub qidx: u32,
+}
+
+impl fmt::Debug for Query {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Err(error) = self.check_depth() {
+            return write!(formatter, "<Query cannot be formatted: {error}>");
+        }
+        formatter
+            .debug_struct("Query")
+            .field("span", &self.span)
+            .field("stmts", &self.stmts)
+            .field("qidx", &self.qidx)
+            .finish()
+    }
+}
+
+#[cfg(feature = "ast")]
+impl serde::Serialize for Query {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.check_depth()
+            .map_err(<S::Error as serde::ser::Error>::custom)?;
+        let mut query = serializer.serialize_struct("Query", 3)?;
+        serde::ser::SerializeStruct::serialize_field(&mut query, "span", &self.span)?;
+        serde::ser::SerializeStruct::serialize_field(&mut query, "stmts", &self.stmts)?;
+        serde::ser::SerializeStruct::serialize_field(&mut query, "qidx", &self.qidx)?;
+        serde::ser::SerializeStruct::end(query)
+    }
+}
+
+impl Query {
+    pub(crate) fn check_depth(&self) -> anyhow::Result<()> {
+        check_ast_depth(AstNode::Query(self))
+    }
+
+    fn detach_children(&mut self, pending: &mut Vec<OwnedAstNode>) {
+        for stmt in core::mem::take(&mut self.stmts) {
+            for modifier in stmt.with_mods {
+                pending.push(OwnedAstNode::Expr(modifier.refr));
+                pending.push(OwnedAstNode::Expr(modifier.r#as));
+            }
+            match stmt.literal {
+                Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                    pending.push(OwnedAstNode::Expr(expr));
+                }
+                Literal::SomeIn {
+                    key,
+                    value,
+                    collection,
+                    ..
+                } => {
+                    if let Some(key) = key {
+                        pending.push(OwnedAstNode::Expr(key));
+                    }
+                    pending.push(OwnedAstNode::Expr(value));
+                    pending.push(OwnedAstNode::Expr(collection));
+                }
+                Literal::Every { domain, query, .. } => {
+                    pending.push(OwnedAstNode::Expr(domain));
+                    pending.push(OwnedAstNode::Query(query));
+                }
+                Literal::SomeVars { .. } => {}
+            }
+        }
+    }
+}
+
+impl Drop for Query {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        self.detach_children(&mut pending);
+        release_ast(&mut pending);
+    }
 }
 
 #[derive(Debug)]

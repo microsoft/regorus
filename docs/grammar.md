@@ -165,6 +165,24 @@ initial identifier as one. Every dotted identifier or bracketed string adds
 one component; dots inside a bracketed string do not. A 33rd component is
 rejected by the general policy parser.
 
+The Rego frontend also limits expression/query nesting and constructed AST
+height to 32. Scalars have height one; each expression or query adds one to
+the largest child height. Statement lists do not add height per sibling.
+This includes general references and operator chains, not just parentheses.
+Parenthesized grammar nesting is checked separately, before speculative
+parsing. Unsupported structures return parser errors.
+
+The interpreter has a separate private budget of 64 simultaneously active
+evaluation entries, shared by expressions, rules/functions, destructuring and
+native loop continuations. Exhaustion is an evaluation error, including in non-strict mode;
+it is not false, undefined, or a request to select a default. Ordinary statement
+iteration does not consume an entry per statement. These structural and native
+budgets are not limits on the depth of input/data Values.
+
+The RVM compiler also enforces its existing rule-tree path limit. A policy may
+parse successfully yet fail RVM compilation when its combined registered path
+exceeds that limit; direct entry-point lookup does not bypass this check.
+
 Static public entry-point lookup uses a separate iterative parser rather than
 building the recursively nested policy AST. It accepts dotted and bracketed
 string spellings up to the longest registered rule path, so equivalent

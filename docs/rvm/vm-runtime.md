@@ -119,8 +119,11 @@ Rust callers can change the per-VM limit with
 evaluation, including during resume, and survives evaluation resets and program
 loads. Zero rejects calls that need a native rule frame; cached results and
 default-only rules can still return without one. There is no new binding API.
-Raising the limit does not enlarge the host thread's stack and can cause stack
-overflow.
+The private supported native ceiling is 17. Larger settings are retained by the
+setter, but a synchronous uncached rule evaluation rejects them with
+`RuleCallDepthExceeded { limit: 17, .. }` before entering its body. The configured
+setting is not clamped or reset. Explicit suspendable frames remain independent
+of this setting; synchronous virtual-document lookups still check it.
 
 This VM resource limit can reject valid, nonrecursive policies. It is separate
 from instruction, time, and memory limits. Depth 16 was tested on Windows in
@@ -131,6 +134,9 @@ patterns may behave differently. The limit does not guarantee stack safety.
 reuse those cases to check typed errors, cleanup, VM reuse, and stepping. Both
 run in subprocesses with a timeout and a 2 MiB test-thread stack.
 These subprocess-backed tests are excluded under Miri.
+Additional boundary/configuration and frontend/interpreter regressions use
+explicit 1,500,000-byte workers inside isolated subprocesses. These bounded
+checks do not establish a universal host-stack guarantee.
 
 ### Run-to-completion
 

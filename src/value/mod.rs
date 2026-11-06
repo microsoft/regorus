@@ -24,6 +24,7 @@ mod tests;
 #[allow(unused_imports)] // surface for downstream PRs
 pub use array::{Array, ArrayCursor, ArrayIntoIter, ArrayIter, ArrayIterMut};
 pub use object::{IntoIter, Iter, IterMut, Object};
+pub(crate) use set::Iter as SetIter;
 #[allow(unused_imports)] // surface for downstream PRs
 pub use set::Set;
 

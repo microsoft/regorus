@@ -279,6 +279,13 @@ impl RegoVM {
         }
 
         // Explicit suspendable frames do not retain native dispatch frames.
+        const MAX_SUPPORTED_NATIVE_RULE_DEPTH: usize = 17;
+        if self.max_native_rule_call_depth > MAX_SUPPORTED_NATIVE_RULE_DEPTH {
+            return Err(VmError::RuleCallDepthExceeded {
+                limit: MAX_SUPPORTED_NATIVE_RULE_DEPTH,
+                pc: self.pc,
+            });
+        }
         if self.register_stack.len() >= self.max_native_rule_call_depth {
             return Err(VmError::RuleCallDepthExceeded {
                 limit: self.max_native_rule_call_depth,
