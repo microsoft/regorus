@@ -428,6 +428,21 @@ impl Interpreter {
 
     pub fn clean_internal_evaluation_state(&mut self) {
         self.data = self.init_data.clone();
+        // Start every evaluation without `with` overrides, even if a previous
+        // evaluation failed to restore them. The entries are reset in place
+        // because building lookup keys would allocate on every evaluation.
+        self.with_functions.clear();
+        if let Value::Object(with_document) = &mut self.with_document {
+            for (key, value) in Rc::make_mut(with_document).iter_mut() {
+                if let Value::String(key) = key {
+                    match key.as_ref() {
+                        "data" => *value = self.init_data.clone(),
+                        "input" => *value = self.input.clone(),
+                        _ => (),
+                    }
+                }
+            }
+        }
         self.processed.clear();
         self.processed_paths = Value::new_object();
         self.ensure_loop_var_values_capacity();
@@ -1628,33 +1643,38 @@ impl Interpreter {
             let (saved_state, _) = self.apply_with_modifiers(first_stmt)?;
 
             let collection_expr = Self::loop_collection_expr(loop_info).clone();
-            let loop_value = if let Expr::Call {
-                span, fcn, params, ..
-            } = collection_expr.as_ref()
-            {
-                // Handle walk(obj, output_param)
-                let extra_arg = get_extra_arg(
-                    &collection_expr,
-                    Some(self.current_module_path.as_str()),
-                    &self.compiled_policy.functions,
-                );
-                // If there is an extra arg, ignore it while computing the loop value.
-                let params_slice: &[ExprRef] = if extra_arg.is_some() {
-                    let (_, prefix) = params
-                        .split_last()
-                        .ok_or_else(|| anyhow!("internal error: expected params"))?;
-                    prefix
+            let loop_value = (|| -> Result<Value> {
+                if let Expr::Call {
+                    span, fcn, params, ..
+                } = collection_expr.as_ref()
+                {
+                    // Handle walk(obj, output_param)
+                    let extra_arg = get_extra_arg(
+                        &collection_expr,
+                        Some(self.current_module_path.as_str()),
+                        &self.compiled_policy.functions,
+                    );
+                    // If there is an extra arg, ignore it while computing the loop value.
+                    let params_slice: &[ExprRef] = if extra_arg.is_some() {
+                        let (_, prefix) = params
+                            .split_last()
+                            .ok_or_else(|| anyhow!("internal error: expected params"))?;
+                        prefix
+                    } else {
+                        params.as_slice()
+                    };
+                    self.eval_call_impl(span, &collection_expr, fcn, params_slice)
                 } else {
-                    params.as_slice()
-                };
-                self.eval_call_impl(span, &collection_expr, fcn, params_slice)?
-            } else {
-                self.eval_expr(&collection_expr)?
-            };
+                    self.eval_expr(&collection_expr)
+                }
+            })();
 
-            // Restore with modifiers.
+            // Restore with modifiers, also when the loop expression failed:
+            // the error may be ignored by a caller, and the with-document and
+            // function mocks must not outlive this statement.
             // TODO: Delay this restore so that the stmt doesn't have to apply with modifiers again.
             self.restore_state(saved_state)?;
+            let loop_value = loop_value?;
 
             // If the loop's index variable h<as already been assigned a value
             // (this can happen if the same index is used for two different collections),
