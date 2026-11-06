@@ -1,4 +1,33 @@
-Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior. 
+Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior.
+
+## Parser nesting limit
+
+While parsing a policy or query, at most 32 nested terms or `every` statements
+can be open at once. Each scalar, variable, array, set, object, function call,
+bracket index, unary `-`, parenthesized expression, comprehension, or `every`
+statement uses 1 slot while its inner tokens are parsed:
+
+- `[[1]]` uses 3 slots: outer array, inner array, and `1`.
+- 31 array wrappers around `1` (`[[...[1]...]]`) or 31 call wrappers around `1`
+  (`count(...count(1)...)`) use 32 slots and succeed; a 32nd wrapper fails with
+  `expression nesting too deep (>32)`.
+- Empty containers and zero-argument calls (`[]`, `{}`, `set()`, `f()`) have no
+  inner value, so 32 nested empty wrappers succeed and the 33rd fails.
+- Sibling elements (`[1, 2, 3]`, `f(1, 2, 3)`, or consecutive statements) close
+  their slot before the next sibling starts and do not add to depth.
+
+Exceeding 32 slots returns a parse error (`expression nesting too deep (>32)`),
+never `Undefined`. A rejected policy is not added to the `Engine`, and the same
+`Engine` remains usable for later policies and queries.
+
+To distinguish arrays/objects from comprehensions (`|`) and expressions from
+assignments (`=`, `:=`) without parsing deep terms twice, the parser scans ahead
+iteratively across the first term before recursing.
+
+This limit only bounds recursive descent in the parser (tested on a 1 MiB worker
+thread stack in debug and release builds, not a guarantee for arbitrary stack
+sizes). It is separate from the 32-component path-ref limit below, flat binary
+operator chains (`1 + 1 + ...`), host `Value` depth, and RVM rule-call depth.
 
 ```ebnf
 
