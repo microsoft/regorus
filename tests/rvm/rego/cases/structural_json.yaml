@@ -3,6 +3,54 @@
 
 # The existing RVM Rego harness also evaluates and compares the interpreter.
 cases:
+  - note: structural_json_object_schema_negation_preserves_false
+    input: '[{}] "quoted" \ backslash'
+    modules:
+      - |
+        package test
+        schema := {0: input, 1: true}
+        default allow_verify := false
+        allow_verify if { not json.verify_schema(schema)[0] }
+        default allow_match_schema := false
+        allow_match_schema if { not json.match_schema(1, schema)[0] }
+        default allow_match_document := false
+        allow_match_document if { not json.match_schema(schema, true)[0] }
+        result := {
+          "allow_verify": allow_verify,
+          "allow_match_schema": allow_match_schema,
+          "allow_match_document": allow_match_document,
+        }
+    query: data.test.result
+    want_result:
+      allow_verify: false
+      allow_match_schema: false
+      allow_match_document: false
+
+  - note: structural_json_object_schema_negation_preserves_false_suspendable
+    input: '[{}] "quoted" \ backslash'
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+        schema := {0: input, 1: true}
+        default allow_verify := false
+        allow_verify if { not json.verify_schema(schema)[0] }
+        default allow_match_schema := false
+        allow_match_schema if { not json.match_schema(1, schema)[0] }
+        default allow_match_document := false
+        allow_match_document if { not json.match_schema(schema, true)[0] }
+        result := {
+          "allow_verify": allow_verify,
+          "allow_match_schema": allow_match_schema,
+          "allow_match_document": allow_match_document,
+        }
+    query: data.test.result
+    want_result:
+      allow_verify: false
+      allow_match_schema: false
+      allow_match_document: false
+
   - note: structural_json_const_object_rejects_numeric_document
     input: '{"const":{"$serde_json::private::Number":"1"}}'
     modules:

@@ -288,7 +288,7 @@ impl RegoVM {
     }
 
     /// Validate VM state consistency for debugging
-    pub(super) fn validate_vm_state(&self) -> Result<()> {
+    pub(super) fn validate_vm_state(&mut self) -> Result<()> {
         self.validate_program_tree()?;
         // Check register bounds
         if self.registers.len() < self.base_register_count {
@@ -319,7 +319,17 @@ impl RegoVM {
         Ok(())
     }
 
-    pub(super) fn validate_program_tree(&self) -> Result<()> {
+    pub(super) fn validate_program_tree(&mut self) -> Result<()> {
+        if matches!(
+            self.program_tree_error,
+            Some(crate::utils::depth::DepthCheckError::Limit(_))
+        ) {
+            self.program_tree_error = crate::utils::depth::check_value(
+                &self.program.rule_tree,
+                crate::rvm::program::Program::MAX_PATH_DEPTH,
+            )
+            .err();
+        }
         match self.program_tree_error {
             None => Ok(()),
             Some(crate::utils::depth::DepthCheckError::Depth(_)) => {

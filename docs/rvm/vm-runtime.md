@@ -104,6 +104,12 @@ path still checks its full height. This avoids expanding every DAG occurrence
 just to admit a Value; it does not memoize `walk`, comparison, or output
 traversals, which may still expand shared occurrences.
 
+Program loading records rule-tree admission errors for execution to report.
+Structural depth failures stay rejected. Resource failures are checked again
+before execution: lifting a memory limit lets the same VM run a valid program
+without loading it again. A successful retry clears the saved error; a retry
+can still discover an actual depth violation.
+
 Resource-checked set membership uses a sorted scan rather than B-tree lookup,
 since a B-tree comparator cannot return a resource error. This is O(n) in set
 size when a timer or applicable memory limit is enabled. Unchecked membership
@@ -132,6 +138,12 @@ calls and interpreter function evaluation, including default-function
 comprehensions. They cannot select a successful alternative, default, or
 negated branch in non-strict mode. Ordinary builtin type errors keep their
 existing strict/non-strict semantics.
+
+JSON schema and document conversion use checked compact JSON output and the
+bounded structural reader, including objects with non-string keys. Memory
+exhaustion remains a typed error, not an invalid-schema Boolean or undefined
+document. For example, `not json.verify_schema({0: input, 1: true})[0]` cannot
+succeed just because copying a large input exhausts the memory budget.
 
 Collection destruction uses the upstream iterative final-owner drain. Shared
 owners are not cloned to release them, and exhausted object iterators are freed

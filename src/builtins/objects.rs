@@ -450,6 +450,15 @@ fn object_union_n(
 }
 
 #[cfg(feature = "jsonschema")]
+fn to_schema_json(arg: &Value) -> Result<serde_json::Value> {
+    crate::utils::depth::check_value(arg, crate::utils::depth::MAX_DEPTH)
+        .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
+    let json = arg.json_string(false)?;
+    crate::utils::json::from_str(&json, crate::utils::depth::MAX_DEPTH)
+        .map_err(crate::utils::json::JsonError::into_anyhow)
+}
+
+#[cfg(feature = "jsonschema")]
 fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::Validator> {
     let schema = match arg {
         Value::String(schema_str) => {
@@ -463,11 +472,7 @@ fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::Val
                 Err(_) => bail!(param.span().error("not a valid json schema")),
             }
         }
-        _ => {
-            crate::utils::depth::check_value(arg, crate::utils::depth::MAX_DEPTH)
-                .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
-            serde_json::to_value(arg)?
-        }
+        _ => to_schema_json(arg)?,
     };
 
     match jsonschema::validator_for(&schema) {
@@ -509,10 +514,13 @@ fn json_match_schema(
     let name = "json.match_schema";
     ensure_args_count(span, name, params, args, 2)?;
 
-    crate::utils::depth::check_value(&args[0], crate::utils::depth::MAX_DEPTH)
-        .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
-    let document: serde_json::Value = serde_json::to_value(&args[0])
-        .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
+    let document = to_schema_json(&args[0]).map_err(|error| {
+        if crate::interpreter::is_evaluation_limit_error(&error) {
+            error
+        } else {
+            span.error(&format!("Failed to parse JSON: {error}"))
+        }
+    })?;
 
     Ok(Value::from_array(
         match compile_json_schema(&params[1], &args[1]) {

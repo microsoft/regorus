@@ -76,34 +76,53 @@ fn deep_array(depth: usize) -> Value {
 
 #[test]
 #[cfg(feature = "rvm")]
-fn program_depth_admission_retains_typed_memory_failure_until_execution() {
+fn program_depth_admission_retries_transient_memory_failure() {
     let mut limits = LimitGuard::lock();
-    let mut program = Program::new();
-    program.instructions = vec![
-        Instruction::LoadInput { dest: 0 },
-        Instruction::Return { value: 0 },
-    ];
-    let good = Arc::new(program.clone());
-    program.rule_tree = (0..32).fold(Value::Null, |value, _| {
-        Value::from(vec![value.clone(), value])
-    });
-    let mut vm = RegoVM::new();
-    vm.set_input(Value::from(7));
-    limits.set_below_current_usage();
-    vm.load_program(Arc::new(program));
-    limits.disable_limit();
+    for depth in [32, 33] {
+        let mut program = Program::new();
+        program.instructions = vec![
+            Instruction::LoadInput { dest: 0 },
+            Instruction::Return { value: 0 },
+        ];
+        program.rule_tree = (0..depth).fold(Value::Null, |value, _| {
+            Value::from(vec![value.clone(), value])
+        });
+        let program = Arc::new(program);
 
-    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-        vm.set_execution_mode(mode);
-        assert!(matches!(
-            vm.execute(),
-            Err(VmError::MemoryLimitExceeded { limit: 1, .. })
-        ));
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_input(Value::from(7));
+            vm.set_execution_mode(mode);
+            limits.set_below_current_usage();
+            vm.load_program(program.clone());
+            assert!(matches!(
+                vm.execute(),
+                Err(VmError::MemoryLimitExceeded { limit: 1, .. })
+            ));
+            limits.disable_limit();
+
+            for _ in 0..2 {
+                let result = vm.execute();
+                if depth == 32 {
+                    assert_eq!(result.unwrap(), Value::from(7));
+                } else {
+                    assert!(
+                        matches!(result, Err(VmError::RuleDataConflict { .. })),
+                        "{mode:?}, depth {depth}: {result:?}"
+                    );
+                }
+            }
+            if depth == 32 {
+                limits.set_below_current_usage();
+                assert!(matches!(
+                    vm.execute(),
+                    Err(VmError::MemoryLimitExceeded { limit: 1, .. })
+                ));
+                limits.disable_limit();
+                assert_eq!(vm.execute().unwrap(), Value::from(7));
+            }
+        }
     }
-
-    vm.load_program(good);
-    vm.set_execution_mode(ExecutionMode::RunToCompletion);
-    assert_eq!(vm.execute().unwrap(), Value::from(7));
 }
 
 #[cfg(feature = "rvm")]
