@@ -561,8 +561,16 @@ impl RegoVM {
         Ok(())
     }
 
-    pub(super) const fn execute_rule_return(&mut self) -> Result<()> {
-        let _ = self;
+    pub(super) fn execute_rule_return(&mut self) -> Result<()> {
+        if let Some(context) = self.call_rule_stack.last() {
+            if matches!(context.rule_type, RuleType::Complete)
+                && matches!(self.get_register(context.result_reg)?, Value::Undefined)
+            {
+                // Exhausting a loop without yielding is a failed body, not a
+                // successful branch that can suppress the remaining `else`s.
+                return Err(VmError::AssertionFailed { pc: self.pc });
+            }
+        }
         Ok(())
     }
 

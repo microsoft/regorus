@@ -47,7 +47,7 @@ impl<'a> Compiler<'a> {
             key_value_loops_hoisted: false,
         };
         self.push_context(context);
-        self.compile_query(query)?;
+        self.with_soft_assert_mode(false, |compiler| compiler.compile_query(query))?;
         self.pop_context();
 
         self.emit_instruction(Instruction::ComprehensionEnd {}, span);

@@ -191,6 +191,13 @@ impl<'a> Compiler<'a> {
             match context.context_type {
                 ContextType::Comprehension(ComprehensionType::Array) => {
                     self.emit_instruction(
+                        Instruction::Guard {
+                            register: value_register,
+                            mode: GuardMode::NotUndefined,
+                        },
+                        span,
+                    );
+                    self.emit_instruction(
                         Instruction::ComprehensionYield {
                             value_reg: value_register,
                             key_reg: None,
@@ -217,6 +224,15 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 ContextType::Comprehension(ComprehensionType::Object) => {
+                    for register in [key_register, value_register] {
+                        self.emit_instruction(
+                            Instruction::Guard {
+                                register,
+                                mode: GuardMode::NotUndefined,
+                            },
+                            span,
+                        );
+                    }
                     self.emit_instruction(
                         Instruction::ComprehensionYield {
                             value_reg: value_register,
