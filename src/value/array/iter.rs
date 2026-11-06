@@ -116,9 +116,9 @@ impl IntoIterator for Array {
     type Item = Value;
     type IntoIter = ArrayIntoIter;
     #[inline]
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(mut self) -> Self::IntoIter {
         ArrayIntoIter {
-            inner: self.inner.into_iter(),
+            inner: core::mem::take(&mut self.inner).into_iter(),
         }
     }
 }

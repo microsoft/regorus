@@ -21,6 +21,7 @@ pub use iter::{IntoIter, Iter};
 /// The current backing storage is `BTreeSet<Value>`. The inner field is
 /// private so the representation can change (hash-backed, lazy, bloom-fronted,
 /// FFI-backed) without touching call sites.
+/// Serde serialization follows the callback nesting budget documented on [`Value`].
 ///
 /// # Iteration
 ///
@@ -29,9 +30,17 @@ pub use iter::{IntoIter, Iter};
 /// - [`Set::cursor`] / [`Set::next`] — implementation-defined order,
 ///   resumable; cheapest per-step cost. Used by interpreter/RVM when iteration
 ///   must yield mid-flight.
-#[derive(Default, Clone, Eq, PartialEq)]
+#[derive(Default, Clone)]
 pub struct Set {
     inner: BTreeSet<Value>,
+}
+
+impl Drop for Set {
+    fn drop(&mut self) {
+        if !self.inner.is_empty() {
+            super::release_values(super::ReleaseFrame::Set(core::mem::take(self).into_iter()));
+        }
+    }
 }
 
 impl Set {
@@ -223,9 +232,20 @@ enum SetCursorInner {
 
 impl Ord for Set {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.iter_sorted().cmp(other.iter_sorted())
+        super::compare_values(super::CompareFrame::Set(
+            self.iter_sorted(),
+            other.iter_sorted(),
+        ))
     }
 }
+
+impl PartialEq for Set {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Set {}
 
 impl PartialOrd for Set {
     #[inline]
@@ -236,9 +256,7 @@ impl PartialOrd for Set {
 
 impl fmt::Debug for Set {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Use sorted iteration so Debug output is stable across storage
-        // variants.
-        f.debug_set().entries(self.iter_sorted()).finish()
+        super::debug_values(super::DebugFrame::Set(self.iter_sorted(), true), f)
     }
 }
 

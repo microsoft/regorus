@@ -64,7 +64,15 @@ use crate::*;
 ///    - [`Value::Number`] has at least 100 digits of precision for computations.
 ///
 /// Value can be efficiently cloned due to the use of reference counting.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// Container release, comparisons, Debug formatting, and JSON output through
+/// [`Display`](fmt::Display) and [`Value::to_json_str`] use iterative traversal.
+/// Generic serde serialization accepts up to 64 simultaneously active Regorus array,
+/// set, or object serializers (inclusive), counting a directly serialized container
+/// as well. Scalars consume no budget. Non-string object keys use iterative JSON
+/// encoding and consume no callback budget. This is not a Value nesting/admission
+/// limit and does not restrict the iterative output methods above. Stack use by
+/// the surrounding caller and serializer remains implementation-dependent.
+#[derive(Clone)]
 pub enum Value {
     /// JSON null.
     Null,
@@ -94,6 +102,649 @@ pub enum Value {
     /// Undefined value.
     /// Used to indicate the absence of a value.
     Undefined,
+}
+
+// Drain final owners explicitly. `into_inner` also handles concurrent Arc
+// releases: exactly one caller receives the payload, unlike try_unwrap().ok().
+// Iterator continuations bound scratch space by depth rather than container width;
+// exhausted iterators are released before descending into their final child.
+enum ReleaseFrame {
+    Value(Value),
+    Array(ArrayIntoIter),
+    Set(set::IntoIter),
+    Object(IntoIter),
+}
+
+fn release_values(first: ReleaseFrame) {
+    let mut pending = Vec::new();
+    let mut current = Some(first);
+    while let Some(frame) = current.take().or_else(|| pending.pop()) {
+        match frame {
+            ReleaseFrame::Value(value) => match value {
+                Value::Array(a) => {
+                    if let Some(a) = Rc::into_inner(a) {
+                        current = Some(ReleaseFrame::Array(a.into_iter()));
+                    }
+                }
+                Value::Set(s) => {
+                    if let Some(s) = Rc::into_inner(s) {
+                        current = Some(ReleaseFrame::Set(s.into_iter()));
+                    }
+                }
+                Value::Object(o) => {
+                    if let Some(o) = Rc::into_inner(o) {
+                        current = Some(ReleaseFrame::Object(o.into_iter()));
+                    }
+                }
+                _ => {}
+            },
+            ReleaseFrame::Array(mut iter) => {
+                if let Some(value) = iter.next() {
+                    current = Some(ReleaseFrame::Value(value));
+                    if iter.len() != 0 {
+                        pending.push(ReleaseFrame::Array(iter));
+                    }
+                }
+            }
+            ReleaseFrame::Set(mut iter) => {
+                if let Some(value) = iter.next() {
+                    current = Some(ReleaseFrame::Value(value));
+                    if iter.len() != 0 {
+                        pending.push(ReleaseFrame::Set(iter));
+                    }
+                }
+            }
+            ReleaseFrame::Object(mut iter) => {
+                if let Some((key, value)) = iter.next() {
+                    if iter.len() != 0 {
+                        pending.push(ReleaseFrame::Object(iter));
+                    }
+                    pending.push(ReleaseFrame::Value(value));
+                    current = Some(ReleaseFrame::Value(key));
+                }
+            }
+        }
+    }
+}
+
+enum CompareFrame<'a> {
+    Value(&'a Value, &'a Value),
+    Array(ArrayIter<'a>, ArrayIter<'a>),
+    Set(set::Iter<'a>, set::Iter<'a>),
+    Object(Iter<'a>, Iter<'a>),
+}
+
+fn compare_values(first: CompareFrame<'_>) -> core::cmp::Ordering {
+    match compare_frames(first, None, &mut || Ok::<(), core::convert::Infallible>(())) {
+        Ok(order) => order,
+        Err(never) => match never {},
+    }
+}
+
+#[cfg(feature = "rvm")]
+pub(crate) fn compare_checked<E>(
+    left: &Value,
+    right: &Value,
+    equality: bool,
+    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
+) -> core::result::Result<core::cmp::Ordering, E> {
+    compare_frames(CompareFrame::Value(left, right), Some(equality), checkpoint)
+}
+
+fn compare_frames<E>(
+    first: CompareFrame<'_>,
+    equality: Option<bool>,
+    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
+) -> core::result::Result<core::cmp::Ordering, E> {
+    use core::cmp::Ordering;
+    let mut pending = Vec::new();
+    let mut current = Some(first);
+    while let Some(frame) = current.take().or_else(|| pending.pop()) {
+        checkpoint()?;
+        let order = match frame {
+            CompareFrame::Value(a, b) => match (a, b) {
+                (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
+                    Ordering::Equal
+                }
+                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                (Value::Number(a), Value::Number(b)) => a.cmp(b),
+                (Value::String(a), Value::String(b)) => {
+                    if equality.is_none() {
+                        a.cmp(b)
+                    } else if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        for (a, b) in a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256)) {
+                            checkpoint()?;
+                            let order = a.cmp(b);
+                            if !order.is_eq() {
+                                return Ok(order);
+                            }
+                        }
+                        a.len().cmp(&b.len())
+                    }
+                }
+                (Value::Array(a), Value::Array(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Array(a.iter(), b.iter()));
+                        Ordering::Equal
+                    }
+                }
+                (Value::Set(a), Value::Set(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Set(a.iter_sorted(), b.iter_sorted()));
+                        Ordering::Equal
+                    }
+                }
+                (Value::Object(a), Value::Object(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Object(a.iter_sorted(), b.iter_sorted()));
+                        Ordering::Equal
+                    }
+                }
+                _ => value_rank(a).cmp(&value_rank(b)),
+            },
+            CompareFrame::Array(mut a, mut b) => match (a.next(), b.next()) {
+                (Some(a_value), Some(b_value)) => {
+                    pending.push(CompareFrame::Array(a, b));
+                    pending.push(CompareFrame::Value(a_value, b_value));
+                    Ordering::Equal
+                }
+                (a, b) => a.is_some().cmp(&b.is_some()),
+            },
+            CompareFrame::Set(mut a, mut b) => match (a.next(), b.next()) {
+                (Some(a_value), Some(b_value)) => {
+                    pending.push(CompareFrame::Set(a, b));
+                    pending.push(CompareFrame::Value(a_value, b_value));
+                    Ordering::Equal
+                }
+                (a, b) => a.is_some().cmp(&b.is_some()),
+            },
+            CompareFrame::Object(mut a, mut b) => match (a.next(), b.next()) {
+                (Some((ak, av)), Some((bk, bv))) => {
+                    pending.push(CompareFrame::Object(a, b));
+                    pending.push(CompareFrame::Value(av, bv));
+                    pending.push(CompareFrame::Value(ak, bk));
+                    Ordering::Equal
+                }
+                (a, b) => a.is_some().cmp(&b.is_some()),
+            },
+        };
+        if order != Ordering::Equal {
+            return Ok(order);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+pub(crate) struct ValueSummary<'a>(&'a Value);
+pub(crate) struct ValueDiagnostic<'a>(&'a Value);
+
+impl Value {
+    pub(crate) const fn summary(&self) -> ValueSummary<'_> {
+        ValueSummary(self)
+    }
+
+    pub(crate) const fn diagnostic(&self) -> ValueDiagnostic<'_> {
+        ValueDiagnostic(self)
+    }
+}
+
+impl fmt::Display for ValueDiagnostic<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Value::Null | Value::Bool(_) | Value::Undefined => self.0.fmt(f),
+            Value::Number(Number::Int(_) | Number::UInt(_) | Number::Float(_)) => self.0.fmt(f),
+            Value::String(s) if s.len() <= 64 => self.0.fmt(f),
+            _ => self.0.summary().fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for ValueSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Value::Null => f.write_str("Null"),
+            Value::Bool(_) => f.write_str("Bool"),
+            Value::Number(_) => f.write_str("Number"),
+            Value::String(s) => write!(f, "String(bytes={})", s.len()),
+            Value::Array(a) => write!(f, "Array(len={})", a.len()),
+            Value::Set(s) => write!(f, "Set(len={})", s.len()),
+            Value::Object(o) => write!(f, "Object(len={})", o.len()),
+            Value::Undefined => f.write_str("Undefined"),
+        }
+    }
+}
+
+const fn value_rank(value: &Value) -> u8 {
+    match value {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Set(_) => 5,
+        Value::Object(_) => 6,
+        Value::Undefined => 7,
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Value {}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        compare_values(CompareFrame::Value(self, other))
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+enum JsonFrame<'a> {
+    Value(&'a Value, Option<usize>),
+    Array(ArrayIter<'a>, Option<usize>, bool),
+    Set(set::Iter<'a>, Option<usize>, bool),
+    Object(Iter<'a>, Option<usize>, bool),
+    Key(&'a Value),
+    EndKey(Vec<u8>),
+    Text(&'static str),
+}
+
+struct JsonOutput<'a, E> {
+    bytes: Vec<u8>,
+    checkpoint: &'a mut dyn FnMut() -> core::result::Result<(), E>,
+    #[cfg(feature = "std")]
+    error: Option<E>,
+}
+
+impl<E: From<anyhow::Error>> JsonOutput<'_, E> {
+    fn append(&mut self, bytes: &[u8]) -> core::result::Result<(), E> {
+        for chunk in bytes.chunks(4096) {
+            (self.checkpoint)()?;
+            let needed = self
+                .bytes
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(|| anyhow::anyhow!("JSON output capacity overflow"))?;
+            if needed > self.bytes.capacity() {
+                let growing = needed.max(self.bytes.capacity().saturating_mul(2));
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                let growing = {
+                    use crate::utils::limits::check_memory_allocation;
+                    if check_memory_allocation(growing).is_ok() {
+                        growing
+                    } else {
+                        check_memory_allocation(needed).map_err(anyhow::Error::new)?;
+                        needed
+                    }
+                };
+                self.bytes
+                    .try_reserve_exact(growing.saturating_sub(self.bytes.len()))
+                    .map_err(anyhow::Error::new)?;
+                (self.checkpoint)()?;
+            }
+            self.bytes.extend_from_slice(chunk);
+            (self.checkpoint)()?;
+        }
+        Ok(())
+    }
+
+    fn indent(&mut self, depth: Option<usize>) -> core::result::Result<(), E> {
+        if let Some(depth) = depth {
+            self.append(b"\n")?;
+            let mut remaining = depth
+                .checked_mul(2)
+                .ok_or_else(|| anyhow::anyhow!("JSON indentation size overflow"))?;
+            const SPACES: [u8; 128] = [b' '; 128];
+            while remaining != 0 {
+                let count = remaining.min(SPACES.len());
+                self.append(&SPACES[..count])?;
+                remaining = remaining.saturating_sub(count);
+            }
+        }
+        Ok(())
+    }
+
+    fn scalar<T: Serialize + ?Sized>(&mut self, value: &T) -> core::result::Result<(), E> {
+        #[cfg(feature = "std")]
+        {
+            let result = value.serialize(&mut serde_json::Serializer::new(&mut *self));
+            if let Some(error) = self.error.take() {
+                return Err(error);
+            }
+            result.map_err(anyhow::Error::new)?;
+            Ok(())
+        }
+        // serde_json does not expose its writer-based Serializer without std.
+        #[cfg(not(feature = "std"))]
+        {
+            self.append(&serde_json::to_vec(value).map_err(anyhow::Error::new)?)
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<E: From<anyhow::Error>> std::io::Write for JsonOutput<'_, E> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.append(bytes).map_err(|error| {
+            self.error = Some(error);
+            std::io::Error::other("JSON output resource failure")
+        })?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Value {
+    // Keep JSON-specific traversal independent of serde's recursive callbacks.
+    // Key frames capture JSON before quoting non-string object keys, including
+    // objects whose keys themselves contain non-string keys.
+    fn json_string(&self, pretty: bool) -> Result<String> {
+        self.json_string_with_checkpoint(pretty, &mut || {
+            crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)
+        })
+    }
+
+    fn json_string_with_checkpoint<E: From<anyhow::Error>>(
+        &self,
+        pretty: bool,
+        checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
+    ) -> core::result::Result<String, E> {
+        let mut output = JsonOutput {
+            bytes: Vec::new(),
+            checkpoint,
+            #[cfg(feature = "std")]
+            error: None,
+        };
+        let mut pending = vec![JsonFrame::Value(self, pretty.then_some(0))];
+        while let Some(frame) = pending.pop() {
+            (output.checkpoint)()?;
+            match frame {
+                JsonFrame::Value(value, depth) => match value {
+                    Value::Array(a) => {
+                        output.append(b"[")?;
+                        pending.push(JsonFrame::Array(a.iter(), depth, true));
+                    }
+                    Value::Set(s) => {
+                        output.append(b"[")?;
+                        pending.push(JsonFrame::Set(s.iter_sorted(), depth, true));
+                    }
+                    Value::Object(o) => {
+                        output.append(b"{")?;
+                        pending.push(JsonFrame::Object(o.iter_sorted(), depth, true));
+                    }
+                    _ => output.scalar(value)?,
+                },
+                JsonFrame::Array(mut iter, depth, first) => {
+                    if let Some(value) = iter.next() {
+                        if !first {
+                            output.append(b",")?;
+                        }
+                        let child_depth = depth.map(|d| d.saturating_add(1));
+                        output.indent(child_depth)?;
+                        pending.push(JsonFrame::Array(iter, depth, false));
+                        pending.push(JsonFrame::Value(value, child_depth));
+                    } else {
+                        if !first {
+                            output.indent(depth)?;
+                        }
+                        output.append(b"]")?;
+                    }
+                }
+                JsonFrame::Set(mut iter, depth, first) => {
+                    if let Some(value) = iter.next() {
+                        if !first {
+                            output.append(b",")?;
+                        }
+                        let child_depth = depth.map(|d| d.saturating_add(1));
+                        output.indent(child_depth)?;
+                        pending.push(JsonFrame::Set(iter, depth, false));
+                        pending.push(JsonFrame::Value(value, child_depth));
+                    } else {
+                        if !first {
+                            output.indent(depth)?;
+                        }
+                        output.append(b"]")?;
+                    }
+                }
+                JsonFrame::Object(mut iter, depth, first) => {
+                    if let Some((key, value)) = iter.next() {
+                        if !first {
+                            output.append(b",")?;
+                        }
+                        let child_depth = depth.map(|d| d.saturating_add(1));
+                        output.indent(child_depth)?;
+                        pending.push(JsonFrame::Object(iter, depth, false));
+                        pending.push(JsonFrame::Value(value, child_depth));
+                        pending.push(JsonFrame::Text(if depth.is_some() { ": " } else { ":" }));
+                        pending.push(JsonFrame::Key(key));
+                    } else {
+                        if !first {
+                            output.indent(depth)?;
+                        }
+                        output.append(b"}")?;
+                    }
+                }
+                JsonFrame::Key(Value::String(key)) => {
+                    output.scalar(key)?;
+                }
+                JsonFrame::Key(key) => {
+                    pending.push(JsonFrame::EndKey(core::mem::take(&mut output.bytes)));
+                    pending.push(JsonFrame::Value(key, None));
+                }
+                JsonFrame::EndKey(parent) => {
+                    let key = String::from_utf8(core::mem::take(&mut output.bytes))
+                        .map_err(anyhow::Error::new)?;
+                    output.bytes = parent;
+                    output.scalar(&key)?;
+                }
+                JsonFrame::Text(text) => output.append(text.as_bytes())?,
+            }
+        }
+        String::from_utf8(output.bytes)
+            .map_err(anyhow::Error::new)
+            .map_err(E::from)
+    }
+}
+
+enum DebugFrame<'a> {
+    Value(&'a Value),
+    Array(ArrayIter<'a>, bool),
+    Set(set::Iter<'a>, bool),
+    Object(Iter<'a>, bool),
+    Text(&'static str),
+    EndTuple,
+}
+
+fn debug_indent(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
+    for _ in 0..depth {
+        f.write_str("    ")?;
+    }
+    Ok(())
+}
+
+fn debug_leaf(
+    name: &str,
+    value: &dyn fmt::Debug,
+    depth: usize,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    struct Leaf<'a>(&'a str, &'a dyn fmt::Debug);
+    impl fmt::Debug for Leaf<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_tuple(self.0).field(self.1).finish()
+        }
+    }
+    if !f.alternate() {
+        return fmt::Debug::fmt(&Leaf(name, value), f);
+    }
+    let text = format!("{:#?}", Leaf(name, value));
+    for (index, line) in text.split('\n').enumerate() {
+        if index != 0 {
+            f.write_str("\n")?;
+            debug_indent(f, depth)?;
+        }
+        f.write_str(line)?;
+    }
+    Ok(())
+}
+
+fn debug_values(first: DebugFrame<'_>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let pretty = f.alternate();
+    let mut pending = vec![(first, 0_usize)];
+    while let Some((frame, depth)) = pending.pop() {
+        match frame {
+            DebugFrame::Value(value) => match value {
+                Value::Null => f.write_str("Null")?,
+                Value::Undefined => f.write_str("Undefined")?,
+                Value::Bool(v) => debug_leaf("Bool", v, depth, f)?,
+                Value::Number(v) => debug_leaf("Number", v, depth, f)?,
+                Value::String(v) => debug_leaf("String", v, depth, f)?,
+                Value::Array(a) => {
+                    f.write_str("Array(")?;
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::EndTuple, depth));
+                    pending.push((DebugFrame::Array(a.iter(), true), child_depth));
+                }
+                Value::Set(s) => {
+                    f.write_str("Set(")?;
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::EndTuple, depth));
+                    pending.push((DebugFrame::Set(s.iter_sorted(), true), child_depth));
+                }
+                Value::Object(o) => {
+                    f.write_str("Object(")?;
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::EndTuple, depth));
+                    pending.push((DebugFrame::Object(o.iter_sorted(), true), child_depth));
+                }
+            },
+            DebugFrame::Array(mut iter, first) => {
+                if first {
+                    f.write_str("[")?;
+                }
+                if let Some(value) = iter.next() {
+                    if !first {
+                        f.write_str(if pretty { "," } else { ", " })?;
+                    }
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::Array(iter, false), depth));
+                    pending.push((DebugFrame::Value(value), child_depth));
+                } else {
+                    if pretty && !first {
+                        f.write_str(",\n")?;
+                        debug_indent(f, depth)?;
+                    }
+                    f.write_str("]")?;
+                }
+            }
+            DebugFrame::Set(mut iter, first) => {
+                if first {
+                    f.write_str("{")?;
+                }
+                if let Some(value) = iter.next() {
+                    if !first {
+                        f.write_str(if pretty { "," } else { ", " })?;
+                    }
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::Set(iter, false), depth));
+                    pending.push((DebugFrame::Value(value), child_depth));
+                } else {
+                    if pretty && !first {
+                        f.write_str(",\n")?;
+                        debug_indent(f, depth)?;
+                    }
+                    f.write_str("}")?;
+                }
+            }
+            DebugFrame::Object(mut iter, first) => {
+                if first {
+                    f.write_str("{")?;
+                }
+                if let Some((key, value)) = iter.next() {
+                    if !first {
+                        f.write_str(if pretty { "," } else { ", " })?;
+                    }
+                    let child_depth = depth.saturating_add(1);
+                    if pretty {
+                        f.write_str("\n")?;
+                        debug_indent(f, child_depth)?;
+                    }
+                    pending.push((DebugFrame::Object(iter, false), depth));
+                    pending.push((DebugFrame::Value(value), child_depth));
+                    pending.push((DebugFrame::Text(": "), child_depth));
+                    pending.push((DebugFrame::Value(key), child_depth));
+                } else {
+                    if pretty && !first {
+                        f.write_str(",\n")?;
+                        debug_indent(f, depth)?;
+                    }
+                    f.write_str("}")?;
+                }
+            }
+            DebugFrame::Text(text) => f.write_str(text)?,
+            DebugFrame::EndTuple => {
+                if pretty {
+                    f.write_str(",\n")?;
+                    debug_indent(f, depth)?;
+                }
+                f.write_str(")")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        debug_values(DebugFrame::Value(self), f)
+    }
 }
 
 #[inline]
@@ -179,24 +830,93 @@ fn record_resume_deserialization_limit_error(error: crate::utils::limits::LimitE
     });
 }
 
+const MAX_SERIALIZATION_CONTAINERS: usize = 64;
+
+pub(crate) struct SerializeWithBudget<'a, T> {
+    value: &'a T,
+    remaining: usize,
+    limit_exceeded: Option<&'a core::cell::Cell<bool>>,
+}
+
+fn serialization_child_budget<E: serde::ser::Error>(
+    remaining: usize,
+    limit_exceeded: Option<&core::cell::Cell<bool>>,
+) -> Result<usize, E> {
+    remaining.checked_sub(1).ok_or_else(|| {
+        if let Some(exceeded) = limit_exceeded {
+            exceeded.set(true);
+        }
+        E::custom(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        })
+    })
+}
+
+// Serde's custom errors erase their source type. Keep a per-call witness so
+// builtins can restore resource-error identity without parsing error strings.
+pub(crate) fn serialize_with_limits<T, E>(
+    value: &Value,
+    serialize: impl FnOnce(&SerializeWithBudget<'_, Value>) -> Result<T, E>,
+) -> Result<T>
+where
+    E: core::error::Error + Send + Sync + 'static,
+{
+    let limit_exceeded = core::cell::Cell::new(false);
+    let value = SerializeWithBudget {
+        value,
+        remaining: MAX_SERIALIZATION_CONTAINERS,
+        limit_exceeded: Some(&limit_exceeded),
+    };
+    let result = serialize(&value);
+    if limit_exceeded.get() {
+        Err(anyhow!(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        }))
+    } else {
+        result.map_err(anyhow::Error::new)
+    }
+}
+
 #[doc(hidden)]
 impl Serialize for Value {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match self {
+        SerializeWithBudget {
+            value: self,
+            remaining: MAX_SERIALIZATION_CONTAINERS,
+            limit_exceeded: None,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for SerializeWithBudget<'_, Value> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.value {
             Value::Null => serializer.serialize_unit(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::String(s) => serializer.serialize_str(s.as_ref()),
             Value::Number(n) => n.serialize(serializer),
-            Value::Array(a) => a.serialize(serializer),
-            // Delegate to the Object/Set serializers — single canonical path,
-            // handles non-string-key stringification internally.
-            Value::Object(fields) => fields.serialize(serializer),
-
-            // display set as an array
-            Value::Set(s) => s.serialize(serializer),
+            Value::Array(a) => SerializeWithBudget {
+                value: a.as_ref(),
+                remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
+            }
+            .serialize(serializer),
+            Value::Object(fields) => SerializeWithBudget {
+                value: fields.as_ref(),
+                remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
+            }
+            .serialize(serializer),
+            Value::Set(s) => SerializeWithBudget {
+                value: s.as_ref(),
+                remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
+            }
+            .serialize(serializer),
 
             // display undefined as a special string
             Value::Undefined => serializer.serialize_str("<undefined>"),
@@ -375,7 +1095,8 @@ impl<'de> Deserialize<'de> for Value {
 impl fmt::Display for Value {
     /// Display a value.
     ///
-    /// A value is displayed by serializing it to JSON using serde_json::to_string.
+    /// A value is displayed as compact JSON.
+    /// If JSON serialization fails, an explicit serialization diagnostic is displayed.
     ///
     /// ```
     /// # use regorus::*;
@@ -386,9 +1107,9 @@ impl fmt::Display for Value {
     /// # }
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match serde_json::to_string(self) {
+        match self.json_string(false) {
             Ok(s) => write!(f, "{s}"),
-            Err(_e) => Err(fmt::Error),
+            Err(e) => write!(f, "<value cannot be serialized: {e}>"),
         }
     }
 }
@@ -624,7 +1345,15 @@ impl Value {
     /// # }
     /// ```
     pub fn to_json_str(&self) -> Result<String> {
-        serde_json::to_string_pretty(self).map_err(anyhow::Error::msg)
+        self.json_string(true)
+    }
+
+    #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
+    pub(crate) fn to_json_str_with_checkpoint<E: From<anyhow::Error>>(
+        &self,
+        checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
+    ) -> core::result::Result<String, E> {
+        self.json_string_with_checkpoint(true, checkpoint)
     }
 
     /// Deserialize a value from YAML.
@@ -1584,9 +2313,9 @@ impl Value {
                         // Same key, different value: the rule produced two outputs for one path.
                         Some(pv) if *pv != *v => bail!(
                             "value for key `{}` generated multiple times: `{}` and `{}`",
-                            serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
-                            serde_json::to_string_pretty(&pv).map_err(anyhow::Error::msg)?,
-                            serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
+                            k.to_json_str()?,
+                            pv.to_json_str()?,
+                            v.to_json_str()?,
                         ),
                         _ => {
                             Rc::make_mut(map).insert(k.clone(), v.clone());
@@ -1677,10 +2406,9 @@ impl Value {
                             })?;
                             bail!(
                                 "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&existing)
-                                    .map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&v).map_err(anyhow::Error::msg)?,
+                                k.to_json_str()?,
+                                existing.to_json_str()?,
+                                v.to_json_str()?,
                             )
                         }
                     }
@@ -1692,7 +2420,7 @@ impl Value {
     }
 
     /// Read-only check that [`deep_merge`](Value::deep_merge)-ing `other` into `self` would not
-    /// conflict, without mutating or allocating.
+    /// conflict, without mutating the document.
     ///
     /// Lets [`Engine::add_data`] validate before merging in place. Since a conflict is the only
     /// way the default-build merge can fail and it depends only on the inputs, a passing scan
@@ -1732,9 +2460,9 @@ impl Value {
                         } else if dv != sv {
                             bail!(
                                 "value for key `{}` generated multiple times: `{}` and `{}`",
-                                serde_json::to_string_pretty(&k).map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&dv).map_err(anyhow::Error::msg)?,
-                                serde_json::to_string_pretty(&sv).map_err(anyhow::Error::msg)?,
+                                k.to_json_str()?,
+                                dv.to_json_str()?,
+                                sv.to_json_str()?,
                             )
                         }
                     }

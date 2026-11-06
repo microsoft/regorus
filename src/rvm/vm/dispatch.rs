@@ -208,7 +208,8 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
@@ -230,7 +231,8 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
@@ -252,7 +254,8 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
@@ -274,7 +277,8 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
@@ -300,7 +304,9 @@ impl RegoVM {
                     }
                     _ => Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: logical AND expects booleans (left={left_value:?}, right={right_value:?})"
+                            "#undefined: logical AND expects booleans (left={}, right={})",
+                            left_value.summary(),
+                            right_value.summary()
                         ),
                         pc: self.pc,
                     }),
@@ -322,7 +328,9 @@ impl RegoVM {
                     }
                     _ => Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: logical OR expects booleans (left={left_value:?}, right={right_value:?})"
+                            "#undefined: logical OR expects booleans (left={}, right={})",
+                            left_value.summary(),
+                            right_value.summary()
                         ),
                         pc: self.pc,
                     }),
