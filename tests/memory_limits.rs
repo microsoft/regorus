@@ -70,6 +70,183 @@ impl Drop for LimitGuard {
     }
 }
 
+fn deep_array(depth: usize) -> Value {
+    (0..depth).fold(Value::Null, |value, _| Value::from(vec![value]))
+}
+
+#[cfg(feature = "rvm")]
+fn comparison_vm(mode: ExecutionMode, timed: bool, kind: u8) -> RegoVM {
+    let mut program = Program::new();
+    program.dispatch_window_size = 3;
+    program.instructions = vec![
+        Instruction::LoadInput { dest: 0 },
+        Instruction::LoadData { dest: 1 },
+        if kind != 0 {
+            Instruction::Contains {
+                dest: 2,
+                collection: 0,
+                value: 1,
+            }
+        } else {
+            Instruction::Le {
+                dest: 2,
+                left: 0,
+                right: 1,
+            }
+        },
+        Instruction::Return { value: 2 },
+    ];
+    let mut vm = RegoVM::new();
+    vm.load_program(Arc::new(program));
+    vm.set_execution_mode(mode);
+    let input = deep_array(4096);
+    vm.set_input(match kind {
+        0 => input,
+        1 => Value::from(vec![input]),
+        2 => regorus::value::Set::from_iter([input]).into_value(),
+        _ => regorus::value::Object::from_iter([(Value::Null, input)]).into(),
+    });
+    vm.set_data(deep_array(4096)).unwrap();
+    if timed {
+        vm.set_execution_timer_config(Some(regorus::utils::limits::ExecutionTimerConfig {
+            limit: std::time::Duration::from_secs(60),
+            check_interval: std::num::NonZeroU32::new(8).unwrap(),
+        }));
+    }
+    vm
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn comparison_scratch_respects_execution_budgets_with_and_without_timers() {
+    let _guard = LimitGuard::lock();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for timed in [false, true] {
+            for kind in 0..4 {
+                let mut vm = comparison_vm(mode, timed, kind);
+                vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+                    limit: NonZeroU64::new(64 * 1024).unwrap(),
+                }));
+                let error = vm
+                    .execute()
+                    .expect_err("comparison scratch must be budgeted");
+                assert!(
+                    matches!(error, VmError::MemoryBudgetExceeded { pc: 2, .. }),
+                    "{mode:?} timed={timed} kind={kind}: {error}"
+                );
+                assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                assert!(vm.get_registers().is_empty());
+                vm.set_memory_budget_config(None);
+                assert_eq!(vm.execute().unwrap(), Value::Bool(true));
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn resumed_comparison_scratch_respects_global_limits_and_releases_state() {
+    let mut guard = LimitGuard::lock();
+    for timed in [false, true] {
+        for kind in 0..4 {
+            let mut vm = comparison_vm(ExecutionMode::Suspendable, timed, kind);
+            vm.set_step_mode(true);
+            vm.execute().unwrap();
+            vm.set_step_mode(false);
+            guard.set_with_additional_budget(32 * 1024);
+            let result = vm.resume(None);
+            guard.disable_limit();
+            let error = result.expect_err("scratch must be checked before it is freed");
+            assert!(
+                matches!(error, VmError::MemoryLimitExceeded { pc: 2, .. }),
+                "{error}"
+            );
+            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+            assert!(vm.get_registers().is_empty());
+            assert_eq!(vm.execute().unwrap(), Value::Bool(true));
+        }
+    }
+}
+
+#[test]
+fn iterative_json_checks_global_limit_while_pretty_output_is_live() {
+    let mut guard = LimitGuard::lock();
+    let value = deep_array(1024);
+    for value in [
+        value.clone(),
+        regorus::value::Set::from_iter([value.clone()]).into_value(),
+        regorus::value::Object::from_iter([(value.clone(), Value::Null)]).into(),
+        Value::from("x".repeat(1024 * 1024)),
+    ] {
+        guard.set_with_additional_budget(64 * 1024);
+        let result = value.to_json_str();
+        guard.disable_limit();
+        let Err(error) = result else {
+            panic!("pretty JSON must stop before producing megabytes");
+        };
+        assert!(
+            matches!(
+                error.downcast_ref::<LimitError>(),
+                Some(LimitError::MemoryLimitExceeded { .. })
+            ),
+            "{error:?}"
+        );
+        assert!(!value.to_json_str().unwrap().is_empty());
+    }
+}
+
+#[cfg(feature = "rvm")]
+#[test]
+fn iterative_ffi_json_checks_execution_budget_during_output() {
+    let _guard = LimitGuard::lock();
+    for (mode, resumed) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        std::thread::spawn(move || {
+            let mut program = Program::new();
+            program.instructions = vec![
+                Instruction::LoadInput { dest: 0 },
+                Instruction::Return { value: 0 },
+            ];
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::new(program));
+            vm.set_execution_mode(mode);
+            vm.set_input(deep_array(1024));
+            vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+                limit: NonZeroU64::new(64 * 1024).unwrap(),
+            }));
+            if resumed {
+                vm.set_step_mode(true);
+                vm.execute().unwrap();
+                vm.set_step_mode(false);
+            }
+            let before = mimalloc::current_thread_allocation_stats();
+            let result = if resumed {
+                vm.resume_to_c_string_for_ffi(|| Ok(None))
+            } else {
+                vm.execute_to_c_string_for_ffi()
+            };
+            let after = mimalloc::current_thread_allocation_stats();
+            assert!(matches!(result, Err(VmError::MemoryBudgetExceeded { .. })));
+            assert!(
+                after.peak - before.allocated < 512 * 1024,
+                "JSON output was built before checking the budget: {before:?} {after:?}"
+            );
+            assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+            assert!(vm.get_registers().is_empty());
+            vm.set_input(Value::Null);
+            assert_eq!(
+                vm.execute_to_c_string_for_ffi().unwrap().as_bytes(),
+                b"null"
+            );
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 const SIMPLE_MODULE: &str = r#"
 package limit
 
@@ -430,12 +607,7 @@ fn vm_global_memory_limit_is_enforced_before_short_initial_dispatches() {
                 }
             ));
             assert_eq!(vm.get_pc(), 0);
-            match mode {
-                ExecutionMode::RunToCompletion => assert!(vm.get_registers().is_empty()),
-                ExecutionMode::Suspendable => {
-                    assert_eq!(vm.get_registers().first(), Some(&Value::Undefined));
-                }
-            }
+            assert!(vm.get_registers().is_empty());
 
             guard.disable_limit();
             regorus::flush_thread_memory_counters();
@@ -1474,7 +1646,7 @@ fn correction_unbudgeted_initial_entry_limit_publishes_error() {
         }
     ));
     assert_eq!(vm.get_pc(), 0);
-    assert_eq!(vm.get_registers().first(), Some(&Value::Undefined));
+    assert!(vm.get_registers().is_empty());
 }
 
 #[cfg(feature = "rvm")]

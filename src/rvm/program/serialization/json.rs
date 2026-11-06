@@ -16,6 +16,13 @@ use indexmap::IndexMap;
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        // json! unwraps serialization errors, so convert fallible Value fields first.
+        let annotations = serde_json::to_value(&self.metadata.annotations)
+            .map_err(|e| format!("JSON serialization failed: {e}"))?;
+        let literals = serde_json::to_value(&self.literals)
+            .map_err(|e| format!("JSON serialization failed: {e}"))?;
+        let rule_tree = serde_json::to_value(&self.rule_tree)
+            .map_err(|e| format!("JSON serialization failed: {e}"))?;
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -27,7 +34,7 @@ impl Program {
                 "has_host_await": self.has_host_await,
                 "needs_recompilation": self.needs_recompilation,
                 "language": self.metadata.language,
-                "annotations": self.metadata.annotations
+                "annotations": annotations
             },
             "program_structure": {
                 "main_entry_point": self.main_entry_point,
@@ -46,13 +53,13 @@ impl Program {
                 "chained_index_params": self.instruction_data.chained_index_params,
                 "comprehension_begin_params": self.instruction_data.comprehension_begin_params
             },
-            "literals": self.literals,
+            "literals": literals,
             "builtin_info_table": self.builtin_info_table,
             "entry_points": self.entry_points,
             "sources": self.sources,
             "rule_infos": self.rule_infos,
             "instruction_spans": self.instruction_spans,
-            "rule_tree": self.rule_tree
+            "rule_tree": rule_tree
         });
 
         serde_json::to_string_pretty(&json_data)
@@ -236,5 +243,37 @@ impl Program {
         }
 
         Ok(program)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn deep_program_values_return_serialization_errors_without_panicking() {
+        for field in 0..3 {
+            for depth in [64, 65] {
+                let mut value = Value::Null;
+                for _ in 0..depth {
+                    value = Value::from(vec![value]);
+                }
+                let mut program = Program::new();
+                match field {
+                    0 => program.literals.push(value),
+                    1 => program.rule_tree = value,
+                    _ => {
+                        program.metadata.annotations.insert("deep".into(), value);
+                    }
+                }
+                let result = program.serialize_json();
+                if depth == 64 {
+                    assert!(result.is_ok());
+                } else {
+                    assert!(matches!(result, Err(error) if error.contains("64 nested containers")));
+                }
+            }
+        }
     }
 }

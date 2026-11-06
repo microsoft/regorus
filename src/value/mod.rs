@@ -200,66 +200,64 @@ fn compare_frames<E>(
     let mut pending = Vec::new();
     let mut current = Some(first);
     while let Some(frame) = current.take().or_else(|| pending.pop()) {
+        checkpoint()?;
         let order = match frame {
-            CompareFrame::Value(a, b) => {
-                checkpoint()?;
-                match (a, b) {
-                    (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
+            CompareFrame::Value(a, b) => match (a, b) {
+                (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
+                    Ordering::Equal
+                }
+                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                (Value::Number(a), Value::Number(b)) => a.cmp(b),
+                (Value::String(a), Value::String(b)) => {
+                    if equality.is_none() {
+                        a.cmp(b)
+                    } else if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        for (a, b) in a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256)) {
+                            checkpoint()?;
+                            let order = a.cmp(b);
+                            if !order.is_eq() {
+                                return Ok(order);
+                            }
+                        }
+                        a.len().cmp(&b.len())
+                    }
+                }
+                (Value::Array(a), Value::Array(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Array(a.iter(), b.iter()));
                         Ordering::Equal
                     }
-                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-                    (Value::Number(a), Value::Number(b)) => a.cmp(b),
-                    (Value::String(a), Value::String(b)) => {
-                        if equality.is_none() {
-                            a.cmp(b)
-                        } else if equality == Some(true) && Rc::ptr_eq(a, b) {
-                            Ordering::Equal
-                        } else if equality == Some(true) && a.len() != b.len() {
-                            return Ok(Ordering::Less);
-                        } else {
-                            for (a, b) in a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256)) {
-                                checkpoint()?;
-                                let order = a.cmp(b);
-                                if !order.is_eq() {
-                                    return Ok(order);
-                                }
-                            }
-                            a.len().cmp(&b.len())
-                        }
-                    }
-                    (Value::Array(a), Value::Array(b)) => {
-                        if equality != Some(false) && Rc::ptr_eq(a, b) {
-                            Ordering::Equal
-                        } else if equality == Some(true) && a.len() != b.len() {
-                            return Ok(Ordering::Less);
-                        } else {
-                            pending.push(CompareFrame::Array(a.iter(), b.iter()));
-                            Ordering::Equal
-                        }
-                    }
-                    (Value::Set(a), Value::Set(b)) => {
-                        if equality != Some(false) && Rc::ptr_eq(a, b) {
-                            Ordering::Equal
-                        } else if equality == Some(true) && a.len() != b.len() {
-                            return Ok(Ordering::Less);
-                        } else {
-                            pending.push(CompareFrame::Set(a.iter_sorted(), b.iter_sorted()));
-                            Ordering::Equal
-                        }
-                    }
-                    (Value::Object(a), Value::Object(b)) => {
-                        if equality != Some(false) && Rc::ptr_eq(a, b) {
-                            Ordering::Equal
-                        } else if equality == Some(true) && a.len() != b.len() {
-                            return Ok(Ordering::Less);
-                        } else {
-                            pending.push(CompareFrame::Object(a.iter_sorted(), b.iter_sorted()));
-                            Ordering::Equal
-                        }
-                    }
-                    _ => value_rank(a).cmp(&value_rank(b)),
                 }
-            }
+                (Value::Set(a), Value::Set(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Set(a.iter_sorted(), b.iter_sorted()));
+                        Ordering::Equal
+                    }
+                }
+                (Value::Object(a), Value::Object(b)) => {
+                    if Rc::ptr_eq(a, b) {
+                        Ordering::Equal
+                    } else if equality == Some(true) && a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    } else {
+                        pending.push(CompareFrame::Object(a.iter_sorted(), b.iter_sorted()));
+                        Ordering::Equal
+                    }
+                }
+                _ => value_rank(a).cmp(&value_rank(b)),
+            },
             CompareFrame::Array(mut a, mut b) => match (a.next(), b.next()) {
                 (Some(a_value), Some(b_value)) => {
                     pending.push(CompareFrame::Array(a, b));
@@ -375,27 +373,90 @@ enum JsonFrame<'a> {
     Text(&'static str),
 }
 
-fn json_indent(output: &mut Vec<u8>, depth: Option<usize>) {
-    if let Some(depth) = depth {
-        output.push(b'\n');
-        for _ in 0..depth {
-            output.extend_from_slice(b"  ");
+struct JsonOutput<'a, E> {
+    bytes: Vec<u8>,
+    checkpoint: &'a mut dyn FnMut() -> core::result::Result<(), E>,
+    #[cfg(feature = "std")]
+    error: Option<E>,
+}
+
+impl<E: From<anyhow::Error>> JsonOutput<'_, E> {
+    fn append(&mut self, bytes: &[u8]) -> core::result::Result<(), E> {
+        for chunk in bytes.chunks(4096) {
+            (self.checkpoint)()?;
+            let needed = self
+                .bytes
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(|| anyhow::anyhow!("JSON output capacity overflow"))?;
+            if needed > self.bytes.capacity() {
+                let growing = needed.max(self.bytes.capacity().saturating_mul(2));
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                let growing = {
+                    use crate::utils::limits::check_memory_allocation;
+                    if check_memory_allocation(growing).is_ok() {
+                        growing
+                    } else {
+                        check_memory_allocation(needed).map_err(anyhow::Error::new)?;
+                        needed
+                    }
+                };
+                self.bytes
+                    .try_reserve_exact(growing.saturating_sub(self.bytes.len()))
+                    .map_err(anyhow::Error::new)?;
+                (self.checkpoint)()?;
+            }
+            self.bytes.extend_from_slice(chunk);
+            (self.checkpoint)()?;
+        }
+        Ok(())
+    }
+
+    fn indent(&mut self, depth: Option<usize>) -> core::result::Result<(), E> {
+        if let Some(depth) = depth {
+            self.append(b"\n")?;
+            let mut remaining = depth
+                .checked_mul(2)
+                .ok_or_else(|| anyhow::anyhow!("JSON indentation size overflow"))?;
+            const SPACES: [u8; 128] = [b' '; 128];
+            while remaining != 0 {
+                let count = remaining.min(SPACES.len());
+                self.append(&SPACES[..count])?;
+                remaining = remaining.saturating_sub(count);
+            }
+        }
+        Ok(())
+    }
+
+    fn scalar<T: Serialize + ?Sized>(&mut self, value: &T) -> core::result::Result<(), E> {
+        #[cfg(feature = "std")]
+        {
+            let result = value.serialize(&mut serde_json::Serializer::new(&mut *self));
+            if let Some(error) = self.error.take() {
+                return Err(error);
+            }
+            result.map_err(anyhow::Error::new)?;
+            Ok(())
+        }
+        // serde_json does not expose its writer-based Serializer without std.
+        #[cfg(not(feature = "std"))]
+        {
+            self.append(&serde_json::to_vec(value).map_err(anyhow::Error::new)?)
         }
     }
 }
 
-fn json_scalar<T: Serialize + ?Sized>(
-    value: &T,
-    output: &mut Vec<u8>,
-) -> core::result::Result<(), serde_json::Error> {
-    #[cfg(feature = "std")]
-    {
-        value.serialize(&mut serde_json::Serializer::new(output))
+#[cfg(feature = "std")]
+impl<E: From<anyhow::Error>> std::io::Write for JsonOutput<'_, E> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.append(bytes).map_err(|error| {
+            self.error = Some(error);
+            std::io::Error::other("JSON output resource failure")
+        })?;
+        Ok(bytes.len())
     }
-    // serde_json does not expose its writer-based Serializer without std.
-    #[cfg(not(feature = "std"))]
-    {
-        output.extend_from_slice(&serde_json::to_vec(value)?);
+
+    fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
 }
@@ -404,92 +465,111 @@ impl Value {
     // Keep JSON-specific traversal independent of serde's recursive callbacks.
     // Key frames capture JSON before quoting non-string object keys, including
     // objects whose keys themselves contain non-string keys.
-    fn json_string(&self, pretty: bool) -> core::result::Result<String, serde_json::Error> {
-        let mut output = Vec::new();
+    fn json_string(&self, pretty: bool) -> Result<String> {
+        self.json_string_with_checkpoint(pretty, &mut || {
+            crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)
+        })
+    }
+
+    fn json_string_with_checkpoint<E: From<anyhow::Error>>(
+        &self,
+        pretty: bool,
+        checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
+    ) -> core::result::Result<String, E> {
+        let mut output = JsonOutput {
+            bytes: Vec::new(),
+            checkpoint,
+            #[cfg(feature = "std")]
+            error: None,
+        };
         let mut pending = vec![JsonFrame::Value(self, pretty.then_some(0))];
         while let Some(frame) = pending.pop() {
+            (output.checkpoint)()?;
             match frame {
                 JsonFrame::Value(value, depth) => match value {
                     Value::Array(a) => {
-                        output.push(b'[');
+                        output.append(b"[")?;
                         pending.push(JsonFrame::Array(a.iter(), depth, true));
                     }
                     Value::Set(s) => {
-                        output.push(b'[');
+                        output.append(b"[")?;
                         pending.push(JsonFrame::Set(s.iter_sorted(), depth, true));
                     }
                     Value::Object(o) => {
-                        output.push(b'{');
+                        output.append(b"{")?;
                         pending.push(JsonFrame::Object(o.iter_sorted(), depth, true));
                     }
-                    _ => json_scalar(value, &mut output)?,
+                    _ => output.scalar(value)?,
                 },
                 JsonFrame::Array(mut iter, depth, first) => {
                     if let Some(value) = iter.next() {
                         if !first {
-                            output.push(b',');
+                            output.append(b",")?;
                         }
                         let child_depth = depth.map(|d| d.saturating_add(1));
-                        json_indent(&mut output, child_depth);
+                        output.indent(child_depth)?;
                         pending.push(JsonFrame::Array(iter, depth, false));
                         pending.push(JsonFrame::Value(value, child_depth));
                     } else {
                         if !first {
-                            json_indent(&mut output, depth);
+                            output.indent(depth)?;
                         }
-                        output.push(b']');
+                        output.append(b"]")?;
                     }
                 }
                 JsonFrame::Set(mut iter, depth, first) => {
                     if let Some(value) = iter.next() {
                         if !first {
-                            output.push(b',');
+                            output.append(b",")?;
                         }
                         let child_depth = depth.map(|d| d.saturating_add(1));
-                        json_indent(&mut output, child_depth);
+                        output.indent(child_depth)?;
                         pending.push(JsonFrame::Set(iter, depth, false));
                         pending.push(JsonFrame::Value(value, child_depth));
                     } else {
                         if !first {
-                            json_indent(&mut output, depth);
+                            output.indent(depth)?;
                         }
-                        output.push(b']');
+                        output.append(b"]")?;
                     }
                 }
                 JsonFrame::Object(mut iter, depth, first) => {
                     if let Some((key, value)) = iter.next() {
                         if !first {
-                            output.push(b',');
+                            output.append(b",")?;
                         }
                         let child_depth = depth.map(|d| d.saturating_add(1));
-                        json_indent(&mut output, child_depth);
+                        output.indent(child_depth)?;
                         pending.push(JsonFrame::Object(iter, depth, false));
                         pending.push(JsonFrame::Value(value, child_depth));
                         pending.push(JsonFrame::Text(if depth.is_some() { ": " } else { ":" }));
                         pending.push(JsonFrame::Key(key));
                     } else {
                         if !first {
-                            json_indent(&mut output, depth);
+                            output.indent(depth)?;
                         }
-                        output.push(b'}');
+                        output.append(b"}")?;
                     }
                 }
                 JsonFrame::Key(Value::String(key)) => {
-                    json_scalar(key, &mut output)?;
+                    output.scalar(key)?;
                 }
                 JsonFrame::Key(key) => {
-                    pending.push(JsonFrame::EndKey(core::mem::take(&mut output)));
+                    pending.push(JsonFrame::EndKey(core::mem::take(&mut output.bytes)));
                     pending.push(JsonFrame::Value(key, None));
                 }
                 JsonFrame::EndKey(parent) => {
-                    let key = String::from_utf8(output).map_err(serde::ser::Error::custom)?;
-                    output = parent;
-                    json_scalar(&key, &mut output)?;
+                    let key = String::from_utf8(core::mem::take(&mut output.bytes))
+                        .map_err(anyhow::Error::new)?;
+                    output.bytes = parent;
+                    output.scalar(&key)?;
                 }
-                JsonFrame::Text(text) => output.extend_from_slice(text.as_bytes()),
+                JsonFrame::Text(text) => output.append(text.as_bytes())?,
             }
         }
-        String::from_utf8(output).map_err(serde::ser::Error::custom)
+        String::from_utf8(output.bytes)
+            .map_err(anyhow::Error::new)
+            .map_err(E::from)
     }
 }
 
@@ -1265,7 +1345,15 @@ impl Value {
     /// # }
     /// ```
     pub fn to_json_str(&self) -> Result<String> {
-        self.json_string(true).map_err(anyhow::Error::msg)
+        self.json_string(true)
+    }
+
+    #[cfg(all(feature = "rvm", feature = "allocator-memory-limits", not(miri)))]
+    pub(crate) fn to_json_str_with_checkpoint<E: From<anyhow::Error>>(
+        &self,
+        checkpoint: &mut dyn FnMut() -> core::result::Result<(), E>,
+    ) -> core::result::Result<String, E> {
+        self.json_string_with_checkpoint(true, checkpoint)
     }
 
     /// Deserialize a value from YAML.

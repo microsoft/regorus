@@ -170,6 +170,7 @@ fn value_output_and_ordering_compatibility() {
 
 #[cfg(feature = "std")]
 #[test]
+#[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
 fn value_traversal_lifecycle_1500000_byte_stack() {
     if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
         native_depth_support::run_in_subprocess(
@@ -443,6 +444,7 @@ fn check_serialization<T: serde::Serialize>(
 
 #[cfg(feature = "std")]
 #[test]
+#[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
 fn value_serialization_budget_1500000_byte_stack() {
     if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
         native_depth_support::run_in_subprocess(

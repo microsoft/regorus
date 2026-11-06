@@ -23,29 +23,39 @@ fn operands(registers: &[Value], pc: usize, left: u8, right: u8) -> Result<(&Val
 }
 
 impl RegoVM {
+    fn needs_checked_comparison(&self) -> bool {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if self.active_memory_budget_config.is_some()
+            || crate::utils::limits::global_memory_limit().is_some()
+        {
+            return true;
+        }
+        self.execution_timer.config().is_some()
+    }
+
     pub(super) fn compare_registers(
         &mut self,
         left: u8,
         right: u8,
         equality: bool,
     ) -> Result<Ordering> {
-        if self.execution_timer.config().is_none() {
+        if !self.needs_checked_comparison() {
             return Ok(self.get_register(left)?.cmp(self.get_register(right)?));
         }
 
         let pc = self.pc;
         let (left, right) = operands(&self.registers, pc, left, right)?;
-        compare_checked(left, right, equality, &mut || {
+        let (left, right) = (left.clone(), right.clone());
+        compare_checked(&left, &right, equality, &mut || {
             Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
-            crate::utils::limits::check_memory_limit_if_needed()
-                .map_err(|error| VmError::from(anyhow::Error::new(error)))
+            self.check_initial_memory_limit()
         })
     }
 
     pub(super) fn contains_registers(&mut self, collection: u8, value: u8) -> Result<bool> {
         let pc = self.pc;
         let (value, collection) = operands(&self.registers, pc, value, collection)?;
-        if self.execution_timer.config().is_none() {
+        if !self.needs_checked_comparison() {
             return Ok(match *collection {
                 Value::Set(ref items) => items.contains(value),
                 Value::Array(ref items) => items.contains(value),
@@ -54,15 +64,15 @@ impl RegoVM {
             });
         }
 
+        let (value, collection) = (value.clone(), collection.clone());
         let mut equals = |item: &Value| {
-            compare_checked(item, value, true, &mut || {
+            compare_checked(item, &value, true, &mut || {
                 Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
-                crate::utils::limits::check_memory_limit_if_needed()
-                    .map_err(|error| VmError::from(anyhow::Error::new(error)))
+                self.check_initial_memory_limit()
             })
             .map(Ordering::is_eq)
         };
-        match *collection {
+        match collection {
             Value::Array(ref items) => {
                 for item in items.iter() {
                     if equals(item)? {
@@ -77,7 +87,7 @@ impl RegoVM {
                     }
                 }
             }
-            // B-tree lookup cannot interrupt its comparator. A timed scan can.
+            // B-tree lookup cannot interrupt its comparator. A checked scan can.
             Value::Set(ref items) => {
                 for item in items.iter_sorted() {
                     if equals(item)? {
@@ -270,23 +280,29 @@ mod tests {
     }
 
     #[test]
-    fn checked_equality_keeps_identity_and_length_shortcuts() {
+    fn checked_comparison_keeps_identity_and_equality_length_shortcuts() {
         for value in [
-            dag(8, core::convert::identity),
-            object(dag(8, core::convert::identity)),
-            set(dag(8, core::convert::identity)),
+            dag(18, core::convert::identity),
+            object(dag(18, core::convert::identity)),
+            set(dag(18, core::convert::identity)),
             Value::String(Rc::from("x".repeat(2048))),
         ] {
             let alias = value.clone();
-            let mut checkpoints = 0;
-            assert_eq!(
-                compare_checked(&value, &alias, true, &mut || {
-                    checkpoints += 1;
-                    Ok::<(), Infallible>(())
-                }),
-                Ok(Ordering::Equal)
-            );
-            assert_eq!(checkpoints, 1);
+            for equality in [false, true] {
+                let mut checkpoints = 0;
+                assert_eq!(
+                    compare_checked(&value, &alias, equality, &mut || {
+                        checkpoints += 1;
+                        Ok::<(), Infallible>(())
+                    }),
+                    Ok(Ordering::Equal)
+                );
+                assert_eq!(checkpoints, 1);
+                assert_eq!(
+                    compare_checked(&value, &alias, equality, &mut || Err("deadline")),
+                    Err("deadline")
+                );
+            }
         }
         for (left, right) in [
             (Value::new_array(), Value::from(vec![Value::Null])),
@@ -325,7 +341,7 @@ mod tests {
                         Ok(Ordering::Equal)
                     );
                     assert!(
-                        checkpoints <= width.saturating_mul(2).saturating_add(4),
+                        checkpoints <= width.saturating_mul(8).saturating_add(12),
                         "width {width}, checkpoints {checkpoints}"
                     );
                 }

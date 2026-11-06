@@ -79,22 +79,27 @@ fields to responsibilities.
 
 Direct comparison instructions (`Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, and
 `AssertEq`) use iterative Value traversal. With an execution timer enabled,
-the traversal checkpoints each value and each 256-byte string chunk, including
+the traversal checkpoints each continuation frame and each 256-byte string chunk, including
 same-type comparisons and array, object-value, and set membership. Deadline
 errors remain errors in strict and non-strict execution, including resumed
 segments, which publish terminal error state and release execution values.
 Traversal work counts toward the existing timer's `check_interval`, not the
 instruction count. The deadline is not restarted for each comparison.
-Equality retains its identity/length shortcuts; when the timer is disabled,
-comparison instructions use native iterative Value comparisons.
+Equality retains its length shortcuts. Equality and ordering both checkpoint
+before skipping pointer-identical strings and containers, including shared DAGs.
+With allocator limits enabled, traversal also checks the active execution budget
+and global memory ceiling while scratch storage is live, even without a timer.
+Without a timer or applicable memory limit, comparisons use native iterative
+Value comparisons.
 
 The traversal does not memoize shared substructures. Compact shared DAGs can
 still require exponential work to finish, but covered comparisons can stop
 at a timer checkpoint instead of expanding the entire structure first.
 
-Timed set membership uses a sorted scan rather than B-tree lookup, since a
-B-tree comparator cannot return a deadline error. This is O(n) in set size only
-when the timer is enabled. Untimed membership retains the native lookup.
+Resource-checked set membership uses a sorted scan rather than B-tree lookup,
+since a B-tree comparator cannot return a resource error. This is O(n) in set
+size when a timer or applicable memory limit is enabled. Unchecked membership
+retains the native lookup.
 Other implicit B-tree comparisons remain infallible: iterative Value traits
 prevent nesting-dependent stack growth but do not checkpoint the execution timer.
 Scalar number comparison is also an indivisible checkpoint unit. This is not
@@ -106,8 +111,13 @@ Strict comparison and shared builtin argument diagnostics report structural
 summaries such as `Array(len=1)` or `String(bytes=4096)`, without rendering the
 contents. Public Value Debug and successful JSON output are unchanged.
 Display, `to_json_str`, and native returned-value JSON use the upstream iterative
-encoder. Generic Serde callbacks have a separate 64-container nesting budget;
-this is not an input admission limit.
+encoder. It checks the global memory ceiling during traversal, buffer growth,
+scalar output, and indentation; native VM result formatting also checks the
+active execution budget before completing the output. These are cooperative
+checks, not a physical-OOM guarantee. Generic Serde callbacks have a separate
+64-container nesting budget; this is not an input admission limit. Program JSON
+serialization returns an error, rather than panicking, if a literal, rule tree,
+or annotation exceeds that budget.
 
 Serialization-budget errors retain typed resource identity through builtin
 calls and interpreter function evaluation, including default-function

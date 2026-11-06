@@ -195,7 +195,7 @@ fn vm_walks() {
             }
         }
 
-        // Aliased ordering still checkpoints; equality retains its identity shortcut.
+        // Aliased ordering checkpoints before taking its constant-time shortcut.
         let alias = nested(4096, Value::Null, 0);
         let mut vm = RegoVM::new();
         vm.load_program(program(Instruction::Lt {
@@ -207,10 +207,7 @@ fn vm_walks() {
         vm.set_input(alias.clone());
         vm.set_data(alias).unwrap();
         vm.set_execution_timer_config(timer(Duration::ZERO));
-        assert!(matches!(
-            vm.execute(),
-            Err(VmError::TimeLimitExceeded { pc: 2, .. })
-        ));
+        assert_eq!(vm.execute().unwrap(), Value::Bool(false));
 
         for kind in 0..3 {
             let needle = nested(4096, Value::Null, 0);

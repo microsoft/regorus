@@ -78,7 +78,7 @@ impl RegoVM {
 
     /// Release state after a failed budgeted suspendable execution.
     ///
-    /// Depth and deadline failures also release state; other unbudgeted errors preserve legacy state.
+    /// Resource failures also release state; other unbudgeted errors preserve legacy state.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
         if matches!(
@@ -86,6 +86,7 @@ impl RegoVM {
             VmError::RuleCallDepthExceeded { .. }
                 | VmError::SerializationDepthExceeded { .. }
                 | VmError::TimeLimitExceeded { .. }
+                | VmError::MemoryLimitExceeded { .. }
         ) {
             return self.fail_run_to_completion(error);
         }
