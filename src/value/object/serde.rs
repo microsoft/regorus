@@ -19,6 +19,7 @@ impl Serialize for Object {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
+            limit_exceeded: None,
         }
         .serialize(serializer)
     }
@@ -27,19 +28,22 @@ impl Serialize for Object {
 impl Serialize for SerializeWithBudget<'_, Object> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::Error;
-        let remaining = serialization_child_budget::<S::Error>(self.remaining)?;
+        let remaining =
+            serialization_child_budget::<S::Error>(self.remaining, self.limit_exceeded)?;
         let mut map = serializer.serialize_map(Some(self.value.len()))?;
         // Sorted iteration: canonical JSON.
         for (k, v) in self.value.iter_sorted() {
             let value = SerializeWithBudget {
                 value: v,
                 remaining,
+                limit_exceeded: self.limit_exceeded,
             };
             match *k {
                 Value::String(_) => map.serialize_entry(
                     &SerializeWithBudget {
                         value: k,
                         remaining,
+                        limit_exceeded: self.limit_exceeded,
                     },
                     &value,
                 )?,

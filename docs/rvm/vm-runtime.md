@@ -75,6 +75,42 @@ fields to responsibilities.
 
 ## 2. Execution modes
 
+### Value comparisons and output
+
+Direct comparison instructions (`Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, and
+`AssertEq`) use iterative Value traversal. With an execution timer enabled,
+the traversal checkpoints each value and each 256-byte string chunk, including
+same-type comparisons and array, object-value, and set membership. Deadline
+errors remain errors in strict and non-strict execution, including resumed
+segments, which publish terminal error state and release execution values.
+Traversal work does not increment the instruction count.
+
+Timed set membership uses a sorted scan rather than B-tree lookup, since a
+B-tree comparator cannot return a deadline error. This is O(n) in set size only
+when the timer is enabled. Untimed membership retains the native lookup.
+Other implicit B-tree comparisons remain infallible: iterative Value traits
+prevent nesting-dependent stack growth but do not checkpoint the execution timer.
+Scalar number comparison is also an indivisible checkpoint unit.
+
+Strict comparison and shared builtin argument diagnostics report structural
+summaries such as `Array(len=1)` or `String(bytes=4096)`, without rendering the
+contents. Public Value Debug and successful JSON output are unchanged.
+Display, `to_json_str`, and native returned-value JSON use the upstream iterative
+encoder. Generic Serde callbacks have a separate 64-container nesting budget;
+this is not an input admission limit.
+
+Serialization-budget errors retain typed resource identity through builtin
+calls and interpreter function alternatives. They cannot select a successful
+alternative, default, or negated branch in non-strict mode. Ordinary builtin
+type errors keep their existing strict/non-strict semantics.
+
+Collection destruction uses the upstream iterative final-owner drain. Shared
+owners are not cloned to release them, and exhausted object iterators are freed
+before descending into their final pair. Single-child array/set chains need no
+continuation allocation; branching shapes and object key/value continuations can
+allocate. Cooperative memory limits do not prohibit cleanup allocations, and
+successful destruction under physical allocator exhaustion is not guaranteed.
+
 ### Native rule-call depth limit
 
 By default, the VM allows at most 16 active rule calls that use the native thread

@@ -175,38 +175,91 @@ enum CompareFrame<'a> {
 }
 
 fn compare_values(first: CompareFrame<'_>) -> core::cmp::Ordering {
+    match compare_frames(first, None, &mut || Ok::<(), core::convert::Infallible>(())) {
+        Ok(order) => order,
+        Err(never) => match never {},
+    }
+}
+
+#[cfg(feature = "rvm")]
+pub(crate) fn compare_checked<E>(
+    left: &Value,
+    right: &Value,
+    equality: bool,
+    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
+) -> core::result::Result<core::cmp::Ordering, E> {
+    compare_frames(CompareFrame::Value(left, right), Some(equality), checkpoint)
+}
+
+fn compare_frames<E>(
+    first: CompareFrame<'_>,
+    equality: Option<bool>,
+    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
+) -> core::result::Result<core::cmp::Ordering, E> {
     use core::cmp::Ordering;
     let mut pending = Vec::new();
     let mut current = Some(first);
     while let Some(frame) = current.take().or_else(|| pending.pop()) {
         let order = match frame {
-            CompareFrame::Value(a, b) => match (a, b) {
-                (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
-                    Ordering::Equal
-                }
-                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-                (Value::Number(a), Value::Number(b)) => a.cmp(b),
-                (Value::String(a), Value::String(b)) => a.cmp(b),
-                (Value::Array(a), Value::Array(b)) => {
-                    if !Rc::ptr_eq(a, b) {
-                        pending.push(CompareFrame::Array(a.iter(), b.iter()));
+            CompareFrame::Value(a, b) => {
+                checkpoint()?;
+                match (a, b) {
+                    (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => {
+                        Ordering::Equal
                     }
-                    Ordering::Equal
-                }
-                (Value::Set(a), Value::Set(b)) => {
-                    if !Rc::ptr_eq(a, b) {
-                        pending.push(CompareFrame::Set(a.iter_sorted(), b.iter_sorted()));
+                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                    (Value::Number(a), Value::Number(b)) => a.cmp(b),
+                    (Value::String(a), Value::String(b)) => {
+                        if equality.is_none() {
+                            a.cmp(b)
+                        } else if equality == Some(true) && Rc::ptr_eq(a, b) {
+                            Ordering::Equal
+                        } else if equality == Some(true) && a.len() != b.len() {
+                            return Ok(Ordering::Less);
+                        } else {
+                            for (a, b) in a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256)) {
+                                checkpoint()?;
+                                let order = a.cmp(b);
+                                if !order.is_eq() {
+                                    return Ok(order);
+                                }
+                            }
+                            a.len().cmp(&b.len())
+                        }
                     }
-                    Ordering::Equal
-                }
-                (Value::Object(a), Value::Object(b)) => {
-                    if !Rc::ptr_eq(a, b) {
-                        pending.push(CompareFrame::Object(a.iter_sorted(), b.iter_sorted()));
+                    (Value::Array(a), Value::Array(b)) => {
+                        if equality != Some(false) && Rc::ptr_eq(a, b) {
+                            Ordering::Equal
+                        } else if equality == Some(true) && a.len() != b.len() {
+                            return Ok(Ordering::Less);
+                        } else {
+                            pending.push(CompareFrame::Array(a.iter(), b.iter()));
+                            Ordering::Equal
+                        }
                     }
-                    Ordering::Equal
+                    (Value::Set(a), Value::Set(b)) => {
+                        if equality != Some(false) && Rc::ptr_eq(a, b) {
+                            Ordering::Equal
+                        } else if equality == Some(true) && a.len() != b.len() {
+                            return Ok(Ordering::Less);
+                        } else {
+                            pending.push(CompareFrame::Set(a.iter_sorted(), b.iter_sorted()));
+                            Ordering::Equal
+                        }
+                    }
+                    (Value::Object(a), Value::Object(b)) => {
+                        if equality != Some(false) && Rc::ptr_eq(a, b) {
+                            Ordering::Equal
+                        } else if equality == Some(true) && a.len() != b.len() {
+                            return Ok(Ordering::Less);
+                        } else {
+                            pending.push(CompareFrame::Object(a.iter_sorted(), b.iter_sorted()));
+                            Ordering::Equal
+                        }
+                    }
+                    _ => value_rank(a).cmp(&value_rank(b)),
                 }
-                _ => value_rank(a).cmp(&value_rank(b)),
-            },
+            }
             CompareFrame::Array(mut a, mut b) => match (a.next(), b.next()) {
                 (Some(a_value), Some(b_value)) => {
                     pending.push(CompareFrame::Array(a, b));
@@ -234,10 +287,49 @@ fn compare_values(first: CompareFrame<'_>) -> core::cmp::Ordering {
             },
         };
         if order != Ordering::Equal {
-            return order;
+            return Ok(order);
         }
     }
-    Ordering::Equal
+    Ok(Ordering::Equal)
+}
+
+pub(crate) struct ValueSummary<'a>(&'a Value);
+pub(crate) struct ValueDiagnostic<'a>(&'a Value);
+
+impl Value {
+    pub(crate) const fn summary(&self) -> ValueSummary<'_> {
+        ValueSummary(self)
+    }
+
+    pub(crate) const fn diagnostic(&self) -> ValueDiagnostic<'_> {
+        ValueDiagnostic(self)
+    }
+}
+
+impl fmt::Display for ValueDiagnostic<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Value::Null | Value::Bool(_) | Value::Undefined => self.0.fmt(f),
+            Value::Number(Number::Int(_) | Number::UInt(_) | Number::Float(_)) => self.0.fmt(f),
+            Value::String(s) if s.len() <= 64 => self.0.fmt(f),
+            _ => self.0.summary().fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for ValueSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Value::Null => f.write_str("Null"),
+            Value::Bool(_) => f.write_str("Bool"),
+            Value::Number(_) => f.write_str("Number"),
+            Value::String(s) => write!(f, "String(bytes={})", s.len()),
+            Value::Array(a) => write!(f, "Array(len={})", a.len()),
+            Value::Set(s) => write!(f, "Set(len={})", s.len()),
+            Value::Object(o) => write!(f, "Object(len={})", o.len()),
+            Value::Undefined => f.write_str("Undefined"),
+        }
+    }
 }
 
 const fn value_rank(value: &Value) -> u8 {
@@ -660,17 +752,49 @@ fn record_resume_deserialization_limit_error(error: crate::utils::limits::LimitE
 
 const MAX_SERIALIZATION_CONTAINERS: usize = 64;
 
-struct SerializeWithBudget<'a, T> {
+pub(crate) struct SerializeWithBudget<'a, T> {
     value: &'a T,
     remaining: usize,
+    limit_exceeded: Option<&'a core::cell::Cell<bool>>,
 }
 
-fn serialization_child_budget<E: serde::ser::Error>(remaining: usize) -> Result<usize, E> {
+fn serialization_child_budget<E: serde::ser::Error>(
+    remaining: usize,
+    limit_exceeded: Option<&core::cell::Cell<bool>>,
+) -> Result<usize, E> {
     remaining.checked_sub(1).ok_or_else(|| {
-        E::custom(format_args!(
-            "value serialization exceeds {MAX_SERIALIZATION_CONTAINERS} nested containers"
-        ))
+        if let Some(exceeded) = limit_exceeded {
+            exceeded.set(true);
+        }
+        E::custom(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        })
     })
+}
+
+// Serde's custom errors erase their source type. Keep a per-call witness so
+// builtins can restore resource-error identity without parsing error strings.
+pub(crate) fn serialize_with_limits<T, E>(
+    value: &Value,
+    serialize: impl FnOnce(&SerializeWithBudget<'_, Value>) -> Result<T, E>,
+) -> Result<T>
+where
+    E: core::error::Error + Send + Sync + 'static,
+{
+    let limit_exceeded = core::cell::Cell::new(false);
+    let value = SerializeWithBudget {
+        value,
+        remaining: MAX_SERIALIZATION_CONTAINERS,
+        limit_exceeded: Some(&limit_exceeded),
+    };
+    let result = serialize(&value);
+    if limit_exceeded.get() {
+        Err(anyhow!(crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        }))
+    } else {
+        result.map_err(anyhow::Error::new)
+    }
 }
 
 #[doc(hidden)]
@@ -682,6 +806,7 @@ impl Serialize for Value {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
+            limit_exceeded: None,
         }
         .serialize(serializer)
     }
@@ -697,16 +822,19 @@ impl Serialize for SerializeWithBudget<'_, Value> {
             Value::Array(a) => SerializeWithBudget {
                 value: a.as_ref(),
                 remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
             Value::Object(fields) => SerializeWithBudget {
                 value: fields.as_ref(),
                 remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
             Value::Set(s) => SerializeWithBudget {
                 value: s.as_ref(),
                 remaining: self.remaining,
+                limit_exceeded: self.limit_exceeded,
             }
             .serialize(serializer),
 

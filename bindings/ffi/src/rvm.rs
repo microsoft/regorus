@@ -30,6 +30,10 @@ use regorus::utils::limits::{
 use regorus::PolicyModule;
 use regorus::Value;
 
+#[cfg(all(test, feature = "std"))]
+#[path = "value_safety_tests.rs"]
+mod value_safety_tests;
+
 /// Wrapper for `regorus::rvm::Program`.
 #[derive(Clone)]
 pub struct RegorusProgram {

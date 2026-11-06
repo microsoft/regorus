@@ -301,7 +301,7 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
                 .eval_query("upper(input)".into(), false)
                 .unwrap_err()
                 .to_string();
-            assert!(error.contains(&format!("expects string argument. Got `{compact}` instead")));
+            assert!(error.contains("expects string argument. Got `Array(len=1)` instead"));
             engine.set_input(Value::Null);
 
             #[cfg(feature = "rvm")]
@@ -325,9 +325,9 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
                 assert_eq!(vm.execute().unwrap(), Value::Bool(false));
                 vm.set_strict_builtin_errors(true);
                 let error = vm.execute().unwrap_err().to_string();
-                assert!(error.contains(&format!(
-                    "cannot compare values of different types (left={a:?}, right=Bool(true))"
-                )));
+                assert!(error.contains(
+                    "cannot compare values of different types (left=Array(len=1), right=Bool)"
+                ));
                 vm.set_input(Value::Null);
             }
             drop(a);
@@ -356,6 +356,49 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn resource_identity_requires_observed_budget_exhaustion_not_error_text() {
+    use super::{serialize_with_limits, MAX_SERIALIZATION_CONTAINERS};
+
+    let value =
+        (0..=MAX_SERIALIZATION_CONTAINERS).fold(Value::Null, |value, _| Value::from(vec![value]));
+    let error = serialize_with_limits(&value, |value| serde_json::to_string(value)).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<crate::LimitError>(),
+        Some(&crate::LimitError::SerializationDepthExceeded {
+            limit: MAX_SERIALIZATION_CONTAINERS,
+        })
+    );
+
+    // Even with an over-budget input, an earlier unrelated serializer error
+    // must not be reclassified just because it has the same message.
+    let error = serialize_with_limits(&value, |_| {
+        Err::<(), _>(<serde_json::Error as serde::ser::Error>::custom(
+            crate::LimitError::SerializationDepthExceeded {
+                limit: MAX_SERIALIZATION_CONTAINERS,
+            },
+        ))
+    })
+    .unwrap_err();
+    assert!(error.downcast_ref::<crate::LimitError>().is_none());
+    assert!(error.downcast_ref::<serde_json::Error>().is_some());
+
+    let error = serialize_with_limits(&value, |value| {
+        let _ = serde_json::to_string(value);
+        Ok::<_, serde_json::Error>("fallback")
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<crate::LimitError>(),
+        Some(crate::LimitError::SerializationDepthExceeded { .. })
+    ));
+
+    assert_eq!(
+        serialize_with_limits(&Value::Null, |value| serde_json::to_string(value)).unwrap(),
+        "null"
+    );
 }
 
 #[cfg(feature = "std")]
