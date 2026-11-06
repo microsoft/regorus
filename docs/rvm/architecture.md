@@ -45,6 +45,66 @@ The Rego VM uses a register-based architecture with the following traits:
 
 ## 1. Compilation Outputs
 
+Rego data references resolve actual rule-head paths, not the intermediate
+namespace entries recorded by the shared compiler. A dynamic selector can select
+a virtual rule whose value is then indexed by a static or dynamic suffix. Missing
+suffixes remain undefined; namespace lookups merge virtual descendants with base
+data. Candidate selection compares every shared path component, so a lookup
+under a nested namespace does not include unrelated sibling rules.
+Package-local namespace references use the same resolution as fully qualified
+`data` references, while local variables retain precedence. Parameterized
+functions, including default-only functions, are not virtual-document values and
+are excluded from lookup candidates. Their package namespaces still exist as
+objects, even when the package has no document rules.
+Zero-argument heads such as `p() := 7` are document values and appear in namespace
+lookups when defined. Their results share the per-execution document cache across
+direct, dynamic, namespace, and explicit `p()` reads. Function metadata is retained
+for explicit calls; parameterized functions do not use this document cache.
+Empty namespace markers do not conflict with base data;
+non-object values at an empty namespace are preserved regardless of whether data
+is set before or after the compiled program is loaded. Actual document-rule
+conflicts remain errors, and traversable namespace prefixes still require objects.
+The compiler records structural package paths in the reserved
+`rego_namespace_tree` metadata annotation, independently of document-rule paths.
+This keeps packages visible when all their rules are undefined without inventing
+objects for undefined dotted-rule heads. A lookup rooted at a non-package prefix
+also remains undefined until base data or a defined descendant contributes.
+The annotation is preserved by both
+binary and JSON program serialization.
+Programs without this annotation retain their existing namespace-assembly
+behavior; recompile older artifacts to obtain the corrected undefined-document
+omission and zero-argument document registration.
+
+For example, with `package tenant; tenants.a := {"deny": true}`, the reference
+`data.tenant.tenants[input.tenant].deny` must read the value of rule `data.tenant.tenants.a`
+before indexing `deny`. For input `{"tenant":"a"}`, negating that reference
+must fail, just as negating `data.tenant.tenants.a.deny` does. Treating the shorter
+rule head as absent incorrectly makes `not` succeed and can grant access.
+The RVM compiler retains that actual head and leaves the suffix for the VM,
+including when the selected rule suspends for a host response.
+
+With `default allow := false` and that negated reference in the same package,
+OPA and the interpreter return `false`, as does the corrected RVM in both modes.
+The separate-package form (`tenant.a` with the lookup in `auth.allow`) has the
+same expected result. These are the AUD02 lookup regressions. An unscoped
+same-package lookup through `data.tenant[input.tenant]` could select `allow`
+itself: OPA rejects that policy for recursion regardless of the supplied input.
+Regorus's different validation behavior for that form is outside this fix.
+
+Dynamic candidates are scheduled without treating them as proven recursive calls.
+For example, `p := {"a":{"b":7}}; result := data.probe[input.key].a.b` in
+`package probe` returns `7` for `{"key":"p"}` in the RVM. The interpreter's
+existing undefined result for this same-namespace form is unchanged. Selecting
+an active rule instead produces `VmError::RecursiveRuleEvaluation`, in either VM
+mode, rather than undefined or unbounded recursion. Synchronous native rule
+calls additionally use the configurable native-depth limit (16 by default) and report
+`VmError::RuleCallDepthExceeded`; explicit suspendable rule frames are not subject
+to that native-stack limit. These errors are fatal to rule evaluation, including
+rules with defaults, and failed execution state is released before reuse.
+Interpreter fixes for that same-namespace drift and strict-only behavior
+remain separate follow-up work; the lookup regressions exercise non-strict
+evaluation without changing existing expected results.
+
 Keyed membership (`key, value in collection`) checks the value at that specific
 object key or array index, not whether the value appears elsewhere. Missing or
 invalid keys produce `false`, as do keyed membership checks on sets and scalar

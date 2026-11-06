@@ -354,9 +354,10 @@ impl RegoVM {
 
     /// Set the maximum number of active native rule calls (default: 16).
     ///
-    /// Checked before each uncached synchronous rule evaluation, including during
-    /// resume. Zero rejects calls that need a native rule frame; cached results,
-    /// default-only rules, and explicit suspendable frames do not count.
+    /// Checked before each uncached synchronous rule evaluation in run-to-completion
+    /// mode. Suspendable evaluation and resume use explicit frames and are not
+    /// bounded by this setting. Zero rejects calls that need a native rule frame;
+    /// cached results and default-only rules do not count.
     /// The setting survives evaluation resets and program loads.
     ///
     /// Raising the limit can exhaust the host thread's stack. This does not resize

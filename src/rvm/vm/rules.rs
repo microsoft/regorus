@@ -17,12 +17,34 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
+    fn is_cacheable_rule_result(rule_info: &RuleInfo) -> bool {
+        rule_info
+            .function_info
+            .as_ref()
+            .is_none_or(|info| info.num_params == 0)
+    }
+
+    fn check_rule_call(&self, rule_index: u16) -> Result<()> {
+        if self
+            .call_rule_stack
+            .iter()
+            .any(|context| context.rule_index == rule_index)
+        {
+            return Err(VmError::RecursiveRuleEvaluation {
+                rule_index,
+                pc: self.pc,
+            });
+        }
+        Ok(())
+    }
+
     /// Returns true if the error represents a resource-limit violation that
     /// must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
         matches!(
             err,
             VmError::TimeLimitExceeded { .. }
+                | VmError::RecursiveRuleEvaluation { .. }
                 | VmError::RuleCallDepthExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
@@ -234,9 +256,9 @@ impl RegoVM {
             })?
             .clone();
 
-        let is_function_rule = rule_info.function_info.is_some();
+        let should_cache = Self::is_cacheable_rule_result(&rule_info);
 
-        if !is_function_rule {
+        if should_cache {
             let (ref computed, ref cached_result) =
                 *self
                     .rule_cache
@@ -263,7 +285,7 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
-            if !is_function_rule {
+            if should_cache {
                 let available = self.rule_cache.len();
                 let entry =
                     self.rule_cache
@@ -279,6 +301,7 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
         // Explicit suspendable frames do not retain native dispatch frames.
         if self.register_stack.len() >= self.max_native_rule_call_depth {
             return Err(VmError::RuleCallDepthExceeded {
@@ -360,7 +383,7 @@ impl RegoVM {
         }
 
         let final_value = self.get_register(dest)?.clone();
-        if !is_function_rule {
+        if should_cache {
             let available = self.rule_cache.len();
             let entry = self
                 .rule_cache
@@ -411,8 +434,9 @@ impl RegoVM {
             .clone();
 
         let is_function_rule = rule_info.function_info.is_some();
+        let should_cache = Self::is_cacheable_rule_result(&rule_info);
 
-        if !is_function_rule {
+        if should_cache {
             let (ref computed, ref cached_result) =
                 *self
                     .rule_cache
@@ -434,7 +458,7 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
-            if !is_function_rule {
+            if should_cache {
                 let available = self.rule_cache.len();
                 let entry =
                     self.rule_cache
@@ -456,6 +480,7 @@ impl RegoVM {
             return Ok(());
         }
 
+        self.check_rule_call(rule_index)?;
         let num_registers = usize::from(rule_info.num_registers);
 
         let num_retained_registers = match function_call_params {
@@ -532,6 +557,7 @@ impl RegoVM {
 
         let frame = ExecutionFrame::new(initial_pc, FrameKind::Rule(frame_data));
         self.execution_stack.push(frame);
+        self.frame_pc_overridden = true;
 
         Ok(())
     }
@@ -720,11 +746,31 @@ impl RegoVM {
             }
         }
 
-        if let Some(definition_bodies) = rule_info
-            .definitions
+        let next_is_else = rule_info
+            .else_bodies
             .get(frame_data.current_definition_index)
+            .and_then(|bodies| {
+                frame_data
+                    .current_body_index
+                    .checked_add(1)
+                    .and_then(|next| bodies.get(next))
+            })
+            .copied()
+            .unwrap_or(false);
+        if !matches!(
+            frame_data.rule_type,
+            RuleType::PartialSet | RuleType::PartialObject
+        ) || frame_data.is_function_rule
+            || next_is_else
         {
-            frame_data.current_body_index = definition_bodies.len();
+            if let Some(definition_bodies) = rule_info
+                .definitions
+                .get(frame_data.current_definition_index)
+            {
+                frame_data.current_body_index = definition_bodies.len();
+            } else {
+                self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
+            }
         } else {
             self.increment_counter(&mut frame_data.current_body_index, "rule body index")?;
         }
@@ -740,7 +786,6 @@ impl RegoVM {
             rule_failed_due_to_inconsistency,
             rule_type,
             result_reg,
-            is_function_rule,
             saved_registers,
             saved_loop_stack,
             saved_comprehension_stack,
@@ -859,7 +904,7 @@ impl RegoVM {
                     register_count,
                 })?;
 
-        if !is_function_rule {
+        if Self::is_cacheable_rule_result(&rule_info) {
             let available = self.rule_cache.len();
             let entry = self
                 .rule_cache

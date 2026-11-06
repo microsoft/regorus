@@ -2,15 +2,175 @@
 // Licensed under the MIT License.
 
 use crate::rvm::instructions::LiteralOrRegister;
-use crate::value::Value;
+use crate::value::{Object, ObjectCursor, Value};
+use crate::Rc;
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
 use super::errors::{Result, VmError};
+use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
 
+#[derive(Debug, Clone)]
+pub(super) struct VirtualLookupContinuation {
+    pc: usize,
+    dest: u8,
+    result: Value,
+    nodes: Vec<(Rc<Object>, ObjectCursor)>,
+    path: Vec<Value>,
+    next_node: Option<Value>,
+    pending_path: Option<Vec<Value>>,
+    root_path: Option<Vec<Value>>,
+    remainder: Vec<Value>,
+}
+
 impl RegoVM {
+    pub(super) fn continue_virtual_data_lookup(&mut self) -> Result<()> {
+        let mut lookup = self
+            .execution_stack
+            .last_mut()
+            .and_then(|frame| frame.virtual_lookup.take())
+            .ok_or(VmError::MissingExecutionFrame {
+                context: "continuing virtual data lookup",
+                pc: self.pc,
+            })?;
+        self.pc = lookup.pc;
+
+        if let Some(path) = lookup.pending_path.take() {
+            let value = self.get_register(lookup.dest)?.clone();
+            if value != Value::Undefined
+                || !self
+                    .program
+                    .metadata
+                    .annotations
+                    .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+            {
+                Self::set_nested_value(&mut lookup.result, &path, value.clone())?;
+            }
+            if let Some(ref root_path) = lookup.root_path {
+                let mut cache_path = root_path.clone();
+                cache_path.extend_from_slice(&path);
+                cache_path.push(Value::Undefined);
+                Self::set_nested_value(&mut self.evaluated, &cache_path, value)?;
+            }
+        }
+
+        if let Some((path, rule_index)) = self.next_virtual_lookup_rule(&mut lookup)? {
+            let dest = lookup.dest;
+            let cached = lookup
+                .root_path
+                .as_ref()
+                .and_then(|root| self.cached_virtual_rule(root, &path));
+            lookup.pending_path = Some(path);
+            self.save_virtual_lookup(lookup)?;
+            if let Some(value) = cached {
+                self.cache_hits = self.checked_add_one(self.cache_hits, "cache hits counter")?;
+                self.set_register(dest, value)?;
+            } else {
+                self.execute_call_rule_suspendable(dest, rule_index, None)?;
+            }
+        } else {
+            let mut result = &lookup.result;
+            for key in &lookup.remainder {
+                result = &result[key];
+            }
+            self.set_register(lookup.dest, result.clone())?;
+        }
+        Ok(())
+    }
+
+    fn next_virtual_lookup_rule(
+        &mut self,
+        lookup: &mut VirtualLookupContinuation,
+    ) -> Result<Option<(Vec<Value>, u16)>> {
+        loop {
+            self.execution_timer_tick(1)?;
+            self.memory_check()?;
+            if let Some(node) = lookup.next_node.take() {
+                match node {
+                    Value::Number(index) => {
+                        let rule_index = index
+                            .as_u64()
+                            .and_then(|index| u16::try_from(index).ok())
+                            .ok_or(VmError::InvalidRuleIndex {
+                                rule_index: Value::Number(index),
+                                pc: self.pc,
+                            })?;
+                        let path = lookup.path.clone();
+                        lookup.path.pop();
+                        return Ok(Some((path, rule_index)));
+                    }
+                    Value::Object(object) => {
+                        let is_namespace = match lookup.root_path.as_ref() {
+                            Some(root) => self.is_virtual_namespace(root, &lookup.path)?,
+                            None => false,
+                        };
+                        if object.is_empty() || is_namespace {
+                            Self::materialize_virtual_namespace(&mut lookup.result, &lookup.path)?;
+                        }
+                        let cursor = object.cursor();
+                        lookup.nodes.push((object, cursor));
+                    }
+                    _ => {
+                        lookup.path.pop();
+                    }
+                }
+            }
+            let Some(&mut (ref object, ref mut cursor)) = lookup.nodes.last_mut() else {
+                return Ok(None);
+            };
+            if let Some((key, child)) = object.next(cursor) {
+                lookup.path.push(key.clone());
+                lookup.next_node = Some(child.clone());
+            } else {
+                lookup.nodes.pop();
+                lookup.path.pop();
+            }
+        }
+    }
+
+    fn save_virtual_lookup(&mut self, lookup: VirtualLookupContinuation) -> Result<()> {
+        let frame = self
+            .execution_stack
+            .last_mut()
+            .ok_or(VmError::MissingExecutionFrame {
+                context: "saving virtual data lookup",
+                pc: self.pc,
+            })?;
+        frame.virtual_lookup = Some(lookup);
+        Ok(())
+    }
+
+    fn schedule_virtual_subobject(
+        &mut self,
+        dest: u8,
+        root_path: Vec<Value>,
+        data: Value,
+        tree: Value,
+    ) -> Result<()> {
+        let result = self.initial_virtual_subobject(data, &root_path)?;
+        self.save_virtual_lookup(VirtualLookupContinuation {
+            pc: self.pc,
+            dest,
+            result,
+            nodes: Vec::new(),
+            path: Vec::new(),
+            next_node: Some(tree),
+            pending_path: None,
+            root_path: Some(root_path),
+            remainder: Vec::new(),
+        })
+    }
+
+    fn cached_virtual_rule(&self, root_path: &[Value], relative_path: &[Value]) -> Option<Value> {
+        let mut node = &self.evaluated;
+        for key in root_path.iter().chain(relative_path) {
+            node = node.as_object().ok()?.get(key)?;
+        }
+        node.as_object().ok()?.get(&Value::Undefined).cloned()
+    }
+
     pub(super) fn execute_virtual_data_document_lookup_subobject(
         &mut self,
         path_components: &[LiteralOrRegister],
@@ -32,18 +192,76 @@ impl RegoVM {
             root_path.push(key_value);
         }
 
-        let mut result_subobject = match data_subobject {
-            Value::Undefined => Value::new_object(),
-            subobject => subobject,
-        };
+        let mut result_subobject = self.initial_virtual_subobject(data_subobject, &root_path)?;
 
         self.traverse_rule_tree_subobject(rule_tree_subobject, &mut result_subobject, &root_path)?;
 
         Ok(result_subobject)
     }
 
+    fn initial_virtual_subobject(&self, data: Value, root_path: &[Value]) -> Result<Value> {
+        if data == Value::Undefined
+            && (!self
+                .program
+                .metadata
+                .annotations
+                .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+                || self.is_virtual_namespace(root_path, &[])?)
+        {
+            Ok(Value::new_object())
+        } else {
+            Ok(data)
+        }
+    }
+
     fn set_nested_value(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
         Self::set_nested_value_static(target, path, value)
+    }
+
+    fn materialize_virtual_namespace(target: &mut Value, path: &[Value]) -> Result<()> {
+        let mut current = &*target;
+        for key in path {
+            current = &current[key];
+        }
+        if *current == Value::Undefined {
+            Self::set_nested_value(target, path, Value::new_object())?;
+        }
+        Ok(())
+    }
+
+    fn is_virtual_namespace(&self, root_path: &[Value], relative_path: &[Value]) -> Result<bool> {
+        let Some(tree) = self
+            .program
+            .metadata
+            .annotations
+            .get(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+        else {
+            return Ok(false);
+        };
+        let data_key = Value::from("data");
+        let mut node = tree;
+        for key in core::iter::once(&data_key)
+            .chain(root_path)
+            .chain(relative_path)
+        {
+            let Value::Object(ref object) = *node else {
+                return Err(VmError::InvalidRuleTreeEntry {
+                    value: node.clone(),
+                    pc: self.pc,
+                });
+            };
+            let Some(child) = object.get(key) else {
+                return Ok(false);
+            };
+            node = child;
+        }
+        if !matches!(node, Value::Object(_)) {
+            return Err(VmError::InvalidRuleTreeEntry {
+                value: node.clone(),
+                pc: self.pc,
+            });
+        }
+        Ok(true)
     }
 
     fn set_nested_value_static(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
@@ -101,34 +319,7 @@ impl RegoVM {
                 if let Some(rule_index) = rule_idx.as_u64() {
                     // Walk the evaluated cache using root_path then relative_path,
                     // without allocating a combined full_cache_path Vec.
-                    let cached_result = {
-                        let mut cache_lookup = &self.evaluated;
-                        let mut path_exists = true;
-
-                        for path_component in root_path.iter().chain(relative_path.iter()) {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                if let Some(next_value) = map.get(path_component) {
-                                    cache_lookup = next_value;
-                                } else {
-                                    path_exists = false;
-                                    break;
-                                }
-                            } else {
-                                path_exists = false;
-                                break;
-                            }
-                        }
-
-                        if path_exists {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                map.get(&Value::Undefined).cloned()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
+                    let cached_result = self.cached_virtual_rule(root_path, relative_path);
 
                     let rule_result = if let Some(cached) = cached_result {
                         self.cache_hits =
@@ -178,7 +369,15 @@ impl RegoVM {
                         result
                     };
 
-                    Self::set_nested_value(result_subobject, relative_path, rule_result)?;
+                    if rule_result != Value::Undefined
+                        || !self
+                            .program
+                            .metadata
+                            .annotations
+                            .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+                    {
+                        Self::set_nested_value(result_subobject, relative_path, rule_result)?;
+                    }
                 } else {
                     return Err(VmError::InvalidRuleIndex {
                         rule_index: Value::Number(rule_idx.clone()),
@@ -187,6 +386,9 @@ impl RegoVM {
                 }
             }
             Value::Object(ref obj) => {
+                if obj.is_empty() || self.is_virtual_namespace(root_path, relative_path)? {
+                    Self::materialize_virtual_namespace(result_subobject, relative_path)?;
+                }
                 for (key, value) in obj.iter() {
                     relative_path.push(key.clone());
                     self.traverse_rule_tree_subobject_with_path(
@@ -257,6 +459,26 @@ impl RegoVM {
                             pc: self.pc,
                         })?;
 
+                    if self.execution_mode == ExecutionMode::Suspendable {
+                        // Snapshot keys before a child rule can overwrite the destination.
+                        let remainder = params
+                            .path_components
+                            .iter()
+                            .skip(components_consumed)
+                            .map(|component| self.literal_or_register_value(component))
+                            .collect::<Result<Vec<_>>>()?;
+                        return self.save_virtual_lookup(VirtualLookupContinuation {
+                            pc: self.pc,
+                            dest: params.dest,
+                            result: Value::Undefined,
+                            nodes: Vec::new(),
+                            path: Vec::new(),
+                            next_node: Some(Value::from(u64::from(rule_index))),
+                            pending_path: None,
+                            root_path: None,
+                            remainder,
+                        });
+                    }
                     self.execute_call_rule_common(params.dest, rule_index, None)?;
 
                     if components_consumed < params.path_components.len() {
@@ -311,6 +533,22 @@ impl RegoVM {
             Value::Object(_) => {
                 let rule_tree_subobject = current_node.clone();
                 let data_subobject = data_ref.clone();
+                if self.execution_mode == ExecutionMode::Suspendable {
+                    let mut root_path = Vec::new();
+                    for (index, component) in params.path_components.iter().enumerate() {
+                        let mut key = self.literal_or_register_value(component)?;
+                        if string_fallback_indices.contains(&index) {
+                            key = Value::from(key.to_string());
+                        }
+                        root_path.push(key);
+                    }
+                    return self.schedule_virtual_subobject(
+                        params.dest,
+                        root_path,
+                        data_subobject,
+                        rule_tree_subobject,
+                    );
+                }
                 let result = self.execute_virtual_data_document_lookup_subobject(
                     &params.path_components,
                     &string_fallback_indices,
@@ -345,5 +583,52 @@ impl RegoVM {
         };
 
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::collections::BTreeMap;
+
+    #[test]
+    #[allow(clippy::panic_in_result_fn)]
+    fn virtual_namespace_cursor_retains_only_active_path() -> Result<()> {
+        let leaves = (0..4096)
+            .map(|index| (Value::from(index), Value::from(0)))
+            .collect::<BTreeMap<_, _>>();
+        let mut tree = Value::from(leaves);
+        for _ in 0..24 {
+            tree = Value::from(
+                [(Value::from("prefix"), tree)]
+                    .into_iter()
+                    .collect::<BTreeMap<_, _>>(),
+            );
+        }
+        let mut lookup = VirtualLookupContinuation {
+            pc: 0,
+            dest: 0,
+            result: Value::new_object(),
+            nodes: Vec::new(),
+            path: Vec::new(),
+            next_node: Some(tree),
+            pending_path: None,
+            root_path: Some(Vec::new()),
+            remainder: Vec::new(),
+        };
+        assert!(lookup.nodes.is_empty());
+        let mut vm = RegoVM::new();
+        let mut count = 0_usize;
+        while let Some((path, rule_index)) = vm.next_virtual_lookup_rule(&mut lookup)? {
+            assert_eq!(path.len(), 25);
+            assert_eq!(rule_index, 0);
+            assert!(lookup.nodes.len() <= 25);
+            assert_eq!(lookup.path.len(), 24);
+            count = count.saturating_add(1);
+        }
+        assert_eq!(count, 4096);
+        assert!(lookup.nodes.is_empty());
+        assert!(lookup.path.is_empty());
+        Ok(())
     }
 }

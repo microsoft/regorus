@@ -79,14 +79,14 @@ impl Program {
                                     });
                                 }
                             }
-                            Value::Object(_) => {
+                            Value::Object(ref namespace) => {
                                 if let Value::Object(_) = *data_value {
                                     Self::check_conflicts_recursive(
                                         rule_value,
                                         data_value,
                                         current_path,
                                     )?;
-                                } else if data_value != &Value::Undefined {
+                                } else if data_value != &Value::Undefined && !namespace.is_empty() {
                                     return Err(crate::rvm::vm::VmError::RuleDataConflict {
                                         message: format!(
                                             "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",

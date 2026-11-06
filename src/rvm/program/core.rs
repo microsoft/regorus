@@ -88,6 +88,8 @@ pub struct Program {
 }
 
 impl Program {
+    pub(crate) const REGO_NAMESPACE_TREE_ANNOTATION: &str = "rego_namespace_tree";
+
     /// Current serialization format version
     pub const SERIALIZATION_VERSION: u32 = 6;
     /// Magic bytes to identify Regorus program files

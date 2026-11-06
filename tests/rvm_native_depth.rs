@@ -148,7 +148,7 @@ fn check_configuration(scenarios: &Scenarios) {
     let case = scenarios
         .cases
         .iter()
-        .find(|case| case.note == "native-depth/virtual-leaf-suspendable-16-succeed")
+        .find(|case| case.note == "native-depth/virtual-leaf-suspendable-17-explicit-succeed")
         .unwrap();
     configured.load_program(compile_case(case));
     configured.set_input(case.input.clone().unwrap());
@@ -166,13 +166,11 @@ fn check_configuration(scenarios: &Scenarios) {
         }
         result = configured.resume(None);
     }
-    assert!(matches!(
-        result,
-        Err(VmError::RuleCallDepthExceeded { limit: 0, .. })
-    ));
+    assert_eq!(result.unwrap(), Value::from(42));
+    assert_eq!(configured.max_native_rule_call_depth(), 0);
     assert!(matches!(
         configured.execution_state(),
-        ExecutionState::Error { .. }
+        ExecutionState::Completed { .. }
     ));
     assert!(configured.get_call_stack().is_empty());
 }
@@ -192,7 +190,9 @@ fn native_depth_lifecycle() {
             check_lifecycle(case, false);
         }
         if case.execution_mode.as_deref() == Some("suspendable")
-            && (case.want_error.is_some() || case.note.contains("virtual-"))
+            && (case.want_error.is_some()
+                || case.note.contains("virtual-")
+                || case.note.contains("mixed-function"))
         {
             check_lifecycle(case, true);
         }

@@ -734,7 +734,7 @@ impl<'a> Compiler<'a> {
 
             self.rule_function_param_count[rule_index as usize] = rule_param_count;
 
-            if rule_param_count.is_none() {
+            if rule_param_count.is_none_or(|count| count == 0) {
                 let components = self
                     .policy
                     .inner

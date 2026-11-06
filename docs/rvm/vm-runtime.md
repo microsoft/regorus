@@ -138,14 +138,15 @@ By default, the VM allows at most 16 active rule calls that use the native threa
 stack. The next call returns `VmError::RuleCallDepthExceeded`, not undefined or a
 rule default. The VM clears the failed execution's state and can be used again.
 
-The limit applies to run-to-completion calls and synchronous virtual-document
-lookups in either mode, including during resume. Explicit suspendable rule
-frames do not count toward it.
+The limit applies only to synchronous native rule calls in run-to-completion
+execution. Suspendable rules, functions, and
+virtual-document lookups use explicit resumable rule frames instead, so they
+do not count toward the native-depth limit.
 
 Rust callers can change the per-VM limit with
 `vm.set_max_native_rule_call_depth(max)` and read it with
 `vm.max_native_rule_call_depth()`. It is checked before each new native rule
-evaluation, including during resume, and survives evaluation resets and program
+evaluation in run-to-completion mode, and survives evaluation resets and program
 loads. Zero rejects calls that need a native rule frame; cached results and
 default-only rules can still return without one. There is no new binding API.
 Raising the limit does not enlarge the host thread's stack and can cause stack
@@ -189,6 +190,15 @@ These subprocess-backed tests are excluded under Miri.
 - `RuleFrameData` carries scheduling cursors, register window sizing, and saved
   copies of the caller's registers and stacks so finalisation can restore the
   original context.
+- Dynamic virtual-document lookups retain a continuation on their owning frame.
+  Selected rules run on the explicit stack, including rules needed to assemble a
+  package object. Host awaits can suspend repeatedly or inside nested lookups;
+  remaining indexing and object assembly run only after the selected rule
+  completes. Lookup keys are captured before switching register windows, and
+  incomplete rule results are never cached as defaults.
+  Namespace assembly discovers rules incrementally using object cursors and one
+  active path rather than retaining a complete path for every descendant.
+  Cursor advancement checks execution time and memory limits.
 - Suspension: `InstructionOutcome::Suspend` records a `SuspendReason` (host
   await, breakpoint, step) and stores the last result snapshot. Host code calls
   `resume(resume_value)` to continue.

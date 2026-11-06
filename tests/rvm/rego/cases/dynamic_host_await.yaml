@@ -1,0 +1,225 @@
+cases:
+  - note: dynamic_host_deny_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: &input {namespace: target, subject: dummy, key: blocked}
+    modules: &dynamic_modules
+      - |
+        package framework
+        import rego.v1
+        default result := true
+        result := false if { data.config[input.namespace].blocked }
+      - |
+        package config.target
+        import rego.v1
+        default blocked := false
+        blocked := __builtin_host_await(input.subject, "is-blocked")
+    query: data.framework.result
+    host_await_responses_suspendable: &deny
+      - {id: is-blocked, args: dummy, value: true}
+    want_result: false
+
+  - note: dynamic_host_allow_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: *dynamic_modules
+    query: data.framework.result
+    host_await_responses_suspendable: &allow
+      - {id: is-blocked, args: dummy, value: false}
+    want_result: true
+
+  - note: dynamic_host_undefined_uses_default_suspendable
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: *dynamic_modules
+    query: data.framework.result
+    host_await_responses_suspendable: &undefined
+      - {id: is-blocked, args: dummy, value: "#undefined"}
+    want_result: true
+
+  - note: dynamic_host_deny_rtc
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: *dynamic_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: is-blocked, value: true}
+    want_result: false
+
+  - note: dynamic_host_allow_rtc
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: *dynamic_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: is-blocked, value: false}
+    want_result: true
+
+  - note: dynamic_host_undefined_uses_default_rtc
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: *dynamic_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: is-blocked, value: "#undefined"}
+    want_result: true
+
+  - note: static_host_deny_control
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: &static_modules
+      - |
+        package framework
+        import rego.v1
+        default result := true
+        result := false if { data.config.target.blocked }
+      - |
+        package config.target
+        import rego.v1
+        default blocked := false
+        blocked := __builtin_host_await(input.subject, "is-blocked")
+    query: data.framework.result
+    host_await_responses_suspendable: *deny
+    want_result: false
+
+  - note: static_host_allow_control
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: *static_modules
+    query: data.framework.result
+    host_await_responses_suspendable: *allow
+    want_result: true
+
+  - note: dynamic_nested_resumes_indexing_and_cached_reference
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: &nested_modules
+      - |
+        package framework
+        import rego.v1
+        result := [selected[input.key], repeated.blocked] if {
+          selected := data.config[input.namespace].record
+          repeated := data.config[input.namespace].record
+        }
+      - |
+        package config.target
+        import rego.v1
+        record := {"blocked": nested}
+        nested := [data.config[input.namespace].first,
+                   __builtin_host_await(input.subject, "second")]
+        first := __builtin_host_await(input.subject, "first")
+    query: data.framework.result
+    host_await_responses_suspendable: &nested_responses
+      - {id: first, args: dummy, value: true}
+      - {id: second, args: dummy, value: false}
+    want_result: [[true, false], [true, false]]
+
+  - note: dynamic_nested_rtc_control
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: *nested_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: first, value: true}
+      - {id: second, value: false}
+    want_result: [[true, false], [true, false]]
+
+  - note: dynamic_package_resumes_and_preserves_base_data
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    data: &base_data {config: {target: {stored: 7}}}
+    modules: &package_modules
+      - |
+        package framework
+        import rego.v1
+        result := [data.config[input.namespace], data.config[input.namespace]]
+      - |
+        package config.target
+        import rego.v1
+        a := __builtin_host_await("a", "first")
+        b := {"blocked": __builtin_host_await("b", "second")}
+        default c := false
+    query: data.framework.result
+    host_await_responses_suspendable: &package_responses
+      - {id: first, args: a, value: false}
+      - {id: second, args: b, value: true}
+    want_result: &package_result
+      - {a: false, b: {blocked: true}, c: false, stored: 7}
+      - {a: false, b: {blocked: true}, c: false, stored: 7}
+
+  - note: dynamic_package_rtc_control
+    strict: false
+    skip_interpreter: true
+    input: *input
+    data: *base_data
+    modules: *package_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: first, value: false}
+      - {id: second, value: true}
+    want_result: *package_result
+
+  - note: dynamic_comprehension_retains_iteration_state
+    strict: false
+    skip_interpreter: true
+    execution_mode: suspendable
+    input: *input
+    modules: &comprehension_modules
+      - |
+        package framework
+        import rego.v1
+        result := [selected.blocked |
+                   namespace := ["target", "target"][_]
+                   selected := data.config[namespace].record]
+      - |
+        package config.target
+        import rego.v1
+        record := {"blocked": __builtin_host_await(input.subject, "is-blocked")}
+    query: data.framework.result
+    host_await_responses_suspendable: *deny
+    want_result: [true, true]
+
+  - note: dynamic_comprehension_rtc_control
+    strict: false
+    skip_interpreter: true
+    input: *input
+    modules: *comprehension_modules
+    query: data.framework.result
+    host_await_responses:
+      - {id: is-blocked, value: true}
+    want_result: [true, true]
+
+  - note: ordinary_dynamic_lookup_interpreter_parity
+    strict: false
+    execution_mode: suspendable
+    input: *input
+    modules:
+      - |
+        package framework
+        import rego.v1
+        result := selected[input.key] if {
+          selected := data.config[input.namespace].record
+        }
+      - |
+        package config.target
+        import rego.v1
+        record := {"blocked": input.subject}
+    query: data.framework.result
+    want_result: dummy

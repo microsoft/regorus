@@ -11,6 +11,9 @@ use thiserror::Error;
 /// VM execution errors
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum VmError {
+    #[error("Recursive evaluation of rule {rule_index} (pc={pc})")]
+    RecursiveRuleEvaluation { rule_index: u16, pc: usize },
+
     #[error("Rule call depth exceeded limit {limit} (pc={pc})")]
     RuleCallDepthExceeded { limit: usize, pc: usize },
 

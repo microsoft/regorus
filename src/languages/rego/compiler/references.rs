@@ -14,9 +14,10 @@ use crate::rvm::instructions::{
     ChainedIndexParams, LiteralOrRegister, VirtualDataDocumentLookupParams,
 };
 use crate::rvm::Instruction;
-use crate::utils::{append_path_component, format_string_path};
+use crate::utils::{append_path_component, format_string_path, get_rule_path_components};
 use crate::Value;
 use alloc::collections::BTreeSet;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -169,6 +170,11 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            // The shared rule table also contains namespace prefixes of rule heads.
+            if !self.policy.inner.rule_paths.contains(&rule_candidate) {
+                continue;
+            }
+
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
                 let rule_result_reg = self.alloc_register()?;
@@ -197,16 +203,91 @@ impl<'a> Compiler<'a> {
         let matching_rules: BTreeSet<String> = self
             .policy
             .inner
-            .rules
-            .keys()
-            .chain(self.policy.inner.default_rules.keys())
+            .rule_paths
+            .iter()
+            .filter(|rule_path| {
+                self.policy
+                    .inner
+                    .functions
+                    .get(*rule_path)
+                    .is_none_or(|(_, arity, _)| *arity == 0)
+                    && self
+                        .policy
+                        .inner
+                        .default_rules
+                        .get(*rule_path)
+                        .is_none_or(|rules| {
+                            !rules.iter().any(|(rule, _)| {
+                                matches!(rule.as_ref(), crate::ast::Rule::Default { args, .. } if !args.is_empty())
+                            })
+                        })
+            })
             .filter(|rule_path| self.matches_path_pattern(rule_path, &path_pattern))
             .cloned()
             .collect();
 
-        if !matching_rules.is_empty() {
+        let mut matches_namespace = false;
+        for module in self.policy.inner.modules.iter() {
+            let mut namespace = vec!["data".to_string()];
+            namespace.extend(
+                get_rule_path_components(&module.package.refr)
+                    .map_err(CompilerError::from)?
+                    .iter()
+                    .map(|component| component.value().to_string()),
+            );
+            if !path_pattern
+                .iter()
+                .zip(&namespace)
+                .all(|(pattern, component)| pattern.as_ref().is_none_or(|value| value == component))
+            {
+                continue;
+            }
+            if namespace.len() > crate::rvm::Program::MAX_PATH_DEPTH {
+                return Err(CompilerError::General {
+                    message: "Package path exceeds maximum rule path depth".to_string(),
+                }
+                .at(span));
+            }
+            let path: Vec<&str> = namespace.iter().map(String::as_str).collect();
+            let namespace_node = self
+                .program
+                .rule_tree
+                .make_or_get_value_mut(&path)
+                .map_err(CompilerError::from)?;
+            if matches!(namespace_node, Value::Undefined) {
+                *namespace_node = Value::new_object();
+            }
+            let namespace_tree = self
+                .program
+                .metadata
+                .annotations
+                .entry(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION.to_string())
+                .or_insert_with(Value::new_object);
+            let package_node = namespace_tree
+                .make_or_get_value_mut(&path)
+                .map_err(CompilerError::from)?;
+            if matches!(package_node, Value::Undefined) {
+                *package_node = Value::new_object();
+            }
+            matches_namespace = true;
+        }
+
+        if !matching_rules.is_empty() || matches_namespace {
             // This path is a prefix of some rules - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
+                if chain
+                    .components
+                    .iter()
+                    .any(|component| matches!(component, AccessComponent::Expression(_)))
+                {
+                    // Candidates are not proven calls. Queue new rules only;
+                    // the VM guards recursion when a candidate is selected.
+                    let saved_call_stack = core::mem::take(&mut self.current_call_stack);
+                    let candidate_result = self.get_or_assign_rule_index(rule_path);
+                    self.current_call_stack = saved_call_stack;
+                    candidate_result?;
+                    continue;
+                }
                 if !self
                     .rule_worklist
                     .iter()
@@ -266,11 +347,9 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        // Rule matches if either:
-        // 1. It's at least as long as the pattern, OR
-        // 2. It matches all available components and the remaining pattern parts are wildcards
-        rule_parts.len() >= pattern.len()
-            || (match_length > 0 && pattern[match_length..].iter().all(Option::is_none))
+        // A shorter rule path supplies the value indexed by the remaining suffix;
+        // a longer rule path contributes to the requested virtual namespace.
+        match_length > 0
     }
 
     /// Compile local variable access chain
@@ -309,6 +388,9 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
+            if !self.policy.inner.rule_paths.contains(&rule_candidate) {
+                continue;
+            }
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 let rule_result_reg = self.alloc_register()?;
                 self.emit_instruction(
@@ -328,6 +410,36 @@ impl<'a> Compiler<'a> {
 
                 return Ok(rule_result_reg);
             }
+        }
+
+        if self.policy.inner.rules.contains_key(&current_pkg_prefix)
+            || self
+                .policy
+                .inner
+                .default_rules
+                .contains_key(&current_pkg_prefix)
+        {
+            let mut components = self
+                .policy
+                .inner
+                .rule_path_components
+                .get(&current_pkg_prefix)
+                .ok_or_else(|| CompilerError::General {
+                    message: format!("missing components for namespace '{current_pkg_prefix}'"),
+                })?
+                .iter()
+                .skip(1)
+                .cloned()
+                .map(AccessComponent::Field)
+                .collect::<Vec<_>>();
+            components.extend_from_slice(&chain.components);
+            return self.compile_data_chain(
+                &ReferenceChain {
+                    root: ReferenceRoot::Variable("data".to_string()),
+                    components,
+                },
+                span,
+            );
         }
 
         // No rule found; fall back to module-level imports.

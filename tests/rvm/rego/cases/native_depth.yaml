@@ -301,8 +301,8 @@ cases:
     query: data.level1.r1
     want_error: Rule call depth exceeded limit 16
 
-  # The entry rule uses an explicit frame: 17 total rules means 16 native calls.
-  - note: native-depth/virtual-leaf-suspendable-16-succeed
+  # Suspendable virtual lookups use explicit frames, not native rule-call frames.
+  - note: native-depth/virtual-leaf-suspendable-17-explicit-succeed
     skip_interpreter: true
     strict: false
     input: *input
@@ -311,14 +311,14 @@ cases:
     query: data.level1.r1
     want_result: 42
 
-  - note: native-depth/virtual-leaf-suspendable-17-error-not-default
+  - note: native-depth/virtual-leaf-suspendable-18-explicit-succeed
     skip_interpreter: true
     strict: false
     input: *input
     modules: *leaf
     execution_mode: suspendable
     query: data.probe.r0
-    want_error: Rule call depth exceeded limit 16
+    want_result: 42
 
   - note: native-depth/virtual-object-16-succeed
     skip_interpreter: true
@@ -392,7 +392,7 @@ cases:
     query: data.level1.r1
     want_error: Rule call depth exceeded limit 16
 
-  - note: native-depth/virtual-object-suspendable-16-succeed
+  - note: native-depth/virtual-object-suspendable-17-explicit-succeed
     skip_interpreter: true
     strict: false
     input: *input
@@ -401,16 +401,16 @@ cases:
     query: data.level1.r1
     want_result: 42
 
-  - note: native-depth/virtual-object-suspendable-17-error-not-default
+  - note: native-depth/virtual-object-suspendable-18-explicit-succeed
     skip_interpreter: true
     strict: false
     input: *input
     modules: *object
     execution_mode: suspendable
     query: data.probe.r0
-    want_error: Rule call depth exceeded limit 16
+    want_result: 42
 
-  - note: native-depth/mixed-function-error-not-default
+  - note: native-depth/mixed-function-explicit-succeed
     skip_interpreter: true
     strict: false
     input: *input
@@ -443,4 +443,4 @@ cases:
       - *object16
       - *last
     query: data.probe.r0
-    want_error: Rule call depth exceeded limit 16
+    want_result: 42

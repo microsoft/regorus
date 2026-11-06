@@ -429,6 +429,19 @@ impl RegoVM {
             self.assert_vm_invariants();
             self.memory_check()?;
             self.frame_pc_overridden = false;
+            if self
+                .execution_stack
+                .last()
+                .is_some_and(|frame| frame.virtual_lookup.is_some())
+            {
+                if let Err(err) = self.continue_virtual_data_lookup() {
+                    if !self.handle_instruction_error(err.clone(), last_result)? {
+                        self.execution_stack.clear();
+                        return Err(err);
+                    }
+                }
+                continue;
+            }
             let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
                 matches!(
                     frame.kind,
@@ -714,6 +727,7 @@ impl RegoVM {
         // Returning Ok(false) causes the caller to clear execution_stack and
         // propagate the error, terminating the evaluation entirely.
         if RegoVM::is_fatal_vm_error(&err) {
+            self.execution_state = ExecutionState::Error { error: err };
             return Ok(false);
         }
 
@@ -790,6 +804,77 @@ mod tests {
     use super::super::errors::VmError;
     use super::{ExecutionMode, ExecutionState, Instruction, Program, RegoVM, Value};
     use alloc::sync::Arc;
+
+    #[test]
+    #[cfg(feature = "std")]
+    #[allow(clippy::unwrap_used)]
+    fn resumed_lookup_timeout_publishes_error_state() {
+        use crate::languages::rego::compiler::Compiler;
+        use crate::utils::limits::ExecutionTimerConfig;
+        use crate::{Engine, Rc};
+        use core::num::NonZeroU32;
+        use core::time::Duration;
+
+        let _limits_lock = crate::utils::limits::acquire_limits_test_lock();
+        let mut engine = Engine::new();
+        engine
+            .add_policy(
+                "probe.rego".into(),
+                "package probe\nresult := data.catalog\nsafe := 7".into(),
+            )
+            .unwrap();
+        engine
+            .add_policy("catalog.rego".into(), "package catalog\np := 7".into())
+            .unwrap();
+        let policy = engine
+            .compile_with_entrypoint(&Rc::from("data.probe.result"))
+            .unwrap();
+        let program =
+            Compiler::compile_from_policy(&policy, &["data.probe.result", "data.probe.safe"])
+                .unwrap();
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_step_mode(true);
+        vm.execute_entry_point_by_name("data.probe.result").unwrap();
+        for _ in 0..100 {
+            if vm
+                .execution_stack
+                .last()
+                .is_some_and(|frame| frame.virtual_lookup.is_some())
+            {
+                break;
+            }
+            vm.resume(None).unwrap();
+        }
+        assert!(vm
+            .execution_stack
+            .last()
+            .is_some_and(|frame| frame.virtual_lookup.is_some()));
+        vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: Duration::from_nanos(1),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        }));
+        assert!(matches!(
+            vm.resume(None),
+            Err(VmError::TimeLimitExceeded { .. })
+        ));
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Error {
+                error: VmError::TimeLimitExceeded { .. }
+            }
+        ));
+        vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: Duration::from_secs(60),
+            check_interval: NonZeroU32::new(1).unwrap(),
+        }));
+        vm.set_step_mode(false);
+        assert_eq!(
+            vm.execute_entry_point_by_name("data.probe.safe").unwrap(),
+            Value::from(7)
+        );
+    }
 
     fn two_instruction_program() -> Arc<Program> {
         let mut program = Program::new();
