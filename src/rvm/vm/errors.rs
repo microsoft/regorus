@@ -11,6 +11,13 @@ use thiserror::Error;
 /// VM execution errors
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum VmError {
+    #[error("{builtin} exceeded builtin depth limit ({limit} helper calls, pc={pc})")]
+    BuiltinDepthLimitExceeded {
+        builtin: &'static str,
+        limit: usize,
+        pc: usize,
+    },
+
     #[error("Rule call depth exceeded limit {limit} (pc={pc})")]
     RuleCallDepthExceeded { limit: usize, pc: usize },
 
@@ -329,6 +336,13 @@ impl From<anyhow::Error> for VmError {
         // sufficient diagnostic information for users.
         if let Some(limit_err) = err.downcast_ref::<crate::LimitError>() {
             return match *limit_err {
+                crate::LimitError::BuiltinDepthLimitExceeded { builtin, limit } => {
+                    VmError::BuiltinDepthLimitExceeded {
+                        builtin,
+                        limit,
+                        pc: 0,
+                    }
+                }
                 crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
                     VmError::TimeLimitExceeded {
                         elapsed,

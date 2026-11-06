@@ -708,6 +708,96 @@ pub extern "C" fn regorus_rvm_get_execution_state(vm: *mut RegorusRvm) -> Regoru
     })
 }
 
+#[cfg(all(test, feature = "std", not(miri)))]
+mod object_depth_tests {
+    use super::*;
+    use crate::common::regorus_result_drop;
+    use alloc::ffi::CString;
+    use core::ffi::CStr;
+    use regorus::{Engine, Rc};
+
+    #[test]
+    fn object_builtin_error_does_not_poison_ffi() {
+        #[cfg(feature = "allocator-memory-limits")]
+        let _memory_lock = crate::TEST_GLOBAL_MEMORY_LIMIT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _poison_lock = crate::panic_guard::lock_poison_test_state();
+        assert!(!crate::panic_guard::is_poisoned());
+        for builtin in ["object.subset", "object.union", "object.union_n"] {
+            let expression = if builtin == "object.union_n" {
+                format!("{builtin}([input.left, input.right])")
+            } else {
+                format!("{builtin}(input.left, input.right)")
+            };
+            let mut engine = Engine::new();
+            engine
+                .add_policy(
+                    "depth.rego".into(),
+                    format!("package probe\nresult := {expression}\nsafe := 7"),
+                )
+                .unwrap();
+            let policy = engine
+                .compile_with_entrypoint(&Rc::from("data.probe.result"))
+                .unwrap();
+            let program =
+                Compiler::compile_from_policy(&policy, &["data.probe.result", "data.probe.safe"])
+                    .unwrap();
+            let mut nested = Value::from(1);
+            let mut owners = Vec::new();
+            for _ in 0..64 {
+                let mut parent = Value::new_object();
+                parent
+                    .as_object_mut()
+                    .unwrap()
+                    .insert(Value::from("a"), nested);
+                nested = parent;
+                owners.push(nested.clone());
+            }
+            let mut input = Value::new_object();
+            input
+                .as_object_mut()
+                .unwrap()
+                .insert(Value::from("left"), nested.clone());
+            input
+                .as_object_mut()
+                .unwrap()
+                .insert(Value::from("right"), nested);
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                for strict in [false, true] {
+                    let mut vm = RegoVM::new();
+                    vm.load_program(program.clone());
+                    vm.set_execution_mode(mode);
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_input(input.clone());
+                    let mut handle = RegorusRvm::new(vm);
+                    let pointer = &mut handle as *mut RegorusRvm;
+                    let entry = CString::new("data.probe.result").unwrap();
+                    let result = regorus_rvm_execute_entry_point_by_name(pointer, entry.as_ptr());
+                    assert!(matches!(result.status, RegorusStatus::Error));
+                    let message = unsafe { CStr::from_ptr(result.error_message) }
+                        .to_str()
+                        .unwrap();
+                    assert!(message.contains(builtin) && message.contains("depth limit"));
+                    regorus_result_drop(result);
+                    assert!(!crate::panic_guard::is_poisoned());
+                    let safe = CString::new("data.probe.safe").unwrap();
+                    let result = regorus_rvm_execute_entry_point_by_name(pointer, safe.as_ptr());
+                    assert!(matches!(result.status, RegorusStatus::Ok));
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(result.output) }.to_str().unwrap(),
+                        "7"
+                    );
+                    regorus_result_drop(result);
+                }
+            }
+            drop(input);
+            while owners.pop().is_some() {}
+        }
+        assert!(!crate::panic_guard::is_poisoned());
+    }
+}
+
 #[cfg(all(test, feature = "allocator-memory-limits", not(miri)))]
 mod tests {
     use super::{

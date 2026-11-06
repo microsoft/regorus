@@ -81,7 +81,10 @@ impl RegoVM {
     /// Depth failures also release state; other unbudgeted errors preserve legacy state.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(error, VmError::RuleCallDepthExceeded { .. }) {
+        if matches!(
+            error,
+            VmError::RuleCallDepthExceeded { .. } | VmError::BuiltinDepthLimitExceeded { .. }
+        ) {
             return self.fail_run_to_completion(error);
         }
         if self.active_memory_budget_config.is_none() {
@@ -98,7 +101,10 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(error, VmError::RuleCallDepthExceeded { .. }) {
+        if matches!(
+            error,
+            VmError::RuleCallDepthExceeded { .. } | VmError::BuiltinDepthLimitExceeded { .. }
+        ) {
             return self.fail_run_to_completion(error);
         }
         error

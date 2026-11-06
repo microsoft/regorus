@@ -5,7 +5,9 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_array, ensure_object};
+use crate::builtins::utils::{
+    enforce_limit, ensure_args_count, ensure_array, ensure_object, BuiltinDepthBudget,
+};
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
@@ -342,16 +344,19 @@ fn remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::Object(obj))
 }
 
-fn is_subset(sup: &Value, sub: &Value) -> bool {
-    match (sup, sub) {
+fn is_subset(sup: &Value, sub: &Value, budget: BuiltinDepthBudget) -> Result<bool> {
+    Ok(match (sup, sub) {
         (Value::Object(sup), Value::Object(sub)) => {
-            sub.iter().all(|(k, vsub)| {
-                match sup.get(k) {
-                    //		    Some(vsup @ Value::Object(_)) => is_subset(vsup, vsub),
-                    Some(vsup) => is_subset(vsup, vsub),
-                    _ => false,
+            for (k, vsub) in sub.iter() {
+                let Some(vsup) = sup.get(k) else {
+                    return Ok(false);
+                };
+                if !is_subset(vsup, vsub, budget.descend()?)? {
+                    return Ok(false);
                 }
-            })
+                enforce_limit()?;
+            }
+            true
         }
         (Value::Set(sup), Value::Set(sub)) => sub.is_subset(sup),
         (Value::Array(sup), Value::Array(sub)) => sup
@@ -359,32 +364,40 @@ fn is_subset(sup: &Value, sub: &Value) -> bool {
             .windows(sub.len())
             .any(|w| w == sub.as_slice()),
         (Value::Array(sup), Value::Set(_)) => {
+            let budget = budget.descend()?;
             let sup = Value::from_set(sup.iter().cloned().collect());
-            is_subset(&sup, sub)
+            enforce_limit()?;
+            is_subset(&sup, sub, budget)?
         }
         (sup, sub) => sup == sub,
-    }
+    })
 }
 
 fn subset(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "object.subset";
     ensure_args_count(span, name, params, args, 2)?;
 
-    Ok(Value::Bool(is_subset(&args[0], &args[1])))
+    Ok(Value::Bool(is_subset(
+        &args[0],
+        &args[1],
+        BuiltinDepthBudget::new(name).descend()?,
+    )?))
 }
 
-fn union(obj1: &Value, obj2: &Value) -> Result<Value> {
+fn union(obj1: &Value, obj2: &Value, budget: BuiltinDepthBudget) -> Result<Value> {
     match (obj1, obj2) {
         (Value::Object(m1), Value::Object(m2)) => {
             let mut u = obj1.clone();
             let um = u.as_object_mut()?;
+            enforce_limit()?;
 
             for (key2, value2) in m2.iter() {
                 let vm = match m1.get(key2) {
-                    Some(value1) => union(value1, value2)?,
+                    Some(value1) => union(value1, value2, budget.descend()?)?,
                     _ => value2.clone(),
                 };
                 um.insert(key2.clone(), vm);
+                enforce_limit()?;
             }
             Ok(u)
         }
@@ -399,7 +412,7 @@ fn object_union(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
     let _ = ensure_object(name, &params[0], args[0].clone())?;
     let _ = ensure_object(name, &params[1], args[1].clone())?;
 
-    let result = union(&args[0], &args[1])?;
+    let result = union(&args[0], &args[1], BuiltinDepthBudget::new(name).descend()?)?;
     Ok(result)
 }
 
@@ -424,7 +437,7 @@ fn object_union_n(
             }
             return Ok(Value::Undefined);
         }
-        u = union(&u, a)?;
+        u = union(&u, a, BuiltinDepthBudget::new(name).descend()?)?;
     }
 
     Ok(u)
@@ -521,5 +534,32 @@ fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
             Err(err)
         }
         Err(_) => Ok(Value::Undefined),
+    }
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::{is_subset, union, BuiltinDepthBudget};
+    use crate::builtins::utils::MAX_BUILTIN_DEPTH;
+    use crate::{LimitError, Value};
+
+    #[test]
+    fn object_builtin_budget_exhaustion() {
+        let mut budget = BuiltinDepthBudget::new("object.subset");
+        for _ in 0..MAX_BUILTIN_DEPTH {
+            budget = budget.descend().unwrap();
+        }
+        let error = budget.descend().err().unwrap();
+        assert!(matches!(
+            error.downcast_ref::<LimitError>(),
+            Some(LimitError::BuiltinDepthLimitExceeded {
+                builtin: "object.subset",
+                limit: MAX_BUILTIN_DEPTH,
+            })
+        ));
+        let object = Value::from_json_str(r#"{"a":1}"#).unwrap();
+        is_subset(&object, &object, budget).unwrap_err();
+        union(&object, &object, budget).unwrap_err();
+        assert!(!is_subset(&Value::new_object(), &object, budget).unwrap());
     }
 }

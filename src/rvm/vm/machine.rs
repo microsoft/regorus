@@ -955,6 +955,9 @@ impl RegoVM {
         };
 
         timer.check_now(now).map_err(|err| match err {
+            LimitError::BuiltinDepthLimitExceeded { builtin, limit } => {
+                VmError::BuiltinDepthLimitExceeded { builtin, limit, pc }
+            }
             LimitError::TimeLimitExceeded { elapsed, limit } => {
                 VmError::TimeLimitExceeded { elapsed, limit, pc }
             }

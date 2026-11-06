@@ -11,6 +11,50 @@ the corresponding feature. This is useful in Confidential Computing scenarios wh
 Currently many builtins are `baked-in`, i.e. there is no way to exclude them from the TCB.
 In future, each builtin will be associated with a feature (many builtins could be associated with the same feature).
 
+### Object builtin depth limit
+
+`object.subset`, `object.union`, and `object.union_n` stop with an error if
+comparing or merging shared keys takes more than 32 nested steps.
+
+The count includes the outer object and the final value. For example:
+
+```rego
+object.subset({"a":{"b":1}}, {"a":{"b":1}}) # true
+```
+
+This comparison takes three steps along the path `a.b`:
+
+1. Compare the outer objects.
+2. Compare the objects under `a`.
+3. Compare the numbers under `b`.
+
+A chain of 31 objects ending in a number takes 32 steps and succeeds. A chain
+of 32 objects ending in a number takes 33 steps and fails. More keys at the
+same level do not use up the depth allowance. Each merge in `object.union_n`
+starts with a fresh allowance. When `object.subset` converts an array to a set,
+that conversion uses one extra step.
+
+Hitting the limit stops evaluation with an error, even when strict builtin
+errors are disabled. For example:
+
+```rego
+default allow := false
+allow if { object.subset(input.left, input.right) }
+```
+
+If this comparison hits the limit, evaluation returns an error, not `false`.
+Calling the builtin inside a function, another rule branch, or a `not`
+expression does not hide the error. A failed merge returns no partial object.
+The engine can evaluate another request after the error.
+
+Rust callers receive `LimitError::BuiltinDepthLimitExceeded` from the interpreter
+or `VmError::BuiltinDepthLimitExceeded` from the RVM. The limit is always enabled.
+It does not depend on memory limits or VM instruction limits.
+
+This limit applies to recursive object comparison and merging. Arrays and sets
+use the shared `Value` comparison code. This object-depth limit does not apply
+to comparisons of their contents.
+
 - [Comparison](https://www.openpolicyagent.org/docs/latest/policy-reference/#comparison)
   | Builtin                                                                                          | Feature |
   |--------------------------------------------------------------------------------------------------|---------|

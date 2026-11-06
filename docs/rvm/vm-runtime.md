@@ -53,8 +53,10 @@ fields to responsibilities.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
   FIFO order when `HostAwait` executes in run-to-completion mode. A registered
   call with an undefined input skips `HostAwait` and leaves the queue untouched.
-- `set_strict_builtin_errors`: toggles builtin failure semantics between
-  `VmError::ArithmeticError` and returning `Value::Undefined`.
+- `set_strict_builtin_errors`: controls how the VM handles ordinary builtin
+  errors. When enabled, the VM returns `VmError::ArithmeticError`; when disabled,
+  it returns `Value::Undefined`. Hitting a resource limit always returns an error,
+  regardless of this setting.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging
   and visualisation tooling.
 - `get_host_await_argument`: when the VM is suspended on a `HostAwait`, returns
@@ -102,6 +104,25 @@ these checks. A numeric library call cannot be interrupted halfway through.
 Deeply nested values can still exhaust the native stack; the rule-call depth
 limit below does not bound value nesting. Interpreter comparisons do not gain
 timer checks here.
+
+### Object builtin depth limit
+
+`object.subset`, `object.union`, and `object.union_n` allow at most 32 nested
+comparison or merge steps along one path. Comparing `{"a":{"b":1}}` with itself
+takes three steps: the outer object, the inner object, and the number `1`.
+More keys at the same level do not use up this allowance. Each merge in
+`object.union_n` starts with a fresh allowance.
+
+Hitting the limit stops evaluation with `VmError::BuiltinDepthLimitExceeded`.
+For example, a rule with `default allow := false` returns an error, not `false`,
+if its builtin call hits the limit. Another rule branch or a `not` expression
+does not hide the error. This behavior applies in both execution modes and
+when resuming stepped execution.
+
+The VM clears the failed execution's state and can evaluate another entry point.
+This limit is always enabled and cannot be changed. It is separate from the
+rule-call limit below. See the [builtin documentation](../builtins.md#object-builtin-depth-limit)
+for the full counting rules and stack-safety limits.
 
 ### Native rule-call depth limit
 

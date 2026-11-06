@@ -12,6 +12,34 @@ use crate::*;
 
 use anyhow::{bail, Result};
 
+pub const MAX_BUILTIN_DEPTH: usize = 32;
+
+#[derive(Clone, Copy)]
+pub struct BuiltinDepthBudget {
+    builtin: &'static str,
+    remaining: usize,
+}
+
+impl BuiltinDepthBudget {
+    pub(crate) const fn new(builtin: &'static str) -> Self {
+        Self {
+            builtin,
+            remaining: MAX_BUILTIN_DEPTH,
+        }
+    }
+
+    /// Consume a helper frame before entering it; siblings reuse the parent budget.
+    pub(crate) fn descend(self) -> Result<Self> {
+        let remaining = self.remaining.checked_sub(1).ok_or_else(|| {
+            anyhow::Error::new(crate::LimitError::BuiltinDepthLimitExceeded {
+                builtin: self.builtin,
+                limit: MAX_BUILTIN_DEPTH,
+            })
+        })?;
+        Ok(Self { remaining, ..self })
+    }
+}
+
 #[inline]
 pub fn enforce_limit() -> Result<()> {
     crate::utils::limits::check_memory_limit_if_needed().map_err(anyhow::Error::new)

@@ -1,0 +1,142 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# The scenario runner compares interpreter and RVM results. Native-stack
+# isolation, typed errors, and same-engine recovery live in builtin_object_depth.rs.
+cases:
+  - note: object-depth/nested-subset
+    modules:
+      - |
+        package test
+        main := [
+          object.subset({"a":{"x":1,"y":2},"extra":3}, {"a":{"x":1}}),
+          object.subset({"a":{"x":1}}, {"a":{"x":2}}),
+          object.subset({"a":1}, {"missing":1}),
+          object.subset({}, {}),
+          object.subset([1,2,3], [2,3]),
+          object.subset([1,2,3], {2,3}),
+        ]
+    query: data.test.main
+    want_result: [true, false, false, true, true, true]
+
+  - note: object-depth/nested-union-right-bias
+    modules:
+      - |
+        package test
+        main := object.union(
+          {"a":{"x":1,"shared":1},"left":3,"replace":0},
+          {"a":{"y":2,"shared":2},"right":4,"replace":{"z":5}},
+        )
+    query: data.test.main
+    want_result:
+      a: {x: 1, y: 2, shared: 2}
+      left: 3
+      right: 4
+      replace: {z: 5}
+
+  - note: object-depth/union-n-empty-and-ordered-folds
+    modules:
+      - |
+        package test
+        main := [
+          object.union_n([]),
+          object.union_n([{}, {"a":{"x":1}}, {}, {"a":{"x":2,"y":3}}]),
+        ]
+    query: data.test.main
+    want_result: [{}, {a: {x: 2, y: 3}}]
+
+  - note: object-depth/union-n-budget-is-per-fold
+    modules:
+      - |
+        package test
+        main := object.union_n([{"a":{"x":n}} | some n in numbers.range(1, 64)])
+    query: data.test.main
+    want_result: {a: {x: 64}}
+
+  - note: object-depth/subset-limit-is-fatal
+    # 32 shared objects need 33 helper invocations including the scalar leaf.
+    input: &deep_input
+      left: &deep
+        a:
+          a:
+            a:
+              a:
+                a:
+                  a:
+                    a:
+                      a:
+                        a:
+                          a:
+                            a:
+                              a:
+                                a:
+                                  a:
+                                    a:
+                                      a:
+                                        a:
+                                          a:
+                                            a:
+                                              a:
+                                                a:
+                                                  a:
+                                                    a:
+                                                      a:
+                                                        a:
+                                                          a:
+                                                            a:
+                                                              a:
+                                                                a:
+                                                                  a:
+                                                                    a:
+                                                                      a: 1
+      right: *deep
+    modules: &deep_modules
+      - |
+        package test
+        default subset := false
+        subset := object.subset(input.left, input.right)
+        default merged := {}
+        merged := object.union(input.left, input.right)
+        default folded := {}
+        folded := object.union_n([{}, input.left, {}, input.right])
+    query: data.test.subset
+    strict_builtin_errors: true
+    want_error: object.subset exceeded builtin depth limit (32 helper calls
+
+  - note: object-depth/union-limit-is-fatal
+    input: *deep_input
+    modules: *deep_modules
+    query: data.test.merged
+    strict_builtin_errors: true
+    want_error: object.union exceeded builtin depth limit (32 helper calls
+
+  - note: object-depth/union-n-limit-is-fatal
+    input: *deep_input
+    modules: *deep_modules
+    query: data.test.folded
+    strict_builtin_errors: true
+    want_error: object.union_n exceeded builtin depth limit (32 helper calls
+
+  - note: object-depth/subset-nonstrict-suspendable-still-fails
+    input: *deep_input
+    modules: *deep_modules
+    query: data.test.subset
+    strict_builtin_errors: false
+    execution_mode: suspendable
+    want_error: object.subset exceeded builtin depth limit (32 helper calls
+
+  - note: object-depth/union-nonstrict-suspendable-still-fails
+    input: *deep_input
+    modules: *deep_modules
+    query: data.test.merged
+    strict_builtin_errors: false
+    execution_mode: suspendable
+    want_error: object.union exceeded builtin depth limit (32 helper calls
+
+  - note: object-depth/union-n-nonstrict-suspendable-still-fails
+    input: *deep_input
+    modules: *deep_modules
+    query: data.test.folded
+    strict_builtin_errors: false
+    execution_mode: suspendable
+    want_error: object.union_n exceeded builtin depth limit (32 helper calls

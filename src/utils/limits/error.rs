@@ -6,9 +6,16 @@
 use core::fmt;
 use core::time::Duration;
 
-/// Errors reported when execution time or memory ceilings are enforced.
+/// Errors reported when execution resource ceilings are enforced.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LimitError {
+    /// Reported before a recursive builtin exceeds its helper-frame allowance.
+    BuiltinDepthLimitExceeded {
+        /// Name of the builtin whose traversal exhausted the allowance.
+        builtin: &'static str,
+        /// Maximum number of active builtin helper invocations.
+        limit: usize,
+    },
     /// Reported when the execution timer observes elapsed time beyond the configured limit.
     TimeLimitExceeded {
         /// Elapsed work duration when the threshold was exceeded.
@@ -33,6 +40,11 @@ pub enum LimitError {
 impl fmt::Debug for LimitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BuiltinDepthLimitExceeded { builtin, limit } => f
+                .debug_struct("BuiltinDepthLimitExceeded")
+                .field("builtin", builtin)
+                .field("limit", limit)
+                .finish(),
             Self::TimeLimitExceeded { elapsed, limit } => f
                 .debug_struct("TimeLimitExceeded")
                 .field("elapsed", elapsed)
@@ -54,6 +66,12 @@ impl fmt::Debug for LimitError {
 impl fmt::Display for LimitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BuiltinDepthLimitExceeded { builtin, limit } => {
+                write!(
+                    f,
+                    "{builtin} exceeded builtin depth limit ({limit} helper calls)"
+                )
+            }
             Self::TimeLimitExceeded { elapsed, limit } => {
                 let elapsed_ns = elapsed.as_nanos();
                 let limit_ns = limit.as_nanos();

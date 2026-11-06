@@ -23,6 +23,7 @@ impl RegoVM {
         matches!(
             err,
             VmError::TimeLimitExceeded { .. }
+                | VmError::BuiltinDepthLimitExceeded { .. }
                 | VmError::RuleCallDepthExceeded { .. }
                 | VmError::MemoryLimitExceeded { .. }
                 | VmError::MemoryBudgetExceeded { .. }
