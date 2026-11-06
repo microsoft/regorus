@@ -743,8 +743,14 @@ fn range_interpreter_preserves_memory_errors() {
         for rule in ["data.limit.result", "data.limit.negated"] {
             let mut engine = new_engine_with_module(RANGE_MODULE);
             engine.set_strict_builtin_errors(strict);
-            for endpoint in [isize::MAX as i64, isize::MIN as i64] {
-                engine.set_input(Value::from(endpoint));
+            for endpoint in [
+                Value::from(isize::MAX as i64),
+                Value::from(isize::MIN as i64),
+                Value::from(1u64 << 63),
+                Value::from(1u64 << 32),
+                Value::from(-(1i128 << 64)),
+            ] {
+                engine.set_input(endpoint);
                 guard.set_with_additional_budget(64 * 1024);
                 let error = engine
                     .eval_rule(rule.to_string())
@@ -785,8 +791,14 @@ fn range_vm_preserves_memory_errors() {
             let mut vm = RegoVM::new();
             vm.load_program(program);
             vm.set_strict_builtin_errors(strict);
-            for endpoint in [isize::MAX as i64, isize::MIN as i64] {
-                vm.set_input(Value::from(endpoint));
+            for endpoint in [
+                Value::from(isize::MAX as i64),
+                Value::from(isize::MIN as i64),
+                Value::from(1u64 << 63),
+                Value::from(1u64 << 32),
+                Value::from(-(1i128 << 64)),
+            ] {
+                vm.set_input(endpoint);
                 guard.set_with_additional_budget(64 * 1024);
                 let result = vm.execute();
                 guard.disable_limit();

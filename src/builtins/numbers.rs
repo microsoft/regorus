@@ -101,20 +101,20 @@ fn range(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Res
         _ => (),
     }
 
-    let distance = v2
-        .sub(&v1)?
-        .as_i64()
-        .ok_or_else(|| span.error("could not determine number of elements"))?;
+    let distance = v2.sub(&v1)?.as_i64();
     let num_elements = distance
-        .unsigned_abs()
-        .checked_add(1)
-        .and_then(|count| usize::try_from(count).ok())
-        .ok_or_else(|| span.error("could not determine number of elements"))?;
+        .and_then(|distance| distance.unsigned_abs().checked_add(1))
+        .and_then(|count| usize::try_from(count).ok());
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     crate::utils::limits::check_memory_allocation(
-        num_elements.saturating_mul(core::mem::size_of::<Value>()),
+        num_elements
+            .unwrap_or(usize::MAX)
+            .saturating_mul(core::mem::size_of::<Value>()),
     )?;
+    let distance = distance.ok_or_else(|| span.error("could not determine number of elements"))?;
+    let num_elements =
+        num_elements.ok_or_else(|| span.error("could not determine number of elements"))?;
     let mut values = Vec::new();
     values
         .try_reserve_exact(num_elements)
