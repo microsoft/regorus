@@ -236,6 +236,70 @@ fn interpreter_function_alternatives_preserve_resource_errors() {
 }
 
 #[test]
+fn interpreter_function_with_replacements_preserve_resource_errors() {
+    for strict in [false, true] {
+        for expression in marshal_expressions() {
+            let rules = [
+                "p := value if { value := f(0) with f as replacement }",
+                "p := true if { not f(0) with f as replacement }",
+                "default p := \"fallback\"\np := value if { value := f(0) with f as replacement }",
+                "p := value if { value := f(0) with f as replacement } else := \"fallback\"",
+                "h(x) := true if { true with upper as replacement }\nh(x) := true\np := h(input)",
+                "p := value if { value := f(0) with f as 7 with f as replacement }",
+            ];
+            for rule in rules.into_iter().map(str::to_string).chain([format!(
+                "h(x) := true if {{ true with upper as {} }}\nh(x) := true\np := h(input)",
+                expression.replace("input", "x")
+            )]) {
+                let mut engine = engine(
+                    format!(
+                        "package test\nf(x) := true\nhealthy := f(1)\nreplacement := {expression}\n{rule}"
+                    ),
+                    strict,
+                    nested(LIMIT + 1, 3),
+                );
+                let error = engine.eval_rule("data.test.p".into()).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<LimitError>(),
+                    Some(&LimitError::SerializationDepthExceeded { limit: LIMIT }),
+                    "{strict}: {expression}: {rule}: {error:?}"
+                );
+                assert_eq!(
+                    engine.eval_rule("data.test.healthy".into()).unwrap(),
+                    Value::Bool(true)
+                );
+                engine.set_input(Value::Null);
+                assert!(engine.eval_rule("data.test.p".into()).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn interpreter_function_with_replacements_keep_function_and_type_error_semantics() {
+    for strict in [false, true] {
+        for (replacement, expected) in [
+            ("g", Value::from("VALUE")),
+            ("\"override\"", Value::from("override")),
+            ("invalid", Value::Undefined),
+        ] {
+            let mut engine = engine(
+                format!(
+                    "package test\nf(x) := x\ng(x) := upper(x)\ninvalid := upper(0)\np := value if {{ value := f(\"value\") with f as {replacement} }}"
+                ),
+                strict,
+                Value::Null,
+            );
+            assert_eq!(
+                engine.eval_rule("data.test.p".into()).unwrap(),
+                expected,
+                "{strict}: {replacement}"
+            );
+        }
+    }
+}
+
+#[test]
 fn interpreter_default_function_comprehension_preserves_resource_errors() {
     for strict in [false, true] {
         let mut engine = engine(

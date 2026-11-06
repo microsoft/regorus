@@ -118,6 +118,65 @@ fn comparison_vm(mode: ExecutionMode, timed: bool, kind: u8) -> RegoVM {
 
 #[cfg(feature = "rvm")]
 #[test]
+fn scalar_set_membership_preserves_results_under_memory_limits() {
+    let mut guard = LimitGuard::lock();
+    let collection = regorus::value::Set::from_iter((0..16384).map(Value::from).chain([
+        Value::Null,
+        Value::Bool(true),
+        Value::from("member"),
+        Value::Undefined,
+        deep_array(4096),
+    ]))
+    .into_value();
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        for resumed in [false, true] {
+            if resumed && mode == ExecutionMode::RunToCompletion {
+                continue;
+            }
+            for global in [false, true] {
+                for needle in [
+                    Value::Null,
+                    Value::Bool(false),
+                    Value::Bool(true),
+                    Value::from(16383),
+                    Value::from(16384),
+                    Value::from(1.0_f64),
+                    Value::from("member"),
+                    Value::from("missing"),
+                    Value::Undefined,
+                ] {
+                    let expected = collection.as_set().unwrap().contains(&needle);
+                    let mut vm = comparison_vm(mode, false, 2);
+                    vm.set_input(collection.clone());
+                    vm.set_data(needle).unwrap();
+                    if !global {
+                        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+                            limit: NonZeroU64::new(64 * 1024).unwrap(),
+                        }));
+                    }
+                    if resumed {
+                        vm.set_step_mode(true);
+                        vm.execute().unwrap();
+                        vm.set_step_mode(false);
+                    }
+                    if global {
+                        guard.set_with_additional_budget(64 * 1024);
+                    }
+                    let result = if resumed {
+                        vm.resume(None)
+                    } else {
+                        vm.execute()
+                    };
+                    guard.disable_limit();
+                    assert_eq!(result.unwrap(), Value::Bool(expected));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rvm")]
+#[test]
 fn comparison_scratch_respects_execution_budgets_with_and_without_timers() {
     let _guard = LimitGuard::lock();
     for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
@@ -266,6 +325,42 @@ fn assert_serialization_memory_error(expression: &str, input: &Value, guard: &mu
                     assert!(vm.execute_entry_point_by_name("data.test.p").is_ok());
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn function_with_replacements_preserve_memory_error_identity() {
+    let mut guard = LimitGuard::lock();
+    let input = Value::from(vec![Value::from("x".repeat(1024 * 1024))]);
+    for strict in [false, true] {
+        for rule in [
+            "p := value if { value := f(0) with f as replacement }",
+            "p := true if { not f(0) with f as replacement }",
+            "default p := \"fallback\"\np := value if { value := f(0) with f as replacement }",
+            "p := value if { value := f(0) with f as replacement } else := \"fallback\"",
+            "h(x) := true if { true with upper as replacement }\nh(x) := true\np := h(input)",
+            "h(x) := true if { true with upper as json.marshal(x) }\nh(x) := true\np := h(input)",
+        ] {
+            let mut engine = new_engine_with_module(&format!(
+                "package test\nf(x) := true\nhealthy := f(1)\nreplacement := json.marshal(input)\n{rule}"
+            ));
+            engine.set_strict_builtin_errors(strict);
+            engine.set_input(input.clone());
+            assert_eq!(
+                engine.eval_rule("data.test.healthy".into()).unwrap(),
+                Value::Bool(true)
+            );
+            guard.set_with_additional_budget(64 * 1024);
+            let result = engine.eval_rule("data.test.p".into());
+            guard.disable_limit();
+            assert_memory_limit_error(&result.unwrap_err());
+            assert_eq!(
+                engine.eval_rule("data.test.healthy".into()).unwrap(),
+                Value::Bool(true)
+            );
+            engine.set_input(Value::Null);
+            assert!(engine.eval_rule("data.test.p".into()).is_ok());
         }
     }
 }

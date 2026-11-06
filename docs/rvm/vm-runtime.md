@@ -98,10 +98,11 @@ The traversal does not memoize shared substructures. Compact shared DAGs can
 still require exponential work to finish, but covered comparisons can stop
 at a timer checkpoint instead of expanding the entire structure first.
 
-Resource-checked set membership uses a sorted scan rather than B-tree lookup,
-since a B-tree comparator cannot return a resource error. This is O(n) in set
-size when a timer or applicable memory limit is enabled. Unchecked membership
-retains the native lookup.
+With memory limits but no timer, scalar set membership retains native O(log n)
+B-tree lookup, checking limits before and after the lookup. Scalar probes cannot
+descend into stored containers. Timed membership and resource-checked compound
+probes use a sorted O(n) scan, since a B-tree comparator cannot return a resource
+error mid-traversal. Unchecked membership retains the native lookup.
 Other implicit B-tree comparisons remain infallible: iterative Value traits
 prevent nesting-dependent stack growth but do not checkpoint the execution timer.
 Scalar number comparison is also an indivisible checkpoint unit. This is not
@@ -131,7 +132,8 @@ Neither endpoint inherits the generic Serde nesting budget.
 Serialization-budget errors, and memory-limit errors while encoding non-string
 object keys, retain typed resource identity through builtin
 calls and interpreter function evaluation, including default-function
-comprehensions. They cannot select a successful alternative, default, or
+comprehensions and function-valued `with` replacement expressions. They cannot
+select a successful alternative, default, or
 negated branch in non-strict mode. Ordinary builtin type errors keep their
 existing strict/non-strict semantics.
 Azure Policy `string`, `format`, and `join` use fallible compact JSON for
