@@ -4,6 +4,71 @@
 use anyhow::{bail, Result};
 use regorus::*;
 
+#[cfg(feature = "rvm")]
+#[test]
+fn rvm_rejects_cycles_between_already_discovered_sibling_rules() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "cycle.rego".into(),
+        r#"package cycle
+           result := [left, right]
+           left := right
+           right := left"#
+            .into(),
+    )?;
+    let policy = engine.compile_with_entrypoint(&"data.cycle.result".into())?;
+    match languages::rego::compiler::Compiler::compile_from_policy(&policy, &["data.cycle.result"])
+    {
+        Err(error) => assert!(
+            error
+                .to_string()
+                .contains("Compile-time recursion detected"),
+            "{error}"
+        ),
+        Ok(_) => bail!("cyclic sibling rules unexpectedly compiled"),
+    }
+    Ok(())
+}
+
+#[test]
+fn cross_package_import_lookup_does_not_false_cycle() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "registry.rego".into(),
+        r#"package registry
+           import data.registry.packages.package_a
+           allow_stage1 if package_a.allow_stage1"#
+            .into(),
+    )?;
+    engine.add_policy(
+        "package_a.rego".into(),
+        r#"package registry.packages.package_a
+           import data.registry
+           allow_stage2 if registry.allow_stage1
+           allow_stage1 := true"#
+            .into(),
+    )?;
+    assert_eq!(
+        engine.eval_rule("data.registry.packages.package_a.allow_stage2".into())?,
+        Value::Bool(true)
+    );
+    assert!(
+        engine
+            .eval_query(
+                "data.registry.packages.package_a.allow_stage2 with data.registry.packages.package_a.allow_stage1 as false"
+                    .into(),
+                false,
+            )?
+            .result
+            .is_empty()
+    );
+    assert_eq!(
+        engine.eval_rule("data.registry.packages.package_a.allow_stage2".into())?,
+        Value::Bool(true)
+    );
+    Ok(())
+}
+
 #[test]
 fn numbers_range_extremes_return_errors() -> Result<()> {
     let mut engine = Engine::new();
