@@ -2,6 +2,84 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: undefined_nested_zero_argument_rule_preserves_package
+    strict: false
+    modules: &undefined_nested_zero_argument_modules
+      - |
+        package catalog.nested
+        p() := 7 if false
+      - |
+        package probe
+        result := [count(data.catalog), data.catalog]
+    query: data.probe.result
+    want_result: [1, {nested: {}}]
+
+  - note: undefined_nested_zero_argument_rule_preserves_package_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *undefined_nested_zero_argument_modules
+    query: data.probe.result
+    want_result: [1, {nested: {}}]
+
+  - note: undefined_nested_document_is_not_a_namespace_member
+    strict: false
+    modules: &undefined_nested_document_modules
+      - |
+        package catalog
+        p.q.r := 7 if false
+      - |
+        package probe
+        result := data.catalog
+    query: data.probe.result
+    want_result: {}
+
+  - note: undefined_nested_document_is_not_a_namespace_member_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *undefined_nested_document_modules
+    query: data.probe.result
+    want_result: {}
+
+  - note: undefined_zero_argument_rule_is_not_a_namespace_member
+    strict: false
+    modules: &undefined_zero_argument_namespace_modules
+      - |
+        package catalog
+        p() := 7 if false
+      - |
+        package probe
+        result := [count(data.catalog), data.catalog]
+    query: data.probe.result
+    want_result: [0, {}]
+
+  - note: undefined_zero_argument_rule_is_not_a_namespace_member_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *undefined_zero_argument_namespace_modules
+    query: data.probe.result
+    want_result: [0, {}]
+
+  - note: zero_argument_rule_is_a_namespace_document
+    strict: false
+    modules: &zero_argument_namespace_modules
+      - |
+        package catalog
+        p() := 7
+        f(x) := x
+        default g(x) := true
+      - |
+        package probe
+        result := [count(data.catalog), data.catalog.p, data.catalog]
+    query: data.probe.result
+    want_result: [1, 7, {p: 7}]
+
+  - note: zero_argument_rule_is_a_namespace_document_suspendable
+    strict: false
+    execution_mode: suspendable
+    modules: *zero_argument_namespace_modules
+    query: data.probe.result
+    want_result: [1, 7, {p: 7}]
+
   - note: function_only_nested_namespace_preserves_base_data
     strict: false
     input: {key: empty}

@@ -257,6 +257,18 @@ impl<'a> Compiler<'a> {
             if matches!(namespace_node, Value::Undefined) {
                 *namespace_node = Value::new_object();
             }
+            let namespace_tree = self
+                .program
+                .metadata
+                .annotations
+                .entry(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION.to_string())
+                .or_insert_with(Value::new_object);
+            let package_node = namespace_tree
+                .make_or_get_value_mut(&path)
+                .map_err(CompilerError::from)?;
+            if matches!(package_node, Value::Undefined) {
+                *package_node = Value::new_object();
+            }
             matches_namespace = true;
         }
 

@@ -39,7 +39,15 @@ impl RegoVM {
 
         if let Some(path) = lookup.pending_path.take() {
             let value = self.get_register(lookup.dest)?.clone();
-            Self::set_nested_value(&mut lookup.result, &path, value.clone())?;
+            if value != Value::Undefined
+                || !self
+                    .program
+                    .metadata
+                    .annotations
+                    .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+            {
+                Self::set_nested_value(&mut lookup.result, &path, value.clone())?;
+            }
             if let Some(ref root_path) = lookup.root_path {
                 let mut cache_path = root_path.clone();
                 cache_path.extend_from_slice(&path);
@@ -94,7 +102,11 @@ impl RegoVM {
                         return Ok(Some((path, rule_index)));
                     }
                     Value::Object(object) => {
-                        if object.is_empty() {
+                        let is_namespace = match lookup.root_path.as_ref() {
+                            Some(root) => self.is_virtual_namespace(root, &lookup.path)?,
+                            None => false,
+                        };
+                        if object.is_empty() || is_namespace {
                             Self::materialize_virtual_namespace(&mut lookup.result, &lookup.path)?;
                         }
                         let cursor = object.cursor();
@@ -208,6 +220,41 @@ impl RegoVM {
         Ok(())
     }
 
+    fn is_virtual_namespace(&self, root_path: &[Value], relative_path: &[Value]) -> Result<bool> {
+        let Some(tree) = self
+            .program
+            .metadata
+            .annotations
+            .get(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+        else {
+            return Ok(false);
+        };
+        let data_key = Value::from("data");
+        let mut node = tree;
+        for key in core::iter::once(&data_key)
+            .chain(root_path)
+            .chain(relative_path)
+        {
+            let Value::Object(ref object) = *node else {
+                return Err(VmError::InvalidRuleTreeEntry {
+                    value: node.clone(),
+                    pc: self.pc,
+                });
+            };
+            let Some(child) = object.get(key) else {
+                return Ok(false);
+            };
+            node = child;
+        }
+        if !matches!(node, Value::Object(_)) {
+            return Err(VmError::InvalidRuleTreeEntry {
+                value: node.clone(),
+                pc: self.pc,
+            });
+        }
+        Ok(true)
+    }
+
     fn set_nested_value_static(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
         let Some((head, tail)) = path.split_first() else {
             *target = value;
@@ -313,7 +360,15 @@ impl RegoVM {
                         result
                     };
 
-                    Self::set_nested_value(result_subobject, relative_path, rule_result)?;
+                    if rule_result != Value::Undefined
+                        || !self
+                            .program
+                            .metadata
+                            .annotations
+                            .contains_key(crate::rvm::Program::REGO_NAMESPACE_TREE_ANNOTATION)
+                    {
+                        Self::set_nested_value(result_subobject, relative_path, rule_result)?;
+                    }
                 } else {
                     return Err(VmError::InvalidRuleIndex {
                         rule_index: Value::Number(rule_idx.clone()),
@@ -322,7 +377,7 @@ impl RegoVM {
                 }
             }
             Value::Object(ref obj) => {
-                if obj.is_empty() {
+                if obj.is_empty() || self.is_virtual_namespace(root_path, relative_path)? {
                     Self::materialize_virtual_namespace(result_subobject, relative_path)?;
                 }
                 for (key, value) in obj.iter() {

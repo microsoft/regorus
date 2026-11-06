@@ -56,6 +56,19 @@ Package-local namespace references use the same resolution as fully qualified
 functions, including default-only functions, are not virtual-document values and
 are excluded from lookup candidates. Their package namespaces still exist as
 objects, even when the package has no document rules.
+Zero-argument heads such as `p() := 7` are document values and appear in namespace
+lookups when defined. Empty namespace markers do not conflict with base data;
+non-object values at an empty namespace are preserved regardless of whether data
+is set before or after the compiled program is loaded. Actual document-rule
+conflicts remain errors, and traversable namespace prefixes still require objects.
+The compiler records structural package paths in the reserved
+`rego_namespace_tree` metadata annotation, independently of document-rule paths.
+This keeps packages visible when all their rules are undefined without inventing
+objects for undefined dotted-rule heads. The annotation is preserved by both
+binary and JSON program serialization.
+Programs without this annotation retain their existing namespace-assembly
+behavior; recompile older artifacts to obtain the corrected undefined-document
+omission and zero-argument document registration.
 
 For example, with `package tenant; tenants.a := {"deny": true}`, the reference
 `data.tenant.tenants[input.tenant].deny` must read the value of rule `data.tenant.tenants.a`
