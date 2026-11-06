@@ -394,6 +394,26 @@ The test driver can be invoked by running:
 $ cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision
 ```
 
+For eligible rule-assignment queries, the driver also checks RVM results against
+the interpreter and round-trips the compiled program through serialization.
+`RVM comparisons verified` counts successful comparisons, excluding skipped
+queries and known failures.
+
+Run the driver's own regression tests separately from the OPA executable:
+
+```bash
+$ cargo test --features opa-testutil --test mod opa_harness
+```
+
+The debug/release CI tasks and pre-push checks run these harness regressions
+with their OPA feature sets.
+
+Only `withkeyword` retains a folder-wide RVM exclusion. Other exclusions require
+an explicit unsupported-capability diagnostic, a catalogued case and compiler
+error, or a catalogued case with its exact known incorrect output. Unrelated
+compiler errors and different incorrect results fail the test; fixed cases
+automatically resume normal comparison.
+
 Currently, Regorus passes all the non-builtin specific tests.
 See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
 

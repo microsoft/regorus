@@ -22,6 +22,57 @@ mod every_binding_differential;
 #[path = "../../native_depth_support/mod.rs"]
 mod native_depth_support;
 
+#[test]
+fn default_function_assignment_errors_preserve_typed_causes() -> Result<()> {
+    use regorus::languages::rego::compiler::CompilerError;
+
+    for expression in ["f(0)", "x := f(0)", "x = f(0)", "[x] := [f(0)]"] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "defaults.rego".to_string(),
+            format!("package test\ndefault f(x) := 0\nresult if {{ {expression} }}"),
+        )?;
+        let policy = engine.compile_with_entrypoint(&Rc::from("data.test.result"))?;
+        let err = Compiler::compile_from_policy(&policy, &["data.test.result"])
+            .expect_err("parameterized defaults must be rejected");
+        assert!(
+            matches!(err.error, CompilerError::FunctionDefaultsUnsupported),
+            "{expression}: {err}"
+        );
+        let err = anyhow::Error::from(err);
+        assert!(err.chain().any(|cause| matches!(
+            cause.downcast_ref::<CompilerError>(),
+            Some(CompilerError::FunctionDefaultsUnsupported)
+        )));
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_default_comprehension_cannot_allow_a_blocked_user() -> Result<()> {
+    use regorus::languages::rego::compiler::CompilerError;
+
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "blocked.rego".to_string(),
+        "package test\ndefault blocked := {u | some u in data.blocklist}\nallow if { not input.user in blocked }".to_string(),
+    )?;
+    engine.add_data(Value::from_json_str(r#"{"blocklist":["mallory"]}"#)?)?;
+    engine.set_input(Value::from_json_str(r#"{"user":"mallory"}"#)?);
+    assert!(engine
+        .eval_query("data.test.allow".to_string(), false)?
+        .result
+        .is_empty());
+    let policy = engine.compile_with_entrypoint(&Rc::from("data.test.allow"))?;
+    let err = Compiler::compile_from_policy(&policy, &["data.test.allow"])
+        .expect_err("runtime-dependent defaults must be rejected");
+    assert!(
+        matches!(err.error, CompilerError::RuntimeDependentDefaultUnsupported),
+        "{err}"
+    );
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,

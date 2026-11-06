@@ -12,6 +12,16 @@ mod lexer;
 mod parser;
 mod value;
 
+#[cfg(all(
+    feature = "opa-testutil",
+    feature = "rvm",
+    feature = "std",
+    feature = "arc"
+))]
+#[allow(dead_code)]
+#[path = "opa.rs"]
+mod opa_harness;
+
 #[cfg(feature = "azure_policy")]
 mod azure_policy;
 

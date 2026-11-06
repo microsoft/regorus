@@ -1,0 +1,546 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Default Keyword Advanced Test Suite
+# Tests supported default expressions and explicit unsupported-function errors.
+# Basic defaults are already tested in default_rules.yaml;
+# these cover additional expression and function cases.
+
+cases:
+  - note: defaults/function_default_with_regular_definition
+    data: {}
+    modules:
+      - |
+        package test
+        default f(x) := 0
+        f(x) := 1 if { x > 0 }
+        result := f(-1)
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/function_default_only
+    data: {}
+    modules:
+      - |
+        package test
+        default f(x) := 2
+        result := f(0)
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/zero_argument_function_default
+    data: {}
+    modules:
+      - |
+        package test
+        default f() := 0
+        f() := 1 if { false }
+        result := f()
+    query: data.test.result
+    want_result: 0
+
+  - note: defaults/array_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := [x | x := 1]
+    query: data.test.result
+    want_result: [1]
+
+  - note: defaults/set_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := {x | x := 1}
+    query: data.test.result
+    want_result: {set!: [1]}
+
+  - note: defaults/object_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := {k: v | k := "x"; v := 1}
+    query: data.test.result
+    want_result: {x: 1}
+
+  - note: defaults/nested_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := {"values": [x | x := 1]}
+    query: data.test.result
+    want_result: {values: [1]}
+
+  # Default with negation in body
+  - note: defaults/default_with_negation
+    data:
+      blocked_users:
+        - "mallory"
+    input:
+      user: "alice"
+    modules:
+      - |
+        package test
+        default allow := false
+        deny if {
+          input.user == data.blocked_users[_]
+        }
+        allow if {
+          not deny
+        }
+    query: data.test.allow
+    want_result: true
+
+  # A suffix of a partial-object rule is not a standalone compiled entrypoint.
+  - note: defaults/indexed_default_entrypoint_is_not_compiled
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        default users["guest"] := {"role": "viewer"}
+        users[name] := info if {
+          some user in input.user_list
+          name := user.name
+          info := {"role": user.role}
+        }
+    query: data.test.users.guest
+    want_error: "not a valid rule path"
+    allow_interpreter_success: true
+
+  - note: defaults/unreachable_function_default_does_not_block_compilation
+    data: {}
+    modules:
+      - |
+        package unsupported
+        default unused(x) := false
+      - |
+        package test
+        result := true
+    query: data.test.result
+    want_result: true
+
+  - note: defaults/function_default_in_package_lookup_is_rejected
+    data: {}
+    modules:
+      - |
+        package defaults
+        default unused(x) := false
+        visible := 1
+      - |
+        package test
+        result := data.defaults
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/imported_function_default_only
+    data: {}
+    modules:
+      - |
+        package defaults
+        default f(x) := 2
+      - |
+        package test
+        import data.defaults as d
+        result := d.f(0)
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/absolute_function_default_only
+    data: {}
+    modules:
+      - |
+        package defaults
+        default f(x) := false
+      - |
+        package test
+        result := data.defaults.f(0)
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/absolute_default_does_not_call_package_prefixed_function
+    data: {}
+    modules:
+      - |
+        package defaults
+        default f(x) := false
+      - |
+        package test.data.defaults
+        f(x) := true
+      - |
+        package test
+        result := data.defaults.f(0)
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/nested_namespace_function_default_is_rejected
+    data: {}
+    modules:
+      - |
+        package test
+        default group.f(x) := 0
+        group.visible := 1
+        result := group
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/unused_descendant_default_does_not_reject_function
+    data: {}
+    modules:
+      - |
+        package test
+        f(x) := x
+        default f.g(y) := 0
+        result := f(7)
+    query: data.test.result
+    want_result: 7
+
+  - note: defaults/unused_descendant_default_does_not_supply_function_fallback
+    data: {}
+    modules:
+      - |
+        package test
+        f(x) := x if { false }
+        default f.g(y) := 0
+        result := f(7)
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: defaults/descendant_default_in_another_package_does_not_reject_function
+    data: {}
+    modules:
+      - |
+        package test.f
+        default g(y) := 0
+      - |
+        package test
+        f(x) := x
+        result := f(7)
+    query: data.test.result
+    want_result: 7
+
+  - note: defaults/ordinary_value_lookup_ignores_sibling_function_default
+    data: {}
+    modules:
+      - |
+        package test
+        default group.f(x) := 0
+        group.visible := 1
+        result := group.visible
+    query: data.test.result
+    want_result: 1
+
+  - note: defaults/function_default_in_assignment
+    data: {}
+    modules:
+      - |
+        package test
+        default f(x) := 0
+        result if { x := f(0); x == 0 }
+    query: data.test.result
+    want_error: "function default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/data_dependent_array_comprehension_is_rejected
+    data: {items: [1, 2]}
+    modules:
+      - |
+        package test
+        default result := [x | some x in data.items]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/input_dependent_object_comprehension_is_rejected
+    data: {}
+    input: {items: {a: 1}}
+    modules:
+      - |
+        package test
+        default result := {k: v | some k, v in input.items}
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/data_dependent_set_cannot_allow_blocked_user
+    data: {blocklist: [mallory]}
+    input: {user: mallory}
+    modules:
+      - |
+        package test
+        default blocked := {u | some u in data.blocklist}
+        allow if { not input.user in blocked }
+    query: data.test.allow
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/nested_runtime_comprehension_is_rejected
+    data: {}
+    input: {items: [1]}
+    modules:
+      - |
+        package test
+        default result := {"values": [[y | some y in input.items] | x := 1]}
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/imported_runtime_comprehension_is_rejected
+    data: {items: [1]}
+    modules:
+      - |
+        package test
+        import data.items as source
+        default result := [x | some x in source]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/rule_dependent_comprehension_is_rejected
+    data: {}
+    input: {items: [1]}
+    modules:
+      - |
+        package test
+        source := input.items
+        default result := [x | some x in source]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/function_dependent_comprehension_is_rejected
+    data: {}
+    input: {item: 1}
+    modules:
+      - |
+        package test
+        source() := input.item
+        default result := [x | x := source()]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/deterministic_builtin_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := [n | n := count([1, 2])]
+    query: data.test.result
+    want_result: [2]
+
+  - note: defaults/nested_comprehension_captures_constant_local
+    data: {}
+    modules:
+      - |
+        package test
+        default result := [[y | y := x] | x := 1]
+    query: data.test.result
+    want_result: [[1]]
+
+  - note: defaults/comprehension_local_shadows_runtime_rule
+    data: {}
+    input: {item: 2}
+    modules:
+      - |
+        package test
+        x := input.item
+        default result := [x | x := 1]
+    query: data.test.result
+    want_result: [1]
+
+  - note: defaults/runtime_dependent_comprehension_term_is_rejected
+    data: {}
+    input: {item: 2}
+    modules:
+      - |
+        package test
+        default result := [input.item | x := 1]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/runtime_function_shadowing_builtin_is_rejected
+    data: {}
+    input: {item: 2}
+    modules:
+      - |
+        package test
+        count(xs) := input.item
+        default result := [n | n := count([1])]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/unreachable_runtime_default_does_not_block_compilation
+    data: {}
+    modules:
+      - |
+        package unused
+        default values := [x | some x in input.items]
+      - |
+        package test
+        result := true
+    query: data.test.result
+    want_result: true
+
+  - note: defaults/constant_every_comprehension
+    data: {}
+    modules:
+      - |
+        package test
+        default result := [1 | every x in [1, 2] { x > 0 }]
+    query: data.test.result
+    want_result: [1]
+
+  - note: defaults/indexed_default_only_parent_accumulates_all_keys
+    data: {}
+    modules:
+      - |
+        package test
+        default blocked["mallory"] := true
+        default blocked["alice"] := false
+    query: data.test.blocked
+    want_result: {mallory: true, alice: false}
+
+  - note: defaults/indexed_defaults_through_cross_package_wrapper
+    data: {}
+    modules:
+      - |
+        package defaults
+        default blocked["mallory"] := true
+        default blocked["alice"] := false
+      - |
+        package test
+        result := data.defaults.blocked
+    query: data.test.result
+    want_result: {mallory: true, alice: false}
+
+  - note: defaults/indexed_default_cannot_allow_blocked_user
+    data: {}
+    input: {user: mallory}
+    modules:
+      - |
+        package test
+        default blocked["mallory"] := true
+        default allow := false
+        allow if { not blocked[input.user] }
+    query: data.test.allow
+    want_result: false
+
+  - note: defaults/descendant_before_zero_argument_function_fallback
+    data: {}
+    modules:
+      - |
+        package test
+        default f.g := true
+        default f() := false
+        f() := true if { false }
+        result := f()
+    query: data.test.result
+    want_result: false
+
+  - note: defaults/descendant_cannot_allow_zero_argument_function
+    data: {}
+    modules:
+      - |
+        package test
+        default f.g := true
+        default f() := false
+        f() := true if { false }
+        default allow := false
+        allow if { f() }
+    query: data.test.allow
+    want_result: false
+
+  - note: defaults/descendant_after_zero_argument_function_fallback
+    data: {}
+    modules:
+      - |
+        package test
+        default f() := false
+        default f.g := true
+        f() := true if { false }
+        result := f()
+    query: data.test.result
+    want_result: false
+
+  - note: defaults/value_rule_does_not_shadow_builtin_in_constant_default
+    data: {}
+    modules:
+      - |
+        package test
+        count := 99
+        default result := [n | n := count([1, 2])]
+    query: data.test.result
+    want_result: [2]
+
+  - note: defaults/non_callable_import_preserves_builtin_in_constant_default
+    data: {}
+    modules:
+      - |
+        package source
+        count := 99
+      - |
+        package test
+        import data.source.count
+        default result := [n | n := count([1, 2])]
+    query: data.test.result
+    want_result: [2]
+
+  - note: defaults/namespace_import_preserves_builtin_in_constant_default
+    data: {}
+    modules:
+      - |
+        package source
+        value := 99
+      - |
+        package test
+        import data.source as count
+        default result := [n | n := count([1, 2])]
+    query: data.test.result
+    want_result: [2]
+
+  - note: defaults/callable_import_in_constant_default_is_rejected
+    data: {}
+    input: {item: 99}
+    modules:
+      - |
+        package source
+        count(xs) := input.item
+      - |
+        package test
+        import data.source.count
+        default result := [n | n := count([1, 2])]
+    query: data.test.result
+    want_error: "runtime-dependent default values are not yet supported"
+    allow_interpreter_success: true
+
+  - note: defaults/builtin_import_resolution_uses_default_declaring_package
+    data: {}
+    input: {item: 99}
+    modules:
+      - |
+        package source
+        count(xs) := input.item
+      - |
+        package defaults
+        import data.missing as count
+        default values := [n | n := count([1, 2])]
+      - |
+        package test
+        import data.source.count
+        result := data.defaults.values
+    query: data.test.result
+    want_result: [2]

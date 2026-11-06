@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-use regorus::languages::rego::compiler::Compiler;
+use regorus::languages::rego::compiler::{Compiler, CompilerError};
 use regorus::rvm::tests::test_utils::test_round_trip_serialization;
 use regorus::rvm::vm::RegoVM;
 use regorus::*;
@@ -18,22 +18,7 @@ use walkdir::WalkDir;
 
 const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v1.2.0";
-const PARTIAL_OBJECT_OVERRIDE_NOTE: &str =
-    "regression/partial-object override, different key type, query";
-
 const OPA_TODO_FOLDERS: &[&str] = &[
-    "aggregates",
-    "baseandvirtualdocs",
-    "dataderef",
-    "defaultkeyword",
-    "fix1863",
-    "functions",
-    "partialdocconstants",
-    "partialobjectdoc",
-    "planner-ir",
-    "refheads",
-    "type",
-    "walkbuiltin",
     // RVM Compiler does not support 'with' keyword yet.
     "withkeyword",
 ];
@@ -179,9 +164,8 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
                 let mut v = qr.bindings.clone();
                 let bindings = v.as_object_mut()?;
                 for (_, v) in bindings.iter_mut() {
-                    match v {
-                        Value::Array(_) => v.as_array_mut()?.sort(),
-                        _ => (),
+                    if let Value::Array(_) = v {
+                        v.as_array_mut()?.sort();
                     }
                 }
                 v
@@ -275,36 +259,125 @@ fn eval_rule_with_rvm(case: &TestCase, is_rego_v0_test: bool, rule_path: &str) -
     }
 }
 
-fn is_not_valid_rule_path_error(err: &anyhow::Error) -> bool {
+fn compiler_limitation_reason(err: &anyhow::Error) -> Option<&'static str> {
     err.chain()
-        .any(|cause| cause.to_string().contains("not a valid rule path"))
+        .find_map(|cause| match cause.downcast_ref::<CompilerError>() {
+            Some(CompilerError::WithKeywordUnsupported) => Some("with keyword unsupported"),
+            Some(CompilerError::FunctionDefaultsUnsupported) => {
+                Some("function defaults unsupported")
+            }
+            Some(CompilerError::RuntimeDependentDefaultUnsupported) => {
+                Some("runtime-dependent default values unsupported")
+            }
+            Some(CompilerError::MultiValueRefHeadUnsupported) => {
+                Some("multi-value ref heads unsupported")
+            }
+            Some(CompilerError::PartialObjectConstantKeyUnsupported)
+            | Some(CompilerError::PartialObjectNestedKeyUnsupported) => {
+                Some("partial object pattern unsupported")
+            }
+            Some(CompilerError::General { message })
+                if message.starts_with("walk loops are not yet supported") =>
+            {
+                Some("walk builtin unsupported")
+            }
+            _ if cause.to_string() == "not a valid rule path" => Some("rule path not compiled"),
+            _ => None,
+        })
 }
 
-fn is_with_keyword_unsupported_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        cause
-            .to_string()
-            .contains("`with` keyword is not supported")
-    })
-}
+// Pin known wrong outputs so a different regression in the same case still fails.
+const KNOWN_RVM_MISMATCH_NOTES: &[(&str, &str, &str)] = &[
+    (
+        "baseandvirtualdocs/base/virtual: undefined",
+        "base/virtual document merge",
+        r#"[{"x":{"p":"<undefined>","q":"<undefined>"}}]"#,
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: undefined-2",
+        "base/virtual document merge",
+        r#"[{"x":{"h":{"k":[1,2,3],"p":"<undefined>"}}}]"#,
+    ),
+    (
+        "baseandvirtualdocs/base/virtual: missing input value",
+        "base/virtual document merge",
+        r#"[{"x":{"p":"<undefined>"}}]"#,
+    ),
+    ("data/nested integer", "integer key data dereference", "[]"),
+    ("fix1863/is defined", "empty package as object", "[]"),
+    (
+        "ir/call-dynamic with mixed partial rules",
+        "dynamic lookup on mixed partial rules",
+        "[]",
+    ),
+    (
+        "ir/call-dynamic with mixed partial rules, ref heads",
+        "dynamic lookup on mixed partial rules with ref heads",
+        "[]",
+    ),
+    (
+        "ir/call-dynamic with ref heads, issue 5839, penultimate",
+        "dynamic ref-head lookup",
+        "[]",
+    ),
+];
 
-fn is_partial_object_unsupported_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        let msg = cause.to_string();
-        msg.contains("partial object rules with constant keys are not yet supported")
-            || msg.contains("partial object rules with nested bracket keys are not yet supported")
-    })
-}
-
-fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
-    if case.note == "defaultkeyword/function with var arg, ref head query" {
-        println!(
-            "    skipping RVM check for '{}' (function defaults with refs unsupported)",
-            case.note
-        );
-        return Ok(());
+fn known_rvm_compile_failure_reason(note: &str, err: &anyhow::Error) -> Option<&'static str> {
+    let compiler_error = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<CompilerError>())?;
+    match (note, compiler_error) {
+        ("aggregates/member+some+key+ref with other variable", CompilerError::SomeInNotHoisted) =>
+            Some("known some-in loop hoisting failure"),
+        ("partialobjectdoc/ref"
+            | "regression/partial-object override, different key type, referenced in other rule",
+            CompilerError::UndefinedVariable { name }) if name == "p" =>
+            Some("known partial-object reference binding failure"),
+        ("ir/no call-dynamic with mixed partial rules, ref heads"
+            | "ir/call-dynamic with ref heads, issue 5839",
+            CompilerError::UndefinedVariable { name }) if name == "a" =>
+            Some("known dynamic ref-head binding failure"),
+        ("regression/dynamic object to static object comparison (https://github.com/open-policy-agent/opa/issues/6138)",
+            CompilerError::UndefinedVariable { name }) if name == "obj" =>
+            Some("known dynamic object binding failure"),
+        ("data/toplevel integer", CompilerError::General { message })
+            if message == "Compile-time recursion detected in rule call chain: data.test.p -> data.test.p" =>
+            Some("known false recursive lookup"),
+        ("refheads/general, set leaf (other rule defines dynamic ref portion)",
+            CompilerError::General { message })
+            if message == "internal: rule 'data.test.p' has multiple types: {PartialSet, PartialObject}" =>
+            Some("known mixed partial-rule type failure"),
+        _ => None,
     }
+}
 
+fn known_rvm_mismatch_reason(
+    note: &str,
+    is_rego_v0_test: bool,
+    rvm_binding: &Value,
+) -> Result<Option<&'static str>> {
+    let Some((_, reason, expected)) = KNOWN_RVM_MISMATCH_NOTES
+        .iter()
+        .find(|(name, _, _)| *name == note)
+    else {
+        return Ok(None);
+    };
+    // The pinned v1 fixture uses string elements where its v0 counterpart uses numbers.
+    let expected = match (note, is_rego_v0_test) {
+        ("baseandvirtualdocs/base/virtual: undefined-2", false) => {
+            r#"[{"x":{"h":{"k":["1","2","3"],"p":"<undefined>"}}}]"#
+        }
+        _ => expected,
+    };
+    Ok((Value::from_json_str(expected)? == *rvm_binding).then_some(*reason))
+}
+
+fn maybe_verify_rvm_case(
+    case: &TestCase,
+    is_rego_v0_test: bool,
+    actual: &Value,
+    verified_rvm_cases: &mut usize,
+) -> Result<()> {
     let (rule_path, binding_var) = match parse_assignment_query(&case.query) {
         Some(info) => info,
         None => return Ok(()),
@@ -313,27 +386,10 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
     let rvm_value = match eval_rule_with_rvm(case, is_rego_v0_test, &rule_path) {
         Ok(value) => value,
         Err(err) => {
-            if is_not_valid_rule_path_error(&err) {
-                println!(
-                    "    skipping RVM check for '{}' (rule path not compiled)",
-                    case.note
-                );
-                return Ok(());
-            }
-
-            if is_with_keyword_unsupported_error(&err) {
-                println!(
-                    "    skipping RVM check for '{}' (with keyword unsupported)",
-                    case.note
-                );
-                return Ok(());
-            }
-
-            if is_partial_object_unsupported_error(&err) {
-                println!(
-                    "    skipping RVM check for '{}' (partial object pattern unsupported)",
-                    case.note
-                );
+            if let Some(reason) = compiler_limitation_reason(&err)
+                .or_else(|| known_rvm_compile_failure_reason(&case.note, &err))
+            {
+                println!("    skipping RVM check for '{}' ({})", case.note, reason);
                 return Ok(());
             }
 
@@ -347,6 +403,14 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
     };
 
     if &rvm_binding != actual {
+        if let Some(reason) = known_rvm_mismatch_reason(&case.note, is_rego_v0_test, &rvm_binding)?
+        {
+            println!(
+                "    skipping RVM check for '{}' (known RVM mismatch: {})",
+                case.note, reason
+            );
+            return Ok(());
+        }
         let interpreter_yaml = yaml_serde::to_string(actual)?;
         let rvm_yaml = yaml_serde::to_string(&rvm_binding)?;
         bail!(
@@ -357,6 +421,7 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
         );
     }
 
+    *verified_rvm_cases += 1;
     Ok(())
 }
 
@@ -376,12 +441,13 @@ fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
     }
 }
 
-fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
+fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<usize> {
     println!("OPA TESTSUITE: {opa_tests_dir}");
     let tests_path = Path::new(&opa_tests_dir);
     let mut status = BTreeMap::<String, (u32, u32, u32)>::new();
     let mut n = 0;
     let mut missing_functions = BTreeMap::new();
+    let mut verified_rvm_cases = 0;
     for entry in WalkDir::new(&opa_tests_dir)
         .sort_by_file_name()
         .into_iter()
@@ -425,15 +491,9 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         for mut case in test.cases {
             let is_json_schema_test = case.note.starts_with("json_verify_schema")
                 || case.note.starts_with("json_match_schema");
-            let mut skip_rvm_validation = skip_rvm_for_folder;
+            let skip_rvm_validation = skip_rvm_for_folder;
 
-            if case.note == PARTIAL_OBJECT_OVERRIDE_NOTE {
-                println!(
-                    "    skipping RVM check for '{}' (needs suffix lookup on rule path)",
-                    case.note
-                );
-                skip_rvm_validation = true;
-            } else if case.note == "reachable_paths/cycle_1022_3" {
+            if case.note == "reachable_paths/cycle_1022_3" {
                 // The OPA behavior is not well-defined.
                 // See: https://github.com/open-policy-agent/opa/issues/5871
                 //      https://github.com/open-policy-agent/opa/issues/6128
@@ -499,32 +559,29 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
             print!("{:4}: {:90}", entry.2, case.note);
             entry.2 += 1;
             match (eval_test_case(&case, is_rego_v0_test), &case.want_result) {
-                (Ok(actual), Some(expected))
-                    if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
+                (Ok(actual), expected)
+                    if match expected {
+                        Some(expected) => {
+                            &actual == expected
+                                || (is_json_schema_test
+                                    && json_schema_tests_check(&actual, expected))
+                        }
+                        None => {
+                            actual == Value::new_array()
+                                && case.want_error.is_none()
+                                && case.error.is_none()
+                        }
+                    } =>
                 {
                     if skip_rvm_validation {
                         log_rvm_skip(&case.note, folder_name.as_deref());
                         entry.0 += 1;
-                    } else if let Err(rvm_err) =
-                        maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
-                    {
-                        println!("\n{} failed.", case.note);
-                        println!("{}", yaml_serde::to_string(&case)?);
-                        println!("{rvm_err}");
-                        entry.1 += 1;
-                        n += 1;
-                        continue;
-                    } else {
-                        entry.0 += 1;
-                    }
-                }
-                (Ok(actual), Some(expected)) if &actual == expected => {
-                    if skip_rvm_validation {
-                        log_rvm_skip(&case.note, folder_name.as_deref());
-                        entry.0 += 1;
-                    } else if let Err(rvm_err) =
-                        maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
-                    {
+                    } else if let Err(rvm_err) = maybe_verify_rvm_case(
+                        &case,
+                        is_rego_v0_test,
+                        &actual,
+                        &mut verified_rvm_cases,
+                    ) {
                         println!("\n{} failed.", case.note);
                         println!("{}", yaml_serde::to_string(&case)?);
                         println!("{rvm_err}");
@@ -538,13 +595,6 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 (Ok(_), Some(_)) if case.note == "strings/sprintf: float too big" => {
                     // OPA renders large floats in scientific notation while Regorus emits full decimal digits.
                     // There is no clear benefit in forcing parity for this presentation-only difference.
-                    entry.0 += 1;
-                }
-                (Ok(actual), None)
-                    if actual == Value::new_array()
-                        && case.want_error.is_none()
-                        && case.error.is_none() =>
-                {
                     entry.0 += 1;
                 }
                 // TODO: Handle tests that specify both want_result and strict_error
@@ -624,6 +674,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     }
 
     println!("\nOPA TESTSUITE STATUS");
+    println!("RVM comparisons verified: {verified_rvm_cases}");
     println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
     let (mut npass, mut nfail) = (0, 0);
     let mut passing = vec![];
@@ -639,6 +690,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     }
     println!();
 
+    std::fs::create_dir_all("target")?;
     std::fs::write("target/opa.passing", passing.join("\n"))?;
 
     if npass == 0 && nfail == 0 {
@@ -651,7 +703,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
 
     if !missing_functions.is_empty() {
         println!("\nMISSING FUNCTIONS");
-        println!("    {:4}  {:42} {}", "", "FUNCTION", "FAILURES");
+        println!("    {:4}  {:42} FAILURES", "", "FUNCTION");
         let mut ncalls = 0;
         for (idx, (fcn, calls)) in missing_functions.iter().enumerate() {
             println!("\x1b[31m    {:4}: {fcn:42} {calls}\x1b[0m", idx + 1);
@@ -664,7 +716,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         bail!("OPA tests failed");
     }
 
-    Ok(())
+    Ok(verified_rvm_cases)
 }
 
 #[derive(clap::Parser)]
@@ -723,5 +775,54 @@ fn main() -> Result<()> {
         }
     };
 
-    run_opa_tests(opa_tests_dir, &cli.folders)
+    run_opa_tests(opa_tests_dir, &cli.folders).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undefined_assignments_without_want_result_still_verify_rvm() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "regorus-opa-undefined-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let fixture = r#"cases:
+  - note: regression/undefined assignment without want_result
+    modules:
+      - |
+        package test
+        p if { false }
+    query: x = data.test.p
+"#;
+        std::fs::create_dir(&root)?;
+        let path = root.join("undefined.yaml");
+        std::fs::write(&path, fixture)?;
+        let verified = run_opa_tests(root.to_string_lossy().into_owned(), &[]);
+        std::fs::remove_file(&path)?;
+        std::fs::remove_dir(&root)?;
+        assert_eq!(verified?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn assigned_function_defaults_are_recognized_by_the_typed_limitation_filter() -> Result<()> {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "default.rego".to_string(),
+            "package test\ndefault f(x) := 0\np if { x := f(0); x == 0 }".to_string(),
+        )?;
+        let policy = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let err = Compiler::compile_from_policy(&policy, &["data.test.p"])
+            .expect_err("parameterized defaults must be rejected");
+        assert_eq!(
+            compiler_limitation_reason(&anyhow::Error::from(err).context("assignment")),
+            Some("function defaults unsupported")
+        );
+        Ok(())
+    }
 }

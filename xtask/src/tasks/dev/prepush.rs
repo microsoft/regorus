@@ -107,6 +107,20 @@ impl PrepushCommand {
             "pre-push: cargo test --test kata --features rego-extensions failed".to_string()
         })?;
 
+        run_cargo_step(
+            &workspace,
+            "cargo test --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test mod opa_harness",
+            [
+                "test",
+                "--features",
+                "opa-testutil,serde_json/arbitrary_precision,rego-extensions",
+                "--test",
+                "mod",
+                "opa_harness",
+            ],
+        )
+        .with_context(|| "pre-push: OPA harness regression tests failed".to_string())?;
+
         log_step("cargo test --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa");
         run_opa_conformance(&workspace).with_context(|| {
             "pre-push: cargo test --features opa-testutil,serde_json/arbitrary_precision,rego-extensions --test opa failed"

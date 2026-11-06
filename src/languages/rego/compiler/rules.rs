@@ -120,6 +120,29 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn validate_partial_set_shape(&self, refr: &ExprRef, rule_path: &str) -> Result<()> {
+        if Self::has_unsupported_bracket_prefix(refr) {
+            return Err(CompilerError::MultiValueRefHeadUnsupported.at(refr.span()));
+        }
+        let module = self
+            .policy
+            .get_modules()
+            .get(self.current_module_index as usize)
+            .ok_or_else(|| {
+                CompilerError::General {
+                    message: "missing declaring module for partial set rule".to_string(),
+                }
+                .at(refr.span())
+            })?;
+        let package =
+            get_path_string(&module.package.refr, Some("data")).map_err(CompilerError::from)?;
+        let head_path = get_path_string(refr, Some(&package)).map_err(CompilerError::from)?;
+        if head_path != rule_path {
+            return Err(CompilerError::MultiValueRefHeadUnsupported.at(refr.span()));
+        }
+        Ok(())
+    }
+
     fn is_string_literal(expr: &ExprRef) -> bool {
         matches!(expr.as_ref(), Expr::String { .. } | Expr::RawString { .. })
     }
@@ -457,6 +480,12 @@ impl<'a> Compiler<'a> {
                         RuleHead::Compr { refr, assign, .. } => {
                             if rule_type == RuleType::PartialObject {
                                 self.validate_partial_object_shape(refr)?;
+                            } else if rule_type == RuleType::Complete
+                                && Self::has_unsupported_bracket_prefix(refr)
+                            {
+                                return Err(
+                                    CompilerError::PartialObjectNestedKeyUnsupported.at(span)
+                                );
                             }
 
                             self.rule_definition_function_params[rule_index as usize].push(None);
@@ -470,7 +499,11 @@ impl<'a> Compiler<'a> {
                             };
                             (key_expr, output_expr)
                         }
-                        RuleHead::Set { key, .. } => {
+                        RuleHead::Set { refr, key, .. } => {
+                            if rule_type == RuleType::PartialSet {
+                                self.validate_partial_set_shape(refr, rule_path)?;
+                            }
+
                             self.rule_definition_function_params[rule_index as usize].push(None);
                             self.rule_definition_destructuring_patterns[rule_index as usize]
                                 .push(None);

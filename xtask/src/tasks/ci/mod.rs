@@ -334,6 +334,15 @@ fn run_example(
 }
 
 fn run_opa_tests(workspace: &Path, release: bool, frozen: bool, features: &str) -> Result<()> {
+    run_ci_cargo_step(
+        workspace,
+        "test",
+        release,
+        frozen,
+        Some(features),
+        &["--test", "mod", "opa_harness"],
+        "cargo test --test mod opa_harness (ci)",
+    )?;
     let tests = opa_passing_arguments(workspace)?;
     let mut args = base_cargo_args("test", release, frozen, Some(features));
     args.push(OsString::from("--test"));
