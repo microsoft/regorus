@@ -81,124 +81,123 @@ impl RegoVM {
         root_path: &[Value],
     ) -> Result<()> {
         let mut relative_path = Vec::new();
-        self.traverse_rule_tree_subobject_with_path(
-            rule_tree_node,
-            result_subobject,
-            root_path,
-            &mut relative_path,
-        )
-    }
+        enum Action<'a, I> {
+            Visit(&'a Value),
+            Children(I),
+            Leave,
+        }
+        let mut pending = alloc::vec![Action::Visit(rule_tree_node)];
+        while let Some(action) = pending.pop() {
+            self.memory_check()?;
+            match action {
+                Action::Visit(node) => match *node {
+                    Value::Number(ref rule_idx) => {
+                        if let Some(rule_index) = rule_idx.as_u64() {
+                            // Walk the evaluated cache using root_path then relative_path,
+                            // without allocating a combined full_cache_path Vec.
+                            let cached_result = {
+                                let mut cache_lookup = &self.evaluated;
+                                let mut path_exists = true;
 
-    fn traverse_rule_tree_subobject_with_path(
-        &mut self,
-        rule_tree_node: &Value,
-        result_subobject: &mut Value,
-        root_path: &[Value],
-        relative_path: &mut Vec<Value>,
-    ) -> Result<()> {
-        match *rule_tree_node {
-            Value::Number(ref rule_idx) => {
-                if let Some(rule_index) = rule_idx.as_u64() {
-                    // Walk the evaluated cache using root_path then relative_path,
-                    // without allocating a combined full_cache_path Vec.
-                    let cached_result = {
-                        let mut cache_lookup = &self.evaluated;
-                        let mut path_exists = true;
-
-                        for path_component in root_path.iter().chain(relative_path.iter()) {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                if let Some(next_value) = map.get(path_component) {
-                                    cache_lookup = next_value;
-                                } else {
-                                    path_exists = false;
-                                    break;
+                                for path_component in root_path.iter().chain(relative_path.iter()) {
+                                    if let Value::Object(ref map) = *cache_lookup {
+                                        if let Some(next_value) = map.get(path_component) {
+                                            cache_lookup = next_value;
+                                        } else {
+                                            path_exists = false;
+                                            break;
+                                        }
+                                    } else {
+                                        path_exists = false;
+                                        break;
+                                    }
                                 }
-                            } else {
-                                path_exists = false;
-                                break;
-                            }
-                        }
 
-                        if path_exists {
-                            if let Value::Object(ref map) = *cache_lookup {
-                                map.get(&Value::Undefined).cloned()
+                                if path_exists {
+                                    if let Value::Object(ref map) = *cache_lookup {
+                                        map.get(&Value::Undefined).cloned()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+
+                            let rule_result = if let Some(cached) = cached_result {
+                                self.cache_hits =
+                                    self.checked_add_one(self.cache_hits, "cache hits counter")?;
+                                cached
                             } else {
-                                None
-                            }
+                                let temp_reg =
+                                    u8::try_from(self.registers.len()).map_err(|_| {
+                                        VmError::RegisterIndexOutOfBounds {
+                                            index: u8::MAX,
+                                            pc: self.pc,
+                                            register_count: self.registers.len(),
+                                        }
+                                    })?;
+                                self.registers.push(Value::Undefined);
+                                let rule_index_u16 = u16::try_from(rule_index).map_err(|_| {
+                                    VmError::InvalidRuleIndex {
+                                        rule_index: Value::Number(rule_idx.clone()),
+                                        pc: self.pc,
+                                    }
+                                })?;
+                                self.execute_call_rule_common(temp_reg, rule_index_u16, None)?;
+                                let register_count = self.registers.len();
+                                let result = self.registers.pop().ok_or(
+                                    VmError::RegisterIndexOutOfBounds {
+                                        index: temp_reg,
+                                        pc: self.pc,
+                                        register_count,
+                                    },
+                                )?;
+
+                                // Build cache_path from root_path + relative_path + Undefined sentinel.
+                                let mut cache_path: Vec<Value> = Vec::with_capacity(
+                                    root_path
+                                        .len()
+                                        .saturating_add(relative_path.len())
+                                        .saturating_add(1),
+                                );
+                                cache_path.extend_from_slice(root_path);
+                                cache_path.extend_from_slice(&relative_path);
+                                cache_path.push(Value::Undefined);
+                                Self::set_nested_value_static(
+                                    &mut self.evaluated,
+                                    &cache_path,
+                                    result.clone(),
+                                )?;
+
+                                result
+                            };
+
+                            Self::set_nested_value(result_subobject, &relative_path, rule_result)?;
                         } else {
-                            None
-                        }
-                    };
-
-                    let rule_result = if let Some(cached) = cached_result {
-                        self.cache_hits =
-                            self.checked_add_one(self.cache_hits, "cache hits counter")?;
-                        cached
-                    } else {
-                        let temp_reg = u8::try_from(self.registers.len()).map_err(|_| {
-                            VmError::RegisterIndexOutOfBounds {
-                                index: u8::MAX,
-                                pc: self.pc,
-                                register_count: self.registers.len(),
-                            }
-                        })?;
-                        self.registers.push(Value::Undefined);
-                        let rule_index_u16 =
-                            u16::try_from(rule_index).map_err(|_| VmError::InvalidRuleIndex {
+                            return Err(VmError::InvalidRuleIndex {
                                 rule_index: Value::Number(rule_idx.clone()),
                                 pc: self.pc,
-                            })?;
-                        self.execute_call_rule_common(temp_reg, rule_index_u16, None)?;
-                        let register_count = self.registers.len();
-                        let result =
-                            self.registers
-                                .pop()
-                                .ok_or(VmError::RegisterIndexOutOfBounds {
-                                    index: temp_reg,
-                                    pc: self.pc,
-                                    register_count,
-                                })?;
-
-                        // Build cache_path from root_path + relative_path + Undefined sentinel.
-                        let mut cache_path: Vec<Value> = Vec::with_capacity(
-                            root_path
-                                .len()
-                                .saturating_add(relative_path.len())
-                                .saturating_add(1),
-                        );
-                        cache_path.extend_from_slice(root_path);
-                        cache_path.extend_from_slice(relative_path);
-                        cache_path.push(Value::Undefined);
-                        Self::set_nested_value_static(
-                            &mut self.evaluated,
-                            &cache_path,
-                            result.clone(),
-                        )?;
-
-                        result
-                    };
-
-                    Self::set_nested_value(result_subobject, relative_path, rule_result)?;
-                } else {
-                    return Err(VmError::InvalidRuleIndex {
-                        rule_index: Value::Number(rule_idx.clone()),
-                        pc: self.pc,
-                    });
+                            });
+                        }
+                    }
+                    Value::Object(ref obj) => {
+                        pending.push(Action::Children(obj.iter()));
+                    }
+                    _ => {}
+                },
+                Action::Children(mut children) => {
+                    if let Some((key, value)) = children.next() {
+                        relative_path.push(key.clone());
+                        pending.push(Action::Children(children));
+                        pending.push(Action::Leave);
+                        pending.push(Action::Visit(value));
+                    }
                 }
-            }
-            Value::Object(ref obj) => {
-                for (key, value) in obj.iter() {
-                    relative_path.push(key.clone());
-                    self.traverse_rule_tree_subobject_with_path(
-                        value,
-                        result_subobject,
-                        root_path,
-                        relative_path,
-                    )?;
+                Action::Leave => {
                     relative_path.pop();
                 }
             }
-            _ => {}
         }
         Ok(())
     }

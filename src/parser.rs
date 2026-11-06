@@ -89,7 +89,7 @@ pub struct Parser<'source> {
 }
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
-const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
+const DEFAULT_MAX_EXPR_DEPTH: usize = Expr::MAX_DEPTH;
 
 impl<'source> Parser<'source> {
     pub(crate) const MAX_PATH_COMPONENTS: usize = DEFAULT_MAX_EXPR_DEPTH;
@@ -204,6 +204,14 @@ impl<'source> Parser<'source> {
 
         self.expr_depth = current_depth.saturating_sub(1);
         res
+    }
+
+    fn check_expr_depth(&mut self, expr: &Expr) -> Result<()> {
+        let result = expr.check_depth();
+        if result.is_err() {
+            self.expr_depth_overflow = true;
+        }
+        result
     }
 
     fn expect(&mut self, text: &str, context: &str) -> Result<()> {
@@ -648,7 +656,39 @@ impl<'source> Parser<'source> {
         Ok(node)
     }
 
+    fn has_comprehension_separator(&self, delim: &str) -> Result<bool> {
+        let mut lookahead = self.clone();
+        let mut nesting = 0_usize;
+        loop {
+            let token = lookahead.token_text();
+            if nesting == 0 {
+                if token == "|" {
+                    return Ok(true);
+                }
+                if token == delim || matches!(token, "," | ":") || lookahead.tok.0 == TokenKind::Eof
+                {
+                    return Ok(false);
+                }
+            }
+            match token {
+                "(" | "set(" | "[" | "{" => nesting = nesting.saturating_add(1),
+                ")" | "]" | "}" => {
+                    if nesting == 0 {
+                        return Ok(false);
+                    }
+                    nesting = nesting.saturating_sub(1);
+                }
+                _ => {}
+            }
+            lookahead.next_token()?;
+        }
+    }
+
     fn parse_compr(&mut self, delim: &str) -> Result<(Expr, Query)> {
+        // Avoid reparsing nested literals at each speculative comprehension level.
+        if !self.has_comprehension_separator(delim)? {
+            bail!("internal error: not a compr");
+        }
         // Save the state.
         let state = self.clone();
         let mut span = self.tok.1.clone();
@@ -656,6 +696,7 @@ impl<'source> Parser<'source> {
         // Parse the first expression as a ref.
         let term = match self.parse_ref() {
             Ok(e) if self.token_text() == "|" => e,
+            Err(err) if self.expr_depth_overflow => return Err(err),
             _ => {
                 // Not a comprehension. Restore state.
                 *self = state;
@@ -914,6 +955,14 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_ref(&mut self) -> Result<Expr> {
+        self.with_expr_depth(|this| {
+            let expr = this.parse_ref_inner()?;
+            this.check_expr_depth(&expr)?;
+            Ok(expr)
+        })
+    }
+
+    fn parse_ref_inner(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut term = match self.token_text() {
             "[" if self.tok.0 == TokenKind::Symbol => self.parse_compr_or_array()?,
@@ -942,6 +991,7 @@ impl<'source> Parser<'source> {
         matches!(&term, Expr::Var { .. });
 
         loop {
+            self.check_expr_depth(&term)?;
             let mut span = self.tok.1.clone();
             let sep_pos = span.start;
             span.start = start;
@@ -1052,6 +1102,7 @@ impl<'source> Parser<'source> {
         let mut expr = self.parse_term()?;
 
         loop {
+            self.check_expr_depth(&expr)?;
             let mut span = self.tok.1.clone();
             span.start = start;
             let op = match self.token_text() {
@@ -1078,6 +1129,7 @@ impl<'source> Parser<'source> {
         let mut expr = self.parse_mul_div_mod_expr()?;
 
         loop {
+            self.check_expr_depth(&expr)?;
             let mut span = self.tok.1.clone();
             span.start = start;
             let op = match self.token_text() {
@@ -1126,6 +1178,7 @@ impl<'source> Parser<'source> {
                 rhs: Ref::new(right),
                 eidx: self.next_eidx(),
             };
+            self.check_expr_depth(&expr)?;
         }
         Ok(expr)
     }
@@ -1147,6 +1200,7 @@ impl<'source> Parser<'source> {
                 rhs: Ref::new(right),
                 eidx: self.next_eidx(),
             };
+            self.check_expr_depth(&expr)?;
         }
         Ok(expr)
     }
@@ -1176,6 +1230,7 @@ impl<'source> Parser<'source> {
                 rhs: Ref::new(right),
                 eidx: self.next_eidx(),
             };
+            self.check_expr_depth(&expr)?;
         }
         Ok(expr)
     }
@@ -1203,6 +1258,7 @@ impl<'source> Parser<'source> {
                 collection: Ref::new(expr3),
                 eidx: self.next_eidx(),
             };
+            self.check_expr_depth(&expr1)?;
             expr2 = None;
 
             if self.token_text() != "in" {
@@ -1225,17 +1281,15 @@ impl<'source> Parser<'source> {
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
-        self.with_expr_depth(|this| {
-            #[cfg(feature = "rego-extensions")]
-            {
-                this.parse_or_expr()
-            }
+        #[cfg(feature = "rego-extensions")]
+        {
+            self.parse_or_expr()
+        }
 
-            #[cfg(not(feature = "rego-extensions"))]
-            {
-                this.parse_membership_expr()
-            }
-        })
+        #[cfg(not(feature = "rego-extensions"))]
+        {
+            self.parse_membership_expr()
+        }
     }
 
     #[cfg(feature = "rego-extensions")]
@@ -1253,6 +1307,7 @@ impl<'source> Parser<'source> {
                 rhs: Ref::new(rhs),
                 eidx: self.next_eidx(),
             };
+            self.check_expr_depth(&expr)?;
         }
         Ok(expr)
     }
@@ -1304,13 +1359,15 @@ impl<'source> Parser<'source> {
         self.next_token()?;
         let right = self.parse_expr()?;
         span.end = self.end;
-        Ok(Expr::AssignExpr {
+        let expr = Expr::AssignExpr {
             span,
             op,
             lhs: Ref::new(expr),
             rhs: Ref::new(right),
             eidx: self.next_eidx(),
-        })
+        };
+        self.check_expr_depth(&expr)?;
+        Ok(expr)
     }
 
     fn parse_with_modifiers(&mut self) -> Result<Vec<WithModifier>> {
@@ -1501,7 +1558,19 @@ impl<'source> Parser<'source> {
         })
     }
 
-    fn parse_query(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
+    fn parse_query(&mut self, span: Span, end_delim: &str) -> Result<Query> {
+        self.with_expr_depth(|this| {
+            let query = this.parse_query_inner(span, end_delim)?;
+            let result = query.check_depth();
+            if result.is_err() {
+                this.expr_depth_overflow = true;
+            }
+            result?;
+            Ok(query)
+        })
+    }
+
+    fn parse_query_inner(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
         let state = self.clone();
         let is_definite_query = matches!(self.token_text(), "some" | "every");
 
@@ -1533,6 +1602,7 @@ impl<'source> Parser<'source> {
                 stmt
             }
             Ok(stmt) => stmt,
+            Err(e) if self.expr_depth_overflow => return Err(e),
             Err(e) if is_definite_query => return Err(e),
             Err(e) if matches!(self.token_text(), "=" | ":=") => return Err(e),
             Err(_) => {
@@ -1696,6 +1766,10 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_rule_ref(&mut self) -> Result<Expr> {
+        self.parse_rule_ref_with_limit(true)
+    }
+
+    fn parse_rule_ref_with_limit(&mut self, limit_height: bool) -> Result<Expr> {
         let start = self.tok.1.start;
         let span = self.tok.1.clone();
 
@@ -1724,6 +1798,9 @@ impl<'source> Parser<'source> {
         };
 
         loop {
+            if limit_height {
+                self.check_expr_depth(&term)?;
+            }
             let mut span = self.tok.1.clone();
             span.start = start;
             match self.token_text() {
@@ -1783,7 +1860,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_rule_selector(&mut self, selector: &str) -> Result<Vec<String>> {
-        let expression = self.parse_rule_ref()?;
+        let expression = self.parse_rule_ref_with_limit(false)?;
         if self.tok.0 != TokenKind::Eof {
             return Err(self.tok.1.error("expecting EOF"));
         }
@@ -1917,6 +1994,7 @@ impl<'source> Parser<'source> {
             let pos = self.end;
             match self.parse_query(span.clone(), "}") {
                 Ok(query) => return Ok(query),
+                Err(e) if self.expr_depth_overflow => return Err(e),
                 Err(e) if pos != self.end => {
                     // Error encountered while parsing query.
                     return Err(e);
@@ -1929,11 +2007,13 @@ impl<'source> Parser<'source> {
         *self = state;
         let stmts = vec![self.parse_literal_stmt()?];
         span.end = self.end;
-        Ok(Query {
+        let query = Query {
             span,
             stmts,
             qidx: self.next_qidx(),
-        })
+        };
+        query.check_depth()?;
+        Ok(query)
     }
 
     pub fn parse_rule_bodies(&mut self) -> Result<Vec<RuleBody>> {

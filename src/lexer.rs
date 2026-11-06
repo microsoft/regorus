@@ -887,6 +887,10 @@ impl<'source> Lexer<'source> {
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
+        self.next_token_with_lookahead(true)
+    }
+
+    fn next_token_with_lookahead(&mut self, lookahead: bool) -> Result<Token> {
         self.skip_ws()?;
 
         let (start, chr) = self.peek();
@@ -1026,14 +1030,14 @@ impl<'source> Lexer<'source> {
             _ if chr.is_ascii_digit() => self.read_number()?,
             _ if chr.is_ascii_alphabetic() || chr == '_' => {
                 let mut ident = self.read_ident()?;
-                if ident.1.text() == "set" && self.peek().1 == '(' {
+                if lookahead && ident.1.text() == "set" && self.peek().1 == '(' {
                     // set immediately followed by ( is treated as set( if
                     // the next token is ).
                     let state = (self.iter.clone(), self.line, self.col);
                     self.iter.next();
 
                     // Check it next token is ).
-                    let next_tok = self.next_token()?;
+                    let next_tok = self.next_token_with_lookahead(false)?;
                     let is_setp = next_tok.1.text() == ")";
 
                     // Restore state

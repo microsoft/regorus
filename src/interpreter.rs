@@ -83,6 +83,19 @@ type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
 // with either.
 const EXPLICIT_DATA_WITH_OVERRIDE_MARKER: Value = Value::Bool(true);
 
+const MAX_NATIVE_EVALUATION_DEPTH: usize = 64;
+
+#[derive(Debug, thiserror::Error)]
+#[error("native evaluation nesting exceeds limit {MAX_NATIVE_EVALUATION_DEPTH}")]
+struct NativeEvaluationDepthExceeded;
+
+pub fn is_evaluation_limit_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<NativeEvaluationDepthExceeded>()
+        .is_some()
+        || error.downcast_ref::<crate::LimitError>().is_some()
+}
+
 #[derive(Debug)]
 pub struct Interpreter {
     compiled_policy: Rc<CompiledPolicyData>,
@@ -120,6 +133,7 @@ pub struct Interpreter {
     processed_paths: Value,
     rule_values: RuleValues,
     active_rules: Vec<Ref<Rule>>,
+    native_evaluation_depth: usize,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -163,6 +177,7 @@ impl Clone for Interpreter {
 
             builtins_cache: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             contexts: Vec::default(),
             current_module_path: String::default(),
             current_module_index: 0,
@@ -241,6 +256,7 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -280,6 +296,7 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -310,6 +327,16 @@ impl Interpreter {
         if let Some(now) = monotonic_now() {
             self.execution_timer.start(now);
         }
+    }
+
+    fn with_native_depth<T>(&mut self, evaluate: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.native_evaluation_depth >= MAX_NATIVE_EVALUATION_DEPTH {
+            return Err(NativeEvaluationDepthExceeded.into());
+        }
+        self.native_evaluation_depth = self.native_evaluation_depth.saturating_add(1);
+        let result = evaluate(self);
+        self.native_evaluation_depth = self.native_evaluation_depth.saturating_sub(1);
+        result
     }
 
     fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
@@ -816,6 +843,14 @@ impl Interpreter {
 
     /// Execute a destructuring plan against a value, binding variables as needed
     pub fn execute_destructuring_plan(
+        &mut self,
+        plan: &DestructuringPlan,
+        value: &Value,
+    ) -> Result<Value> {
+        self.with_native_depth(|this| this.execute_destructuring_plan_impl(plan, value))
+    }
+
+    fn execute_destructuring_plan_impl(
         &mut self,
         plan: &DestructuringPlan,
         value: &Value,
@@ -1598,6 +1633,14 @@ impl Interpreter {
         stmts: &[&LiteralStmt],
         loops: &[HoistedLoop],
     ) -> Result<bool> {
+        self.with_native_depth(|this| this.eval_stmts_in_loop_impl(stmts, loops))
+    }
+
+    fn eval_stmts_in_loop_impl(
+        &mut self,
+        stmts: &[&LiteralStmt],
+        loops: &[HoistedLoop],
+    ) -> Result<bool> {
         self.memory_check()?;
         self.check_execution_time()?;
         if loops.is_empty() {
@@ -1958,6 +2001,10 @@ impl Interpreter {
     }
 
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
+        self.with_native_depth(|this| this.eval_output_expr_in_loop_impl(loops))
+    }
+
+    fn eval_output_expr_in_loop_impl(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         self.check_execution_time()?;
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2232,6 +2279,10 @@ impl Interpreter {
     }
 
     fn eval_stmts(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        self.with_native_depth(|this| this.eval_stmts_impl(stmts))
+    }
+
+    fn eval_stmts_impl(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
         let mut eval_success = true;
 
         for (idx, stmt) in stmts.iter().enumerate() {
@@ -2695,42 +2746,67 @@ impl Interpreter {
         path == "print" || matches!(Self::lookup_builtin(span, path), Ok(Some(_)))
     }
 
-    fn to_printable(value: &Value, s: &mut String) {
-        match value {
-            Value::Array(array) => {
-                s.push('[');
-                for (idx, e) in array.iter().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(e, s);
-                }
-                s.push(']');
-            }
-            Value::Set(set) => {
-                s.push('{');
-                for (idx, e) in set.iter().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(e, s);
-                }
-                s.push('}');
-            }
-            Value::Object(map) => {
-                s.push('{');
-                for (idx, (k, entry_value)) in map.iter_sorted().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(k, s);
-                    s.push_str(": ");
-                    Self::to_printable(entry_value, s);
-                }
-                s.push('}');
-            }
-            other => s.push_str(&format!("{other}")),
+    fn to_printable(root: &Value, s: &mut String) -> Result<()> {
+        enum Frame<'a> {
+            Value(&'a Value),
+            Text(&'static str),
+            Array(ArrayIter<'a>, bool),
+            Set(SetIter<'a>, bool),
+            Object(Iter<'a>, bool),
         }
+        let mut pending = vec![Frame::Value(root)];
+        while let Some(frame) = pending.pop() {
+            crate::utils::limits::check_memory_limit_if_needed()?;
+            match frame {
+                Frame::Value(Value::Array(array)) => {
+                    s.push('[');
+                    pending.push(Frame::Array(array.iter(), true));
+                }
+                Frame::Value(Value::Set(set)) => {
+                    s.push('{');
+                    pending.push(Frame::Set(set.iter(), true));
+                }
+                Frame::Value(Value::Object(object)) => {
+                    s.push('{');
+                    pending.push(Frame::Object(object.iter_sorted(), true));
+                }
+                Frame::Value(value) => s.push_str(&format!("{value}")),
+                Frame::Text(text) => s.push_str(text),
+                Frame::Array(mut values, first) => match values.next() {
+                    Some(value) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Array(values, false));
+                        pending.push(Frame::Value(value));
+                    }
+                    None => s.push(']'),
+                },
+                Frame::Set(mut values, first) => match values.next() {
+                    Some(value) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Set(values, false));
+                        pending.push(Frame::Value(value));
+                    }
+                    None => s.push('}'),
+                },
+                Frame::Object(mut values, first) => match values.next() {
+                    Some((key, value)) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Object(values, false));
+                        pending.push(Frame::Value(value));
+                        pending.push(Frame::Text(": "));
+                        pending.push(Frame::Value(key));
+                    }
+                    None => s.push('}'),
+                },
+            }
+        }
+        Ok(())
     }
 
     fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
@@ -2755,7 +2831,7 @@ impl Interpreter {
                 Value::Undefined => msg.push_str("<undefined>"),
                 // Do not print quotes for string values.
                 Value::String(s) => msg.push_str(&format!("{s}")),
-                a => Self::to_printable(&a, &mut msg),
+                a => Self::to_printable(&a, &mut msg)?,
             }
         }
 
@@ -2775,6 +2851,16 @@ impl Interpreter {
     }
 
     fn eval_call_impl(
+        &mut self,
+        span: &Span,
+        expr: &ExprRef,
+        fcn: &ExprRef,
+        params: &[ExprRef],
+    ) -> Result<Value> {
+        self.with_native_depth(|this| this.eval_call_inner(span, expr, fcn, params))
+    }
+
+    fn eval_call_inner(
         &mut self,
         span: &Span,
         expr: &ExprRef,
@@ -2888,6 +2974,7 @@ impl Interpreter {
             }
             match r {
                 Ok(v) => return Ok(v),
+                Err(e) if is_evaluation_limit_error(&e) => return Err(e),
                 Err(e) => bail!(span.error(&format!("{e}"))),
             }
         }
@@ -2985,8 +3072,11 @@ impl Interpreter {
                     // resolve paths through the wrong module's imports when
                     // the error is swallowed below in non-strict mode.
                     self.set_current_module(prev_module)?;
-                    errors.push(e);
                     self.scopes = scopes;
+                    if is_evaluation_limit_error(&e) {
+                        return Err(e);
+                    }
+                    errors.push(e);
                     continue;
                 }
             };
@@ -3061,6 +3151,10 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
+                                Err(e) if is_evaluation_limit_error(&e) => {
+                                    self.scopes = scopes;
+                                    return Err(e);
+                                }
                                 Err(e) => errors.push(e),
                             }
                         }
@@ -3470,6 +3564,10 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
+        self.with_native_depth(|this| this.eval_expr_impl(expr))
+    }
+
+    fn eval_expr_impl(&mut self, expr: &ExprRef) -> Result<Value> {
         self.check_execution_time()?;
         #[cfg(feature = "coverage")]
         if self.enable_coverage {
@@ -4153,23 +4251,40 @@ impl Interpreter {
                                 )?;
                             }
                         } else if is_set {
-                            if let Ok(mut comps) = self.eval_rule_ref(refr) {
-                                let mut full_path = package_components;
-                                full_path.append(&mut comps);
-                                self.update_rule_value(span, full_path, Value::new_set(), true)?;
-                            }
-                        } else if is_object {
-                            // Fetch the rule, ignoring the key.
-                            if let Expr::RefBrack { refr, .. } = refr.as_ref() {
-                                if let Ok(mut comps) = self.eval_rule_ref(refr) {
+                            match self.eval_rule_ref(refr) {
+                                Ok(mut comps) => {
                                     let mut full_path = package_components;
                                     full_path.append(&mut comps);
                                     self.update_rule_value(
                                         span,
                                         full_path,
-                                        Value::Undefined,
-                                        false,
+                                        Value::new_set(),
+                                        true,
                                     )?;
+                                }
+                                Err(error) if is_evaluation_limit_error(&error) => {
+                                    return Err(error)
+                                }
+                                Err(_) => {}
+                            }
+                        } else if is_object {
+                            // Fetch the rule, ignoring the key.
+                            if let Expr::RefBrack { refr, .. } = refr.as_ref() {
+                                match self.eval_rule_ref(refr) {
+                                    Ok(mut comps) => {
+                                        let mut full_path = package_components;
+                                        full_path.append(&mut comps);
+                                        self.update_rule_value(
+                                            span,
+                                            full_path,
+                                            Value::Undefined,
+                                            false,
+                                        )?;
+                                    }
+                                    Err(error) if is_evaluation_limit_error(&error) => {
+                                        return Err(error);
+                                    }
+                                    Err(_) => {}
                                 }
                             }
                         }
@@ -4265,7 +4380,7 @@ impl Interpreter {
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
-        let res = self.eval_rule_impl(module, rule);
+        let res = self.with_native_depth(|this| this.eval_rule_impl(module, rule));
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;

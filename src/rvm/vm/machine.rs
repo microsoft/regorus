@@ -359,8 +359,9 @@ impl RegoVM {
     /// default-only rules, and explicit suspendable frames do not count.
     /// The setting survives evaluation resets and program loads.
     ///
-    /// Raising the limit can exhaust the host thread's stack. This does not resize
-    /// that stack or guarantee stack safety.
+    /// Settings above the private supported ceiling (17) are retained but return
+    /// an error before a synchronous rule evaluation. Explicit suspendable frames
+    /// are independent of this setting.
     pub const fn set_max_native_rule_call_depth(&mut self, max: usize) {
         self.max_native_rule_call_depth = max;
     }
