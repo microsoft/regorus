@@ -444,7 +444,7 @@ fn execution_structure_limits() {
             );
         }
 
-        for count in [60, 61] {
+        for count in [60, 61, 128] {
             let mut engine = Engine::new();
             let statements = (0..count)
                 .map(|index| format!("some x{index} in [0]"))
@@ -452,22 +452,17 @@ fn execution_structure_limits() {
                 .join(";\n");
             let policy = format!("package probe\nsafe := 7\nr0 := 42 if {{ {statements} }}");
             engine.add_policy("statements.rego".into(), policy).unwrap();
-            let result = engine.eval_rule("data.probe.r0".into());
-            if count == 60 {
-                assert_eq!(result.unwrap(), Value::from(42));
-            } else {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("native evaluation nesting"));
-            }
+            assert_eq!(
+                engine.eval_rule("data.probe.r0".into()).unwrap(),
+                Value::from(42)
+            );
             assert_eq!(
                 engine.eval_rule("data.probe.safe".into()).unwrap(),
                 Value::from(7)
             );
         }
 
-        for count in [20, 21] {
+        for count in [20, 21, 128] {
             let mut engine = Engine::new();
             engine.set_input_json(r#"{"items":[0]}"#).unwrap();
             let statements = vec!["input.items[_] == 0"; count].join(";\n");
@@ -477,15 +472,10 @@ fn execution_structure_limits() {
                     format!("package probe\nr0 := 42 if {{ {statements} }}"),
                 )
                 .unwrap();
-            let result = engine.eval_rule("data.probe.r0".into());
-            if count == 20 {
-                assert_eq!(result.unwrap(), Value::from(42));
-            } else {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("native evaluation nesting"));
-            }
+            assert_eq!(
+                engine.eval_rule("data.probe.r0".into()).unwrap(),
+                Value::from(42)
+            );
         }
 
         for statements in [
@@ -511,10 +501,10 @@ fn execution_structure_limits() {
                 .contains("Register overflow"));
         }
 
-        let statements = (0..61)
-            .map(|index| format!("some x{index} in [0]"))
-            .collect::<Vec<_>>()
-            .join(";\n");
+        // Default comprehensions still propagate genuinely nested function
+        // errors; wide sequential some-in bodies are no longer native nesting.
+        let statements = "some x in f0(0)";
+        let dependencies = dependency_module(24, true).replace("r0 := f0(42)\n", "");
         for function in [false, true] {
             let mut engine = Engine::new();
             let defaults = if function {
@@ -525,7 +515,7 @@ fn execution_structure_limits() {
             engine
                 .add_policy(
                     "defaults.rego".into(),
-                    format!("package probe\nsafe := 7\n{defaults}"),
+                    format!("{dependencies}\n{defaults}"),
                 )
                 .unwrap();
             engine.set_strict_builtin_errors(false);

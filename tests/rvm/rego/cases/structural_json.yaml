@@ -1,0 +1,168 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# The existing RVM Rego harness also evaluates and compares the interpreter.
+cases:
+  - note: structural_json_const_object_rejects_numeric_document
+    input: '{"const":{"$serde_json::private::Number":"1"}}'
+    modules:
+      - |
+        package test
+        result := {
+          "string_schema_matches": json.match_schema(1, input)[0],
+          "object_schema_matches": json.match_schema(1, {"const": {"$serde_json::private::Number": "1"}})[0],
+          "numeric_const_matches": json.match_schema(1, "{\"const\":1}")[0],
+        }
+    query: data.test.result
+    want_result:
+      string_schema_matches: false
+      object_schema_matches: false
+      numeric_const_matches: true
+
+  - note: structural_json_const_object_rejects_numeric_document_suspendable
+    input: '{"const":{"$serde_json::private::Number":"1"}}'
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+        result := {
+          "string_schema_matches": json.match_schema(1, input)[0],
+          "object_schema_matches": json.match_schema(1, {"const": {"$serde_json::private::Number": "1"}})[0],
+          "numeric_const_matches": json.match_schema(1, "{\"const\":1}")[0],
+        }
+    query: data.test.result
+    want_result:
+      string_schema_matches: false
+      object_schema_matches: false
+      numeric_const_matches: true
+
+  - note: structural_json_sole_number_named_schema_keyword
+    input: '{"$serde_json::private::Number":"123"}'
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema(123, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+
+  - note: structural_json_number_named_keyword_keeps_sibling_constraints
+    input: '{"$serde_json::private::Number":"123","type":"number","minimum":-1.25,"maximum":1e30}'
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "minimum": json.match_schema(-1.25, input)[0],
+          "below_minimum": json.match_schema(-2, input)[0],
+          "maximum": json.match_schema(1e30, input)[0],
+          "above_maximum": json.match_schema(1e31, input)[0],
+          "wrong_type": json.match_schema("123", input)[0],
+        }
+    query: data.test.result
+    strict_builtin_errors: true
+    want_result:
+      verified: true
+      minimum: true
+      below_minimum: false
+      maximum: true
+      above_maximum: false
+      wrong_type: false
+
+  - note: structural_json_nested_number_named_subschema_keywords
+    input: '{"allOf":[{"properties":{"payload":{"$serde_json::private::Number":"123","type":"number"}}}]}'
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema({"payload": 123}, input)[0],
+          "rejected": json.match_schema({"payload": "123"}, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+      rejected: false
+
+  - note: structural_json_ordinary_extension_objects_and_escaped_strings
+    input: '{"$serde_json::private::Number":{"nested":[{},{"$serde_json::private::Number":"not a number","sibling":true}]},"description":"[{}] \"quoted\" \\ \u005b","type":"number"}'
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema(123, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+
+  - note: structural_json_actual_numbers_in_schema_extensions
+    input: '{"$serde_json::private::Number":"not a number","extension":[-1.25,18446744073709551615,123456789012345678901234567890,1e300]}'
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema(123, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+
+  - note: structural_json_sole_number_named_schema_keyword_suspendable
+    input: '{"$serde_json::private::Number":"123"}'
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema(123, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+
+  - note: structural_json_nested_subschema_constraints_suspendable
+    input: '{"allOf":[{"properties":{"payload":{"$serde_json::private::Number":"not a number","type":"number","minimum":-1.25,"maximum":1e30}}}]}'
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema({"payload": -1.25}, input)[0],
+          "rejected": json.match_schema({"payload": -2}, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true
+      rejected: false
+
+  - note: structural_json_actual_numbers_and_extension_objects_suspendable
+    input: '{"$serde_json::private::Number":{"nested":[{},{"key":"value"}]},"extension":[-1.25,18446744073709551615,123456789012345678901234567890,1e300]}'
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+        result := {
+          "verified": json.verify_schema(input)[0],
+          "matched": json.match_schema(123, input)[0],
+        }
+    query: data.test.result
+    want_result:
+      verified: true
+      matched: true

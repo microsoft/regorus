@@ -320,16 +320,39 @@ impl RegoVM {
     }
 
     pub(super) fn validate_program_tree(&self) -> Result<()> {
-        if self.program_tree_supported {
-            Ok(())
-        } else {
-            Err(VmError::RuleDataConflict {
-                message: alloc::format!(
-                    "rule tree exceeds supported nesting limit {}",
-                    crate::rvm::program::Program::MAX_PATH_DEPTH
-                ),
-                pc: self.pc,
-            })
+        match self.program_tree_error {
+            None => Ok(()),
+            Some(crate::utils::depth::DepthCheckError::Depth(_)) => {
+                Err(VmError::RuleDataConflict {
+                    message: alloc::format!(
+                        "rule tree exceeds supported nesting limit {}",
+                        crate::rvm::program::Program::MAX_PATH_DEPTH
+                    ),
+                    pc: self.pc,
+                })
+            }
+            Some(crate::utils::depth::DepthCheckError::Limit(error)) => Err(match error {
+                crate::LimitError::MemoryLimitExceeded { usage, limit } => {
+                    VmError::MemoryLimitExceeded {
+                        usage,
+                        limit,
+                        pc: self.pc,
+                    }
+                }
+                crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
+                    VmError::TimeLimitExceeded {
+                        elapsed,
+                        limit,
+                        pc: self.pc,
+                    }
+                }
+                crate::LimitError::RegexSizeLimitExceeded { limit } => {
+                    VmError::RegexSizeLimitExceeded { limit, pc: self.pc }
+                }
+                crate::LimitError::SerializationDepthExceeded { limit } => {
+                    VmError::SerializationDepthExceeded { limit, pc: self.pc }
+                }
+            }),
         }
     }
 }

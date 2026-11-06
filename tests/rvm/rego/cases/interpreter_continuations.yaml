@@ -1,0 +1,179 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+cases:
+  - note: interpreter-continuations/wide-bodies-and-moderate-helpers
+    modules: &wide
+      - |
+        package probe
+        wide := 42 if {
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          input.items[_] == 0
+          f0(0) == 0
+        }
+        somewide := 42 if {
+          some x0 in [0]
+          some x1 in [0]
+          some x2 in [0]
+          some x3 in [0]
+          some x4 in [0]
+          some x5 in [0]
+          some x6 in [0]
+          some x7 in [0]
+          some x8 in [0]
+          some x9 in [0]
+          some x10 in [0]
+          some x11 in [0]
+          some x12 in [0]
+          some x13 in [0]
+          some x14 in [0]
+          some x15 in [0]
+          some x16 in [0]
+          some x17 in [0]
+          some x18 in [0]
+          some x19 in [0]
+          some x20 in [0]
+          some x21 in [0]
+          some x22 in [0]
+          some x23 in [0]
+          some x24 in [0]
+          some x25 in [0]
+          some x26 in [0]
+          some x27 in [0]
+          some x28 in [0]
+          some x29 in [0]
+          some x30 in [0]
+          some x31 in [0]
+          some x32 in [0]
+          some x33 in [0]
+          some x34 in [0]
+          some x35 in [0]
+          some x36 in [0]
+          some x37 in [0]
+          some x38 in [0]
+          some x39 in [0]
+          f0(0) == 0
+        }
+        f0(x) := f1(x)
+        f1(x) := f2(x)
+        f2(x) := f3(x)
+        f3(x) := f4(x)
+        f4(x) := f5(x)
+        f5(x) := f6(x)
+        f6(x) := f7(x)
+        f7(x) := x
+        result := {"hoisted": wide, "some": somewide}
+    input: &input
+      items: [0]
+    query: data.probe.result
+    want_result: &wide_result
+      hoisted: 42
+      some: 42
+
+  - note: interpreter-continuations/wide-bodies-suspendable
+    modules: *wide
+    input: *input
+    query: data.probe.result
+    execution_mode: suspendable
+    want_result: *wide_result
+
+  - note: interpreter-continuations/mixed-choice-points-and-backtracking
+    modules: &backtracking
+      - |
+        package probe
+        result := [[a, b, z] |
+          some a in {1, 2}
+          some b in [0, 1]
+          z := input.items[_]
+          z > b
+          not input.missing
+        ]
+    input: &backtracking_input
+      items: [0, 1, 2]
+    query: data.probe.result
+    want_result: &backtracking_result
+      - [1, 0, 1]
+      - [1, 0, 2]
+      - [1, 1, 2]
+      - [2, 0, 1]
+      - [2, 0, 2]
+      - [2, 1, 2]
+
+  - note: interpreter-continuations/mixed-choice-points-suspendable
+    modules: *backtracking
+    input: *backtracking_input
+    query: data.probe.result
+    execution_mode: suspendable
+    want_result: *backtracking_result
+
+  - note: interpreter-continuations/composite-object-set-keys-and-nested-backtracking
+    modules: &composite_iteration
+      - |
+        package probe
+        source := {[0, 1]: 1, [0, 2]: 2, "scalar": 3}
+        members := {[0, 1], [0, 2], "scalar"}
+        result := {
+          "some_object": count([v |
+            some k, v in source
+            some x in [0, 1]
+            x == 1
+          ]),
+          "hoisted_object": count([v |
+            v := source[_]
+            some x in [0, 1]
+            x == 1
+          ]),
+          "some_set": count([v |
+            some v in members
+            is_array(v)
+            some x in [0, 1]
+            x == 1
+          ]),
+          "hoisted_set": count([v |
+            v := members[_]
+            is_array(v)
+            some x in [0, 1]
+            x == 1
+          ]),
+          "nested": count([1 |
+            some k, v in source
+            is_array(k)
+            some member in members
+            is_array(member)
+            v > 0
+          ]),
+        }
+    query: data.probe.result
+    want_result: &composite_iteration_result
+      some_object: 3
+      hoisted_object: 3
+      some_set: 2
+      hoisted_set: 2
+      nested: 4
+
+  - note: interpreter-continuations/composite-object-set-keys-suspendable
+    modules: *composite_iteration
+    query: data.probe.result
+    execution_mode: suspendable
+    want_result: *composite_iteration_result

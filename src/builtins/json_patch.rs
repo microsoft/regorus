@@ -35,7 +35,7 @@ enum EditNode {
 impl EditNode {
     fn from_value(value: &Value) -> Result<Self> {
         crate::utils::depth::check_value(value, MAX_EDIT_DEPTH)
-            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
+            .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
         Self::from_checked_value(value)
     }
 
@@ -329,8 +329,14 @@ impl EditTree {
     }
 
     fn insert_value(&mut self, path: &[Value], value: &Value) -> Result<()> {
-        crate::utils::depth::check_value(value, attachment_budget(path.len())?)
-            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
+        crate::utils::depth::check_value(value, attachment_budget(path.len())?).map_err(
+            |error| match error {
+                crate::utils::depth::DepthCheckError::Depth(_) => {
+                    crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH).into()
+                }
+                error => error.into_anyhow(),
+            },
+        )?;
         let node = EditNode::from_value(value)?;
         if path.is_empty() {
             self.root = Some(node);
@@ -362,8 +368,14 @@ impl EditTree {
 
     #[cfg(test)]
     fn replace_value(&mut self, path: &[Value], value: &Value) -> Result<()> {
-        crate::utils::depth::check_value(value, attachment_budget(path.len())?)
-            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
+        crate::utils::depth::check_value(value, attachment_budget(path.len())?).map_err(
+            |error| match error {
+                crate::utils::depth::DepthCheckError::Depth(_) => {
+                    crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH).into()
+                }
+                error => error.into_anyhow(),
+            },
+        )?;
         let node = EditNode::from_value(value)?;
         if path.is_empty() {
             self.root = Some(node);

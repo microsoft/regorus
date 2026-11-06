@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use super::{Object, Value};
-use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 
 pub(super) enum Dom {
     Json(serde_json::Value),
@@ -32,7 +32,10 @@ pub(super) fn convert(value: Dom) -> Value {
                 serde_json::Value::Bool(value) => result = Value::Bool(value),
                 serde_json::Value::String(value) => result = Value::from(value),
                 serde_json::Value::Number(value) => {
-                    result = number(&value.to_string(), &mut valid);
+                    result = number(
+                        serde_json::from_value::<Value>(serde_json::Value::Number(value)),
+                        &mut valid,
+                    );
                 }
                 serde_json::Value::Array(values) => pending.push(Frame::Array(
                     Box::new(values.into_iter().map(Dom::Json)),
@@ -52,7 +55,10 @@ pub(super) fn convert(value: Dom) -> Value {
                 yaml_serde::Value::Bool(value) => result = Value::Bool(value),
                 yaml_serde::Value::String(value) => result = Value::from(value),
                 yaml_serde::Value::Number(value) => {
-                    result = number(&value.to_string(), &mut valid);
+                    result = number(
+                        yaml_serde::from_value::<Value>(yaml_serde::Value::Number(value)),
+                        &mut valid,
+                    );
                 }
                 yaml_serde::Value::Sequence(values) => pending.push(Frame::Array(
                     Box::new(values.into_iter().map(Dom::Yaml)),
@@ -109,8 +115,8 @@ pub(super) fn convert(value: Dom) -> Value {
     }
 }
 
-fn number(text: &str, valid: &mut bool) -> Value {
-    match Value::from_numeric_string(text) {
+fn number<E>(value: Result<Value, E>, valid: &mut bool) -> Value {
+    match value {
         Ok(value) => value,
         Err(_) => {
             *valid = false;

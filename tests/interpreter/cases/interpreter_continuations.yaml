@@ -1,0 +1,130 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+# WITH is not supported by the RVM compiler. Shared-backend continuation
+# scenarios live in tests/rvm/rego/cases/interpreter_continuations.yaml.
+cases:
+  - note: continuation-with-value-function-and-scope-restoration
+    modules:
+      - |
+        package probe
+        import rego.v1
+        f(x) := x
+        g(x) := 9
+        value := v if { v := f(0) with f as 7 }
+        function := v if { v := f(0) with f as g }
+        hoisted := [input.flag |
+          input.items[_] == 1 with input.items as [1, 1]
+          f(false) == false
+        ]
+        some_override := [input.flag |
+          some x in [0, 1] with input.flag as true
+          input.flag
+        ]
+        restored := [input.flag |
+          some x in [0, 1]
+          f(1) == 2 with f as 2 with input.flag as true
+          not input.flag
+        ]
+        nested := [[input.flag, y] |
+          some x in [0, 1] with input.flag as true
+          some y in [2, 3] with input.flag as false
+          not input.flag
+        ]
+        result := {
+          "value": value,
+          "function": function,
+          "hoisted": hoisted,
+          "some": some_override,
+          "restored": restored,
+          "nested": nested,
+          "original": input.flag,
+          "original_function": f(3),
+        }
+    input:
+      flag: false
+      items: [0]
+    query: data.probe.result
+    want_result:
+      value: 7
+      function: 9
+      hoisted: [false, false]
+      some: [true, true]
+      restored: [false, false]
+      nested: [[false, 2], [false, 3], [false, 2], [false, 3]]
+      original: false
+      original_function: 3
+
+  - note: fatal-native-with-value-replacement-is-not-default-or-negated-success
+    strict: false
+    modules:
+      - |
+        package probe
+        import rego.v1
+        default allow := false
+        allow if { not denied }
+        denied if { f(0) with f as r0 }
+        f(x) := x
+        r0 := r1
+        r1 := r2
+        r2 := r3
+        r3 := r4
+        r4 := r5
+        r5 := r6
+        r6 := r7
+        r7 := r8
+        r8 := r9
+        r9 := r10
+        r10 := r11
+        r11 := r12
+        r12 := r13
+        r13 := r14
+        r14 := r15
+        r15 := r16
+        r16 := r17
+        r17 := r18
+        r18 := r19
+        r19 := r20
+        r20 := r21
+        r21 := r22
+        r22 := r23
+        r23 := 42
+    query: data.probe.allow
+    error: native evaluation nesting
+
+  - note: fatal-builtin-with-value-replacement-is-not-negated-success
+    strict: false
+    modules:
+      - |
+        package probe
+        import rego.v1
+        default allow := false
+        allow if { not denied }
+        denied if { f(0) with f as bad }
+        f(x) := x
+        # Construct valid 257-container JSON as text, so the YAML loader's
+        # separate Value nesting bound does not reject the fixture itself.
+        opens := concat("", ["[" | some x in numbers.range(0, 256)])
+        closes := concat("", ["]" | some x in numbers.range(0, 256)])
+        bad := json.unmarshal(concat("", [opens, "null", closes]))
+    query: data.probe.allow
+    error: could not deserialize json
+
+  - note: fatal-default-inside-active-some-in-does-not-allow-false-fallback
+    strict: false
+    modules:
+      - |
+        package probe
+        import rego.v1
+        # 31 array wrappers; default evaluation must restore the caller's scopes
+        # when this fails inside the already-active some-in continuation.
+        default d := [[[[[ [[[[[ [[[[[ [[[[[ [[[[[ [[[[[ [0] ]]]]] ]]]]] ]]]]] ]]]]] ]]]]] ]]]]]
+        deny(x) := true if {
+          some y in [0]
+          # 29 wrappers around [d,y]. The false clause is essential: a downgraded
+          # ordinary error could otherwise select that fallback and allow access.
+          [[[[[ [[[[[ [[[[[ [[[[[ [[[[[ [[[[ [d,y] ]]]] ]]]]] ]]]]] ]]]]] ]]]]] ]]]]]
+        }
+        deny(x) := false
+        allow if { not deny(0) }
+    query: data.probe.allow
+    error: native evaluation nesting

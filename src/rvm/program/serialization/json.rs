@@ -70,17 +70,10 @@ impl Program {
 
     /// Deserialize program from JSON format
     pub fn deserialize_json(data: &str) -> Result<Program, String> {
-        use serde::de::DeserializeSeed as _;
-        let mut deserializer = serde_json::Deserializer::from_str(data);
         // Leave room for the format envelope around independently bounded values.
-        let value = crate::value::ValueSeed(crate::utils::depth::MAX_DEPTH.saturating_add(8), None)
-            .deserialize(&mut deserializer)
-            .map_err(|e| format!("JSON parsing failed: {e}"))?;
-        deserializer
-            .end()
-            .map_err(|e| format!("JSON parsing failed: {e}"))?;
         let json_data =
-            serde_json::to_value(value).map_err(|e| format!("JSON conversion failed: {e}"))?;
+            crate::utils::json::from_str(data, crate::utils::depth::MAX_DEPTH.saturating_add(8))
+                .map_err(|e| format!("JSON parsing failed: {e}"))?;
 
         let metadata = json_data
             .get("metadata")

@@ -96,6 +96,14 @@ The traversal does not memoize shared substructures. Compact shared DAGs can
 still require exponential work to finish, but covered comparisons can stop
 at a timer checkpoint instead of expanding the entire structure first.
 
+Depth admission is separate from those traversals: the shared Value depth
+validator memoizes completed container subtree heights by pointer identity.
+Its active stack is path-sized and its memo has one entry per distinct
+container, with cooperative memory checkpoints. Reusing a subtree at a deeper
+path still checks its full height. This avoids expanding every DAG occurrence
+just to admit a Value; it does not memoize `walk`, comparison, or output
+traversals, which may still expand shared occurrences.
+
 Resource-checked set membership uses a sorted scan rather than B-tree lookup,
 since a B-tree comparator cannot return a resource error. This is O(n) in set
 size when a timer or applicable memory limit is enabled. Unchecked membership
@@ -131,6 +139,41 @@ before descending into their final pair. Single-child array/set chains need no
 continuation allocation; branching shapes and object key/value continuations can
 allocate. Cooperative memory limits do not prohibit cleanup allocations, and
 successful destruction under physical allocator exhaustion is not guaranteed.
+
+### Interpreter statement continuations
+
+The tree-walking interpreter retains its separate native evaluation nesting
+budget of 64. Recursive expression, rule/function, nested-query, and output-loop
+evaluation remain guarded; a resource error is not undefined, a rule default,
+or a successful negation, even with non-strict builtin errors.
+
+Sequential statement continuations, including `some .. in` and hoisted index
+or `walk` loops, use explicit heap-backed backtracking frames instead of nested
+native calls. Body width therefore does not consume that native budget.
+Frames retain collection cursors and binding plans, restore iteration scopes
+and cached loop values, and unwind active `with` state on success or error.
+Array traversal stays lazy. Object/set continuations take shallow, shared-Value
+snapshots using borrowed iteration, with memory/time checkpoints before and
+after each entry/member is accumulated. Advancing these snapshots does not
+search, hash, or structurally compare keys/members; shared DAG prefixes therefore
+do not turn cursor advancement into an unchecked structural traversal. Snapshot
+storage is proportional to the collection's entry count, not its expanded tree.
+Hoisted collection evaluation restores the complete saved state before
+propagating an error. Function-value `with` replacement also propagates typed
+resource errors instead of falling back to function-name lookup.
+Default evaluation restores the caller's scopes on every result path. Error
+unwinding attempts every frame's scope, cached-value, and saved-state cleanup:
+cleanup failures cannot downgrade an original fatal evaluation error, and an
+independent cleanup failure is returned even if evaluation otherwise succeeded.
+
+This is not an unlimited-width or constant-memory guarantee: live choice points
+and scope snapshots consume memory, and combinations can require exponential
+work. The RVM's independent 255-register window still rejects some wide bodies
+with register overflow; `with` remains unsupported by its compiler. Tests cover
+128-statement interpreter bodies, shared-backend 24-hoisted-loop and 40-some-in
+bodies with eight helper calls, and real native-nesting rejection/recovery in
+isolated 1,500,000-byte workers. These are bounded measurements, not a universal
+host-stack guarantee.
 
 ### Native rule-call depth limit
 

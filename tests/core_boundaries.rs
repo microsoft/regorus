@@ -233,6 +233,115 @@ fn traversal_and_formatting() {
 }
 
 #[test]
+fn owned_dom_json_numbers_preserve_scalar_deserialization() {
+    // Dependency features can be unified by callers, so inspect the number protocol.
+    let keeps_number_spelling = serde_json::from_str::<serde_json::Number>("1e0")
+        .unwrap()
+        .to_string()
+        == "1e0";
+    for number in [2.0_f64.powi(63), 1e23_f64] {
+        let json = serde_json::Value::Number(serde_json::Number::from_f64(number).unwrap());
+        let expected = serde_json::from_value::<Value>(json.clone()).unwrap();
+        let converted = Value::from(json.clone());
+        assert_eq!(converted, expected);
+        assert_eq!(
+            Value::from(serde_json::Value::Array(vec![json.clone()])),
+            Value::from(vec![expected.clone()])
+        );
+        assert_eq!(
+            Value::from(serde_json::json!({ "n": json })),
+            Value::from(BTreeMap::from([(Value::from("n"), expected.clone())]))
+        );
+        if !keeps_number_spelling {
+            assert_eq!(converted, Value::from(number));
+            assert_ne!(
+                converted,
+                Value::from_numeric_string(&json.to_string()).unwrap()
+            );
+        }
+    }
+    for (json, expected) in [
+        (serde_json::Value::from(i64::MIN), Value::from(i64::MIN)),
+        (serde_json::Value::from(u64::MAX), Value::from(u64::MAX)),
+        (
+            serde_json::Value::from(9_223_372_036_854_775_808_u64),
+            Value::from(9_223_372_036_854_775_808_u64),
+        ),
+    ] {
+        assert_eq!(Value::from(json), expected);
+    }
+    if keeps_number_spelling {
+        let text = "1234567890123456789012345678901234567890";
+        assert_eq!(
+            Value::from(serde_json::from_str::<serde_json::Value>(text).unwrap()),
+            Value::from_numeric_string(text).unwrap()
+        );
+    } else {
+        let input = Value::from(serde_json::Value::from(2.0_f64.powi(63)));
+        evaluate(
+            "input == 9223372036854775808",
+            input.clone(),
+            Some(true.into()),
+        );
+        evaluate("input == 9223372036854776000", input, Some(false.into()));
+    }
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn owned_dom_yaml_numbers_preserve_scalar_deserialization() {
+    for number in [2.0_f64.powi(63), 1e23_f64] {
+        let yaml = yaml_serde::Value::from(number);
+        let converted = Value::from(yaml.clone());
+        let expected = Value::from(number);
+        assert_eq!(
+            converted,
+            yaml_serde::from_value::<Value>(yaml.clone()).unwrap()
+        );
+        assert_eq!(converted, expected);
+        assert_ne!(
+            converted,
+            Value::from_numeric_string(&number.to_string()).unwrap()
+        );
+        assert_eq!(
+            Value::from(yaml_serde::Value::Sequence(vec![yaml.clone()])),
+            Value::from(vec![expected.clone()])
+        );
+        let mut mapping = yaml_serde::Mapping::new();
+        mapping.insert(yaml, yaml_serde::Value::Bool(true));
+        assert_eq!(
+            Value::from(yaml_serde::Value::Mapping(mapping)),
+            Value::from(BTreeMap::from([(expected, true.into())]))
+        );
+    }
+    for (yaml, expected) in [
+        (yaml_serde::Value::from(i64::MIN), Value::from(i64::MIN)),
+        (yaml_serde::Value::from(u64::MAX), Value::from(u64::MAX)),
+    ] {
+        assert_eq!(Value::from(yaml), expected);
+    }
+    for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            Value::from(yaml_serde::Value::from(number)),
+            Value::Undefined
+        );
+        assert_eq!(
+            Value::from(yaml_serde::Value::Sequence(vec![yaml_serde::Value::from(
+                number
+            )])),
+            Value::Undefined
+        );
+    }
+    let input = Value::from(yaml_serde::Value::from(2.0_f64.powi(63)));
+    evaluate(
+        "input == 9223372036854775808",
+        input.clone(),
+        Some(true.into()),
+    );
+    evaluate("input == 9223372036854776000", input, Some(false.into()));
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
 fn text_and_dom_conversion() {
     on_execution_stack("text_and_dom_conversion", || {

@@ -390,6 +390,12 @@ fn compile_and_run_rvm_with_all_entry_points(
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
+    #[cfg(not(feature = "jsonschema"))]
+    if std::path::Path::new(file).file_name() == Some(std::ffi::OsStr::new("structural_json.yaml"))
+    {
+        return Ok(());
+    }
+
     let yaml_str = fs::read_to_string(file)?;
     let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 

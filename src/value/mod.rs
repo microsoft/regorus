@@ -1647,6 +1647,9 @@ impl From<f64> for Value {
 impl From<serde_json::Value> for Value {
     /// Create a [`Value`] from [`serde_json::Value`].
     ///
+    /// Containers are traversed iteratively; numeric scalars retain Serde's
+    /// integer or floating-point interpretation without a text round-trip.
+    ///
     /// Returns [`Value::Undefined`] in case of error.
     /// ```
     /// # use regorus::*;
@@ -1667,6 +1670,9 @@ impl From<serde_json::Value> for Value {
 #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
 impl From<yaml_serde::Value> for Value {
     /// Create a [`Value`] from [`yaml_serde::Value`].
+    ///
+    /// Containers are traversed iteratively; numeric scalars retain Serde's
+    /// integer or floating-point interpretation without a text round-trip.
     ///
     /// Returns [`Value::Undefined`] in case of error.
     /// ```

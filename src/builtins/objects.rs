@@ -451,21 +451,25 @@ fn object_union_n(
 
 #[cfg(feature = "jsonschema")]
 fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::Validator> {
-    let value = match arg {
-        Value::String(schema_str) => match Value::from_json_str(schema_str) {
-            Ok(value) => value,
-            Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => {
-                return Err(error)
+    let schema = match arg {
+        Value::String(schema_str) => {
+            match crate::utils::json::from_str(schema_str, crate::utils::depth::MAX_DEPTH)
+                .map_err(crate::utils::json::JsonError::into_anyhow)
+            {
+                Ok(value) => value,
+                Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => {
+                    return Err(error)
+                }
+                Err(_) => bail!(param.span().error("not a valid json schema")),
             }
-            Err(_) => bail!(param.span().error("not a valid json schema")),
-        },
+        }
         _ => {
-            crate::utils::depth::check_value(arg, crate::utils::depth::MAX_DEPTH)?;
-            arg.clone()
+            crate::utils::depth::check_value(arg, crate::utils::depth::MAX_DEPTH)
+                .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
+            serde_json::to_value(arg)?
         }
     };
 
-    let schema = serde_json::to_value(value)?;
     match jsonschema::validator_for(&schema) {
         Ok(schema) => Ok(schema),
         Err(e) => bail!(e.to_string()),
@@ -505,7 +509,8 @@ fn json_match_schema(
     let name = "json.match_schema";
     ensure_args_count(span, name, params, args, 2)?;
 
-    crate::utils::depth::check_value(&args[0], crate::utils::depth::MAX_DEPTH)?;
+    crate::utils::depth::check_value(&args[0], crate::utils::depth::MAX_DEPTH)
+        .map_err(crate::utils::depth::DepthCheckError::into_anyhow)?;
     let document: serde_json::Value = serde_json::to_value(&args[0])
         .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
 
