@@ -42,6 +42,9 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
+    #[error("Value serialization exceeds {limit} nested containers (pc={pc})")]
+    SerializationDepthExceeded { limit: usize, pc: usize },
+
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 
@@ -345,6 +348,9 @@ impl From<anyhow::Error> for VmError {
                 }
                 crate::LimitError::RegexSizeLimitExceeded { limit } => {
                     VmError::RegexSizeLimitExceeded { limit, pc: 0 }
+                }
+                crate::LimitError::SerializationDepthExceeded { limit } => {
+                    VmError::SerializationDepthExceeded { limit, pc: 0 }
                 }
             };
         }

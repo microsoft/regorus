@@ -1044,9 +1044,9 @@ impl<'source> Lexer<'source> {
                     let state = (self.iter.clone(), self.line, self.col);
                     self.iter.next();
 
-                    // Check it next token is ).
-                    let next_tok = self.next_token_with_lookahead(false)?;
-                    let is_setp = next_tok.1.text() == ")";
+                    // Inspect the delimiter without recursively lexing another `set(`.
+                    self.skip_ws()?;
+                    let is_setp = self.peek().1 == ')';
 
                     // Restore state
                     (self.iter, self.line, self.col) = state;

@@ -181,13 +181,8 @@ impl<'source> Parser<'source> {
     }
 
     fn with_expr_depth<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        // Increment expression depth.
-        self.expr_depth = self.expr_depth.saturating_add(1);
-        let current_depth = self.expr_depth;
-
-        // Enforce recursion limit.
-        if self.expr_depth > self.max_expr_depth {
-            self.expr_depth = current_depth.saturating_sub(1);
+        let entry_depth = self.expr_depth;
+        if entry_depth >= self.max_expr_depth {
             self.expr_depth_overflow = true;
             bail!(self.tok.1.error(&format!(
                 "expression nesting too deep (>{})",
@@ -195,14 +190,13 @@ impl<'source> Parser<'source> {
             )));
         }
 
+        self.expr_depth = entry_depth.saturating_add(1);
         let res = f(self);
-
-        // Upon return, ensure that expression depth is still current_depth.
-        if self.expr_depth != current_depth {
+        let balanced = self.expr_depth == entry_depth.saturating_add(1);
+        self.expr_depth = entry_depth;
+        if !balanced {
             bail!("internal error: expression depth imbalance");
         }
-
-        self.expr_depth = current_depth.saturating_sub(1);
         res
     }
 
@@ -2825,6 +2819,8 @@ mod lookahead_tests {
             "{[1], [2], [3]}",
             "f([1], [2], [3])",
             "[1 + 2, 3 * 4]",
+            "[1 | true]",
+            "{1: 2 | true}",
         ] {
             let source = Source::from_contents("width.rego".to_string(), text.to_string())?;
             let mut parser = Parser::new(&source)?;
@@ -2834,6 +2830,82 @@ mod lookahead_tests {
             assert!(!parser.expr_depth_overflow);
             assert_eq!(parser.tok.0, TokenKind::Eof);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_scope_restores_depth_on_all_result_exits() -> Result<()> {
+        let source = Source::from_contents("scope.rego".to_string(), "1".to_string())?;
+        let mut parser = Parser::new(&source)?;
+        parser.expr_depth = 1;
+        parser.with_expr_depth(|_| Ok(()))?;
+        assert_eq!(parser.expr_depth, 1);
+
+        let failure: Result<()> = parser.with_expr_depth(|_| bail!("syntax error"));
+        assert!(failure.is_err());
+        assert_eq!(parser.expr_depth, 1);
+
+        let imbalance = parser.with_expr_depth(|this| {
+            this.expr_depth = 0;
+            Ok(())
+        });
+        assert!(imbalance.is_err());
+        assert_eq!(parser.expr_depth, 1);
+
+        parser.max_expr_depth = 1;
+        let overflow = parser.with_expr_depth(|_| Ok(()));
+        assert!(overflow.is_err());
+        assert_eq!(parser.expr_depth, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_budget_covers_rule_heads_bindings_and_modifiers() -> Result<()> {
+        for text in [
+            "package p\nr := [[[1]]]",
+            "package p\nf([[[x]]]) := 1",
+            "package p\ndefault f(x) := [[[1]]]",
+            "package p\nr[[[[1]]]] := 1",
+            "package p\nr if { [[[x]]] := input }",
+            "package p\nr if { some x in [[[1]]] }",
+            "package p\nr if { true with input as [[[1]]] }",
+            "package p\nr if { every x in [[[1]]] { true } }",
+        ] {
+            let source = Source::from_contents("contexts.rego".to_string(), text.to_string())?;
+            let mut parser = Parser::new(&source)?;
+            parser.enable_rego_v1()?;
+            parser.max_expr_depth = 3;
+            let error = parser
+                .parse()
+                .err()
+                .ok_or_else(|| anyhow!("accepted {text}"))?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("expression nesting too deep (>3)"),
+                "{text}: {error}"
+            );
+            assert_eq!(parser.expr_depth, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_scope_preserves_typed_resource_errors() -> Result<()> {
+        let source = Source::from_contents("resource.rego".to_string(), "1".to_string())?;
+        let mut parser = Parser::new(&source)?;
+        let limit = crate::utils::limits::LimitError::MemoryLimitExceeded { usage: 2, limit: 1 };
+        let result: Result<()> = parser.with_expr_depth(|_| Err(anyhow!(limit)));
+        let error = result
+            .err()
+            .ok_or_else(|| anyhow!("resource failure was lost"))?;
+        assert_eq!(
+            error.downcast_ref::<crate::utils::limits::LimitError>(),
+            Some(&limit)
+        );
+        assert!(parser.is_terminal_parse_error(&error));
+        assert_eq!(parser.expr_depth, 0);
+        assert!(!parser.expr_depth_overflow);
         Ok(())
     }
 }

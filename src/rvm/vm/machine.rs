@@ -750,7 +750,8 @@ impl RegoVM {
                         vm.ffi_output_start_usage_for_test = limits::current_memory_budget_usage()
                             .map(|usage| usage.requested_bytes());
                     }
-                    let json = value.to_json_str().map_err(VmError::from)?;
+                    let json = value
+                        .to_json_str_with_checkpoint(&mut || vm.check_initial_memory_limit())?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
                         message: String::from("RVM JSON result contained an interior NUL byte"),
                         pc: vm.pc,
@@ -803,7 +804,8 @@ impl RegoVM {
                         vm.ffi_output_start_usage_for_test = limits::current_memory_budget_usage()
                             .map(|usage| usage.requested_bytes());
                     }
-                    let json = value.to_json_str().map_err(VmError::from)?;
+                    let json = value
+                        .to_json_str_with_checkpoint(&mut || vm.check_initial_memory_limit())?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
                         message: String::from("RVM JSON result contained an interior NUL byte"),
                         pc: vm.pc,
@@ -970,6 +972,9 @@ impl RegoVM {
             }
             LimitError::RegexSizeLimitExceeded { limit } => {
                 VmError::RegexSizeLimitExceeded { limit, pc }
+            }
+            LimitError::SerializationDepthExceeded { limit } => {
+                VmError::SerializationDepthExceeded { limit, pc }
             }
         })
     }

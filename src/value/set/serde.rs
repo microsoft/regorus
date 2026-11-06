@@ -16,6 +16,7 @@ impl Serialize for Set {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
+            limit_exceeded: None,
         }
         .serialize(serializer)
     }
@@ -23,13 +24,14 @@ impl Serialize for Set {
 
 impl Serialize for SerializeWithBudget<'_, Set> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let remaining = serialization_child_budget::<S::Error>(self.remaining)?;
+        let remaining =
+            serialization_child_budget::<S::Error>(self.remaining, self.limit_exceeded)?;
         // Sets serialize as JSON arrays. Sorted iteration: canonical output.
-        serializer.collect_seq(
-            self.value
-                .iter_sorted()
-                .map(|value| SerializeWithBudget { value, remaining }),
-        )
+        serializer.collect_seq(self.value.iter_sorted().map(|value| SerializeWithBudget {
+            value,
+            remaining,
+            limit_exceeded: self.limit_exceeded,
+        }))
     }
 }
 

@@ -199,6 +199,13 @@ native `Value`s or using their iterative comparison and output methods.
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
 
+  `json.marshal`, `json.marshal_with_options`, and `yaml.marshal` retain the
+  upstream 64-container serialization budget. For example, an input containing
+  65 nested arrays returns a typed serialization-depth error, even in non-strict
+  mode; it cannot select a default or make negation succeed. Native `Value`
+  formatting and `to_json_str()` remain iterative and do not use that callback
+  budget.
+
   `urlquery.encode` and `urlquery.encode_object` retain the
   `application/x-www-form-urlencoded` escaping used by Rust's `url` crate.
   This intentionally differs from OPA's Go `net/url.QueryEscape` convention:

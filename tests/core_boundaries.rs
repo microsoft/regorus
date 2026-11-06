@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #![cfg(feature = "std")]
 
-use regorus::{Engine, Value};
+use regorus::{Engine, LimitError, Value};
 use std::collections::BTreeMap;
 
 mod native_depth_support;
@@ -47,8 +47,18 @@ fn evaluate(expression: &str, input: Value, expected: Option<Value>) {
         Some(expected) => assert_eq!(&result.unwrap(), expected, "{expression}"),
         None => {
             let error = result.expect_err(&format!("{backend}: {expression}"));
+            let serialization_depth_error = matches!(
+                error.downcast_ref::<LimitError>(),
+                Some(LimitError::SerializationDepthExceeded { limit: 64 })
+            );
+            #[cfg(feature = "rvm")]
+            let serialization_depth_error = serialization_depth_error
+                || matches!(
+                    error.downcast_ref::<regorus::rvm::vm::VmError>(),
+                    Some(regorus::rvm::vm::VmError::SerializationDepthExceeded { limit: 64, .. })
+                );
             assert!(
-                format!("{error:#}").contains("nesting limit"),
+                format!("{error:#}").contains("nesting limit") || serialization_depth_error,
                 "{expression}: {error:#}"
             );
         }
@@ -257,15 +267,16 @@ fn text_and_dom_conversion() {
         for text in ["[", "{", "not-json"] {
             evaluate("json.is_valid(input)", text.into(), Some(false.into()));
         }
-        evaluate(
-            "json.marshal(input)",
-            nested(2048, false),
-            Some(Value::from(format!(
-                "{}null{}",
-                "[".repeat(2048),
-                "]".repeat(2048)
-            ))),
-        );
+        assert!(nested(2048, false).to_json_str().is_ok());
+        for depth in [64, 65] {
+            evaluate(
+                "json.marshal(input)",
+                nested(depth, false),
+                (depth == 64).then(|| {
+                    Value::from(format!("{}null{}", "[".repeat(depth), "]".repeat(depth)))
+                }),
+            );
+        }
         #[cfg(feature = "yaml")]
         for depth in [64, 65] {
             evaluate(

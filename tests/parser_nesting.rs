@@ -132,6 +132,64 @@ fn parser_preserves_term_boundaries() -> Result<()> {
             parse_expression(&nested(open, "true", close, 14))?;
             expect_nesting_error(parse_expression(&nested(open, "true", close, 32)));
         }
+        for (depth, accept) in [(14, true), (32, false)] {
+            let text = nested("every x in input {\n", "true", "\n}", depth);
+            let source = Source::from_contents("every.rego".to_string(), text)?;
+            let mut parser = Parser::new(&source)?;
+            parser.enable_rego_v1()?;
+            let result = parser.parse_user_query();
+            if accept {
+                result?;
+            } else {
+                expect_nesting_error(result);
+            }
+        }
+
+        let array = nested("[", "1", "]", 31);
+        let calls = nested("count([", "1", "])", 15);
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "boundary.rego".to_string(),
+            format!("package boundary\nvalue := {array}\nanswer := count(value)"),
+        )?;
+        engine.add_policy(
+            "calls.rego".to_string(),
+            format!("package calls\nanswer := {calls}"),
+        )?;
+        for entrypoint in ["data.boundary.answer", "data.calls.answer"] {
+            assert_eq!(engine.eval_rule(entrypoint.to_string())?, Value::from(1));
+        }
+        #[cfg(feature = "rvm")]
+        {
+            use regorus::languages::rego::compiler::Compiler;
+            use regorus::rvm::vm::RegoVM;
+            let policy = engine.compile_with_entrypoint(&"data.boundary.answer".into())?;
+            let program = Compiler::compile_from_policy(
+                &policy,
+                &["data.boundary.answer", "data.calls.answer"],
+            )?;
+            let mut vm = RegoVM::new();
+            vm.load_program(program);
+            for entrypoint in ["data.boundary.answer", "data.calls.answer"] {
+                assert_eq!(vm.execute_entry_point_by_name(entrypoint)?, Value::from(1));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
+fn parser_accepts_wide_shallow_statements() -> Result<()> {
+    on_parser_stack("parser_accepts_wide_shallow_statements", || {
+        for statement in ["\"ok\"\n", "`ok`\n", "[1]\n", "(true)\n"] {
+            let source = Source::from_contents(
+                "wide.rego".to_string(),
+                format!("{{\n{}}}", statement.repeat(8192)),
+            )?;
+            let query = Parser::new(&source)?.parse_query_or_literal_stmt()?;
+            assert_eq!(query.stmts.len(), 8192);
+        }
         Ok(())
     })
 }

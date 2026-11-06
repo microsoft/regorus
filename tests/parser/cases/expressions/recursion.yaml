@@ -28,6 +28,40 @@ cases:
       x = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
     error: "expression nesting too deep (>32)"
 
+  - note: deep-calls-at-limit
+    rego: |
+      package test
+      x = count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(1)))))))))))))))))))))))))))))))
+    num_expressions: 65
+    num_statements: 0
+    num_queries: 0
+
+  - note: deep-calls-over-limit
+    rego: |
+      package test
+      x = count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(count(1))))))))))))))))))))))))))))))))
+    error: "expression nesting too deep (>32)"
+
+  - note: deep-set-lookahead-over-limit
+    rego: |
+      package test
+      x = set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set(set()))))))))))))))))))))))))))))))))
+    error: "expression nesting too deep (>32)"
+
+  - note: deep-every-over-limit
+    rego: |
+      package test
+      import rego.v1
+      x if {
+        every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] {
+        every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] {
+        every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] {
+        every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] { every a in [1] {
+          true
+        } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }
+      }
+    error: "expression nesting too deep (>32)"
+
   - note: multiline-unary-unification-and-parens-string-call
     rego: |
       package test

@@ -6,6 +6,9 @@ The parser limits recursive terms and query bodies to a shared depth of 32 and
 also checks the depth of the resulting expressions and queries. Plain terms such
 as `[[1]]` use three levels. A comprehension such as `[0 | true]` also opens a
 query body, so nested comprehensions reach the limit sooner than nested arrays.
+The query-body guard also bounds nested `every` bodies without charging a second
+slot for the same statement. Sibling terms close their slot before the next
+starts, so wide shallow arrays and queries do not add to the nesting depth.
 Excessive nesting returns an `expression nesting too deep` error, not
 `Undefined`. A rejected policy is not added to the engine, which remains usable.
 

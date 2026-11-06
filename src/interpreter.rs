@@ -3077,6 +3077,9 @@ impl Interpreter {
                     self.set_current_module(prev_module)?;
                     self.scopes = scopes;
                     if is_evaluation_limit_error(&e) {
+                        if let Some(with_functions) = with_functions_saved {
+                            self.with_functions = with_functions;
+                        }
                         return Err(e);
                     }
                     errors.push(e);
@@ -3156,6 +3159,9 @@ impl Interpreter {
                                 Ok(v) => results.push(v),
                                 Err(e) if is_evaluation_limit_error(&e) => {
                                     self.scopes = scopes;
+                                    if let Some(with_functions) = with_functions_saved {
+                                        self.with_functions = with_functions;
+                                    }
                                     return Err(e);
                                 }
                                 Err(e) => errors.push(e),

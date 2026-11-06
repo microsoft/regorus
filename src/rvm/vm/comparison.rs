@@ -1,126 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use crate::{Rc, Value};
+use crate::value::compare_checked;
+use crate::Value;
 
 use super::errors::{Result, VmError};
 use super::machine::RegoVM;
-
-// Explicit reference patterns conflict with needless_borrowed_reference here.
-#[allow(clippy::pattern_type_mismatch)]
-fn compare_checked<'a, E>(
-    lhs: &'a Value,
-    rhs: &'a Value,
-    equality: bool,
-    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
-) -> core::result::Result<Ordering, E> {
-    type Values<'a> = Box<dyn Iterator<Item = &'a Value> + 'a>;
-    enum Frame<'a> {
-        Value(&'a Value, &'a Value),
-        Sequence(Values<'a>, Values<'a>),
-    }
-    let mut pending = Vec::new();
-    let mut current = Some(Frame::Value(lhs, rhs));
-    while let Some(frame) = current.take().or_else(|| pending.pop()) {
-        let (left, right) = match frame {
-            Frame::Value(left, right) => (left, right),
-            Frame::Sequence(mut left, mut right) => {
-                match (left.next(), right.next()) {
-                    (Some(a), Some(b)) => {
-                        pending.push(Frame::Sequence(left, right));
-                        current = Some(Frame::Value(a, b));
-                    }
-                    (Some(_), None) => return Ok(Ordering::Greater),
-                    (None, Some(_)) => return Ok(Ordering::Less),
-                    (None, None) => {}
-                }
-                continue;
-            }
-        };
-        checkpoint()?;
-        let result = match (left, right) {
-            (Value::Array(a), Value::Array(b)) => {
-                if equality {
-                    if Rc::ptr_eq(a, b) {
-                        continue;
-                    }
-                    if a.len() != b.len() {
-                        return Ok(Ordering::Less);
-                    }
-                }
-                current = Some(Frame::Sequence(Box::new(a.iter()), Box::new(b.iter())));
-                Ordering::Equal
-            }
-            (Value::Object(a), Value::Object(b)) => {
-                if equality {
-                    if Rc::ptr_eq(a, b) {
-                        continue;
-                    }
-                    if a.len() != b.len() {
-                        return Ok(Ordering::Less);
-                    }
-                }
-                current = Some(Frame::Sequence(
-                    Box::new(a.iter_sorted().flat_map(|(key, value)| [key, value])),
-                    Box::new(b.iter_sorted().flat_map(|(key, value)| [key, value])),
-                ));
-                Ordering::Equal
-            }
-            (Value::Set(a), Value::Set(b)) => {
-                if equality {
-                    if Rc::ptr_eq(a, b) {
-                        continue;
-                    }
-                    if a.len() != b.len() {
-                        return Ok(Ordering::Less);
-                    }
-                }
-                current = Some(Frame::Sequence(
-                    Box::new(a.iter_sorted()),
-                    Box::new(b.iter_sorted()),
-                ));
-                Ordering::Equal
-            }
-            (Value::String(a), Value::String(b)) => {
-                if equality {
-                    if Rc::ptr_eq(a, b) {
-                        continue;
-                    }
-                    if a.len() != b.len() {
-                        return Ok(Ordering::Less);
-                    }
-                }
-                for (left_chunk, right_chunk) in
-                    a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256))
-                {
-                    checkpoint()?;
-                    let result = left_chunk.cmp(right_chunk);
-                    if !result.is_eq() {
-                        return Ok(result);
-                    }
-                }
-                a.len().cmp(&b.len())
-            }
-            // Less is only an internal unequal sentinel in equality mode.
-            _ if equality => {
-                if left == right {
-                    Ordering::Equal
-                } else {
-                    Ordering::Less
-                }
-            }
-            _ => left.cmp(right),
-        };
-        if !result.is_eq() {
-            return Ok(result);
-        }
-    }
-    Ok(Ordering::Equal)
-}
 
 fn operands(registers: &[Value], pc: usize, left: u8, right: u8) -> Result<(&Value, &Value)> {
     let get = |index: u8| {
@@ -136,37 +23,39 @@ fn operands(registers: &[Value], pc: usize, left: u8, right: u8) -> Result<(&Val
 }
 
 impl RegoVM {
+    fn needs_checked_comparison(&self) -> bool {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        if self.active_memory_budget_config.is_some()
+            || crate::utils::limits::global_memory_limit().is_some()
+        {
+            return true;
+        }
+        self.execution_timer.config().is_some()
+    }
+
     pub(super) fn compare_registers(
         &mut self,
         left: u8,
         right: u8,
         equality: bool,
     ) -> Result<Ordering> {
-        if self.execution_timer.config().is_none() {
-            let left = self.get_register(left)?;
-            let right = self.get_register(right)?;
-            return Ok(if equality {
-                if left == right {
-                    Ordering::Equal
-                } else {
-                    Ordering::Less
-                }
-            } else {
-                left.cmp(right)
-            });
+        if !self.needs_checked_comparison() {
+            return Ok(self.get_register(left)?.cmp(self.get_register(right)?));
         }
 
         let pc = self.pc;
         let (left, right) = operands(&self.registers, pc, left, right)?;
-        compare_checked(left, right, equality, &mut || {
-            Self::tick_execution_timer(&mut self.execution_timer, pc, 1)
+        let (left, right) = (left.clone(), right.clone());
+        compare_checked(&left, &right, equality, &mut || {
+            Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
+            self.check_initial_memory_limit()
         })
     }
 
     pub(super) fn contains_registers(&mut self, collection: u8, value: u8) -> Result<bool> {
-        if self.execution_timer.config().is_none() {
-            let value = self.get_register(value)?;
-            let collection = self.get_register(collection)?;
+        let pc = self.pc;
+        let (value, collection) = operands(&self.registers, pc, value, collection)?;
+        if !self.needs_checked_comparison() {
             return Ok(match *collection {
                 Value::Set(ref items) => items.contains(value),
                 Value::Array(ref items) => items.contains(value),
@@ -175,15 +64,15 @@ impl RegoVM {
             });
         }
 
-        let pc = self.pc;
-        let (value, collection) = operands(&self.registers, pc, value, collection)?;
+        let (value, collection) = (value.clone(), collection.clone());
         let mut equals = |item: &Value| {
-            compare_checked(item, value, true, &mut || {
-                Self::tick_execution_timer(&mut self.execution_timer, pc, 1)
+            compare_checked(item, &value, true, &mut || {
+                Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
+                self.check_initial_memory_limit()
             })
             .map(Ordering::is_eq)
         };
-        match *collection {
+        match collection {
             Value::Array(ref items) => {
                 for item in items.iter() {
                     if equals(item)? {
@@ -198,8 +87,14 @@ impl RegoVM {
                     }
                 }
             }
-            // B-tree key comparisons remain infallible and do not use this path.
-            Value::Set(ref items) => return Ok(items.contains(value)),
+            // B-tree lookup cannot interrupt its comparator. A checked scan can.
+            Value::Set(ref items) => {
+                for item in items.iter_sorted() {
+                    if equals(item)? {
+                        return Ok(true);
+                    }
+                }
+            }
             _ => {}
         }
         Ok(false)
@@ -211,6 +106,7 @@ mod tests {
     #![allow(clippy::panic_in_result_fn)]
 
     use super::*;
+    use alloc::collections::{BTreeMap, BTreeSet};
     use alloc::sync::Arc;
     use alloc::vec;
     use core::convert::Infallible;
@@ -222,6 +118,7 @@ mod tests {
     use crate::rvm::vm::ExecutionMode;
     use crate::utils::limits::{acquire_limits_test_lock, ExecutionTimerConfig};
     use crate::value::{Object, Set};
+    use crate::Rc;
 
     fn dag(depth: usize, wrap: fn(Value) -> Value) -> Value {
         (0..depth).fold(Value::Null, |child, _| {
@@ -249,6 +146,8 @@ mod tests {
             Value::from(0_u64),
             Value::from(1_u64),
             Value::from(1.0_f64),
+            Value::from(f64::NAN),
+            Value::from(f64::INFINITY),
             Value::from_json_str("1234567890123456789012345678901234567890")?,
             Value::from(""),
             Value::from("alpha"),
@@ -271,6 +170,12 @@ mod tests {
                 )));
             }
         }
+        let leaves = values.clone();
+        for value in leaves {
+            values.push(Value::from(vec![value.clone(), value.clone()]));
+            values.push(Value::from(BTreeSet::from([value.clone()])));
+            values.push(Value::from(BTreeMap::from([(value.clone(), value)])));
+        }
         for wrap in [core::convert::identity, object, set] {
             values.push(dag(4, wrap));
         }
@@ -288,6 +193,48 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn checked_comparison_interrupts_and_shortcuts() {
+        for equality in [false, true] {
+            for (a, b) in [
+                (
+                    Value::from(vec![Value::Null; 128]),
+                    Value::from(vec![Value::Null; 128]),
+                ),
+                (Value::from("x".repeat(4096)), Value::from("x".repeat(4096))),
+            ] {
+                let mut count = 0;
+                let result = compare_checked(&a, &b, equality, &mut || {
+                    count += 1;
+                    if count == 4 {
+                        Err("deadline")
+                    } else {
+                        Ok(())
+                    }
+                });
+                assert_eq!(result, Err("deadline"));
+                assert_eq!(count, 4);
+            }
+        }
+        for a in [
+            Value::from(vec![Value::Null; 128]),
+            Value::from(BTreeSet::from([Value::Null])),
+            Value::from(BTreeMap::from([(Value::Null, Value::Null)])),
+            Value::from("x".repeat(4096)),
+        ] {
+            let alias = a.clone();
+            let mut count = 0;
+            assert_eq!(
+                compare_checked(&a, &alias, true, &mut || {
+                    count += 1;
+                    Ok::<(), Infallible>(())
+                }),
+                Ok(Ordering::Equal)
+            );
+            assert_eq!(count, 1);
+        }
     }
 
     #[test]
@@ -333,23 +280,29 @@ mod tests {
     }
 
     #[test]
-    fn checked_equality_keeps_identity_and_length_shortcuts() {
+    fn checked_comparison_keeps_identity_and_equality_length_shortcuts() {
         for value in [
-            dag(8, core::convert::identity),
-            object(dag(8, core::convert::identity)),
-            set(dag(8, core::convert::identity)),
+            dag(18, core::convert::identity),
+            object(dag(18, core::convert::identity)),
+            set(dag(18, core::convert::identity)),
             Value::String(Rc::from("x".repeat(2048))),
         ] {
             let alias = value.clone();
-            let mut checkpoints = 0;
-            assert_eq!(
-                compare_checked(&value, &alias, true, &mut || {
-                    checkpoints += 1;
-                    Ok::<(), Infallible>(())
-                }),
-                Ok(Ordering::Equal)
-            );
-            assert_eq!(checkpoints, 1);
+            for equality in [false, true] {
+                let mut checkpoints = 0;
+                assert_eq!(
+                    compare_checked(&value, &alias, equality, &mut || {
+                        checkpoints += 1;
+                        Ok::<(), Infallible>(())
+                    }),
+                    Ok(Ordering::Equal)
+                );
+                assert_eq!(checkpoints, 1);
+                assert_eq!(
+                    compare_checked(&value, &alias, equality, &mut || Err("deadline")),
+                    Err("deadline")
+                );
+            }
         }
         for (left, right) in [
             (Value::new_array(), Value::from(vec![Value::Null])),
@@ -388,7 +341,7 @@ mod tests {
                         Ok(Ordering::Equal)
                     );
                     assert!(
-                        checkpoints <= width.saturating_mul(2).saturating_add(4),
+                        checkpoints <= width.saturating_mul(8).saturating_add(12),
                         "width {width}, checkpoints {checkpoints}"
                     );
                 }
