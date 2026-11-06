@@ -1,5 +1,10 @@
 # regorus
 
+Native container conversion supports 32 nested containers in either direction.
+Cyclic native containers are rejected; repeated acyclic references are converted
+independently. JSON output uses the core JSON formatter rather than native
+container conversion.
+
 **Regorus** is
 
   - *Rego*-*Rus(t)*  - A fast, light-weight [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/)
@@ -65,4 +70,3 @@ value = engine.eval_rule('data.framework.mount_overlay')
 print(value)
 
 ```
-

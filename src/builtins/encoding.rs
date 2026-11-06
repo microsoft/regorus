@@ -331,7 +331,10 @@ fn yaml_is_valid(
     ensure_args_count(span, name, params, args, 1)?;
 
     let yaml_str = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Value::from_yaml_str(&yaml_str).is_ok()))
+    match Value::from_yaml_str(&yaml_str) {
+        Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => Err(error),
+        result => Ok(Value::Bool(result.is_ok())),
+    }
 }
 
 #[cfg(feature = "yaml")]
@@ -339,6 +342,7 @@ fn yaml_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool
     let name = "yaml.marshal";
     ensure_args_count(span, name, params, args, 1)?;
 
+    crate::utils::depth::check_value(&args[0], crate::value::MAX_SERIALIZATION_CONTAINERS)?;
     let serialized = yaml_serde::to_string(&args[0])
         .map_err(|err| span.error(&format!("could not serialize to yaml: {err}")))?;
 
@@ -368,15 +372,18 @@ fn json_is_valid(
     ensure_args_count(span, name, params, args, 1)?;
 
     let json_str = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Value::from_json_str(&json_str).is_ok()))
+    match Value::from_json_str(&json_str) {
+        Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => Err(error),
+        result => Ok(Value::Bool(result.is_ok())),
+    }
 }
 
 fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "json.marshal";
     ensure_args_count(span, name, params, args, 1)?;
-    Ok(Value::from(serde_json::to_string(&args[0]).map_err(
-        |e| span.error(&format!("could not serialize to json\nCaused by\n{e}")),
-    )?))
+    Ok(Value::from(args[0].json_string(false).map_err(|e| {
+        span.error(&format!("could not serialize to json\nCaused by\n{e}"))
+    })?))
 }
 
 fn json_marshal_with_options(
@@ -417,12 +424,13 @@ fn json_marshal_with_options(
     }
 
     if !pretty || options.is_empty() {
-        return Ok(Value::from(serde_json::to_string(&args[0]).map_err(
-            |e| span.error(&format!("could not serialize to json\nCaused by\n{e}")),
-        )?));
+        return Ok(Value::from(args[0].json_string(false).map_err(|e| {
+            span.error(&format!("could not serialize to json\nCaused by\n{e}"))
+        })?));
     }
 
-    let lines: Vec<String> = serde_json::to_string_pretty(&args[0])
+    let lines: Vec<String> = args[0]
+        .json_string(true)
         .map_err(|e| span.error(&format!("could not serialize to json\nCaused by\n{e}")))?
         .split('\n')
         .map(|line| {

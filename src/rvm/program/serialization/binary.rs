@@ -81,6 +81,7 @@ impl Program {
     /// Uses postcard for all sections now that `Value` supports serde.
     pub fn serialize_binary(&self) -> Result<Vec<u8>, String> {
         self.validate_limits()?;
+        self.validate_serialization_depth()?;
 
         let mut buffer = Vec::new();
 

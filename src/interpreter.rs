@@ -94,6 +94,9 @@ pub fn is_evaluation_limit_error(error: &anyhow::Error) -> bool {
         .downcast_ref::<NativeEvaluationDepthExceeded>()
         .is_some()
         || error.downcast_ref::<crate::LimitError>().is_some()
+        || error
+            .downcast_ref::<crate::utils::depth::DepthExceeded>()
+            .is_some()
 }
 
 #[derive(Debug)]
@@ -2708,7 +2711,7 @@ impl Interpreter {
             // Resource-limit errors must always propagate, even in non-strict
             // mode, to prevent `not builtin(...)` from silently flipping to true.
             Err(e) if !self.compiled_policy.strict_builtin_errors => {
-                if e.downcast_ref::<crate::LimitError>().is_some() {
+                if is_evaluation_limit_error(&e) {
                     return Err(e);
                 }
                 return Ok(Value::Undefined);

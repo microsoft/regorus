@@ -105,6 +105,7 @@ impl RegoVM {
     }
 
     pub(super) fn initialize_execution_state(&mut self) {
+        self.builtin_limit_exceeded = false;
         // Reset basic execution state
         self.executed_instructions = 0;
         self.pc = 0;
@@ -277,6 +278,7 @@ impl RegoVM {
 
     /// Validate VM state consistency for debugging
     pub(super) fn validate_vm_state(&self) -> Result<()> {
+        self.validate_program_tree()?;
         // Check register bounds
         if self.registers.len() < self.base_register_count {
             return Err(VmError::RegisterCountBelowBase {
@@ -304,6 +306,20 @@ impl RegoVM {
         }
 
         Ok(())
+    }
+
+    pub(super) fn validate_program_tree(&self) -> Result<()> {
+        if self.program_tree_supported {
+            Ok(())
+        } else {
+            Err(VmError::RuleDataConflict {
+                message: alloc::format!(
+                    "rule tree exceeds supported nesting limit {}",
+                    crate::rvm::program::Program::MAX_PATH_DEPTH
+                ),
+                pc: self.pc,
+            })
+        }
     }
 }
 

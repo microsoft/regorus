@@ -43,6 +43,12 @@ impl Program {
     /// Check for conflicts between rule tree and data
     /// Returns an error if any rule path conflicts with data paths
     pub fn check_rule_data_conflicts(&self, data: &Value) -> Result<(), crate::rvm::vm::VmError> {
+        crate::utils::depth::check_value(&self.rule_tree, Self::MAX_PATH_DEPTH).map_err(
+            |error| crate::rvm::vm::VmError::RuleDataConflict {
+                message: error.to_string(),
+                pc: 0,
+            },
+        )?;
         let actual_rule_tree = &self.rule_tree["data"];
 
         match *actual_rule_tree {

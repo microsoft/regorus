@@ -83,6 +83,13 @@ layout is deliberately split:
 | `needs_recompilation: bool`                     | Indicates a legacy binary format or unresolved builtin.          | Signals the loader to recompile; corrupt current-version sections are errors. |
 | `rego_v0: bool`                                 | Records whether the policy targeted Rego v0 semantics.          | Ensures recompilation preserves language-version behaviour. |
 
+Binary and JSON program formats support 32 nested containers in literals,
+rule trees, and metadata annotations. Readers validate nesting during child
+decoding; writers check native-authored values before encoding. The supported
+wire representation and variant identifiers are unchanged. Loading a native
+program retains it; execution and rule/data conflict checks validate its rule
+tree before traversal.
+
 Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
 inspection tooling to populate and render the program.

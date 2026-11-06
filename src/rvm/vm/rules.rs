@@ -19,17 +19,18 @@ use super::machine::RegoVM;
 impl RegoVM {
     /// Returns true if the error represents a resource-limit violation that
     /// must never be silently absorbed by rule evaluation.
-    pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
-        matches!(
-            err,
-            VmError::TimeLimitExceeded { .. }
-                | VmError::RuleCallDepthExceeded { .. }
-                | VmError::MemoryLimitExceeded { .. }
-                | VmError::MemoryBudgetExceeded { .. }
-                | VmError::RegexSizeLimitExceeded { .. }
-                | VmError::InstructionLimitExceeded { .. }
-                | VmError::NumericOverflow { .. }
-        )
+    pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
+        self.builtin_limit_exceeded
+            || matches!(
+                err,
+                VmError::TimeLimitExceeded { .. }
+                    | VmError::RuleCallDepthExceeded { .. }
+                    | VmError::MemoryLimitExceeded { .. }
+                    | VmError::MemoryBudgetExceeded { .. }
+                    | VmError::RegexSizeLimitExceeded { .. }
+                    | VmError::InstructionLimitExceeded { .. }
+                    | VmError::NumericOverflow { .. }
+            )
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -112,7 +113,7 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
-                        Err(e) if Self::is_fatal_vm_error(&e) => {
+                        Err(e) if self.is_fatal_vm_error(&e) => {
                             self.restore_rule_state(
                                 &mut previous_loop_stack,
                                 &mut previous_comprehension_stack,
@@ -168,7 +169,7 @@ impl RegoVM {
                             break;
                         }
                     }
-                    Err(e) if Self::is_fatal_vm_error(&e) => {
+                    Err(e) if self.is_fatal_vm_error(&e) => {
                         self.restore_rule_state(
                             &mut previous_loop_stack,
                             &mut previous_comprehension_stack,

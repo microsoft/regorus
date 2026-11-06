@@ -43,11 +43,42 @@ impl Default for Engine {
 }
 
 fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
+    from_active(ob, &mut Vec::new())
+}
+
+const MAX_CONVERSION_DEPTH: usize = 32;
+
+fn from_active(ob: &Bound<'_, PyAny>, active: &mut Vec<usize>) -> Result<Value, PyErr> {
+    let container = !ob.is_instance_of::<PyString>()
+        && (ob.cast::<PyDict>().is_ok()
+            || ob.cast::<PySet>().is_ok()
+            || ob.cast::<PyFrozenSet>().is_ok()
+            || ob.cast::<PySequence>().is_ok()
+            || ob.cast::<PyMapping>().is_ok());
+    if !container {
+        return from_children(ob, active);
+    }
+    let identity = ob.as_ptr() as usize;
+    if active.contains(&identity) {
+        return Err(PyValueError::new_err("cyclic native value"));
+    }
+    if active.len() >= MAX_CONVERSION_DEPTH {
+        return Err(PyValueError::new_err(
+            "native conversion nesting limit exceeded",
+        ));
+    }
+    active.push(identity);
+    let result = from_children(ob, active);
+    active.pop();
+    result
+}
+
+fn from_children(ob: &Bound<'_, PyAny>, active: &mut Vec<usize>) -> Result<Value, PyErr> {
     // dicts
     Ok(if let Ok(dict) = ob.cast::<PyDict>() {
         let mut map = BTreeMap::new();
         for (k, v) in dict {
-            map.insert(from(&k)?, from(&v)?);
+            map.insert(from_active(&k, active)?, from_active(&v, active)?);
         }
         map.into()
     }
@@ -55,7 +86,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     else if let Ok(pset) = ob.cast::<PySet>() {
         let mut set = BTreeSet::new();
         for v in pset {
-            set.insert(from(&v)?);
+            set.insert(from_active(&v, active)?);
         }
         set.into()
     }
@@ -64,7 +95,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         //
         let mut set = BTreeSet::new();
         for v in pfset {
-            set.insert(from(&v)?);
+            set.insert(from_active(&v, active)?);
         }
         set.into()
     }
@@ -72,13 +103,13 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     else if let Ok(plist) = ob.cast::<PyList>() {
         let mut array = Vec::new();
         for v in plist {
-            array.push(from(&v)?);
+            array.push(from_active(&v, active)?);
         }
         array.into()
     } else if let Ok(ptuple) = ob.cast::<PyTuple>() {
         let mut array = Vec::new();
         for v in ptuple {
-            array.push(from(&v)?);
+            array.push(from_active(&v, active)?);
         }
         array.into()
     }
@@ -111,7 +142,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     else if let Ok(pseq) = ob.cast::<PySequence>() {
         let mut array = Vec::new();
         for i in 0..pseq.len()? {
-            array.push(from(&pseq.get_item(i)?)?);
+            array.push(from_active(&pseq.get_item(i)?, active)?);
         }
         array.into()
     }
@@ -123,7 +154,7 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
         for i in 0..keys.len() {
             let key = keys.get_item(i)?;
             let value = values.get_item(i)?;
-            map.insert(from(&key)?, from(&value)?);
+            map.insert(from_active(&key, active)?, from_active(&value, active)?);
         }
         map.into()
     } else {
@@ -133,7 +164,18 @@ fn from(ob: &Bound<'_, PyAny>) -> Result<Value, PyErr> {
     })
 }
 
-fn to(mut v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
+fn to(v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
+    to_remaining(v, py, MAX_CONVERSION_DEPTH)
+}
+
+fn to_remaining(mut v: Value, py: Python<'_>, remaining: usize) -> Result<Py<PyAny>> {
+    let remaining = if matches!(v, Value::Array(_) | Value::Object(_) | Value::Set(_)) {
+        remaining
+            .checked_sub(1)
+            .ok_or_else(|| anyhow!("native conversion nesting limit exceeded"))?
+    } else {
+        remaining
+    };
     let obj = match v {
         Value::Null => None::<u64>.into_bound_py_any(py),
 
@@ -161,7 +203,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
         Value::Array(_) => {
             let list = PyList::empty(py);
             for v in std::mem::take(v.as_array_mut()?) {
-                list.append(to(v, py)?)?;
+                list.append(to_remaining(v, py, remaining)?)?;
             }
             list.into_bound_py_any(py)
         }
@@ -169,7 +211,7 @@ fn to(mut v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
         Value::Set(_) => {
             let set = PySet::empty(py)?;
             for v in std::mem::take(v.as_set_mut()?) {
-                set.add(to(v, py)?)?;
+                set.add(to_remaining(v, py, remaining)?)?;
             }
             set.into_bound_py_any(py)
         }
@@ -177,7 +219,10 @@ fn to(mut v: Value, py: Python<'_>) -> Result<Py<PyAny>> {
         Value::Object(_) => {
             let dict = PyDict::new(py);
             for (k, v) in std::mem::take(v.as_object_mut()?) {
-                dict.set_item(to(k, py)?, to(v, py)?)?;
+                dict.set_item(
+                    to_remaining(k, py, remaining)?,
+                    to_remaining(v, py, remaining)?,
+                )?;
             }
             dict.into_bound_py_any(py)
         }

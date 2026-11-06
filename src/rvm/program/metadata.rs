@@ -112,8 +112,10 @@ impl ProgramMetadata {
 /// Floating-point numbers are truncated to `i64` because metadata annotations
 /// are expected to contain only integer counts, flags, and identifiers —
 /// fractional values are not anticipated.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum MetadataValue {
+// This private wire bridge is created by bounded seeds or the checked
+// annotation encoder. Recursive traits and conversion rely on those bounds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MetadataValue {
     /// A string value
     String(String),
     /// A set of unique strings (sorted)
@@ -126,6 +128,169 @@ pub enum MetadataValue {
     List(Vec<MetadataValue>),
     /// A string-keyed map of metadata values (recursive)
     Map(BTreeMap<String, MetadataValue>),
+}
+
+fn check_metadata(root: &MetadataValue) -> Result<(), crate::utils::depth::DepthExceeded> {
+    let mut pending = alloc::vec![(root, crate::utils::depth::MAX_DEPTH)];
+    while let Some((value, remaining)) = pending.pop() {
+        let children: alloc::boxed::Box<dyn Iterator<Item = &MetadataValue>> = match *value {
+            MetadataValue::List(ref items) => alloc::boxed::Box::new(items.iter()),
+            MetadataValue::Map(ref items) => alloc::boxed::Box::new(items.values()),
+            MetadataValue::StringSet(_) => {
+                crate::utils::depth::descend(remaining)?;
+                continue;
+            }
+            _ => continue,
+        };
+        let remaining = crate::utils::depth::descend(remaining)?;
+        pending.extend(children.map(|child| (child, remaining)));
+    }
+    Ok(())
+}
+
+impl Serialize for MetadataValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        check_metadata(self).map_err(serde::ser::Error::custom)?;
+        match *self {
+            Self::String(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 0, "String", value)
+            }
+            Self::StringSet(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 1, "StringSet", value)
+            }
+            Self::Bool(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 2, "Bool", value)
+            }
+            Self::Integer(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 3, "Integer", value)
+            }
+            Self::List(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 4, "List", value)
+            }
+            Self::Map(ref value) => {
+                serializer.serialize_newtype_variant("MetadataValue", 5, "Map", value)
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum MetadataVariant {
+    String,
+    StringSet,
+    Bool,
+    Integer,
+    List,
+    Map,
+}
+
+struct MetadataSeed(usize);
+
+impl<'de> serde::de::DeserializeSeed<'de> for MetadataSeed {
+    type Value = MetadataValue;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_enum(
+            "MetadataValue",
+            &["String", "StringSet", "Bool", "Integer", "List", "Map"],
+            self,
+        )
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for MetadataSeed {
+    type Value = MetadataValue;
+
+    fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("a metadata value")
+    }
+
+    fn visit_enum<A: serde::de::EnumAccess<'de>>(self, access: A) -> Result<Self::Value, A::Error> {
+        use serde::de::{Error as _, VariantAccess as _};
+        let (variant, access) = access.variant::<MetadataVariant>()?;
+        Ok(match variant {
+            MetadataVariant::String => MetadataValue::String(access.newtype_variant()?),
+            MetadataVariant::StringSet => {
+                crate::utils::depth::descend(self.0).map_err(A::Error::custom)?;
+                MetadataValue::StringSet(access.newtype_variant()?)
+            }
+            MetadataVariant::Bool => MetadataValue::Bool(access.newtype_variant()?),
+            MetadataVariant::Integer => MetadataValue::Integer(access.newtype_variant()?),
+            MetadataVariant::List => access.newtype_variant_seed(MetadataItems {
+                remaining: crate::utils::depth::descend(self.0).map_err(A::Error::custom)?,
+                map: false,
+            })?,
+            MetadataVariant::Map => access.newtype_variant_seed(MetadataItems {
+                remaining: crate::utils::depth::descend(self.0).map_err(A::Error::custom)?,
+                map: true,
+            })?,
+        })
+    }
+}
+
+struct MetadataItems {
+    remaining: usize,
+    map: bool,
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for MetadataItems {
+    type Value = MetadataValue;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        if self.map {
+            deserializer.deserialize_map(self)
+        } else {
+            deserializer.deserialize_seq(self)
+        }
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for MetadataItems {
+    type Value = MetadataValue;
+
+    fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("metadata entries")
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut access: A,
+    ) -> Result<Self::Value, A::Error> {
+        use serde::de::Error as _;
+        let mut values = Vec::new();
+        while let Some(value) = access.next_element_seed(MetadataSeed(self.remaining))? {
+            values.push(value);
+            crate::utils::limits::check_memory_limit_if_needed().map_err(A::Error::custom)?;
+        }
+        Ok(MetadataValue::List(values))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut access: A,
+    ) -> Result<Self::Value, A::Error> {
+        use serde::de::Error as _;
+        let mut values = BTreeMap::new();
+        while let Some(key) = access.next_key::<String>()? {
+            let value = access.next_value_seed(MetadataSeed(self.remaining))?;
+            values.insert(key, value);
+            crate::utils::limits::check_memory_limit_if_needed().map_err(A::Error::custom)?;
+        }
+        Ok(MetadataValue::Map(values))
+    }
+}
+
+impl<'de> Deserialize<'de> for MetadataValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::DeserializeSeed as _;
+        MetadataSeed(crate::utils::depth::MAX_DEPTH).deserialize(deserializer)
+    }
 }
 
 impl MetadataValue {
@@ -234,6 +399,10 @@ mod metadata_serde {
         S: serde::Serializer,
     {
         use serde::Serialize as _;
+        for value in annotations.values() {
+            crate::utils::depth::check_value(value, crate::utils::depth::MAX_DEPTH)
+                .map_err(serde::ser::Error::custom)?;
+        }
         let bridge: BTreeMap<String, MetadataValue> = annotations
             .iter()
             .map(|(k, v)| (k.clone(), MetadataValue::from_value(v)))
@@ -257,6 +426,64 @@ mod metadata_serde {
 mod tests {
     use super::*;
     use crate::value::Value;
+    use alloc::vec;
+
+    #[test]
+    #[cfg(feature = "std")]
+    #[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
+    fn metadata_depth_roundtrips() {
+        if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+            crate::value::tests::native_depth_support::run_in_subprocess(
+                "rvm::program::metadata::tests::metadata_depth_roundtrips",
+            );
+            return;
+        }
+        std::thread::Builder::new()
+            .stack_size(1_500_000)
+            .spawn(|| {
+                for depth in [32, 33] {
+                    let metadata = (0..depth).fold(MetadataValue::Bool(true), |v, _| {
+                        MetadataValue::List(vec![v])
+                    });
+                    let mut bytes = [4, 1].repeat(depth);
+                    bytes.extend([2, 1]);
+                    assert_eq!(postcard::to_allocvec(&metadata).is_ok(), depth == 32);
+                    assert_eq!(
+                        postcard::from_bytes::<MetadataValue>(&bytes).is_ok(),
+                        depth == 32
+                    );
+                    postcard::from_bytes::<MetadataValue>(
+                        bytes.get(..bytes.len().saturating_sub(1)).unwrap(),
+                    )
+                    .unwrap_err();
+                }
+                for depth in [31, 32] {
+                    let metadata = (0..depth).fold(
+                        MetadataValue::StringSet(BTreeSet::from([String::from("member")])),
+                        |v, _| MetadataValue::List(vec![v]),
+                    );
+                    let mut bytes = [4, 1].repeat(depth);
+                    bytes.extend([1, 1, 6]);
+                    bytes.extend(b"member");
+                    assert_eq!(postcard::to_allocvec(&metadata).is_ok(), depth == 31);
+                    assert_eq!(
+                        postcard::from_bytes::<MetadataValue>(&bytes).is_ok(),
+                        depth == 31
+                    );
+                    if depth == 31 {
+                        assert_eq!(
+                            postcard::from_bytes::<MetadataValue>(&bytes)
+                                .unwrap()
+                                .to_value(),
+                            metadata.to_value(),
+                        );
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     /// Round-trip: Value → MetadataValue → Value must be equivalent for
     /// all lossless variants (strings, bools, integers, arrays, objects).

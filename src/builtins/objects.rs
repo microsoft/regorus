@@ -39,7 +39,7 @@ pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn
     }
 }
 
-fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
+fn json_filter_impl(v: &Value, filter: &Value, remaining: usize) -> Result<Value> {
     let filters = match filter {
         Value::Object(fields) if fields.len() == 1 && filter[&Value::Null] == Value::Null => {
             return Ok(v.clone())
@@ -48,6 +48,7 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
         _ => return Ok(v.clone()),
     };
 
+    let remaining = crate::utils::depth::descend(remaining)?;
     match v {
         Value::Array(_) => {
             let mut items = vec![];
@@ -56,7 +57,7 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
                 // TODO: support integer indexes?
                 if let Value::String(idx) = idx {
                     if let Ok(idx) = Value::from_json_str(idx) {
-                        let item = json_filter_impl(&v[&idx], filter)?;
+                        let item = json_filter_impl(&v[&idx], filter, remaining)?;
                         if item != Value::Undefined {
                             items.push(item);
                             // Guard array growth while filtering nested structures.
@@ -72,7 +73,7 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
             let mut items = BTreeSet::new();
             for (item, filter) in filters.iter() {
                 if s.contains(item) {
-                    let item = json_filter_impl(item, filter)?;
+                    let item = json_filter_impl(item, filter, remaining)?;
                     if item != Value::Undefined {
                         items.insert(item);
                         // Guard set growth when preserving matched entries.
@@ -86,7 +87,7 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
         Value::Object(_) => {
             let mut items = BTreeMap::new();
             for (key, filter) in filters.iter() {
-                let item = json_filter_impl(&v[key], filter)?;
+                let item = json_filter_impl(&v[key], filter, remaining)?;
                 if item != Value::Undefined {
                     items.insert(key.clone(), item);
                     // Guard map growth as filtered keys accumulate.
@@ -101,7 +102,7 @@ fn json_filter_impl(v: &Value, filter: &Value) -> Result<Value> {
     }
 }
 
-fn json_remove_impl(v: &Value, filter: &Value) -> Result<Value> {
+fn json_remove_impl(v: &Value, filter: &Value, remaining: usize) -> Result<Value> {
     let filters = match filter {
         Value::Object(fields) if !fields.is_empty() => fields,
         _ => return Ok(v.clone()),
@@ -111,13 +112,14 @@ fn json_remove_impl(v: &Value, filter: &Value) -> Result<Value> {
         return Ok(Value::Undefined);
     }
 
+    let remaining = crate::utils::depth::descend(remaining)?;
     match v {
         Value::Array(a) => {
             let mut items = vec![];
             for (idx, item) in a.iter().enumerate() {
                 let idx = Value::String(format!("{idx}").into());
                 if let Some(f) = filters.get(&idx) {
-                    let v = json_remove_impl(item, f)?;
+                    let v = json_remove_impl(item, f, remaining)?;
                     if v != Value::Undefined {
                         items.push(v);
                         // Guard array size while removing JSON paths.
@@ -137,7 +139,7 @@ fn json_remove_impl(v: &Value, filter: &Value) -> Result<Value> {
             let mut items = BTreeSet::new();
             for item in s.iter() {
                 if let Some(f) = filters.get(item) {
-                    let v = json_remove_impl(item, f)?;
+                    let v = json_remove_impl(item, f, remaining)?;
                     if v != Value::Undefined {
                         items.insert(v);
                         // Guard set size during filtered retention.
@@ -157,7 +159,7 @@ fn json_remove_impl(v: &Value, filter: &Value) -> Result<Value> {
             let mut items = BTreeMap::new();
             for (key, value) in obj.iter() {
                 if let Some(f) = filters.get(key) {
-                    let v = json_remove_impl(value, f)?;
+                    let v = json_remove_impl(value, f, remaining)?;
                     if v != Value::Undefined {
                         items.insert(key.clone(), v);
                         // Guard map size as filtered properties accumulate.
@@ -257,7 +259,7 @@ fn json_filter(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         }
     }
 
-    json_filter_impl(&args[0], &filters)
+    json_filter_impl(&args[0], &filters, crate::utils::depth::MAX_DEPTH)
 }
 
 fn json_remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -271,7 +273,7 @@ fn json_remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool)
         _ => bail!(span.error(format!("`{name}` requires set/array argument").as_str())),
     };
 
-    json_remove_impl(&args[0], &filters)
+    json_remove_impl(&args[0], &filters, crate::utils::depth::MAX_DEPTH)
 }
 
 fn filter(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -342,52 +344,66 @@ fn remove(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     Ok(Value::Object(obj))
 }
 
-fn is_subset(sup: &Value, sub: &Value) -> bool {
-    match (sup, sub) {
-        (Value::Object(sup), Value::Object(sub)) => {
-            sub.iter().all(|(k, vsub)| {
-                match sup.get(k) {
-                    //		    Some(vsup @ Value::Object(_)) => is_subset(vsup, vsub),
-                    Some(vsup) => is_subset(vsup, vsub),
-                    _ => false,
+fn is_subset(sup: &Value, sub: &Value) -> Result<bool> {
+    let mut pending = vec![(sup, sub)];
+    while let Some((sup, sub)) = pending.pop() {
+        enforce_limit()?;
+        let matches = match (sup, sub) {
+            (Value::Object(sup), Value::Object(sub)) => {
+                for (key, value) in sub.iter() {
+                    match sup.get(key) {
+                        Some(parent) => {
+                            pending.push((parent, value));
+                            enforce_limit()?;
+                        }
+                        None => return Ok(false),
+                    }
                 }
-            })
+                true
+            }
+            (Value::Set(sup), Value::Set(sub)) => sub.is_subset(sup),
+            (Value::Array(sup), Value::Array(sub)) => {
+                sub.is_empty()
+                    || sup
+                        .as_slice()
+                        .windows(sub.len())
+                        .any(|w| w == sub.as_slice())
+            }
+            (Value::Array(sup), Value::Set(sub)) => sub.iter().all(|value| sup.contains(value)),
+            (sup, sub) => sup == sub,
+        };
+        if !matches {
+            return Ok(false);
         }
-        (Value::Set(sup), Value::Set(sub)) => sub.is_subset(sup),
-        (Value::Array(sup), Value::Array(sub)) => {
-            sub.is_empty()
-                || sup
-                    .as_slice()
-                    .windows(sub.len())
-                    .any(|w| w == sub.as_slice())
-        }
-        (Value::Array(sup), Value::Set(_)) => {
-            let sup = Value::from_set(sup.iter().cloned().collect());
-            is_subset(&sup, sub)
-        }
-        (sup, sub) => sup == sub,
     }
+    Ok(true)
 }
 
 fn subset(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
     let name = "object.subset";
     ensure_args_count(span, name, params, args, 2)?;
 
-    Ok(Value::Bool(is_subset(&args[0], &args[1])))
+    Ok(Value::Bool(is_subset(&args[0], &args[1])?))
 }
 
 fn union(obj1: &Value, obj2: &Value) -> Result<Value> {
+    union_impl(obj1, obj2, crate::utils::depth::MAX_DEPTH)
+}
+
+fn union_impl(obj1: &Value, obj2: &Value, remaining: usize) -> Result<Value> {
     match (obj1, obj2) {
         (Value::Object(m1), Value::Object(m2)) => {
+            let remaining = crate::utils::depth::descend(remaining)?;
             let mut u = obj1.clone();
             let um = u.as_object_mut()?;
 
             for (key2, value2) in m2.iter() {
                 let vm = match m1.get(key2) {
-                    Some(value1) => union(value1, value2)?,
+                    Some(value1) => union_impl(value1, value2, remaining)?,
                     _ => value2.clone(),
                 };
                 um.insert(key2.clone(), vm);
+                enforce_limit()?;
             }
             Ok(u)
         }
@@ -435,18 +451,25 @@ fn object_union_n(
 
 #[cfg(feature = "jsonschema")]
 fn compile_json_schema(param: &Ref<Expr>, arg: &Value) -> Result<jsonschema::Validator> {
-    let schema_str = match arg {
-        Value::String(schema_str) => schema_str.as_ref().to_string(),
-        _ => arg.to_json_str()?,
+    let value = match arg {
+        Value::String(schema_str) => match Value::from_json_str(schema_str) {
+            Ok(value) => value,
+            Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => {
+                return Err(error)
+            }
+            Err(_) => bail!(param.span().error("not a valid json schema")),
+        },
+        _ => {
+            crate::utils::depth::check_value(arg, crate::utils::depth::MAX_DEPTH)?;
+            arg.clone()
+        }
     };
 
-    if let Ok(schema) = serde_json::from_str(&schema_str) {
-        match jsonschema::validator_for(&schema) {
-            Ok(schema) => return Ok(schema),
-            Err(e) => bail!(e.to_string()),
-        }
+    let schema = serde_json::to_value(value)?;
+    match jsonschema::validator_for(&schema) {
+        Ok(schema) => Ok(schema),
+        Err(e) => bail!(e.to_string()),
     }
-    bail!(param.span().error("not a valid json schema"))
 }
 
 #[cfg(feature = "jsonschema")]
@@ -462,6 +485,7 @@ fn json_verify_schema(
     Ok(Value::from_array(
         match compile_json_schema(&params[0], &args[0]) {
             Ok(_) => [Value::Bool(true), Value::Null],
+            Err(e) if crate::interpreter::is_evaluation_limit_error(&e) => return Err(e),
             Err(e) if strict => bail!(params[0]
                 .span()
                 .error(format!("invalid schema: {e}").as_str())),
@@ -481,7 +505,8 @@ fn json_match_schema(
     let name = "json.match_schema";
     ensure_args_count(span, name, params, args, 2)?;
 
-    let document: serde_json::Value = serde_json::from_str(&args[0].to_json_str()?)
+    crate::utils::depth::check_value(&args[0], crate::utils::depth::MAX_DEPTH)?;
+    let document: serde_json::Value = serde_json::to_value(&args[0])
         .map_err(|err| span.error(&format!("Failed to parse JSON: {err}")))?;
 
     Ok(Value::from_array(
@@ -490,6 +515,7 @@ fn json_match_schema(
                 Ok(_) => [Value::Bool(true), Value::Null],
                 Err(e) => [Value::Bool(false), Value::from(e.to_string())],
             },
+            Err(e) if crate::interpreter::is_evaluation_limit_error(&e) => return Err(e),
             Err(e) if strict => bail!(params[1]
                 .span()
                 .error(format!("invalid schema: {e}").as_str())),
@@ -516,13 +542,7 @@ fn json_patch(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) 
         Ok(patched) => Ok(patched),
         // Resource-limit errors must propagate rather than look like an
         // invalid patch, so callers cannot bypass configured limits.
-        Err(err)
-            if err
-                .downcast_ref::<crate::utils::limits::LimitError>()
-                .is_some() =>
-        {
-            Err(err)
-        }
+        Err(err) if crate::interpreter::is_evaluation_limit_error(&err) => Err(err),
         Err(_) => Ok(Value::Undefined),
     }
 }

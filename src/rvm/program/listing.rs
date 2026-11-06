@@ -84,8 +84,9 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
         push_line(&mut output, format_args!(";"));
         push_line(&mut output, format_args!("; LITERALS (JSON values):"));
         for (idx, literal) in program.literals.iter().enumerate() {
-            let literal_json =
-                serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
+            let literal_json = literal
+                .json_string(false)
+                .unwrap_or_else(|_| "<invalid>".to_string());
             push_line(
                 &mut output,
                 format_args!(";   L{:2}: {}", idx, literal_json),
@@ -142,7 +143,9 @@ pub fn generate_assembly_listing(program: &Program, config: &AssemblyListingConf
         if !program.metadata.annotations.is_empty() {
             push_line(&mut output, format_args!(";   annotations:"));
             for (key, value) in &program.metadata.annotations {
-                let json = serde_json::to_string(value).unwrap_or_else(|_| "<invalid>".to_string());
+                let json = value
+                    .json_string(false)
+                    .unwrap_or_else(|_| "<invalid>".to_string());
                 push_line(&mut output, format_args!(";     {}: {}", key, json));
             }
         }
@@ -275,8 +278,9 @@ fn format_instruction_readable(
             let comment = program.literals.get(usize::from(literal_idx)).map_or_else(
                 || "Load literal: <invalid index>".to_string(),
                 |literal| {
-                    let literal_json =
-                        serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
+                    let literal_json = literal
+                        .json_string(false)
+                        .unwrap_or_else(|_| "<invalid>".to_string());
                     format!("Load literal: {}", literal_json)
                 },
             );
@@ -557,8 +561,9 @@ fn format_instruction_readable(
                     )
                 },
                 |literal| {
-                    let literal_json =
-                        serde_json::to_string(literal).unwrap_or_else(|_| "<invalid>".to_string());
+                    let literal_json = literal
+                        .json_string(false)
+                        .unwrap_or_else(|_| "<invalid>".to_string());
                     format!("Index with literal key: r{}[{}]", container, literal_json)
                 },
             );
@@ -797,7 +802,8 @@ fn format_instruction_readable(
                                             }
                                             ref other => format!(
                                                 "[{}]",
-                                                serde_json::to_string(other)
+                                                other
+                                                    .json_string(false)
                                                     .unwrap_or_else(|_| "?".to_string())
                                             ),
                                         },

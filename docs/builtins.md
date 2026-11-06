@@ -11,6 +11,12 @@ the corresponding feature. This is useful in Confidential Computing scenarios wh
 Currently many builtins are `baked-in`, i.e. there is no way to exclude them from the TCB.
 In future, each builtin will be associated with a feature (many builtins could be associated with the same feature).
 
+Structured-value operations preserve collection traversal order and use
+operation-local nesting budgets where needed. A nesting-limit error remains an
+error when strict builtin errors are disabled; ordinary builtin errors retain
+their existing Undefined/false behavior. These budgets do not restrict storing
+native `Value`s or using their iterative comparison and output methods.
+
 - [Comparison](https://www.openpolicyagent.org/docs/latest/policy-reference/#comparison)
   | Builtin                                                                                          | Feature |
   |--------------------------------------------------------------------------------------------------|---------|

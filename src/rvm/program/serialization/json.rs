@@ -16,6 +16,8 @@ use indexmap::IndexMap;
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        self.validate_limits()?;
+        self.validate_serialization_depth()?;
         let json_data = serde_json::json!({
             "metadata": {
                 "compiler_version": self.metadata.compiler_version,
@@ -61,8 +63,17 @@ impl Program {
 
     /// Deserialize program from JSON format
     pub fn deserialize_json(data: &str) -> Result<Program, String> {
-        let json_data: serde_json::Value =
-            serde_json::from_str(data).map_err(|e| format!("JSON parsing failed: {}", e))?;
+        use serde::de::DeserializeSeed as _;
+        let mut deserializer = serde_json::Deserializer::from_str(data);
+        // Leave room for the format envelope around independently bounded values.
+        let value = crate::value::ValueSeed(crate::utils::depth::MAX_DEPTH.saturating_add(8), None)
+            .deserialize(&mut deserializer)
+            .map_err(|e| format!("JSON parsing failed: {e}"))?;
+        deserializer
+            .end()
+            .map_err(|e| format!("JSON parsing failed: {e}"))?;
+        let json_data =
+            serde_json::to_value(value).map_err(|e| format!("JSON conversion failed: {e}"))?;
 
         let metadata = json_data
             .get("metadata")
@@ -160,7 +171,9 @@ impl Program {
 
         let literals: Vec<Value> = json_data
             .get("literals")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Literals deserialization failed: {e}"))?
             .unwrap_or_default();
 
         let builtin_info_table: Vec<BuiltinInfo> = json_data
@@ -190,7 +203,9 @@ impl Program {
 
         let rule_tree: Value = json_data
             .get("rule_tree")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| Value::new_object()))
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Rule tree deserialization failed: {e}"))?
             .unwrap_or_else(Value::new_object);
 
         let mut program = Program {
@@ -231,6 +246,8 @@ impl Program {
             program.recompute_host_await_presence();
         }
 
+        program.validate_limits()?;
+        program.validate_serialization_depth()?;
         if !program.builtin_info_table.is_empty() {
             let _ = program.initialize_resolved_builtins();
         }

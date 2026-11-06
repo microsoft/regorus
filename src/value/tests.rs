@@ -105,7 +105,7 @@ const SIZES: &[u64] = &[0, 1, 2, 4, 8, 64, 256, 1024];
 #[cfg(feature = "std")]
 #[path = "../../tests/native_depth_support/mod.rs"]
 #[allow(clippy::std_instead_of_core)]
-mod native_depth_support;
+pub mod native_depth_support;
 
 #[cfg(feature = "std")]
 fn nested_value(depth: usize, mut value: Value, kind: usize) -> Value {

@@ -3,8 +3,78 @@
 import json
 import pytest
 import regorus
+import subprocess
+import sys
 
 TEST_EXT_NAME = "Microsoft.Azure.ActiveDirectory.AADSSHLoginForLinux"
+
+
+def test_native_conversion_roundtrips():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import threading\n"
+            "from concurrent.futures import ThreadPoolExecutor\n"
+            "from test_extensions import _check_native_conversion\n"
+            "threading.stack_size(1_500_000)\n"
+            "with ThreadPoolExecutor(max_workers=1) as pool:\n"
+            "    pool.submit(_check_native_conversion).result()\n",
+        ],
+        check=True,
+        timeout=30,
+    )
+
+
+def _check_native_conversion():
+    from collections import UserDict, UserList
+
+    engine = regorus.Engine()
+    engine.add_policy(
+        "conversion.rego",
+        "package conversion\nanswer := input\nwrapped := [input]\nsize := count(input)",
+    )
+    for container in [[], {}, UserList(), UserDict()]:
+        if isinstance(container, (dict, UserDict)):
+            container["value"] = container
+        else:
+            container.append(container)
+        with pytest.raises(ValueError, match="cyclic native value"):
+            engine.set_input(container)
+
+    left = []
+    right = {"left": left}
+    left.append(right)
+    with pytest.raises(ValueError, match="cyclic native value"):
+        engine.set_input(right)
+
+    shared = {"value": (1, 2)}
+    engine.set_input([shared, shared])
+    assert engine.eval_rule("data.conversion.answer") == [
+        {"value": [1, 2]}, {"value": [1, 2]}
+    ]
+    for depth in [32, 33]:
+        value = None
+        for _ in range(depth):
+            value = [value]
+        if depth == 32:
+            engine.set_input(value)
+            assert engine.eval_rule("data.conversion.answer") == value
+            with pytest.raises(RuntimeError, match="nesting limit"):
+                engine.eval_rule("data.conversion.wrapped")
+        else:
+            with pytest.raises(ValueError, match="nesting limit"):
+                engine.set_input(value)
+        engine.set_input([7])
+        assert engine.eval_rule("data.conversion.answer") == [7]
+
+    key = 0
+    for _ in range(31):
+        key = (key,)
+    engine.set_input({key: True})
+    assert engine.eval_rule("data.conversion.size") == 1
+    with pytest.raises(ValueError, match="nesting limit"):
+        engine.set_input({(key,): True})
 
 
 @pytest.fixture(name="engine", scope="function")

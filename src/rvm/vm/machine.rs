@@ -52,6 +52,8 @@ pub struct RegoVM {
 
     /// The compiled program containing instructions, literals, and metadata
     pub(super) program: Arc<Program>,
+    pub(super) program_tree_supported: bool,
+    pub(super) builtin_limit_exceeded: bool,
 
     /// Reference to the compiled policy for default rule access
     pub(super) compiled_policy: Option<CompiledPolicy>,
@@ -244,6 +246,8 @@ impl RegoVM {
             registers: Vec::new(), // Start with no registers - will be resized when program is loaded
             pc: 0,
             program: Arc::new(Program::default()),
+            program_tree_supported: true,
+            builtin_limit_exceeded: false,
             compiled_policy: None,
             rule_cache: Vec::new(),
             data: Value::Null,
@@ -318,6 +322,8 @@ impl RegoVM {
         }
 
         self.program = program.clone();
+        self.program_tree_supported =
+            crate::utils::depth::check_value(&program.rule_tree, Program::MAX_PATH_DEPTH).is_ok();
 
         // Use the dispatch window size from the program for initial register allocation
         let dispatch_size = usize::from(program.dispatch_window_size).max(2); // Ensure at least 2 registers

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::cmp::Ordering;
 
 use crate::{Rc, Value};
@@ -10,100 +12,114 @@ use super::machine::RegoVM;
 
 // Explicit reference patterns conflict with needless_borrowed_reference here.
 #[allow(clippy::pattern_type_mismatch)]
-fn compare_checked<E>(
-    left: &Value,
-    right: &Value,
+fn compare_checked<'a, E>(
+    lhs: &'a Value,
+    rhs: &'a Value,
     equality: bool,
     checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
 ) -> core::result::Result<Ordering, E> {
-    checkpoint()?;
-    match (left, right) {
-        (Value::Array(a), Value::Array(b)) => {
-            if equality {
-                if Rc::ptr_eq(a, b) {
-                    return Ok(Ordering::Equal);
-                }
-                if a.len() != b.len() {
-                    return Ok(Ordering::Less);
-                }
-            }
-            compare_sequence(a.iter(), b.iter(), equality, checkpoint)
-        }
-        (Value::Object(a), Value::Object(b)) => {
-            if equality {
-                if Rc::ptr_eq(a, b) {
-                    return Ok(Ordering::Equal);
-                }
-                if a.len() != b.len() {
-                    return Ok(Ordering::Less);
-                }
-            }
-            compare_sequence(
-                a.iter_sorted().flat_map(|(key, value)| [key, value]),
-                b.iter_sorted().flat_map(|(key, value)| [key, value]),
-                equality,
-                checkpoint,
-            )
-        }
-        (Value::Set(a), Value::Set(b)) => {
-            if equality {
-                if Rc::ptr_eq(a, b) {
-                    return Ok(Ordering::Equal);
-                }
-                if a.len() != b.len() {
-                    return Ok(Ordering::Less);
-                }
-            }
-            compare_sequence(a.iter_sorted(), b.iter_sorted(), equality, checkpoint)
-        }
-        (Value::String(a), Value::String(b)) => {
-            if equality {
-                if Rc::ptr_eq(a, b) {
-                    return Ok(Ordering::Equal);
-                }
-                if a.len() != b.len() {
-                    return Ok(Ordering::Less);
-                }
-            }
-            for (left_chunk, right_chunk) in a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256))
-            {
-                checkpoint()?;
-                let result = left_chunk.cmp(right_chunk);
-                if !result.is_eq() {
-                    return Ok(result);
-                }
-            }
-            Ok(a.len().cmp(&b.len()))
-        }
-        // Less is only an internal unequal sentinel in equality mode.
-        _ if equality => Ok(if left == right {
-            Ordering::Equal
-        } else {
-            Ordering::Less
-        }),
-        _ => Ok(left.cmp(right)),
+    type Values<'a> = Box<dyn Iterator<Item = &'a Value> + 'a>;
+    enum Frame<'a> {
+        Value(&'a Value, &'a Value),
+        Sequence(Values<'a>, Values<'a>),
     }
-}
-
-fn compare_sequence<'a, 'b, E>(
-    mut left: impl Iterator<Item = &'a Value>,
-    mut right: impl Iterator<Item = &'b Value>,
-    equality: bool,
-    checkpoint: &mut impl FnMut() -> core::result::Result<(), E>,
-) -> core::result::Result<Ordering, E> {
-    loop {
-        match (left.next(), right.next()) {
-            (Some(a), Some(b)) => {
-                let result = compare_checked(a, b, equality, checkpoint)?;
-                if !result.is_eq() {
-                    return Ok(result);
+    let mut pending = Vec::new();
+    let mut current = Some(Frame::Value(lhs, rhs));
+    while let Some(frame) = current.take().or_else(|| pending.pop()) {
+        let (left, right) = match frame {
+            Frame::Value(left, right) => (left, right),
+            Frame::Sequence(mut left, mut right) => {
+                match (left.next(), right.next()) {
+                    (Some(a), Some(b)) => {
+                        pending.push(Frame::Sequence(left, right));
+                        current = Some(Frame::Value(a, b));
+                    }
+                    (Some(_), None) => return Ok(Ordering::Greater),
+                    (None, Some(_)) => return Ok(Ordering::Less),
+                    (None, None) => {}
+                }
+                continue;
+            }
+        };
+        checkpoint()?;
+        let result = match (left, right) {
+            (Value::Array(a), Value::Array(b)) => {
+                if equality {
+                    if Rc::ptr_eq(a, b) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    }
+                }
+                current = Some(Frame::Sequence(Box::new(a.iter()), Box::new(b.iter())));
+                Ordering::Equal
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                if equality {
+                    if Rc::ptr_eq(a, b) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    }
+                }
+                current = Some(Frame::Sequence(
+                    Box::new(a.iter_sorted().flat_map(|(key, value)| [key, value])),
+                    Box::new(b.iter_sorted().flat_map(|(key, value)| [key, value])),
+                ));
+                Ordering::Equal
+            }
+            (Value::Set(a), Value::Set(b)) => {
+                if equality {
+                    if Rc::ptr_eq(a, b) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    }
+                }
+                current = Some(Frame::Sequence(
+                    Box::new(a.iter_sorted()),
+                    Box::new(b.iter_sorted()),
+                ));
+                Ordering::Equal
+            }
+            (Value::String(a), Value::String(b)) => {
+                if equality {
+                    if Rc::ptr_eq(a, b) {
+                        continue;
+                    }
+                    if a.len() != b.len() {
+                        return Ok(Ordering::Less);
+                    }
+                }
+                for (left_chunk, right_chunk) in
+                    a.as_bytes().chunks(256).zip(b.as_bytes().chunks(256))
+                {
+                    checkpoint()?;
+                    let result = left_chunk.cmp(right_chunk);
+                    if !result.is_eq() {
+                        return Ok(result);
+                    }
+                }
+                a.len().cmp(&b.len())
+            }
+            // Less is only an internal unequal sentinel in equality mode.
+            _ if equality => {
+                if left == right {
+                    Ordering::Equal
+                } else {
+                    Ordering::Less
                 }
             }
-            (Some(_), None) => return Ok(Ordering::Greater),
-            (None, Some(_)) => return Ok(Ordering::Less),
-            (None, None) => return Ok(Ordering::Equal),
+            _ => left.cmp(right),
+        };
+        if !result.is_eq() {
+            return Ok(result);
         }
     }
+    Ok(Ordering::Equal)
 }
 
 fn operands(registers: &[Value], pc: usize, left: u8, right: u8) -> Result<(&Value, &Value)> {

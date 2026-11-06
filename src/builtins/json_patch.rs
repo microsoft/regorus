@@ -17,7 +17,10 @@ use crate::Value;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
+use alloc::{boxed::Box, vec};
 use anyhow::{anyhow, bail, Result};
+
+const MAX_EDIT_DEPTH: usize = 128;
 
 #[derive(Debug)]
 enum EditNode {
@@ -31,12 +34,18 @@ enum EditNode {
 
 impl EditNode {
     fn from_value(value: &Value) -> Result<Self> {
+        crate::utils::depth::check_value(value, MAX_EDIT_DEPTH)
+            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
+        Self::from_checked_value(value)
+    }
+
+    fn from_checked_value(value: &Value) -> Result<Self> {
         enforce_limit()?;
         Ok(match value {
             Value::Object(object) => {
                 let mut fields = BTreeMap::new();
                 for (key, value) in object.iter() {
-                    fields.insert(key.clone(), Self::from_value(value)?);
+                    fields.insert(key.clone(), Self::from_checked_value(value)?);
                     enforce_limit()?;
                 }
                 Self::Object(fields)
@@ -44,7 +53,7 @@ impl EditNode {
             Value::Array(array) => {
                 let mut items = VecDeque::with_capacity(array.len());
                 for value in array.iter() {
-                    items.push_back(Self::from_value(value)?);
+                    items.push_back(Self::from_checked_value(value)?);
                     enforce_limit()?;
                 }
                 Self::Array(items)
@@ -52,13 +61,34 @@ impl EditNode {
             Value::Set(set) => {
                 let mut members = BTreeMap::new();
                 for value in set.iter() {
-                    members.insert(value.clone(), Self::from_value(value)?);
+                    members.insert(value.clone(), Self::from_checked_value(value)?);
                     enforce_limit()?;
                 }
                 Self::Set(members)
             }
             scalar => Self::Scalar(scalar.clone()),
         })
+    }
+
+    fn check_attachment(&self, path_length: usize) -> Result<()> {
+        let remaining = attachment_budget(path_length)?;
+        let mut pending = vec![(self, remaining)];
+        while let Some((node, remaining)) = pending.pop() {
+            enforce_limit()?;
+            let children: Box<dyn Iterator<Item = &Self>> = match node {
+                Self::Scalar(_) => continue,
+                Self::Array(items) => Box::new(items.iter()),
+                Self::Object(items) | Self::Set(items) => Box::new(items.values()),
+            };
+            let remaining = remaining
+                .checked_sub(1)
+                .ok_or(crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
+            for child in children {
+                pending.push((child, remaining));
+                enforce_limit()?;
+            }
+        }
+        Ok(())
     }
 
     fn render(&self) -> Result<Value> {
@@ -299,6 +329,8 @@ impl EditTree {
     }
 
     fn insert_value(&mut self, path: &[Value], value: &Value) -> Result<()> {
+        crate::utils::depth::check_value(value, attachment_budget(path.len())?)
+            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
         let node = EditNode::from_value(value)?;
         if path.is_empty() {
             self.root = Some(node);
@@ -309,6 +341,7 @@ impl EditTree {
     }
 
     fn insert_node(&mut self, path: &[Value], node: EditNode) -> Result<()> {
+        node.check_attachment(path.len())?;
         if path.is_empty() {
             self.root = Some(node);
         } else {
@@ -329,6 +362,8 @@ impl EditTree {
 
     #[cfg(test)]
     fn replace_value(&mut self, path: &[Value], value: &Value) -> Result<()> {
+        crate::utils::depth::check_value(value, attachment_budget(path.len())?)
+            .map_err(|_| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH))?;
         let node = EditNode::from_value(value)?;
         if path.is_empty() {
             self.root = Some(node);
@@ -413,16 +448,24 @@ pub(super) fn apply(target: &Value, operations: &[Value]) -> Result<Value> {
 }
 
 fn parse_path(path: &Value) -> Result<Vec<Value>> {
-    match path {
-        Value::String(path) if path.is_empty() => Ok(Vec::new()),
-        Value::String(path) => Ok(path
+    let path: Vec<Value> = match path {
+        Value::String(path) if path.is_empty() => Vec::new(),
+        Value::String(path) => path
             .trim_start_matches('/')
             .split('/')
             .map(|part| Value::from(part.replace("~1", "/").replace("~0", "~")))
-            .collect()),
-        Value::Array(parts) => Ok(parts.iter().cloned().collect()),
+            .collect(),
+        Value::Array(parts) => parts.iter().cloned().collect(),
         _ => bail!("path must be a string or an array of path segments"),
-    }
+    };
+    attachment_budget(path.len())?;
+    Ok(path)
+}
+
+fn attachment_budget(path_length: usize) -> Result<usize> {
+    MAX_EDIT_DEPTH
+        .checked_sub(path_length)
+        .ok_or_else(|| crate::utils::depth::DepthExceeded(MAX_EDIT_DEPTH).into())
 }
 
 fn array_index(length: usize, segment: &Value, append_ok: bool) -> Result<usize> {

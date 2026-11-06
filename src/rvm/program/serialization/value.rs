@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr as _;
-use serde::de::{self, EnumAccess, VariantAccess as _, Visitor};
+use serde::de::{self, DeserializeSeed, EnumAccess, SeqAccess, VariantAccess as _, Visitor};
 use serde::ser::{SerializeSeq as _, SerializeTuple as _};
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +35,8 @@ impl<'a> Serialize for BinaryValueRef<'a> {
     where
         S: serde::Serializer,
     {
+        crate::utils::depth::check_value(self.0, crate::utils::depth::MAX_DEPTH)
+            .map_err(serde::ser::Error::custom)?;
         match *self.0 {
             Value::Null => serializer.serialize_unit_variant("BinaryValue", VARIANT_NULL, "Null"),
             Value::Bool(b) => {
@@ -202,7 +204,94 @@ enum BinaryVariant {
     NumberF64,
 }
 
-struct BinaryValueVisitor;
+struct BinaryValueVisitor(usize);
+
+#[derive(Clone, Copy)]
+struct BinarySeed(usize);
+
+impl<'de> DeserializeSeed<'de> for BinarySeed {
+    type Value = BinaryValue;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_enum("BinaryValue", BINARY_VARIANTS, BinaryValueVisitor(self.0))
+    }
+}
+
+struct BinaryItems {
+    remaining: usize,
+    entries: bool,
+}
+
+impl<'de> DeserializeSeed<'de> for BinaryItems {
+    type Value = Value;
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for BinaryItems {
+    type Value = Value;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("binary value entries")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> Result<Value, A::Error> {
+        let remaining = crate::utils::depth::descend(self.remaining).map_err(de::Error::custom)?;
+        if self.entries {
+            let mut output = Object::new();
+            while let Some((key, value)) = access.next_element_seed(BinaryEntrySeed(remaining))? {
+                output.insert(key.0, value.0);
+                crate::utils::limits::check_memory_limit_if_needed().map_err(de::Error::custom)?;
+            }
+            let output = output.into_value();
+            crate::utils::limits::check_memory_limit_if_needed().map_err(de::Error::custom)?;
+            Ok(output)
+        } else {
+            let mut output = Vec::new();
+            while let Some(value) = access.next_element_seed(BinarySeed(remaining))? {
+                output.push(value.0);
+                crate::utils::limits::check_memory_limit_if_needed().map_err(de::Error::custom)?;
+            }
+            Ok(Value::from(output))
+        }
+    }
+}
+
+struct BinaryEntrySeed(usize);
+
+impl<'de> DeserializeSeed<'de> for BinaryEntrySeed {
+    type Value = (BinaryValue, BinaryValue);
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_tuple(2, self)
+    }
+}
+
+impl<'de> Visitor<'de> for BinaryEntrySeed {
+    type Value = (BinaryValue, BinaryValue);
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a binary key/value pair")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+        let key = access
+            .next_element_seed(BinarySeed(self.0))?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        let value = access
+            .next_element_seed(BinarySeed(self.0))?
+            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+        Ok((key, value))
+    }
+}
 
 impl<'de> Visitor<'de> for BinaryValueVisitor {
     type Value = BinaryValue;
@@ -257,31 +346,30 @@ impl<'de> Visitor<'de> for BinaryValueVisitor {
                 Ok(BinaryValue(Value::from(s)))
             }
             (BinaryVariant::Array, variant) => {
-                let items: Vec<BinaryValue> = variant.newtype_variant()?;
-                let values: Vec<Value> = items.into_iter().map(BinaryValue::into_value).collect();
-                Ok(BinaryValue(Value::from(values)))
+                let value = variant.newtype_variant_seed(BinaryItems {
+                    remaining: self.0,
+                    entries: false,
+                })?;
+                Ok(BinaryValue(value))
             }
             (BinaryVariant::Set, variant) => {
-                let items: Vec<BinaryValue> = variant.newtype_variant()?;
-                let mut set = BTreeSet::new();
-                for item in items {
-                    set.insert(item.into_value());
-                }
+                let items = variant.newtype_variant_seed(BinaryItems {
+                    remaining: self.0,
+                    entries: false,
+                })?;
+                let set: BTreeSet<Value> = items
+                    .as_array()
+                    .map_err(de::Error::custom)?
+                    .iter()
+                    .cloned()
+                    .collect();
                 Ok(BinaryValue(Value::from(set)))
             }
             (BinaryVariant::Object, variant) => {
-                let entries: Vec<(BinaryValue, BinaryValue)> = variant.newtype_variant()?;
-                let mut map = Object::new();
-                for (key, value) in entries {
-                    map.insert(key.into_value(), value.into_value());
-                    crate::utils::limits::check_memory_limit_if_needed()
-                        .map_err(|err| de::Error::custom(format!("{err}")))?;
-                }
-                let object = map.into_value();
-                // Mirror the JSON object path: re-check after `into_value` compacts
-                // storage so binary program loading honors allocator memory limits.
-                crate::utils::limits::check_memory_limit_if_needed()
-                    .map_err(|err| de::Error::custom(format!("{err}")))?;
+                let object = variant.newtype_variant_seed(BinaryItems {
+                    remaining: self.0,
+                    entries: true,
+                })?;
                 Ok(BinaryValue(object))
             }
             (BinaryVariant::Undefined, variant) => {
@@ -297,7 +385,7 @@ impl<'de> Deserialize<'de> for BinaryValue {
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_enum("BinaryValue", BINARY_VARIANTS, BinaryValueVisitor)
+        BinarySeed(crate::utils::depth::MAX_DEPTH).deserialize(deserializer)
     }
 }
 
@@ -315,6 +403,64 @@ mod tests {
 
     use super::*;
     use alloc::vec;
+
+    #[test]
+    #[cfg(feature = "std")]
+    #[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
+    fn collection_depth_roundtrips() {
+        if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+            crate::value::tests::native_depth_support::run_in_subprocess(
+                "rvm::program::serialization::value::tests::collection_depth_roundtrips",
+            );
+            return;
+        }
+        std::thread::Builder::new()
+            .stack_size(1_500_000)
+            .spawn(|| {
+                for depth in [32, 33] {
+                    for kind in 0..4 {
+                        let value = (0..depth).fold(Value::Null, |value, _| match kind {
+                            0 => Value::from(vec![value]),
+                            1 => Value::from(BTreeSet::from([value])),
+                            2 => Value::from(alloc::collections::BTreeMap::from([(
+                                Value::from("k"),
+                                value,
+                            )])),
+                            _ => Value::from(alloc::collections::BTreeMap::from([(
+                                value,
+                                Value::Null,
+                            )])),
+                        });
+                        let mut bytes = match kind {
+                            0 => [4, 1].repeat(depth),
+                            1 => [5, 1].repeat(depth),
+                            2 => [6, 1, 3, 1, b'k'].repeat(depth),
+                            _ => [6, 1].repeat(depth),
+                        };
+                        bytes.push(0);
+                        if kind == 3 {
+                            bytes.extend(vec![0; depth]);
+                        }
+                        let encoded = postcard::to_allocvec(&BinaryValueRef(&value));
+                        let decoded = postcard::from_bytes::<BinaryValue>(&bytes);
+                        if depth == 32 {
+                            assert_eq!(encoded.expect("bounded encoding"), bytes);
+                            assert_eq!(decoded.expect("bounded decoding").0, value);
+                            postcard::from_bytes::<BinaryValue>(
+                                bytes.get(..bytes.len().saturating_sub(1)).expect("prefix"),
+                            )
+                            .expect_err("incomplete collection");
+                        } else {
+                            encoded.expect_err("encoding requires bounded values");
+                            decoded.expect_err("decoding requires bounded values");
+                        }
+                    }
+                }
+            })
+            .expect("worker starts")
+            .join()
+            .expect("worker completes");
+    }
 
     /// A blob is untrusted input: the `NumberF64` variant must not be able to put a non-finite
     /// `Number` into the loaded program. The value has no JSON representation and

@@ -87,67 +87,81 @@ fn visit(
     path: &mut Vec<Value>,
     paths: &mut BTreeSet<Value>,
 ) -> Result<()> {
-    if let Value::String(s) = node {
-        if s.as_ref() == "" {
-            if !path.is_empty() {
-                paths.insert(Value::from_array(path.clone()));
-                // Guard path result growth when terminating at empty edge.
-                enforce_limit()?;
-            }
-            return Ok(());
-        }
+    enum Frame<'a> {
+        Node(&'a Value),
+        Neighbors(Box<dyn Iterator<Item = &'a Value> + 'a>),
+        Leave(&'a Value),
     }
-
-    let neighbors = graph.get(node);
-    if neighbors.is_none() {
-        // Current node is not valid. Add path as is.
-        if !path.is_empty() {
-            paths.insert(Value::from_array(path.clone()));
-            // Guard path set growth when encountering missing nodes.
-            enforce_limit()?;
-        }
-        return Ok(());
-    }
-
-    if visited.contains(node) {
-        paths.insert(Value::from_array(path.clone()));
-        // Guard path set growth when detecting a cycle.
+    let mut pending = vec![Frame::Node(node)];
+    while let Some(frame) = pending.pop() {
         enforce_limit()?;
-    } else {
-        path.push(node.clone());
-        // Guard path stack growth while descending the graph.
-        enforce_limit()?;
-        visited.insert(node.clone());
-        // Guard visited set growth while marking nodes as seen.
-        enforce_limit()?;
-        let n = match neighbors {
-            Some(Value::Array(arr)) => {
-                for n in arr.iter().rev() {
-                    visit(graph, visited, n, path, paths)?;
+        let node = match frame {
+            Frame::Node(node) => node,
+            Frame::Neighbors(mut neighbors) => {
+                if let Some(node) = neighbors.next() {
+                    pending.push(Frame::Neighbors(neighbors));
+                    pending.push(Frame::Node(node));
                 }
-                arr.len()
+                continue;
             }
-            Some(Value::Set(set)) => {
-                for n in set.iter().rev() {
-                    visit(graph, visited, n, path, paths)?;
-                }
-                set.len()
+            Frame::Leave(node) => {
+                visited.remove(node);
+                path.pop();
+                continue;
             }
-            Some(&Value::Null) => 0,
-            _ => bail!(format!("neighbors for node `{node}` must be array/set.")),
         };
-
-        if n == 0 {
-            // Current node has no neighbors.
-            if !path.is_empty() {
-                paths.insert(Value::from_array(path.clone()));
-                // Guard path set growth when recording leaf nodes.
-                enforce_limit()?;
+        if let Value::String(s) = node {
+            if s.as_ref() == "" {
+                if !path.is_empty() {
+                    paths.insert(Value::from_array(path.clone()));
+                    // Guard path result growth when terminating at empty edge.
+                    enforce_limit()?;
+                }
+                continue;
             }
         }
 
-        visited.remove(node);
-        path.pop();
+        let neighbors = graph.get(node);
+        if neighbors.is_none() {
+            // Current node is not valid. Add path as is.
+            if !path.is_empty() {
+                paths.insert(Value::from_array(path.clone()));
+                // Guard path set growth when encountering missing nodes.
+                enforce_limit()?;
+            }
+            continue;
+        }
+
+        if visited.contains(node) {
+            paths.insert(Value::from_array(path.clone()));
+            // Guard path set growth when detecting a cycle.
+            enforce_limit()?;
+        } else {
+            path.push(node.clone());
+            // Guard path stack growth while descending the graph.
+            enforce_limit()?;
+            visited.insert(node.clone());
+            // Guard visited set growth while marking nodes as seen.
+            enforce_limit()?;
+            let (empty, children): (bool, Box<dyn Iterator<Item = &Value>>) = match neighbors {
+                Some(Value::Array(arr)) => (arr.is_empty(), Box::new(arr.iter().rev())),
+                Some(Value::Set(set)) => (set.is_empty(), Box::new(set.iter().rev())),
+                Some(&Value::Null) => (true, Box::new(core::iter::empty())),
+                _ => bail!(format!("neighbors for node `{node}` must be array/set.")),
+            };
+
+            if empty {
+                // Current node has no neighbors.
+                if !path.is_empty() {
+                    paths.insert(Value::from_array(path.clone()));
+                    // Guard path set growth when recording leaf nodes.
+                    enforce_limit()?;
+                }
+            }
+
+            pending.push(Frame::Leave(node));
+            pending.push(Frame::Neighbors(children));
+        }
     }
 
     Ok(())
@@ -186,41 +200,49 @@ fn reachable_paths(
 }
 
 fn walk_visit(path: &mut Vec<Value>, value: &Value, paths: &mut Vec<Value>) -> Result<()> {
-    {
-        let path = Value::from_array(path.clone());
-        paths.push(Value::from_array([path, value.clone()].into()));
-        // Guard walk result growth when emitting a new path/value pair.
-        enforce_limit()?;
+    enum Frame<'a> {
+        Value(&'a Value),
+        Children(Box<dyn Iterator<Item = (Value, &'a Value)> + 'a>),
+        Leave,
     }
-    match value {
-        Value::Array(arr) => {
-            for (idx, elem) in arr.iter().enumerate() {
-                path.push(Value::from(idx));
-                // Guard path stack growth while traversing array members.
-                enforce_limit()?;
-                walk_visit(path, elem, paths)?;
-                path.pop();
+    let mut pending = vec![Frame::Value(value)];
+    while let Some(frame) = pending.pop() {
+        enforce_limit()?;
+        let value = match frame {
+            Frame::Value(value) => value,
+            Frame::Children(mut children) => {
+                if let Some((key, value)) = children.next() {
+                    pending.push(Frame::Children(children));
+                    path.push(key);
+                    pending.push(Frame::Leave);
+                    pending.push(Frame::Value(value));
+                }
+                continue;
             }
-        }
-        Value::Set(set) => {
-            for elem in set.iter() {
-                path.push(elem.clone());
-                // Guard path stack growth while traversing set members.
-                enforce_limit()?;
-                walk_visit(path, elem, paths)?;
+            Frame::Leave => {
                 path.pop();
+                continue;
             }
+        };
+        {
+            let path = Value::from_array(path.clone());
+            paths.push(Value::from_array([path, value.clone()].into()));
+            // Guard walk result growth when emitting a new path/value pair.
+            enforce_limit()?;
         }
-        Value::Object(obj) => {
-            for (key, value) in obj.iter_sorted() {
-                path.push(key.clone());
-                // Guard path stack growth while traversing object entries.
-                enforce_limit()?;
-                walk_visit(path, value, paths)?;
-                path.pop();
+        let children: Box<dyn Iterator<Item = (Value, &Value)>> = match value {
+            Value::Array(arr) => Box::new(
+                arr.iter()
+                    .enumerate()
+                    .map(|(index, value)| (Value::from(index), value)),
+            ),
+            Value::Set(set) => Box::new(set.iter().map(|value| (value.clone(), value))),
+            Value::Object(obj) => {
+                Box::new(obj.iter_sorted().map(|(key, value)| (key.clone(), value)))
             }
-        }
-        _ => (),
+            _ => Box::new(core::iter::empty()),
+        };
+        pending.push(Frame::Children(children));
     }
     Ok(())
 }
