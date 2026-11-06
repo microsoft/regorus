@@ -1,5 +1,21 @@
 Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior. 
 
+Arithmetic expressions are limited to **32 arithmetic nodes along any path in
+the parsed expression tree**. Both precedence levels (`+`, `-`, `*`, `/`, `%`)
+count toward this limit. For example, `1+1+1` has depth two, while
+`(1+1)*(1+1)` also has depth two, not three. Parentheses, calls, collection
+elements, references, and comprehension bodies do not reset the arithmetic
+count. An array with thousands of independent `1+1` elements has arithmetic
+depth one; this restriction does not impose an arithmetic width limit.
+
+Parsing rejects an over-limit operation before constructing its tree node,
+with an `arithmetic expression nesting too deep (>32)` error. This bounds
+arithmetic recursion in subsequent analysis, interpreter evaluation, RVM
+compilation, and cleanup of parser-produced trees. The conservative fixed
+limit is based on small-stack measurements; it is not a guarantee for
+arbitrarily small host stacks or other kinds of recursion. It does not
+validate trees constructed directly through the unstable AST API.
+
 ```ebnf
 
 module           ::= package  imports rule*

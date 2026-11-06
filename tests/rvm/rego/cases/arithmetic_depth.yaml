@@ -1,0 +1,136 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Parser rejection cases live in tests/parser/cases/expressions/arithmetic_depth.yaml.
+# These accepted cases run through both the interpreter and RVM.
+cases:
+  - note: arithmetic-depth/addition-at-limit
+    modules:
+      - |
+        package test
+        main := 1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+    query: data.test.main
+    want_result: 33
+
+  - note: arithmetic-depth/subtraction-at-limit
+    modules:
+      - |
+        package test
+        main := 1
+          -1-1-1-1 -1-1-1-1
+          -1-1-1-1 -1-1-1-1
+          -1-1-1-1 -1-1-1-1
+          -1-1-1-1 -1-1-1-1
+    query: data.test.main
+    want_result: -31
+
+  - note: arithmetic-depth/multiplication-at-limit
+    modules:
+      - |
+        package test
+        main := 1
+          *1*1*1*1 *1*1*1*1
+          *1*1*1*1 *1*1*1*1
+          *1*1*1*1 *1*1*1*1
+          *1*1*1*1 *1*1*1*1
+    query: data.test.main
+    want_result: 1
+
+  - note: arithmetic-depth/division-at-limit
+    modules:
+      - |
+        package test
+        main := 1
+          /1/1/1/1 /1/1/1/1
+          /1/1/1/1 /1/1/1/1
+          /1/1/1/1 /1/1/1/1
+          /1/1/1/1 /1/1/1/1
+    query: data.test.main
+    want_result: 1
+
+  - note: arithmetic-depth/modulo-at-limit
+    modules:
+      - |
+        package test
+        main := 1
+          %1%1%1%1 %1%1%1%1
+          %1%1%1%1 %1%1%1%1
+          %1%1%1%1 %1%1%1%1
+          %1%1%1%1 %1%1%1%1
+    query: data.test.main
+    want_result: 0
+
+  - note: arithmetic-depth/composed-calls-at-limit
+    modules:
+      - |
+        package test
+        main := abs(abs(1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1)
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1)
+    query: data.test.main
+    want_result: 33
+
+  - note: arithmetic-depth/composed-calls-at-limit-suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        main := abs(abs(1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1)
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1)
+    query: data.test.main
+    want_result: 33
+
+  - note: arithmetic-depth/mixed-precedence-and-left-associativity
+    modules:
+      - |
+        package test
+        main := [10-3-2, 20/2/5, 1+2*3, (1+1)*(1+1)]
+    query: data.test.main
+    want_result: [5, 2, 7, 4]
+
+  - note: arithmetic-depth/undefined-is-not-false-at-limit
+    modules:
+      - |
+        package test
+        main := input.missing
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+          +1+1+1+1 +1+1+1+1
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: arithmetic-depth/more-than-32-independent-operations
+    modules:
+      - |
+        package test
+        main := [
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+          1+1, 1+1, 1+1, 1+1, 1+1,
+        ]
+    query: data.test.main
+    want_result: [
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+      2, 2, 2, 2, 2,
+    ]

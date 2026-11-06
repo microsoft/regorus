@@ -90,6 +90,7 @@ pub struct Parser<'source> {
 
 const FUTURE_KEYWORDS: [&str; 4] = ["contains", "every", "if", "in"];
 const DEFAULT_MAX_EXPR_DEPTH: usize = 32;
+const MAX_ARITHMETIC_DEPTH: usize = 32;
 
 impl<'source> Parser<'source> {
     pub(crate) const MAX_PATH_COMPONENTS: usize = DEFAULT_MAX_EXPR_DEPTH;
@@ -656,6 +657,7 @@ impl<'source> Parser<'source> {
         // Parse the first expression as a ref.
         let term = match self.parse_ref() {
             Ok(e) if self.token_text() == "|" => e,
+            Err(err) if self.expr_depth_overflow => return Err(err),
             _ => {
                 // Not a comprehension. Restore state.
                 *self = state;
@@ -1047,6 +1049,145 @@ impl<'source> Parser<'source> {
         self.parse_ref()
     }
 
+    fn arithmetic_depth(expr: &Expr) -> Result<usize> {
+        enum Pending<'a> {
+            Expr(&'a Expr, usize),
+            Query(&'a Query, usize),
+        }
+
+        let mut pending = vec![Pending::Expr(expr, 0)];
+        let mut maximum = 0;
+        // Only arithmetic nodes add to the depth; siblings never add together.
+        // Accepted depth bounds repeated subtree scans, without recursive walks
+        // or unbounded quadratic scans of a long chain.
+        while let Some(node) = pending.pop() {
+            check_memory_limit()?;
+            let (expr, depth) = match node {
+                Pending::Expr(expr, depth) => (expr, depth),
+                Pending::Query(query, depth) => {
+                    for stmt in &query.stmts {
+                        for modifier in &stmt.with_mods {
+                            pending.push(Pending::Expr(&modifier.refr, depth));
+                            pending.push(Pending::Expr(&modifier.r#as, depth));
+                        }
+                        match &stmt.literal {
+                            Literal::SomeVars { .. } => (),
+                            Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } => {
+                                pending.push(Pending::Expr(expr, depth));
+                            }
+                            Literal::SomeIn {
+                                key,
+                                value,
+                                collection,
+                                ..
+                            } => {
+                                if let Some(key) = key {
+                                    pending.push(Pending::Expr(key, depth));
+                                }
+                                pending.push(Pending::Expr(value, depth));
+                                pending.push(Pending::Expr(collection, depth));
+                            }
+                            Literal::Every { domain, query, .. } => {
+                                pending.push(Pending::Expr(domain, depth));
+                                pending.push(Pending::Query(query, depth));
+                            }
+                        }
+                    }
+                    continue;
+                }
+            };
+            match expr {
+                Expr::String { .. }
+                | Expr::RawString { .. }
+                | Expr::Number { .. }
+                | Expr::Bool { .. }
+                | Expr::Null { .. }
+                | Expr::Var { .. } => (),
+                Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                    pending.extend(items.iter().map(|item| Pending::Expr(item, depth)));
+                }
+                Expr::Object { fields, .. } => {
+                    for (_, key, value) in fields {
+                        pending.push(Pending::Expr(key, depth));
+                        pending.push(Pending::Expr(value, depth));
+                    }
+                }
+                Expr::ArrayCompr { term, query, .. } | Expr::SetCompr { term, query, .. } => {
+                    pending.push(Pending::Expr(term, depth));
+                    pending.push(Pending::Query(query, depth));
+                }
+                Expr::ObjectCompr {
+                    key, value, query, ..
+                } => {
+                    pending.push(Pending::Expr(key, depth));
+                    pending.push(Pending::Expr(value, depth));
+                    pending.push(Pending::Query(query, depth));
+                }
+                Expr::Call { fcn, params, .. } => {
+                    pending.push(Pending::Expr(fcn, depth));
+                    pending.extend(params.iter().map(|param| Pending::Expr(param, depth)));
+                }
+                Expr::UnaryExpr { expr, .. } => pending.push(Pending::Expr(expr, depth)),
+                Expr::RefDot { refr, .. } => pending.push(Pending::Expr(refr, depth)),
+                Expr::RefBrack { refr, index, .. } => {
+                    pending.push(Pending::Expr(refr, depth));
+                    pending.push(Pending::Expr(index, depth));
+                }
+                Expr::ArithExpr { lhs, rhs, .. } => {
+                    let depth = depth.saturating_add(1);
+                    maximum = maximum.max(depth);
+                    if maximum >= MAX_ARITHMETIC_DEPTH {
+                        return Ok(maximum);
+                    }
+                    pending.push(Pending::Expr(lhs, depth));
+                    pending.push(Pending::Expr(rhs, depth));
+                }
+                Expr::BinExpr { lhs, rhs, .. }
+                | Expr::BoolExpr { lhs, rhs, .. }
+                | Expr::AssignExpr { lhs, rhs, .. } => {
+                    pending.push(Pending::Expr(lhs, depth));
+                    pending.push(Pending::Expr(rhs, depth));
+                }
+                #[cfg(feature = "rego-extensions")]
+                Expr::OrExpr { lhs, rhs, .. } => {
+                    pending.push(Pending::Expr(lhs, depth));
+                    pending.push(Pending::Expr(rhs, depth));
+                }
+                Expr::Membership {
+                    key,
+                    value,
+                    collection,
+                    ..
+                } => {
+                    if let Some(key) = key {
+                        pending.push(Pending::Expr(key, depth));
+                    }
+                    pending.push(Pending::Expr(value, depth));
+                    pending.push(Pending::Expr(collection, depth));
+                }
+            }
+        }
+        Ok(maximum)
+    }
+
+    fn make_arith_expr(&mut self, span: Span, op: ArithOp, lhs: Expr, rhs: Expr) -> Result<Expr> {
+        if Self::arithmetic_depth(&lhs)?.max(Self::arithmetic_depth(&rhs)?) >= MAX_ARITHMETIC_DEPTH
+        {
+            self.expr_depth_overflow = true;
+            bail!(span.error(&format!(
+                "arithmetic expression nesting too deep (>{MAX_ARITHMETIC_DEPTH})"
+            )));
+        }
+        // Reject before linking another node so error cleanup also stays bounded.
+        Ok(Expr::ArithExpr {
+            span,
+            op,
+            lhs: Ref::new(lhs),
+            rhs: Ref::new(rhs),
+            eidx: self.next_eidx(),
+        })
+    }
+
     fn parse_mul_div_mod_expr(&mut self) -> Result<Expr> {
         let start = self.tok.1.start;
         let mut expr = self.parse_term()?;
@@ -1063,13 +1204,7 @@ impl<'source> Parser<'source> {
             self.next_token()?;
             let right = self.parse_term()?;
             span.end = self.end;
-            expr = Expr::ArithExpr {
-                span,
-                op,
-                lhs: Ref::new(expr),
-                rhs: Ref::new(right),
-                eidx: self.next_eidx(),
-            };
+            expr = self.make_arith_expr(span, op, expr, right)?;
         }
     }
 
@@ -1099,13 +1234,7 @@ impl<'source> Parser<'source> {
                 self.parse_mul_div_mod_expr()?
             };
             span.end = self.end;
-            expr = Expr::ArithExpr {
-                span,
-                op,
-                lhs: Ref::new(expr),
-                rhs: Ref::new(right),
-                eidx: self.next_eidx(),
-            };
+            expr = self.make_arith_expr(span, op, expr, right)?;
         }
     }
 
@@ -1533,6 +1662,7 @@ impl<'source> Parser<'source> {
                 stmt
             }
             Ok(stmt) => stmt,
+            Err(e) if self.expr_depth_overflow => return Err(e),
             Err(e) if is_definite_query => return Err(e),
             Err(e) if matches!(self.token_text(), "=" | ":=") => return Err(e),
             Err(_) => {

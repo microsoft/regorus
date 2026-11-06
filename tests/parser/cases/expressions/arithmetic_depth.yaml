@@ -1,0 +1,317 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: arithmetic-depth/addition-below-limit
+    rego: |
+      package test
+      r := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1
+    num_expressions: 65
+
+  - note: arithmetic-depth/addition-at-limit
+    rego: |
+      package test
+      r := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+    num_expressions: 67
+
+  - note: arithmetic-depth/subtraction-at-limit
+    rego: |
+      package test
+      r := 1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+    num_expressions: 67
+
+  - note: arithmetic-depth/multiplication-at-limit
+    rego: |
+      package test
+      r := 1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+    num_expressions: 67
+
+  - note: arithmetic-depth/division-at-limit
+    rego: |
+      package test
+      r := 1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+    num_expressions: 67
+
+  - note: arithmetic-depth/modulo-at-limit
+    rego: |
+      package test
+      r := 1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+    num_expressions: 67
+
+  - note: arithmetic-depth/addition-over-limit
+    rego: |
+      package test
+      r := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/subtraction-over-limit
+    rego: |
+      package test
+      r := 1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+        -1-1-1-1 -1-1-1-1
+        -1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/multiplication-over-limit
+    rego: |
+      package test
+      r := 1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/division-over-limit
+    rego: |
+      package test
+      r := 1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+        /1/1/1/1 /1/1/1/1
+        /1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/modulo-over-limit
+    rego: |
+      package test
+      r := 1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+        %1%1%1%1 %1%1%1%1
+        %1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/precedence-levels-compose
+    rego: |
+      package test
+      r := 1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        *1*1*1*1 *1*1*1*1
+        +1*1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/negative-token-subtraction-composes
+    rego: |
+      package test
+      r := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        -1
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/parentheses-do-not-reset-depth
+    rego: |
+      package test
+      r := 1 + (1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1)
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/calls-compose-at-limit
+    rego: |
+      package test
+      r := abs(abs(1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1)
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1)
+    num_expressions: 71
+
+  - note: arithmetic-depth/calls-cannot-split-an-oversized-path
+    rego: |
+      package test
+      r := abs(abs(1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1)
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1)
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/array-lookahead-preserves-depth-error
+    rego: |
+      package test
+      r := [abs(1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1)]
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/set-lookahead-preserves-depth-error
+    rego: |
+      package test
+      r := {1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1}
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/object-value-preserves-depth-error
+    rego: |
+      package test
+      r := {"key": 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1}
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/array-reference-does-not-reset-depth
+    rego: |
+      package test
+      r := 1 + [1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1][0]
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/object-reference-does-not-reset-depth
+    rego: |
+      package test
+      r := 1 + {"key": 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1}.key
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/comprehension-query-preserves-depth-error
+    rego: |
+      package test
+      r := [x | x := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1]
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/comprehension-query-contributes-to-path
+    rego: |
+      package test
+      r := 1 + count([x | x := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1])
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/object-comprehension-preserves-depth-error
+    rego: |
+      package test
+      r := {"key": x | x := 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1 +1}
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/some-in-collection-contributes-to-path
+    rego: |
+      package test
+      import future.keywords.in
+      r := 1 + count([x | some x in [1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1]])
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/with-modifier-contributes-to-path
+    rego: |
+      package test
+      r := 1 + count([x | x := 1 with input as 1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1])
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/every-domain-contributes-to-path
+    rego: |
+      package test
+      import future.keywords.every
+      r := 1 + count([x | x := 1; every y in [1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1] { y > 0 }])
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/comparison-does-not-reset-depth
+    rego: |
+      package test
+      r := 1 + (false == [1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1])
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/unary-negation-does-not-reset-depth
+    rego: |
+      package test
+      r := 1 + (-(1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1
+        +1+1+1+1 +1+1+1+1))
+    error: "arithmetic expression nesting too deep (>32)"
+
+  - note: arithmetic-depth/wide-independent-arithmetic-is-allowed
+    rego: |
+      package test
+      r := [
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+        1+1, 1+1, 1+1, 1+1, 1+1,
+      ]
+    num_expressions: 123
