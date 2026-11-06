@@ -254,7 +254,7 @@ fn fn_string(_span: &Span, _params: &[Ref<Expr>], args: &[Value], _strict: bool)
         Value::Null => Ok(Value::from("null")),
         Value::Undefined => Ok(Value::Undefined),
         // For arrays and objects, produce JSON-style representation.
-        _ => Ok(Value::from(arg.to_string())),
+        _ => Ok(Value::from(arg.to_json_str_compact()?)),
     }
 }
 

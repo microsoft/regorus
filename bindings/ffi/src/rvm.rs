@@ -1943,7 +1943,7 @@ pub extern "C" fn regorus_rvm_get_host_await_argument(vm: *mut RegorusRvm) -> Re
                 let vm = to_shared_ref(vm as *const RegorusRvm)?;
                 let guard = vm.try_read()?;
                 match guard.get_host_await_argument() {
-                    Some(arg) => Ok(Some(serde_json::to_string(arg)?)),
+                    Some(arg) => Ok(Some(arg.to_json_str_compact()?)),
                     None => Ok(None),
                 }
             }();
