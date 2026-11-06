@@ -1,0 +1,313 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: error_conflict_complete_negation
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p if not q
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_complete_negation_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p if not q
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_complete_multiple_yields
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 2]
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_object_comprehension
+    modules:
+      - |
+        package test
+        p := {"k": x | some x in [1, 2]}
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_partial_object
+    modules:
+      - |
+        package test
+        p[k] := x if { k := "k"; some x in [1, 2] }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_equal_complete_yields
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 1]
+    query: data.test.p
+    want_result: 1
+
+  - note: error_conflict_equal_object_comprehension
+    modules:
+      - |
+        package test
+        p := {"k": x | some x in [1, 1]}
+    query: data.test.p
+    want_result: {"k": 1}
+
+  - note: error_conflict_equal_partial_object
+    modules:
+      - |
+        package test
+        p[k] := 1 if k := "k"
+        p[k] := 1 if k := "k"
+    query: data.test.p
+    want_result: {"k": 1}
+
+  - note: error_conflict_undefined_function_negation_control
+    modules:
+      - |
+        package test
+        f(x) := x
+        p if not f(input.missing)
+    query: data.test.p
+    want_result: true
+
+  - note: error_conflict_complete_default
+    modules:
+      - |
+        package test
+        default p := 42
+        p := 1
+        p := 2
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_complete_else
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p := 1 if q else := 2
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_function
+    modules:
+      - |
+        package test
+        f(x) := 1
+        f(x) := 2
+        p := f(0)
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_function_multiple_yields
+    modules:
+      - |
+        package test
+        f(a) := x if some x in [1, 2]
+        p := f(0)
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_nested_comprehension
+    modules:
+      - |
+        package test
+        q := 1
+        q := 2
+        p := [q | true]
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_object_comprehension_negation
+    modules:
+      - |
+        package test
+        q := {"k": x | some x in [1, 2]}
+        p if not q
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_missing_complete_candidate
+    modules:
+      - |
+        package test
+        p := x.k if some x in [{"k": 1}, {}, {"k": 2}]
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_missing_partial_object_candidate
+    modules:
+      - |
+        package test
+        p[k] := x.k if { k := "k"; some x in [{"k": 1}, {}, {"k": 2}] }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_missing_comprehension_candidate
+    modules:
+      - |
+        package test
+        p := {"k": x.k | some x in [{"k": 1}, {}, {"k": 2}]}
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_missing_candidate_preserves_answer
+    # The unchanged interpreter loses the first answer after the missing value.
+    # This RVM accumulator check does not include that separate interpreter fix.
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        p := x.k if some x in [{"k": 1}, {}]
+    query: data.test.p
+    want_result: 1
+
+  - note: error_conflict_missing_comprehension_candidate_preserves_false
+    modules:
+      - |
+        package test
+        p := {"k": x.k | some x in [{"k": false}, {}]}
+    query: data.test.p
+    want_result: {"k": false}
+
+  - note: error_conflict_nested_missing_comprehension_stays_local
+    modules:
+      - |
+        package test
+        p := {"k": x.missing | true} if some x in [{}]
+    query: data.test.p
+    want_result: {}
+
+  - note: error_conflict_equal_function_control
+    modules:
+      - |
+        package test
+        f(x) := 1
+        f(x) := 1
+        p := f(0)
+    query: data.test.p
+    want_result: 1
+
+  - note: error_conflict_default_control
+    modules:
+      - |
+        package test
+        default p := 42
+        p := 1 if false
+    query: data.test.p
+    want_result: 42
+
+  - note: error_conflict_failed_condition_control
+    modules:
+      - |
+        package test
+        p := x if { some x in [1, 2]; x == 2 }
+    query: data.test.p
+    want_result: 2
+
+  - note: error_conflict_nonstrict_arithmetic_control
+    # Preserve default non-strict RVM behavior; the interpreter defaults to strict errors.
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        q := 1 + "x"
+        p if not q
+    query: data.test.p
+    want_result: true
+
+  - note: error_conflict_nonstrict_conversion_control
+    # Preserve default non-strict RVM behavior; the interpreter defaults to strict errors.
+    skip_interpreter: true
+    modules:
+      - |
+        package test
+        default p := 42
+        p := to_number("invalid")
+    query: data.test.p
+    want_result: 42
+
+  - note: error_conflict_nonstrict_ordering_control
+    modules:
+      - |
+        package test
+        p := x < "x" if some x in [1]
+    query: data.test.p
+    want_result: true
+
+  - note: error_conflict_complete_multiple_yields_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 2]
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_object_comprehension_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p := {"k": x | some x in [1, 2]}
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_partial_object_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p[k] := x if { k := "k"; some x in [1, 2] }
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_function_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        f(x) := 1
+        f(x) := 2
+        p := f(0)
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_missing_comprehension_candidate_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p := {"k": x.k | some x in [{"k": 1}, {}, {"k": 2}]}
+    query: data.test.p
+    want_error: "conflict"
+
+  - note: error_conflict_nested_missing_comprehension_stays_local_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p := {"k": x.missing | true} if some x in [{}]
+    query: data.test.p
+    want_result: {}
+
+  - note: error_conflict_equal_complete_yields_suspendable
+    execution_mode: suspendable
+    modules:
+      - |
+        package test
+        p := x if some x in [1, 1]
+    query: data.test.p
+    want_result: 1

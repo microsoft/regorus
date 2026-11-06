@@ -1,0 +1,55 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: conflict_check_unequal_outputs
+    literals: [1, 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "CheckConflict { left: 0, right: 1 }"
+      - "Return { value: 1 }"
+    want_error: "eval_conflict_error"
+    want_error_strict: "eval_conflict_error"
+
+  - note: conflict_check_equal_outputs
+    literals: [{"k": 1}, {"k": 1}]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "CheckConflict { left: 0, right: 1 }"
+      - "Return { value: 1 }"
+    want_result: {"k": 1}
+    want_result_strict: {"k": 1}
+
+  - note: conflict_check_undefined_is_not_output
+    literals: ["#undefined", 1]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "CheckConflict { left: 0, right: 1 }"
+      - "CheckConflict { left: 1, right: 0 }"
+      - "Return { value: 1 }"
+    want_result: 1
+    want_result_strict: 1
+
+  - note: generic_move_still_overwrites
+    literals: [1, 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Move { dest: 0, src: 1 }"
+      - "Return { value: 0 }"
+    want_result: 2
+    want_result_strict: 2
+
+  - note: generic_object_set_still_overwrites
+    literals: [{"k": 1}, "k", 2]
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Load { dest: 1, literal_idx: 1 }"
+      - "Load { dest: 2, literal_idx: 2 }"
+      - "ObjectSet { obj: 0, key: 1, value: 2 }"
+      - "Return { value: 0 }"
+    want_result: {"k": 2}
+    want_result_strict: {"k": 2}

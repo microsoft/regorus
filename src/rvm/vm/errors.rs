@@ -217,6 +217,9 @@ pub enum VmError {
     #[error("Assertion failed (pc={pc})")]
     AssertionFailed { pc: usize },
 
+    #[error("eval_conflict_error: evaluation produced conflicting outputs (pc={pc})")]
+    EvaluationConflict { pc: usize },
+
     #[error("Rule-data conflict: {message} (pc={pc})")]
     RuleDataConflict { message: String, pc: usize },
 

@@ -347,6 +347,10 @@ impl RegoVM {
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
+            CheckConflict { left, right } => {
+                self.check_output_conflict(self.get_register(left)?, self.get_register(right)?)?;
+                Ok(InstructionOutcome::Continue)
+            }
             Guard { register, mode } => {
                 let value = self.get_register(register)?;
                 let passed = match mode {

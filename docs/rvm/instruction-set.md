@@ -57,9 +57,29 @@ must have been allocated by the current frame.
 | `Not`    | `dest, operand`         | Logical negation.                                             |
 | `AssertCondition` | `condition`    | Fails current loop/rule when the condition is falsey.         |
 | `AssertNotUndefined` | `register`  | Fails when register holds `Value::Undefined`.                 |
+| `CheckConflict` | `left, right` | Raises `VmError::EvaluationConflict` if both values are defined and unequal; does not modify registers. |
 
 `handle_condition` routes through `loops.rs` to propagate failures to loop and
 comprehension contexts. Outside loops it aborts the current rule.
+
+Evaluation conflicts propagate through callers, negation, comprehensions,
+defaults and `else` bodies in both execution modes, regardless of builtin
+strictness. A conflicting answer is an error, not an undefined result that
+negation or a default can turn into a successful answer. Existing arithmetic,
+comparison and unrelated error-handling behavior is unchanged.
+In particular, this does not repair strict builtin errors being absorbed at
+rule boundaries; that is separate from conflict handling.
+
+Rego complete-rule yields use `CheckConflict` before copying a new result.
+Partial-object yields check the previous key value before `ObjectSet`, and
+object comprehensions reject unequal duplicate values while accepting equal
+ones. Generic `Move` and `ObjectSet` still overwrite. `CheckConflict` is appended
+to the serialized instruction enum so existing opcode discriminants stay stable.
+These compiler-emitted checks require recompiling existing Rego artifacts;
+loading an older program does not insert checks into its bytecode. Missing
+candidates are skipped before conflict-bearing accumulator writes, so they
+cannot erase an earlier defined answer. Object comprehensions skip missing keys
+and values locally rather than failing an enclosing loop.
 
 Rego rule yields guard against undefined values (and object keys) before
 updating the accumulator. A missing candidate contributes no answer and cannot

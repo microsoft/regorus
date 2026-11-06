@@ -417,6 +417,13 @@ pub enum Instruction {
         /// Register that accumulates the result.
         result: u8,
     },
+
+    /// Reject unequal defined outputs without changing either register.
+    /// Appended to preserve existing serialized instruction discriminants.
+    CheckConflict {
+        left: u8,
+        right: u8,
+    },
 }
 
 impl Instruction {

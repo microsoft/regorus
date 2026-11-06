@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 mod compiler;
+mod conflict_semantics;
 mod rego;

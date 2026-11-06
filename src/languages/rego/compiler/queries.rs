@@ -226,6 +226,22 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 ContextType::Rule(RuleType::PartialObject) => {
+                    let previous_value = self.alloc_register()?;
+                    self.emit_instruction(
+                        Instruction::Index {
+                            dest: previous_value,
+                            container: dest_register,
+                            key: key_register,
+                        },
+                        span,
+                    );
+                    self.emit_instruction(
+                        Instruction::CheckConflict {
+                            left: previous_value,
+                            right: value_register,
+                        },
+                        span,
+                    );
                     self.emit_instruction(
                         Instruction::ObjectSet {
                             obj: dest_register,
@@ -236,6 +252,13 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 ContextType::Rule(RuleType::Complete) => {
+                    self.emit_instruction(
+                        Instruction::CheckConflict {
+                            left: dest_register,
+                            right: value_register,
+                        },
+                        span,
+                    );
                     self.emit_instruction(
                         Instruction::Move {
                             dest: dest_register,

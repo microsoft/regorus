@@ -196,11 +196,7 @@ cases:
         want_result: high
       - note: different_values_conflict
         input: {a: true, c: true}
-        want_error: "conflicts"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
+        want_error: "conflict"
       - note: none
         input: {}
         want_result: "#undefined"
@@ -284,11 +280,7 @@ cases:
         want_result: {a: alice}
       - note: different_values
         input: {resources: [{name: a, owner: alice}, {name: a, owner: bob}]}
-        want_error: "multiple outputs"
-        divergence:
-          reason: The RVM keeps the last value for a conflicting partial-object key (microsoft/regorus#719).
-          engines: [rvm]
-          actual_result: {a: bob}
+        want_error: "outputs"
 
   - note: function_multiple_definitions
     description: A function with two definitions selected by its argument.
@@ -351,11 +343,7 @@ cases:
         want_result: 1
       - note: both_definitions
         input: {x: 10}
-        want_error: "multiple outputs"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
+        want_error: "outputs"
       - note: no_definition
         input: {x: -1}
         want_result: "#undefined"
