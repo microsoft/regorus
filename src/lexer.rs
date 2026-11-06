@@ -385,6 +385,9 @@ pub struct Token(pub TokenKind, pub Span);
 #[derive(Clone)]
 pub struct Lexer<'source> {
     source: Source,
+    // Shared across snapshots so speculative rollback cannot erase measured work.
+    #[cfg(test)]
+    pub(crate) token_count: alloc::sync::Arc<core::sync::atomic::AtomicUsize>,
     iter: Peekable<CharIndices<'source>>,
     line: u32,
     col: u32,
@@ -409,6 +412,8 @@ impl<'source> Lexer<'source> {
     pub fn new(source: &'source Source) -> Self {
         Self {
             source: source.clone(),
+            #[cfg(test)]
+            token_count: alloc::sync::Arc::default(),
             iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
@@ -891,6 +896,9 @@ impl<'source> Lexer<'source> {
     }
 
     fn next_token_with_lookahead(&mut self, lookahead: bool) -> Result<Token> {
+        #[cfg(test)]
+        self.token_count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.skip_ws()?;
 
         let (start, chr) = self.peek();

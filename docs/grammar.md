@@ -1,4 +1,27 @@
-Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior. 
+Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior.
+
+## Parsing nested expressions
+
+The parser limits recursive terms and query bodies to a shared depth of 32 and
+also checks the depth of the resulting expressions and queries. Plain terms such
+as `[[1]]` use three levels. A comprehension such as `[0 | true]` also opens a
+query body, so nested comprehensions reach the limit sooner than nested arrays.
+Excessive nesting returns an `expression nesting too deep` error, not
+`Undefined`. A rejected policy is not added to the engine, which remains usable.
+
+Before trying a comprehension or assignment, an iterative lookahead checks for
+`|`, `=`, or `:=` after the first reference. It skips nested delimiters and does
+not treat string contents as separators. For example, `[0 | [0 | true]]` must not
+parse each inner query again while checking whether the outer expression is an
+assignment. The scan stops at the reference boundary rather than reading all
+later statements, keeping long sequences of shallow statements inexpensive.
+
+This lookahead does not change the grammar or depth limits. In particular,
+parenthesized string indices in calls (`f[("k")](1)`) and multiline unary
+unification (`-` followed on the next line by `1 = -1`) remain supported.
+Depth errors and typed resource-limit errors are preserved across parsing
+fallbacks. These limits are separate from host `Value` limits and RVM rule-call
+limits; they are not a guarantee for arbitrary native stack sizes.
 
 ```ebnf
 

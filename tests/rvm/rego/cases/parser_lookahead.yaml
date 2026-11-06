@@ -1,0 +1,53 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: parser-lookahead/nested-bare-comprehensions
+    modules:
+      - |
+        package probe
+        arrays := [0 | [0 | [0 | true]]]
+        sets := {0 | {0 | {0 | true}}}
+        objects := {"k": 0 | {"k": 0 | {"k": 0 | true}}}
+        answer := [arrays, sets, objects]
+    query: data.probe.answer
+    want_result: [[0], {"set!": [0]}, {"k": 0}]
+
+  - note: parser-lookahead/assignment-and-comprehension-heads
+    modules:
+      - |
+        package probe
+        f.k(x) := x
+        valid := result if {
+          -
+          1 = -1
+          f[("k")](7) = result
+          [f[("k")](1) | true] = [1]
+          {"|": `:=`} = {"|": `:=`}
+        }
+    query: data.probe.valid
+    want_result: 7
+
+  - note: parser-lookahead/nested-empty-comprehension-is-defined
+    modules:
+      - |
+        package probe
+        answer := [0 | [0 | input.missing]]
+    query: data.probe.answer
+    want_result: [0]
+
+  - note: parser-lookahead/undefined-body-produces-no-elements
+    modules:
+      - |
+        package probe
+        answer := [0 | input.missing]
+    query: data.probe.answer
+    want_result: []
+
+  - note: parser-lookahead/false-is-defined
+    modules:
+      - |
+        package probe
+        answer := [false | true]
+    query: data.probe.answer
+    want_result: [false]
