@@ -10,21 +10,47 @@ use serde::de::{Deserialize, Deserializer, Error as _, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap as _, Serializer};
 
 use super::Object;
-use crate::value::Value;
+use crate::value::{
+    serialization_child_budget, SerializeWithBudget, Value, MAX_SERIALIZATION_CONTAINERS,
+};
 
 impl Serialize for Object {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        SerializeWithBudget {
+            value: self,
+            remaining: MAX_SERIALIZATION_CONTAINERS,
+            limit_exceeded: None,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl Serialize for SerializeWithBudget<'_, Object> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::Error;
-        let mut map = serializer.serialize_map(Some(self.len()))?;
+        let remaining =
+            serialization_child_budget::<S::Error>(self.remaining, self.limit_exceeded)?;
+        let mut map = serializer.serialize_map(Some(self.value.len()))?;
         // Sorted iteration: canonical JSON.
-        for (k, v) in self.iter_sorted() {
+        for (k, v) in self.value.iter_sorted() {
+            let value = SerializeWithBudget {
+                value: v,
+                remaining,
+                limit_exceeded: self.limit_exceeded,
+            };
             match *k {
-                Value::String(_) => map.serialize_entry(k, v)?,
+                Value::String(_) => map.serialize_entry(
+                    &SerializeWithBudget {
+                        value: k,
+                        remaining,
+                        limit_exceeded: self.limit_exceeded,
+                    },
+                    &value,
+                )?,
                 _ => {
-                    // Non-string keys are stringified via serde_json::to_string
-                    // so the resulting JSON has valid string keys.
-                    let key_str = serde_json::to_string(k).map_err(Error::custom)?;
-                    map.serialize_entry(&key_str, v)?;
+                    // Non-string keys retain their compact JSON string encoding.
+                    let key_str = k.json_string(false).map_err(Error::custom)?;
+                    map.serialize_entry(&key_str, &value)?;
                 }
             }
         }

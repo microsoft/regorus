@@ -135,7 +135,10 @@ impl AliasRegistry {
 
         for alias in &manifest.aliases {
             let suffix = if alias.name.len() > ns_prefix.len()
-                && alias.name[..ns_prefix.len()].eq_ignore_ascii_case(&ns_prefix)
+                && alias
+                    .name
+                    .get(..ns_prefix.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(&ns_prefix))
             {
                 &alias.name[ns_prefix.len()..]
             } else {
@@ -147,7 +150,9 @@ impl AliasRegistry {
             let mut best_len = 0;
             for rt in &known_rts {
                 if suffix.len() > rt.len()
-                    && suffix[..rt.len()].eq_ignore_ascii_case(rt)
+                    && suffix
+                        .get(..rt.len())
+                        .is_some_and(|s| s.eq_ignore_ascii_case(rt))
                     && suffix.as_bytes().get(rt.len()) == Some(&b'/')
                     && rt.len() > best_len
                 {
@@ -373,7 +378,10 @@ fn resolve_resource_type(fq_type: &str, aliases: &[types::AliasEntry]) -> Resolv
         // start with the resource type prefix.  In that case, take the
         // part after the last '/'.
         let short_name = if alias.name.len() > prefix.len()
-            && alias.name[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            && alias
+                .name
+                .get(..prefix.len())
+                .is_some_and(|s| s.eq_ignore_ascii_case(&prefix))
         {
             &alias.name[prefix.len()..]
         } else if let Some(rest) = alias
@@ -890,6 +898,84 @@ mod tests {
         let resolved = registry.get("Microsoft.Storage/storageAccounts").unwrap();
         assert_eq!(resolved.entries.len(), 1);
         assert!(resolved.entries.contains_key("supportshttpstrafficonly"));
+    }
+
+    #[test]
+    fn test_load_from_json_unicode_prefix_non_match() {
+        let json = r#"[{
+            "namespace": "T",
+            "resourceTypes": [{
+                "resourceType": "w",
+                "aliases": [
+                    {"name": "a😀x", "defaultPath": "properties.x"},
+                    {"name": "a😀/other", "defaultPath": "properties.other"},
+                    {"name": "T/w/é😀", "defaultPath": "properties.unicode"},
+                    {"name": "t/W/normal", "defaultPath": "properties.normal"}
+                ]
+            }]
+        }]"#;
+
+        let mut registry = AliasRegistry::new();
+        registry.load_from_json(json).unwrap();
+
+        let resolved = registry.get("T/w").unwrap();
+        assert_eq!(resolved.entries.len(), 4);
+        assert_eq!(resolved.entries["a😀x"].default_path, "properties.x");
+        assert_eq!(resolved.entries["other"].default_path, "properties.other");
+        assert_eq!(resolved.entries["é😀"].default_path, "properties.unicode");
+        assert_eq!(resolved.entries["normal"].default_path, "properties.normal");
+        assert_eq!(registry.resolve_alias("a😀x"), None);
+        assert_eq!(registry.resolve_alias("a😀/other"), Some("other"));
+        assert_eq!(registry.resolve_alias("T/w/é😀"), Some("é😀"));
+        assert_eq!(registry.resolve_alias("T/w/normal"), Some("normal"));
+    }
+
+    #[test]
+    fn test_data_manifest_unicode_namespace_prefix_non_match() {
+        let json = r#"{
+            "dataNamespace": "T",
+            "resourceTypeAliases": [{"resourceType": "w"}],
+            "aliases": [
+                {"name": "a😀x", "paths": [{"path": "properties.invalid"}]},
+                {"name": "T/w/normal", "paths": [{"path": "properties.normal"}]},
+                {"name": "t/W/é😀", "paths": [{"path": "properties.unicode"}]}
+            ]
+        }"#;
+
+        let mut registry = AliasRegistry::new();
+        registry.load_data_policy_manifest_json(json).unwrap();
+
+        let resolved = registry.get("T/w").unwrap();
+        assert_eq!(resolved.entries.len(), 2);
+        assert_eq!(resolved.entries["normal"].default_path, "properties.normal");
+        assert_eq!(resolved.entries["é😀"].default_path, "properties.unicode");
+        assert_eq!(registry.resolve_alias("a😀x"), None);
+        assert_eq!(registry.resolve_alias("T/w/normal"), Some("normal"));
+        assert_eq!(registry.resolve_alias("T/w/é😀"), Some("é😀"));
+    }
+
+    #[test]
+    fn test_data_manifest_unicode_resource_type_prefix_non_match() {
+        let json = r#"{
+            "dataNamespace": "T",
+            "resourceTypeAliases": [{"resourceType": "www"}],
+            "aliases": [
+                {"name": "T/a😀x", "paths": [{"path": "properties.invalid"}]},
+                {"name": "T/www/normal", "paths": [{"path": "properties.normal"}]},
+                {"name": "t/WWW/é😀", "paths": [{"path": "properties.unicode"}]}
+            ]
+        }"#;
+
+        let mut registry = AliasRegistry::new();
+        registry.load_data_policy_manifest_json(json).unwrap();
+
+        let resolved = registry.get("T/www").unwrap();
+        assert_eq!(resolved.entries.len(), 2);
+        assert_eq!(resolved.entries["normal"].default_path, "properties.normal");
+        assert_eq!(resolved.entries["é😀"].default_path, "properties.unicode");
+        assert_eq!(registry.resolve_alias("T/a😀x"), None);
+        assert_eq!(registry.resolve_alias("T/www/normal"), Some("normal"));
+        assert_eq!(registry.resolve_alias("T/www/é😀"), Some("é😀"));
     }
 
     #[test]

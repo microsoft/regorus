@@ -435,6 +435,17 @@ pub axiom fn axiom_bigint_not_spec(value: BigInt)
 
 /// Bitwise shifting
 
+// An owned left shift multiplies the signed integer by 2^shift.
+pub axiom fn axiom_bigint_obeys_shl_spec()
+    ensures
+        <BigInt as vstd::std_specs::ops::ShlSpec<usize>>::obeys_shl_spec(),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShlSpec<usize>>::shl_req(value, shift),
+        forall|value: BigInt, shift: usize| #[trigger]
+            <BigInt as vstd::std_specs::ops::ShlSpec<usize>>::shl_spec(value, shift)@ ==
+            value@ * pow2(shift as nat) as int,
+;
+
 // This axiom says that BigInt supports the expected semantics for
 // core::ops::ShrAssign, i.e., `>>=`. That is, for any BigInt 'a' and
 // any shift amount `u: usize`, `a >>= u` causes the resulting `a@` to

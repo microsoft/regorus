@@ -26,6 +26,15 @@ use vstd::arithmetic::power2::pow2;
 use vstd::float::*;
 use vstd::std_specs::cmp::PartialEqSpec;
 
+pub assume_specification[ Ordering::reverse ](ordering: Ordering) -> (result: Ordering)
+    ensures
+        result == match ordering {
+            Ordering::Less => Ordering::Greater,
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => Ordering::Less,
+        },
+;
+
 pub assume_specification[ <Number as Clone>::clone ](n: &Number) -> (res: Number)
     ensures
         res@ == n@,
@@ -75,41 +84,6 @@ pub open spec fn normalize_float(value: f64) -> NumberView
 //
 // A finite binary64 value is exactly `sign * significand * 2^exponent`. Comparing that
 // scaled-integer form with exact integers preserves all finite distinctions.
-
-// Exponent field of an f64 magnitude (bits 52..=62). `to_bits_abs_spec` has already cleared
-// the sign bit.
-pub open spec fn f64_biased_exponent(f: f64) -> int
-{
-    (f.to_bits_abs_spec() >> 52) as int
-}
-
-// Fraction field of an f64 magnitude (bits 0..=51).
-pub open spec fn f64_fraction(f: f64) -> int
-{
-    (f.to_bits_abs_spec() & 0x000f_ffff_ffff_ffff) as int
-}
-
-// Integer significand scaled by 2^52 for a finite binary64 value.
-pub open spec fn f64_finite_significand(f: f64) -> int
-{
-    if f64_biased_exponent(f) == 0 {
-        f64_fraction(f)
-    } else {
-        f64_fraction(f) + pow2(52)
-    }
-}
-
-// Exponent paired with `f64_finite_significand`. For a finite value,
-// `|f| == f64_finite_significand(f) * 2^f64_finite_exponent(f)`. The normal-value
-// offset is 1023 + 52 = 1075 because the significand is scaled by 2^52.
-pub open spec fn f64_finite_exponent(f: f64) -> int
-{
-    if f64_biased_exponent(f) == 0 {
-        -1074
-    } else {
-        f64_biased_exponent(f) - 1075
-    }
-}
 
 // Compare `l_sign * l_magnitude * 2^l_exponent` with `r_sign * r_magnitude * 2^r_exponent`.
 // Scaling both sides to the smaller common exponent keeps the comparison integral and exact.

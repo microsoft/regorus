@@ -179,7 +179,8 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                self.set_register(dest, Value::Bool(a == b))?;
+                let result = self.compare_registers(left, right, true)?.is_eq();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             Ne { dest, left, right } => {
@@ -191,7 +192,8 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                self.set_register(dest, Value::Bool(a != b))?;
+                let result = !self.compare_registers(left, right, true)?.is_eq();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             Lt { dest, left, right } => {
@@ -206,13 +208,15 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
                 }
 
-                self.set_register(dest, Value::Bool(a < b))?;
+                let result = self.compare_registers(left, right, false)?.is_lt();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             Le { dest, left, right } => {
@@ -227,13 +231,15 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
                 }
 
-                self.set_register(dest, Value::Bool(a <= b))?;
+                let result = self.compare_registers(left, right, false)?.is_le();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             Gt { dest, left, right } => {
@@ -248,13 +254,15 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
                 }
 
-                self.set_register(dest, Value::Bool(a > b))?;
+                let result = self.compare_registers(left, right, false)?.is_gt();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             Ge { dest, left, right } => {
@@ -269,13 +277,15 @@ impl RegoVM {
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
                     return Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={a:?}, right={b:?})"
+                            "#undefined: cannot compare values of different types (left={}, right={})",
+                            a.summary(), b.summary()
                         ),
                         pc: self.pc,
                     });
                 }
 
-                self.set_register(dest, Value::Bool(a >= b))?;
+                let result = self.compare_registers(left, right, false)?.is_ge();
+                self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
             }
             And { dest, left, right } => {
@@ -294,7 +304,9 @@ impl RegoVM {
                     }
                     _ => Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: logical AND expects booleans (left={left_value:?}, right={right_value:?})"
+                            "#undefined: logical AND expects booleans (left={}, right={})",
+                            left_value.summary(),
+                            right_value.summary()
                         ),
                         pc: self.pc,
                     }),
@@ -316,7 +328,9 @@ impl RegoVM {
                     }
                     _ => Err(VmError::ArithmeticError {
                         message: alloc::format!(
-                            "#undefined: logical OR expects booleans (left={left_value:?}, right={right_value:?})"
+                            "#undefined: logical OR expects booleans (left={}, right={})",
+                            left_value.summary(),
+                            right_value.summary()
                         ),
                         pc: self.pc,
                     }),
@@ -335,7 +349,9 @@ impl RegoVM {
             AssertEq { left, right } => {
                 let a = self.get_register(left)?;
                 let b = self.get_register(right)?;
-                let passed = a != &Value::Undefined && b != &Value::Undefined && a == b;
+                let passed = a != &Value::Undefined
+                    && b != &Value::Undefined
+                    && self.compare_registers(left, right, true)?.is_eq();
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -729,21 +745,7 @@ impl RegoVM {
                 collection,
                 value,
             } => {
-                let value_to_check = self.get_register(value)?;
-                let collection_value = self.get_register(collection)?;
-
-                let result = match *collection_value {
-                    Value::Set(ref set_elements) => {
-                        Value::Bool(set_elements.contains(value_to_check))
-                    }
-                    Value::Array(ref array_items) => {
-                        Value::Bool(array_items.contains(value_to_check))
-                    }
-                    Value::Object(ref object_fields) => {
-                        Value::Bool(object_fields.values().any(|v| v == value_to_check))
-                    }
-                    _ => Value::Bool(false),
-                };
+                let result = Value::Bool(self.contains_registers(collection, value)?);
 
                 self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)

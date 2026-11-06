@@ -88,14 +88,7 @@ static bool test_registered_host_await_wide_stride() {
                        "echo") ||
         !expect_ffi_ok(regorus_rvm_get_host_await_argument(vm.get()),
                        "get registered HostAwait argument",
-                       R"json([
-  "first",
-  {
-    "nested": [
-      2
-    ]
-  }
-])json") ||
+                       R"json(["first",{"nested":[2]}])json") ||
         !expect_ffi_ok(regorus_rvm_resume(vm.get(), "123", true),
                        "resume registered HostAwait program",
                        "123")) {

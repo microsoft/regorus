@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 mod arithmetic;
+mod comparison;
 mod comprehension;
 mod context;
 mod dispatch;

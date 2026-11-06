@@ -282,15 +282,15 @@ fn regex_template_match(
             return Ok(Value::Undefined);
         }
         // Match precesing literal (if any)
-        if template[0..start] != value[0..start] {
+        if value.get(..start) != Some(&template[..start]) {
             return Ok(Value::Bool(false));
         }
 
         // Fetch pattern, excluding delimiters.
-        let re = compile_regex_for_builtin(
-            params[0].span(),
-            &template[start + delimiter_start.len()..end],
-        )?;
+        let Some(pattern) = template.get(start + delimiter_start.len()..end) else {
+            return Ok(Value::Undefined);
+        };
+        let re = compile_regex_for_builtin(params[0].span(), pattern)?;
 
         // Skip preceding literal in value.
         value = &value[start..];

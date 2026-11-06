@@ -744,7 +744,8 @@ impl RegoVM {
                         vm.ffi_output_start_usage_for_test = limits::current_memory_budget_usage()
                             .map(|usage| usage.requested_bytes());
                     }
-                    let json = value.to_json_str().map_err(VmError::from)?;
+                    let json = value
+                        .to_json_str_with_checkpoint(&mut || vm.check_initial_memory_limit())?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
                         message: String::from("RVM JSON result contained an interior NUL byte"),
                         pc: vm.pc,
@@ -797,7 +798,8 @@ impl RegoVM {
                         vm.ffi_output_start_usage_for_test = limits::current_memory_budget_usage()
                             .map(|usage| usage.requested_bytes());
                     }
-                    let json = value.to_json_str().map_err(VmError::from)?;
+                    let json = value
+                        .to_json_str_with_checkpoint(&mut || vm.check_initial_memory_limit())?;
                     let output = CString::new(json).map_err(|_| VmError::Internal {
                         message: String::from("RVM JSON result contained an interior NUL byte"),
                         pc: vm.pc,
@@ -939,7 +941,15 @@ impl RegoVM {
     }
 
     pub(super) fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
-        if !self.execution_timer.accumulate(work_units) {
+        Self::tick_execution_timer(&mut self.execution_timer, self.pc, work_units)
+    }
+
+    pub(super) fn tick_execution_timer(
+        timer: &mut ExecutionTimer,
+        pc: usize,
+        work_units: u32,
+    ) -> Result<()> {
+        if !timer.accumulate(work_units) {
             return Ok(());
         }
 
@@ -947,23 +957,20 @@ impl RegoVM {
             return Ok(());
         };
 
-        self.execution_timer
-            .check_now(now)
-            .map_err(|err| match err {
-                LimitError::TimeLimitExceeded { elapsed, limit } => VmError::TimeLimitExceeded {
-                    elapsed,
-                    limit,
-                    pc: self.pc,
-                },
-                LimitError::MemoryLimitExceeded { usage, limit } => VmError::MemoryLimitExceeded {
-                    usage,
-                    limit,
-                    pc: self.pc,
-                },
-                LimitError::RegexSizeLimitExceeded { limit } => {
-                    VmError::RegexSizeLimitExceeded { limit, pc: self.pc }
-                }
-            })
+        timer.check_now(now).map_err(|err| match err {
+            LimitError::TimeLimitExceeded { elapsed, limit } => {
+                VmError::TimeLimitExceeded { elapsed, limit, pc }
+            }
+            LimitError::MemoryLimitExceeded { usage, limit } => {
+                VmError::MemoryLimitExceeded { usage, limit, pc }
+            }
+            LimitError::RegexSizeLimitExceeded { limit } => {
+                VmError::RegexSizeLimitExceeded { limit, pc }
+            }
+            LimitError::SerializationDepthExceeded { limit } => {
+                VmError::SerializationDepthExceeded { limit, pc }
+            }
+        })
     }
 
     pub(super) fn snapshot_execution_timer_on_suspend(&mut self) {
