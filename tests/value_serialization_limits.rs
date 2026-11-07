@@ -6,6 +6,116 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const LIMIT: usize = 64;
 
+#[cfg(feature = "azure_policy")]
+#[test]
+fn semantic_formatting_keeps_scalar_and_container_conventions() {
+    for input in [
+        Value::Null,
+        Value::Bool(true),
+        Value::Bool(false),
+        Value::from(" unquoted \"text\" "),
+        Value::from(1.5_f64),
+        Value::from(vec![Value::from(" a\nb "), Value::Bool(true)]),
+        Value::from(BTreeSet::from([Value::Null, Value::Bool(true)])),
+        Value::from(BTreeMap::from([(
+            Value::from(vec![Value::Null]),
+            Value::Bool(true),
+        )])),
+    ] {
+        let ordinary = match &input {
+            Value::String(s) => s.to_string(),
+            _ => input.to_json_str_compact().unwrap(),
+        };
+        let formatted = match &input {
+            Value::Null => String::new(),
+            Value::Bool(true) => "True".into(),
+            Value::Bool(false) => "False".into(),
+            _ => ordinary.clone(),
+        };
+        for (expression, expected) in [
+            ("azure.policy.fn.string(input)", ordinary.clone()),
+            (r#"azure.policy.fn.format("{0}", input)"#, formatted),
+            (r#"azure.policy.fn.join([input], ",")"#, ordinary),
+        ] {
+            for strict in [false, true] {
+                let mut engine = Engine::new();
+                engine.set_strict_builtin_errors(strict);
+                engine.set_input(input.clone());
+                let results = engine.eval_query(expression.into(), false).unwrap();
+                assert_eq!(
+                    results.result[0].expressions[0].value,
+                    Value::from(expected.clone())
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn iterative_query_json_preserves_serde_bytes_and_omit_empty_fields() {
+    use regorus::{Expression, Location, QueryResult, QueryResults, Rc};
+    for value in [
+        Value::Null,
+        Value::Bool(true),
+        Value::Undefined,
+        Value::from("a\"\\\n\r\t\0"),
+        Value::from(1.5_f64),
+        Value::from(f64::NAN),
+        Value::from_numeric_string("1234567890123456789012345678901234567890").unwrap(),
+        Value::from(vec![Value::Null, Value::Bool(false)]),
+        Value::from(BTreeSet::from([Value::Null, Value::Bool(true)])),
+        Value::from(BTreeMap::from([(
+            Value::from(vec![Value::Null]),
+            Value::Undefined,
+        )])),
+        nested(LIMIT, 3),
+    ] {
+        assert_eq!(
+            value.to_json_str_compact().unwrap(),
+            serde_json::to_string(&value).unwrap()
+        );
+        for bindings in [Value::new_object(), Value::Null, value.clone()] {
+            let results = QueryResults {
+                result: vec![
+                    QueryResult {
+                        expressions: vec![
+                            Expression {
+                                value: value.clone(),
+                                text: Rc::from("input\n\"escaped\"\\\0"),
+                                location: Location {
+                                    row: u32::MAX,
+                                    col: 2,
+                                },
+                            },
+                            Expression {
+                                value: Value::Bool(true),
+                                text: Rc::from("true"),
+                                location: Location { row: 3, col: 1 },
+                            },
+                        ],
+                        bindings,
+                    },
+                    QueryResult::default(),
+                ],
+            };
+            assert_eq!(
+                results.to_json_str().unwrap(),
+                serde_json::to_string_pretty(&results).unwrap()
+            );
+        }
+    }
+    assert_eq!(QueryResults::default().to_json_str().unwrap(), "{}");
+    for query in ["input", "x := input", "x = [1,2,3][_]", "true; false"] {
+        let mut engine = Engine::new();
+        engine.set_input(nested(3, 3));
+        let results = engine.eval_query(query.into(), false).unwrap();
+        assert_eq!(
+            results.to_json_str().unwrap(),
+            serde_json::to_string_pretty(&results).unwrap()
+        );
+    }
+}
+
 fn nested(depth: usize, kind: usize) -> Value {
     nested_with_leaf(depth, kind, Value::Null)
 }
@@ -121,6 +231,70 @@ fn interpreter_function_alternatives_preserve_resource_errors() {
                 engine.set_input(Value::Null);
                 assert!(engine.eval_rule("data.test.p".into()).is_ok());
             }
+        }
+    }
+}
+
+#[test]
+fn interpreter_function_with_replacements_preserve_resource_errors() {
+    for strict in [false, true] {
+        for expression in marshal_expressions() {
+            let rules = [
+                "p := value if { value := f(0) with f as replacement }",
+                "p := true if { not f(0) with f as replacement }",
+                "default p := \"fallback\"\np := value if { value := f(0) with f as replacement }",
+                "p := value if { value := f(0) with f as replacement } else := \"fallback\"",
+                "h(x) := true if { true with upper as replacement }\nh(x) := true\np := h(input)",
+                "p := value if { value := f(0) with f as 7 with f as replacement }",
+            ];
+            for rule in rules.into_iter().map(str::to_string).chain([format!(
+                "h(x) := true if {{ true with upper as {} }}\nh(x) := true\np := h(input)",
+                expression.replace("input", "x")
+            )]) {
+                let mut engine = engine(
+                    format!(
+                        "package test\nf(x) := true\nhealthy := f(1)\nreplacement := {expression}\n{rule}"
+                    ),
+                    strict,
+                    nested(LIMIT + 1, 3),
+                );
+                let error = engine.eval_rule("data.test.p".into()).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<LimitError>(),
+                    Some(&LimitError::SerializationDepthExceeded { limit: LIMIT }),
+                    "{strict}: {expression}: {rule}: {error:?}"
+                );
+                assert_eq!(
+                    engine.eval_rule("data.test.healthy".into()).unwrap(),
+                    Value::Bool(true)
+                );
+                engine.set_input(Value::Null);
+                assert!(engine.eval_rule("data.test.p".into()).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn interpreter_function_with_replacements_keep_function_and_type_error_semantics() {
+    for strict in [false, true] {
+        for (replacement, expected) in [
+            ("g", Value::from("VALUE")),
+            ("\"override\"", Value::from("override")),
+            ("invalid", Value::Undefined),
+        ] {
+            let mut engine = engine(
+                format!(
+                    "package test\nf(x) := x\ng(x) := upper(x)\ninvalid := upper(0)\np := value if {{ value := f(\"value\") with f as {replacement} }}"
+                ),
+                strict,
+                Value::Null,
+            );
+            assert_eq!(
+                engine.eval_rule("data.test.p".into()).unwrap(),
+                expected,
+                "{strict}: {replacement}"
+            );
         }
     }
 }

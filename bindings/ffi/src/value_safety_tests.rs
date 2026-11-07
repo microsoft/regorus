@@ -3,11 +3,91 @@
 
 use super::*;
 use crate::common::regorus_result_drop;
+use crate::native_depth_support;
 use core::ffi::CStr;
 use std::ffi::CString;
 
-#[path = "../../../tests/native_depth_support/mod.rs"]
-mod native_depth_support;
+#[test]
+#[cfg_attr(miri, ignore)]
+fn host_await_arguments_on_exact_1_mib_stack() {
+    if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+        native_depth_support::run_in_subprocess(
+            "rvm::value_safety_tests::host_await_arguments_on_exact_1_mib_stack",
+        );
+        return;
+    }
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            let mut engine = regorus::Engine::new();
+            engine
+                .add_policy(
+                    "echo.rego".into(),
+                    "package echo\nresult := echo(input)".into(),
+                )
+                .unwrap();
+            let policy = engine
+                .compile_with_entrypoint(&"data.echo.result".into())
+                .unwrap();
+            let program = Compiler::compile_from_policy_with_host_await(
+                &policy,
+                &["data.echo.result"],
+                &[("echo", 1)],
+            )
+            .unwrap();
+            for depth in [65, 512] {
+                let input = (0..depth).fold(Value::from("\"\\\n\r\t\0"), |child, _| {
+                    Value::from(vec![child])
+                });
+                let expected = Value::from(vec![input.clone()])
+                    .to_json_str_compact()
+                    .unwrap();
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(ExecutionMode::Suspendable);
+                vm.set_input(input);
+                vm.execute().unwrap();
+                let handle = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+                for _ in 0..2 {
+                    let result = regorus_rvm_get_host_await_argument(handle);
+                    assert_eq!(result.status, RegorusStatus::Ok);
+                    assert!(result.error_message.is_null());
+                    assert!(!result.output.is_null());
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(result.output) }.to_str().unwrap(),
+                        expected
+                    );
+                    regorus_result_drop(result);
+                }
+                unsafe { &*handle }
+                    .try_write()
+                    .unwrap()
+                    .resume(Some(Value::Bool(true)))
+                    .unwrap();
+                let finished = regorus_rvm_get_host_await_argument(handle);
+                assert_eq!(finished.status, RegorusStatus::Ok);
+                assert!(finished.output.is_null());
+                regorus_result_drop(finished);
+                {
+                    let vm = unsafe { &*handle };
+                    let mut guard = vm.try_write().unwrap();
+                    guard.set_input(Value::Null);
+                    guard.execute().unwrap();
+                }
+                let healthy = regorus_rvm_get_host_await_argument(handle);
+                assert_eq!(healthy.status, RegorusStatus::Ok);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(healthy.output) }.to_bytes(),
+                    b"[null]"
+                );
+                regorus_result_drop(healthy);
+                regorus_rvm_drop(handle);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
 
 #[test]
 #[cfg_attr(miri, ignore)]

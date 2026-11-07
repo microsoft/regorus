@@ -85,7 +85,9 @@ errors remain errors in strict and non-strict execution, including resumed
 segments, which publish terminal error state and release execution values.
 Traversal work counts toward the existing timer's `check_interval`, not the
 instruction count. The deadline is not restarted for each comparison.
-Equality retains its length shortcuts. Equality and ordering both checkpoint
+Equality retains length checks at every nested container, including direct
+Array/Set/Object equality and comparisons with resource checks disabled.
+Equality and ordering both checkpoint
 before skipping pointer-identical strings and containers, including shared DAGs.
 With allocator limits enabled, traversal also checks the active execution budget
 and global memory ceiling while scratch storage is live, even without a timer.
@@ -110,10 +112,11 @@ before execution: lifting a memory limit lets the same VM run a valid program
 without loading it again. A successful retry clears the saved error; a retry
 can still discover an actual depth violation.
 
-Resource-checked set membership uses a sorted scan rather than B-tree lookup,
-since a B-tree comparator cannot return a resource error. This is O(n) in set
-size when a timer or applicable memory limit is enabled. Unchecked membership
-retains the native lookup.
+With memory limits but no timer, scalar set membership retains native O(log n)
+B-tree lookup, checking limits before and after the lookup. Scalar probes cannot
+descend into stored containers. Timed membership and resource-checked compound
+probes use a sorted O(n) scan, since a B-tree comparator cannot return a resource
+error mid-traversal. Unchecked membership retains the native lookup.
 Other implicit B-tree comparisons remain infallible: iterative Value traits
 prevent nesting-dependent stack growth but do not checkpoint the execution timer.
 Scalar number comparison is also an indivisible checkpoint unit. This is not
@@ -124,7 +127,8 @@ checks here.
 Strict comparison and shared builtin argument diagnostics report structural
 summaries such as `Array(len=1)` or `String(bytes=4096)`, without rendering the
 contents. Public Value Debug and successful JSON output are unchanged.
-Display, `to_json_str`, and native returned-value JSON use the upstream iterative
+Display, `to_json_str`, `to_json_str_compact`, `QueryResults::to_json_str`, and
+native returned-value JSON use the upstream iterative
 encoder. It checks the global memory ceiling during traversal, buffer growth,
 scalar output, and indentation; native VM result formatting also checks the
 active execution budget before completing the output. These are cooperative
@@ -133,11 +137,24 @@ checks, not a physical-OOM guarantee. Generic Serde callbacks have a separate
 serialization also preserves the separate 32-container program limit for
 literals, rule trees, and annotations, returning an error rather than panicking.
 
-Serialization-budget errors retain typed resource identity through builtin
+The FFI query-result endpoint uses `QueryResults::to_json_str`, preserving the
+pretty-JSON field order and omit-empty rules while accepting deep expression
+values and bindings. Host-await argument output uses compact iterative JSON,
+preserving whitespace within strings, escaping, and the original payload shape.
+Neither endpoint inherits the generic Serde nesting budget.
+
+Serialization-budget errors, and memory-limit errors while encoding non-string
+object keys, retain typed resource identity through builtin
 calls and interpreter function evaluation, including default-function
-comprehensions. They cannot select a successful alternative, default, or
+comprehensions and function-valued `with` replacement expressions. They cannot
+select a successful alternative, default, or
 negated branch in non-strict mode. Ordinary builtin type errors keep their
 existing strict/non-strict semantics.
+Azure Policy `string`, `format`, and `join` use fallible compact JSON for
+container-to-string conversions. Formatting exhaustion is an error, not a
+successful string containing Display's diagnostic text. Public Display remains
+diagnostic on failure; successful JSON and scalar-conversion conventions remain
+unchanged.
 
 JSON schema and document conversion use checked compact JSON output and the
 bounded structural reader, including objects with non-string keys. Memory

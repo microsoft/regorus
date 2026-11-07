@@ -16,7 +16,7 @@ impl Serialize for Array {
         SerializeWithBudget {
             value: self,
             remaining: MAX_SERIALIZATION_CONTAINERS,
-            limit_exceeded: None,
+            limit_error: None,
         }
         .serialize(serializer)
     }
@@ -24,12 +24,11 @@ impl Serialize for Array {
 
 impl Serialize for SerializeWithBudget<'_, Array> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let remaining =
-            serialization_child_budget::<S::Error>(self.remaining, self.limit_exceeded)?;
+        let remaining = serialization_child_budget::<S::Error>(self.remaining, self.limit_error)?;
         serializer.collect_seq(self.value.iter().map(|value| SerializeWithBudget {
             value,
             remaining,
-            limit_exceeded: self.limit_exceeded,
+            limit_error: self.limit_error,
         }))
     }
 }
