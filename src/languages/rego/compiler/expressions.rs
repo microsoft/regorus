@@ -29,6 +29,8 @@ impl<'a> Compiler<'a> {
         span: &Span,
         assert_condition: bool,
     ) -> Result<Register> {
+        expr.check_depth()
+            .map_err(|error| CompilerError::from(error).at(span))?;
         if let Some(reg) = self.loop_expr_register_map.get(expr).cloned() {
             let result_reg = reg;
             if assert_condition {

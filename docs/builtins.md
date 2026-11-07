@@ -11,6 +11,12 @@ the corresponding feature. This is useful in Confidential Computing scenarios wh
 Currently many builtins are `baked-in`, i.e. there is no way to exclude them from the TCB.
 In future, each builtin will be associated with a feature (many builtins could be associated with the same feature).
 
+Structured-value operations preserve collection traversal order and use
+operation-local nesting budgets where needed. A nesting-limit error remains an
+error when strict builtin errors are disabled; ordinary builtin errors retain
+their existing Undefined/false behavior. These budgets do not restrict storing
+native `Value`s or using their iterative comparison and output methods.
+
 - [Comparison](https://www.openpolicyagent.org/docs/latest/policy-reference/#comparison)
   | Builtin                                                                                          | Feature |
   |--------------------------------------------------------------------------------------------------|---------|
@@ -192,6 +198,13 @@ In future, each builtin will be associated with a feature (many builtins could b
   | [yaml.is_valid](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlis_valid)                         | `yaml`      |
   | [yaml.marshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlmarshal)                           | `yaml`      |
   | [yaml.unmarshal](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-encoding-yamlunmarshal)                       | `yaml`      |
+
+  `json.marshal`, `json.marshal_with_options`, and `yaml.marshal` retain the
+  upstream 64-container serialization budget. For example, an input containing
+  65 nested arrays returns a typed serialization-depth error, even in non-strict
+  mode; it cannot select a default or make negation succeed. Native `Value`
+  formatting and `to_json_str()` remain iterative and do not use that callback
+  budget.
 
   `urlquery.encode` and `urlquery.encode_object` retain the
   `application/x-www-form-urlencoded` escaping used by Rust's `url` crate.

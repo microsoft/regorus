@@ -190,41 +190,10 @@ fn split(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
     Ok(Value::from(parts))
 }
 
-fn to_string(v: &Value, unescape: bool) -> String {
-    match v {
-        Value::Null => "null".to_owned(),
-        Value::Bool(b) => b.to_string(),
-        Value::String(s) if unescape => {
-            serde_json::to_string(s.as_ref()).unwrap_or(s.as_ref().to_string())
-        }
-        Value::String(s) => s.as_ref().to_string(),
-        Value::Number(n) => n.format_decimal(),
-        Value::Array(a) => {
-            "[".to_owned()
-                + &a.iter()
-                    .map(|e| to_string(e, true))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-                + "]"
-        }
-        Value::Set(s) => {
-            "{".to_owned()
-                + &s.iter()
-                    .map(|e| to_string(e, true))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-                + "}"
-        }
-        Value::Object(o) => {
-            "{".to_owned()
-                + &o.iter_sorted()
-                    .map(|(k, v)| to_string(k, true) + ": " + &to_string(v, true))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-                + "}"
-        }
-        Value::Undefined => "#undefined".to_string(),
-    }
+fn to_string(v: &Value, unescape: bool) -> Result<String> {
+    let mut output = String::new();
+    append_formatted_value(&mut output, v, unescape, 0, false)?;
+    Ok(output)
 }
 
 #[derive(Clone, Copy)]
@@ -670,54 +639,110 @@ fn append_value_string(
     unescape: bool,
     depth: usize,
 ) -> Result<()> {
-    if depth > 128 {
-        bail!("sprintf value nesting limit exceeded");
+    append_formatted_value(out, value, unescape, depth, true)
+}
+
+fn append_formatted_value(
+    out: &mut String,
+    value: &Value,
+    unescape: bool,
+    depth: usize,
+    quoted: bool,
+) -> Result<()> {
+    enum Frame<'a> {
+        Value(&'a Value, bool, usize),
+        Sequence(
+            Box<dyn Iterator<Item = &'a Value> + 'a>,
+            bool,
+            usize,
+            &'static str,
+        ),
+        Object(crate::value::Iter<'a>, bool, usize),
+        Text(&'static str),
     }
-    match value {
-        Value::Null => append_sprintf(out, "null")?,
-        Value::Bool(value) => append_sprintf(out, if *value { "true" } else { "false" })?,
-        Value::String(value) if unescape => append_go_quoted_body(out, value.as_ref(), false, '"')?,
-        Value::String(value) => append_sprintf(out, value.as_ref())?,
-        Value::Number(value) => append_decimal(out, value)?,
-        Value::Array(values) => {
-            append_sprintf(out, "[")?;
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    append_sprintf(out, ", ")?;
+    let mut pending = vec![Frame::Value(value, unescape, depth)];
+    while let Some(frame) = pending.pop() {
+        enforce_limit()?;
+        let (value, unescape, depth) = match frame {
+            Frame::Value(value, unescape, depth) => (value, unescape, depth),
+            Frame::Text(text) => {
+                append_sprintf(out, text)?;
+                continue;
+            }
+            Frame::Sequence(mut values, first, depth, close) => {
+                if let Some(value) = values.next() {
+                    if !first {
+                        append_sprintf(out, ", ")?;
+                    }
+                    pending.push(Frame::Sequence(values, false, depth, close));
+                    pending.push(Frame::Value(value, true, depth));
+                } else {
+                    append_sprintf(out, close)?;
                 }
-                append_value_string(out, value, true, depth + 1)?;
-                enforce_limit()?;
+                continue;
             }
-            append_sprintf(out, "]")?;
-        }
-        Value::Set(values) => {
-            if values.is_empty() {
-                return append_sprintf(out, "set()");
-            }
-            append_sprintf(out, "{")?;
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    append_sprintf(out, ", ")?;
+            Frame::Object(mut values, first, depth) => {
+                if let Some((key, value)) = values.next() {
+                    if !first {
+                        append_sprintf(out, ", ")?;
+                    }
+                    pending.push(Frame::Object(values, false, depth));
+                    pending.push(Frame::Value(value, true, depth));
+                    pending.push(Frame::Text(": "));
+                    pending.push(Frame::Value(key, true, depth));
+                } else {
+                    append_sprintf(out, "}")?;
                 }
-                append_value_string(out, value, true, depth + 1)?;
-                enforce_limit()?;
+                continue;
             }
-            append_sprintf(out, "}")?;
+        };
+        if quoted && depth > 128 {
+            return Err(anyhow::Error::new(crate::utils::depth::DepthExceeded(128))
+                .context("sprintf value nesting limit exceeded"));
         }
-        Value::Object(values) => {
-            append_sprintf(out, "{")?;
-            for (index, (key, value)) in values.iter_sorted().enumerate() {
-                if index > 0 {
-                    append_sprintf(out, ", ")?;
+        match value {
+            Value::Null => append_sprintf(out, "null")?,
+            Value::Bool(value) => append_sprintf(out, if *value { "true" } else { "false" })?,
+            Value::String(value) if unescape && quoted => {
+                append_go_quoted_body(out, value.as_ref(), false, '"')?
+            }
+            Value::String(value) if unescape => {
+                append_sprintf(out, &serde_json::to_string(value.as_ref())?)?
+            }
+            Value::String(value) => append_sprintf(out, value.as_ref())?,
+            Value::Number(value) => append_decimal(out, value)?,
+            Value::Array(values) => {
+                append_sprintf(out, "[")?;
+                pending.push(Frame::Sequence(
+                    Box::new(values.iter()),
+                    true,
+                    depth.saturating_add(1),
+                    "]",
+                ));
+            }
+            Value::Set(values) => {
+                if values.is_empty() && quoted {
+                    append_sprintf(out, "set()")?;
+                    continue;
                 }
-                append_value_string(out, key, true, depth + 1)?;
-                append_sprintf(out, ": ")?;
-                append_value_string(out, value, true, depth + 1)?;
-                enforce_limit()?;
+                append_sprintf(out, "{")?;
+                pending.push(Frame::Sequence(
+                    Box::new(values.iter()),
+                    true,
+                    depth.saturating_add(1),
+                    "}",
+                ));
             }
-            append_sprintf(out, "}")?;
+            Value::Object(values) => {
+                append_sprintf(out, "{")?;
+                pending.push(Frame::Object(
+                    values.iter_sorted(),
+                    true,
+                    depth.saturating_add(1),
+                ));
+            }
+            Value::Undefined => append_sprintf(out, "#undefined")?,
         }
-        Value::Undefined => append_sprintf(out, "#undefined")?,
     }
     enforce_limit()
 }
@@ -816,9 +841,9 @@ fn sprintf(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
         // https://pkg.go.dev/fmt
         match (verb, arg) {
             ('s', Value::String(sv)) => s += sv.as_ref(),
-            ('s', v) => s += &to_string(v, false),
+            ('s', v) => s += &to_string(v, false)?,
 
-            ('v', _) => s += &to_string(arg, false),
+            ('v', _) => s += &to_string(arg, false)?,
             ('t', Value::Bool(value)) => s += if *value { "true" } else { "false" },
             ('b', Value::Number(f)) if f.is_integer() => {
                 let (sign, v) = get_sign_value(f);

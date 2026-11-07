@@ -116,6 +116,7 @@ impl RegoVM {
     }
 
     pub(super) fn initialize_execution_state(&mut self) {
+        self.builtin_limit_exceeded = false;
         // Reset basic execution state
         self.executed_instructions = 0;
         self.pc = 0;
@@ -287,7 +288,8 @@ impl RegoVM {
     }
 
     /// Validate VM state consistency for debugging
-    pub(super) fn validate_vm_state(&self) -> Result<()> {
+    pub(super) fn validate_vm_state(&mut self) -> Result<()> {
+        self.validate_program_tree()?;
         // Check register bounds
         if self.registers.len() < self.base_register_count {
             return Err(VmError::RegisterCountBelowBase {
@@ -315,6 +317,53 @@ impl RegoVM {
         }
 
         Ok(())
+    }
+
+    pub(super) fn validate_program_tree(&mut self) -> Result<()> {
+        if matches!(
+            self.program_tree_error,
+            Some(crate::utils::depth::DepthCheckError::Limit(_))
+        ) {
+            self.program_tree_error = crate::utils::depth::check_value(
+                &self.program.rule_tree,
+                crate::rvm::program::Program::MAX_PATH_DEPTH,
+            )
+            .err();
+        }
+        match self.program_tree_error {
+            None => Ok(()),
+            Some(crate::utils::depth::DepthCheckError::Depth(_)) => {
+                Err(VmError::RuleDataConflict {
+                    message: alloc::format!(
+                        "rule tree exceeds supported nesting limit {}",
+                        crate::rvm::program::Program::MAX_PATH_DEPTH
+                    ),
+                    pc: self.pc,
+                })
+            }
+            Some(crate::utils::depth::DepthCheckError::Limit(error)) => Err(match error {
+                crate::LimitError::MemoryLimitExceeded { usage, limit } => {
+                    VmError::MemoryLimitExceeded {
+                        usage,
+                        limit,
+                        pc: self.pc,
+                    }
+                }
+                crate::LimitError::TimeLimitExceeded { elapsed, limit } => {
+                    VmError::TimeLimitExceeded {
+                        elapsed,
+                        limit,
+                        pc: self.pc,
+                    }
+                }
+                crate::LimitError::RegexSizeLimitExceeded { limit } => {
+                    VmError::RegexSizeLimitExceeded { limit, pc: self.pc }
+                }
+                crate::LimitError::SerializationDepthExceeded { limit } => {
+                    VmError::SerializationDepthExceeded { limit, pc: self.pc }
+                }
+            }),
+        }
     }
 }
 

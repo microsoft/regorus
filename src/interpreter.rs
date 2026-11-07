@@ -78,10 +78,117 @@ enum RuleValueMerge {
 
 type RuleValues = BTreeMap<Vec<Value>, (Value, Ref<Expr>)>;
 
+// A query's scheduled statement order is already computed by the compiler. These
+// cursors only replace the interpreter's recursive backtracking continuations;
+// expressions, nested queries and rule/function calls retain their native guard.
+#[derive(Clone)]
+struct StatementPosition<'a> {
+    stmts: &'a [&'a LiteralStmt],
+    loops: Option<Rc<Vec<HoistedLoop>>>,
+    next_loop: usize,
+}
+
+type StatementCursor = Box<dyn Iterator<Item = (Value, Value)>>;
+
+// Object/set search cursors compare structural keys while resuming. Snapshot
+// their shallow entries with checkpoints instead: borrowed iteration and the
+// resulting owned iterator do not compare or hash Values. Arrays need no copy.
+fn statement_cursor(
+    collection: Value,
+    checkpoint: &mut impl FnMut() -> Result<()>,
+) -> Result<StatementCursor> {
+    checkpoint()?;
+    let mut entries = Vec::new();
+    match collection {
+        Value::Array(items) => {
+            let mut index: usize = 0;
+            return Ok(Box::new(core::iter::from_fn(move || {
+                let value = items.get(index)?.clone();
+                let key = Value::from(index);
+                index = index.saturating_add(1);
+                Some((key, value))
+            })));
+        }
+        Value::Set(items) => {
+            let mut members = Vec::new();
+            for value in items.iter() {
+                checkpoint()?;
+                members.push(value.clone());
+                checkpoint()?;
+            }
+            return Ok(Box::new(
+                members.into_iter().map(|value| (value.clone(), value)),
+            ));
+        }
+        Value::Object(items) => {
+            for (key, value) in items.iter() {
+                checkpoint()?;
+                entries.push((key.clone(), value.clone()));
+                checkpoint()?;
+            }
+        }
+        _ => {}
+    }
+    Ok(Box::new(entries.into_iter()))
+}
+
+struct StatementLoop<'a> {
+    position: StatementPosition<'a>,
+    cursor: StatementCursor,
+    key_plan: Option<DestructuringPlan>,
+    value_plan: Option<DestructuringPlan>,
+    // Hoisted loops introduce a scope and a cached expression value. Some-in
+    // instead backtracks in its existing scope and keeps WITH active over its
+    // continuation. Keep these lifetimes distinct.
+    target: Option<ExprRef>,
+    previous_loop_value: Option<Value>,
+    saved_scope: Option<Scope>,
+    query_result: Option<QueryResult>,
+    saved_state: Option<State>,
+    started: bool,
+    success: bool,
+}
+
 // Path components in processed_paths are strings, and the ordinary processed marker uses
 // Undefined. This boolean key records an explicit data WITH replacement without colliding
 // with either.
 const EXPLICIT_DATA_WITH_OVERRIDE_MARKER: Value = Value::Bool(true);
+
+const MAX_NATIVE_EVALUATION_DEPTH: usize = 64;
+
+#[derive(Debug, thiserror::Error)]
+#[error("native evaluation nesting exceeds limit {MAX_NATIVE_EVALUATION_DEPTH}")]
+struct NativeEvaluationDepthExceeded;
+
+pub fn is_evaluation_limit_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<NativeEvaluationDepthExceeded>()
+        .is_some()
+        || error.downcast_ref::<crate::LimitError>().is_some()
+        || error
+            .downcast_ref::<crate::utils::depth::DepthExceeded>()
+            .is_some()
+}
+
+// Cleanup must not downgrade an existing fatal error. Conversely, a cleanup
+// limit is fatal even if evaluation produced only an ordinary error. Keep
+// secondary failures as context, including when evaluation itself succeeded.
+fn merge_statement_cleanup<T>(result: Result<T>, cleanup: Result<()>) -> Result<T> {
+    match (result, cleanup) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cleanup_error)) => {
+            let message = format!(
+                "evaluation failed: {error}; continuation cleanup failed: {cleanup_error:#}"
+            );
+            if !is_evaluation_limit_error(&error) && is_evaluation_limit_error(&cleanup_error) {
+                Err(cleanup_error.context(message))
+            } else {
+                Err(error.context(message))
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Interpreter {
@@ -120,6 +227,7 @@ pub struct Interpreter {
     processed_paths: Value,
     rule_values: RuleValues,
     active_rules: Vec<Ref<Rule>>,
+    native_evaluation_depth: usize,
     builtins_cache: BTreeMap<(&'static str, Vec<Value>), Value>,
     no_rules_lookup: bool,
     execution_timer: ExecutionTimer,
@@ -163,6 +271,7 @@ impl Clone for Interpreter {
 
             builtins_cache: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             contexts: Vec::default(),
             current_module_path: String::default(),
             current_module_index: 0,
@@ -241,6 +350,7 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -280,6 +390,7 @@ impl Interpreter {
             processed_paths: Value::new_object(),
             rule_values: BTreeMap::default(),
             active_rules: Vec::default(),
+            native_evaluation_depth: 0,
             builtins_cache: BTreeMap::default(),
             no_rules_lookup: false,
             traces: None,
@@ -310,6 +421,16 @@ impl Interpreter {
         if let Some(now) = monotonic_now() {
             self.execution_timer.start(now);
         }
+    }
+
+    fn with_native_depth<T>(&mut self, evaluate: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.native_evaluation_depth >= MAX_NATIVE_EVALUATION_DEPTH {
+            return Err(NativeEvaluationDepthExceeded.into());
+        }
+        self.native_evaluation_depth = self.native_evaluation_depth.saturating_add(1);
+        let result = evaluate(self);
+        self.native_evaluation_depth = self.native_evaluation_depth.saturating_sub(1);
+        result
     }
 
     fn execution_timer_tick(&mut self, work_units: u32) -> Result<()> {
@@ -820,6 +941,14 @@ impl Interpreter {
         plan: &DestructuringPlan,
         value: &Value,
     ) -> Result<Value> {
+        self.with_native_depth(|this| this.execute_destructuring_plan_impl(plan, value))
+    }
+
+    fn execute_destructuring_plan_impl(
+        &mut self,
+        plan: &DestructuringPlan,
+        value: &Value,
+    ) -> Result<Value> {
         self.check_execution_time()?;
         if value == &Value::Undefined {
             return Ok(Value::Undefined);
@@ -1008,158 +1137,6 @@ impl Interpreter {
         }
     }
 
-    fn eval_some_in(
-        &mut self,
-        _span: &Span,
-        _key_expr: &Option<ExprRef>,
-        _value_expr: &ExprRef,
-        collection: &ExprRef,
-        stmts: &[&LiteralStmt],
-    ) -> Result<bool> {
-        self.check_execution_time()?;
-        let scope_saved = self.current_scope()?.clone();
-        let mut count: usize = 0;
-
-        // Fetch the binding plan for this some..in expression
-        let module_idx = self.current_module_index;
-        let expr_idx = collection.as_ref().eidx();
-
-        let binding_plan = self
-            .loop_hoisting_table(module_idx)
-            .get_expr_binding_plan(module_idx, expr_idx)
-            .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
-
-        let Some(BindingPlan::SomeIn {
-            key_plan,
-            value_plan,
-            ..
-        }) = binding_plan.cloned()
-        else {
-            bail!("internal error: missing binding plan for some..in expression");
-        };
-
-        match self.eval_expr(collection)? {
-            Value::Array(a) => {
-                for (idx, value) in a.iter().enumerate() {
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    let mut success = if let Some(key_plan) = &key_plan {
-                        self.execute_destructuring_plan(key_plan, &Value::from(idx))?
-                            == Value::from(true)
-                    } else {
-                        true
-                    };
-
-                    // Execute value binding
-                    success = success
-                        && self.execute_destructuring_plan(&value_plan, value)?
-                            == Value::from(true);
-
-                    if !success {
-                        *self.current_scope_mut()? = scope_saved.clone();
-                        continue;
-                    }
-
-                    let mut should_break = false;
-                    if self.eval_stmts(stmts)? {
-                        count = count.saturating_add(1);
-                        if let Some(ctx) = self.contexts.last() {
-                            if ctx.early_return {
-                                should_break = true;
-                            }
-                        }
-                    }
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    if should_break {
-                        break;
-                    }
-                }
-            }
-            Value::Set(s) => {
-                for value in s.iter() {
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    let mut success = if let Some(key_plan) = &key_plan {
-                        self.execute_destructuring_plan(key_plan, value)? == Value::from(true)
-                    } else {
-                        true
-                    };
-
-                    // Execute value binding
-                    success = success
-                        && self.execute_destructuring_plan(&value_plan, value)?
-                            == Value::from(true);
-
-                    if !success {
-                        *self.current_scope_mut()? = scope_saved.clone();
-                        continue;
-                    }
-
-                    let mut should_break = false;
-                    if self.eval_stmts(stmts)? {
-                        count = count.saturating_add(1);
-                        if let Some(ctx) = self.contexts.last() {
-                            if ctx.early_return {
-                                should_break = true;
-                            }
-                        }
-                    }
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    if should_break {
-                        break;
-                    }
-                }
-            }
-
-            Value::Object(o) => {
-                for (key, value) in o.iter() {
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    let mut success = if let Some(key_plan) = &key_plan {
-                        self.execute_destructuring_plan(key_plan, key)? == Value::from(true)
-                    } else {
-                        true
-                    };
-
-                    // Execute value binding
-                    success = success
-                        && self.execute_destructuring_plan(&value_plan, value)?
-                            == Value::from(true);
-
-                    if !success {
-                        *self.current_scope_mut()? = scope_saved.clone();
-                        continue;
-                    }
-
-                    let mut should_break = false;
-                    if self.eval_stmts(stmts)? {
-                        count = count.saturating_add(1);
-                        if let Some(ctx) = self.contexts.last() {
-                            if ctx.early_return {
-                                should_break = true;
-                            }
-                        }
-                    }
-                    *self.current_scope_mut()? = scope_saved.clone();
-
-                    if should_break {
-                        break;
-                    }
-                }
-            }
-            Value::Undefined => (),
-            v => {
-                bail!(collection.span().error(
-                    format!("`some .. in collection` expects array/set/object. Got `{v}`").as_str()
-                ))
-            }
-        }
-
-        Ok(count > 0)
-    }
-
     fn make_expression_result(span: &Span, v: &Value) -> Expression {
         Expression {
             value: v.clone(),
@@ -1171,7 +1148,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_stmt_impl(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
+    fn eval_stmt_impl(&mut self, stmt: &LiteralStmt) -> Result<bool> {
         self.memory_check()?;
         self.check_execution_time()?;
         Ok(match &stmt.literal {
@@ -1270,21 +1247,7 @@ impl Interpreter {
                 }
                 true
             }
-            Literal::SomeIn {
-                span,
-                key,
-                value,
-                collection,
-            } => {
-                if let Some(ctx) = self.contexts.last_mut() {
-                    if let Some(result) = &mut ctx.result {
-                        result
-                            .expressions
-                            .push(Self::make_expression_result(span, &Value::Bool(true)));
-                    }
-                }
-                self.eval_some_in(span, key, value, collection, stmts)?
-            }
+            Literal::SomeIn { .. } => bail!("internal error: some-in requires a continuation"),
             Literal::Every {
                 span,
                 key,
@@ -1466,9 +1429,7 @@ impl Interpreter {
 
                     if target_is_function {
                         match self.eval_expr(&wm.r#as) {
-                            Err(error) if error.downcast_ref::<crate::LimitError>().is_some() => {
-                                return Err(error);
-                            }
+                            Err(error) if is_evaluation_limit_error(&error) => return Err(error),
                             Ok(v) if v != Value::Undefined => {
                                 // Function replaced by value.
                                 self.with_functions
@@ -1576,10 +1537,10 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_stmt(&mut self, stmt: &LiteralStmt, stmts: &[&LiteralStmt]) -> Result<bool> {
+    fn eval_stmt(&mut self, stmt: &LiteralStmt) -> Result<bool> {
         let (saved_state, skip_exec) = self.apply_with_modifiers(stmt)?;
         let r = if !skip_exec {
-            self.eval_stmt_impl(stmt, stmts)
+            self.eval_stmt_impl(stmt)
         } else {
             Ok(false)
         };
@@ -1596,53 +1557,25 @@ impl Interpreter {
         }
     }
 
-    fn eval_stmts_in_loop(
+    fn eval_loop_collection(
         &mut self,
-        stmts: &[&LiteralStmt],
-        loops: &[HoistedLoop],
-    ) -> Result<bool> {
-        self.memory_check()?;
-        self.check_execution_time()?;
-        if loops.is_empty() {
-            if let Some((first_stmt, tail_stmts)) = stmts.split_first() {
-                // Evaluate the current statement whose loop expressions have been hoisted.
-                if self.eval_stmt(first_stmt, tail_stmts)? {
-                    if !matches!(&first_stmt.literal, Literal::SomeIn { .. }) {
-                        self.eval_stmts(tail_stmts)
-                    } else {
-                        Ok(true)
-                    }
-                } else {
-                    Ok(false)
-                }
-            } else {
-                self.eval_stmts(stmts)
-            }
-        } else {
-            let (loop_info, loop_tail) = loops
-                .split_first()
-                .ok_or_else(|| anyhow!("internal error: expected loop info"))?;
-            let (first_stmt, _tail_stmts) = stmts
-                .split_first()
-                .ok_or_else(|| anyhow!("internal error: expected statements for loop"))?;
-            let mut result = false;
-
-            // Apply with modifiers before evaluating the loop expression.
-            let (saved_state, _) = self.apply_with_modifiers(first_stmt)?;
-
-            let collection_expr = Self::loop_collection_expr(loop_info).clone();
-            let loop_value = if let Expr::Call {
+        stmt: &LiteralStmt,
+        collection_expr: &ExprRef,
+    ) -> Result<Value> {
+        let (saved_state, _) = self.apply_with_modifiers(stmt)?;
+        // Include argument preparation in the captured result: no fallible exit
+        // after applying WITH may bypass restoration of the complete State.
+        let result = (|| {
+            if let Expr::Call {
                 span, fcn, params, ..
             } = collection_expr.as_ref()
             {
-                // Handle walk(obj, output_param)
                 let extra_arg = get_extra_arg(
-                    &collection_expr,
+                    collection_expr,
                     Some(self.current_module_path.as_str()),
                     &self.compiled_policy.functions,
                 );
-                // If there is an extra arg, ignore it while computing the loop value.
-                let params_slice: &[ExprRef] = if extra_arg.is_some() {
+                let params_slice = if extra_arg.is_some() {
                     let (_, prefix) = params
                         .split_last()
                         .ok_or_else(|| anyhow!("internal error: expected params"))?;
@@ -1650,180 +1583,106 @@ impl Interpreter {
                 } else {
                     params.as_slice()
                 };
-                self.eval_call_impl(span, &collection_expr, fcn, params_slice)?
+                self.eval_call_impl(span, collection_expr, fcn, params_slice)
             } else {
-                self.eval_expr(&collection_expr)?
-            };
-
-            // Restore with modifiers.
-            // TODO: Delay this restore so that the stmt doesn't have to apply with modifiers again.
-            self.restore_state(saved_state)?;
-
-            // If the loop's index variable h<as already been assigned a value
-            // (this can happen if the same index is used for two different collections),
-            // then evaluate statements only if the index applies to this collection.
-            if let Some(walk_plan) = self.get_walk_binding_plan(loop_info)? {
-                let loop_target_expr = Self::loop_assignment_expr(loop_info);
-                self.scopes.push(Scope::default());
-
-                let query_result = self.get_current_context()?.result.clone();
-
-                let mut walk_result = false;
-                match loop_value {
-                    Value::Array(items) => {
-                        for item in items.iter() {
-                            self.memory_check()?;
-                            self.set_loop_var_value(loop_target_expr, item.clone())?;
-
-                            if self.execute_destructuring_plan(&walk_plan, item)?
-                                == Value::from(true)
-                            {
-                                walk_result =
-                                    self.eval_stmts_in_loop(stmts, loop_tail)? || walk_result;
-                            }
-
-                            Self::clear_scope(self.current_scope_mut()?);
-                            if let Some(ctx) = self.contexts.last_mut() {
-                                ctx.result.clone_from(&query_result);
-                                if ctx.early_return {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Value::Undefined => (),
-                    other => {
-                        let span = Self::loop_span(loop_info);
-                        bail!(span
-                            .error(format!("walk expected array result, got `{other}`").as_str()));
-                    }
-                }
-
-                self.scopes.pop();
-                self.remove_loop_var_value(loop_target_expr);
-                return Ok(walk_result);
+                self.eval_expr(collection_expr)
             }
+        })();
+        self.restore_state(saved_state)?;
+        result
+    }
 
-            let index_expr = Self::loop_index_expr(loop_info);
-            if let Some(Expr::Var {
-                span: index_var, ..
-            }) = index_expr.map(|r| r.as_ref())
-            {
-                if let Some(idx) = self.lookup_local_var(&index_var.source_str()) {
-                    if loop_value[&idx] != Value::Undefined {
-                        result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
-                        return Ok(result);
-                    } else if idx != Value::Undefined {
-                        // The index is not valid for this collection.
-                        return Ok(false);
-                    }
-                }
-            }
-
-            let index_plan = if let Some(index) = index_expr {
-                let module_idx = self.current_module_index;
-                let expr_idx = index.as_ref().eidx();
-                let plan = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?;
-
-                match plan.cloned() {
-                    Some(BindingPlan::LoopIndex {
-                        destructuring_plan, ..
-                    }) => destructuring_plan,
-                    Some(other_plan) => {
-                        bail!("internal error: expected LoopIndex for loop index expression, got {:?}", other_plan);
-                    }
-                    None => {
-                        bail!("internal error: no binding plan found for loop index expression");
-                    }
-                }
-            } else {
-                bail!("internal error: no binding plan found for loop index expression");
-            };
-
-            // Create a new scope.
-            self.scopes.push(Scope::default());
-
-            let query_result = self.get_current_context()?.result.clone();
-            let loop_target_expr = Self::loop_assignment_expr(loop_info);
-            match loop_value {
-                Value::Array(items) => {
-                    for (idx, v) in items.iter().enumerate() {
-                        self.memory_check()?;
-                        self.set_loop_var_value(loop_target_expr, v.clone())?;
-
-                        if self.execute_destructuring_plan(&index_plan, &Value::from(idx))?
-                            == Value::from(true)
-                        {
-                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
-                        }
-
-                        Self::clear_scope(self.current_scope_mut()?);
-                        if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result.clone_from(&query_result);
-                            if ctx.early_return {
-                                break;
-                            }
-                        }
-                    }
-
-                    self.remove_loop_var_value(loop_target_expr);
-                }
-                Value::Set(items) => {
-                    for v in items.iter() {
-                        self.memory_check()?;
-                        self.set_loop_var_value(loop_target_expr, v.clone())?;
-
-                        // For sets, index is also the value.
-                        if self.execute_destructuring_plan(&index_plan, v)? == Value::from(true) {
-                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
-                        }
-
-                        Self::clear_scope(self.current_scope_mut()?);
-                        if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result.clone_from(&query_result);
-                            if ctx.early_return {
-                                break;
-                            }
-                        }
-                    }
-                    self.remove_loop_var_value(loop_target_expr);
-                }
-                Value::Object(obj) => {
-                    for (k, v) in obj.iter() {
-                        self.memory_check()?;
-                        self.set_loop_var_value(loop_target_expr, v.clone())?;
-                        // For objects, index is key.
-                        if self.execute_destructuring_plan(&index_plan, k)? == Value::from(true) {
-                            result = self.eval_stmts_in_loop(stmts, loop_tail)? || result;
-                        }
-
-                        Self::clear_scope(self.current_scope_mut()?);
-                        if let Some(ctx) = self.contexts.last_mut() {
-                            ctx.result.clone_from(&query_result);
-                            if ctx.early_return {
-                                break;
-                            }
-                        }
-                    }
-                    self.remove_loop_var_value(loop_target_expr);
-                }
-                Value::Undefined => {
-                    result = false;
-                }
-                _ => {
-                    // The item is not a collection.
-                    result = false;
-                }
-            }
-
-            self.scopes.pop();
-
-            // Return true if at least on iteration returned true
-            Ok(result)
+    fn reset_statement_iteration(&mut self, frame: &StatementLoop<'_>) -> Result<()> {
+        if let Some(scope) = &frame.saved_scope {
+            self.current_scope_mut()?.clone_from(scope);
+        } else {
+            Self::clear_scope(self.current_scope_mut()?);
+            self.get_current_context_mut()?
+                .result
+                .clone_from(&frame.query_result);
         }
+        Ok(())
+    }
+
+    fn next_statement_iteration(
+        &mut self,
+        frame: &mut StatementLoop<'_>,
+        branch_success: bool,
+    ) -> Result<bool> {
+        if frame.started {
+            frame.success |= branch_success;
+            self.reset_statement_iteration(frame)?;
+            if self.get_current_context()?.early_return
+                && (frame.saved_scope.is_none() || branch_success)
+            {
+                return Ok(false);
+            }
+        } else if let Some(scope) = &frame.saved_scope {
+            self.current_scope_mut()?.clone_from(scope);
+        }
+        loop {
+            self.memory_check()?;
+            self.check_execution_time()?;
+            let Some((key, value)) = frame.cursor.next() else {
+                return Ok(false);
+            };
+            if let Some(target) = &frame.target {
+                self.set_loop_var_value(target, value.clone())?;
+            }
+            let key_matches = match &frame.key_plan {
+                Some(plan) => self.execute_destructuring_plan(plan, &key)? == Value::Bool(true),
+                None => true,
+            };
+            let value_matches = key_matches
+                && match &frame.value_plan {
+                    Some(plan) => {
+                        self.execute_destructuring_plan(plan, &value)? == Value::Bool(true)
+                    }
+                    None => true,
+                };
+            if value_matches {
+                frame.started = true;
+                return Ok(true);
+            }
+            self.reset_statement_iteration(frame)?;
+        }
+    }
+
+    fn finish_statement_loop(&mut self, frame: StatementLoop<'_>) -> Result<()> {
+        let scope_result = if let Some(scope) = frame.saved_scope {
+            self.current_scope_mut().map(|current| *current = scope)
+        } else {
+            self.scopes
+                .pop()
+                .map(|_| ())
+                .ok_or_else(|| anyhow!("internal error: no statement loop scope to restore"))
+        };
+        let cache_result = if let Some(target) = frame.target {
+            if let Some(value) = frame.previous_loop_value {
+                self.set_loop_var_value(&target, value)
+            } else {
+                self.remove_loop_var_value(&target);
+                Ok(())
+            }
+        } else {
+            Ok(())
+        };
+        let state_result = self.restore_state(frame.saved_state);
+        merge_statement_cleanup(
+            merge_statement_cleanup(scope_result, cache_result),
+            state_result,
+        )
+    }
+
+    fn finish_statement_loops(
+        &mut self,
+        mut frames: Vec<StatementLoop<'_>>,
+        mut result: Result<bool>,
+    ) -> Result<bool> {
+        while let Some(frame) = frames.pop() {
+            result = merge_statement_cleanup(result, self.finish_statement_loop(frame));
+        }
+        result
     }
 
     fn eval_rule_ref(&mut self, rule_refr: &ExprRef) -> Result<Vec<Value>> {
@@ -1961,6 +1820,10 @@ impl Interpreter {
     }
 
     fn eval_output_expr_in_loop(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
+        self.with_native_depth(|this| this.eval_output_expr_in_loop_impl(loops))
+    }
+
+    fn eval_output_expr_in_loop_impl(&mut self, loops: &[HoistedLoop]) -> Result<bool> {
         self.check_execution_time()?;
         if loops.is_empty() {
             let (key_expr, output_expr) = self.get_exprs_from_context()?;
@@ -2235,84 +2098,238 @@ impl Interpreter {
     }
 
     fn eval_stmts(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
-        let mut eval_success = true;
+        self.with_native_depth(|this| this.eval_stmts_impl(stmts))
+    }
 
-        for (idx, stmt) in stmts.iter().enumerate() {
-            self.memory_check()?;
-
-            if !eval_success {
-                break;
-            }
-
-            // Get pre-computed hoisted loops from compilation phase
-            let loop_exprs: Vec<HoistedLoop> = match self
+    fn statement_position<'a>(
+        &self,
+        stmts: &'a [&'a LiteralStmt],
+    ) -> Result<StatementPosition<'a>> {
+        let loops = if let Some(stmt) = stmts.first() {
+            self
                 .loop_hoisting_table(self.current_module_index)
                 .get_statement_loops(self.current_module_index, stmt.sidx)
                 .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
-            {
-                Some(hoisted_loops) => {
-                    // Use pre-computed loops from compilation phase
-                    hoisted_loops.clone()
-                }
-                None => {
-                    // Loop hoisting should have been done during compilation
-                    // If we reach here, it means the hoisting pass didn't process this statement
-                    bail!(stmt.span.error("Loop hoisting information not found for statement. This is likely a bug in the compilation phase."));
-                }
-            };
-
-            if !loop_exprs.is_empty() {
-                // If there are hoisted loop expressions, execute subsequent statements
-                // within loops.
-                let remaining = stmts.get(idx..).unwrap_or(&[]);
-                return self.eval_stmts_in_loop(remaining, &loop_exprs[..]);
-            }
-
-            let tail = idx
-                .checked_add(1)
-                .and_then(|n| stmts.get(n..))
-                .unwrap_or(&[]);
-
-            eval_success = self.eval_stmt(stmt, tail)?;
-
-            if matches!(&stmt.literal, Literal::SomeIn { .. }) {
-                return Ok(eval_success);
-            }
-        }
-
-        if eval_success {
-            eval_success = self.eval_output_expr()?;
+                .cloned()
+                .ok_or_else(|| stmt.span.error("Loop hoisting information not found for statement. This is likely a bug in the compilation phase."))?
         } else {
-            // If a query snippet is being run, gather results.
-            let result_opt = {
-                let ctx = self.get_current_context_mut()?;
-                ctx.result.clone()
-            };
+            Vec::new()
+        };
+        Ok(StatementPosition {
+            stmts,
+            loops: (!loops.is_empty()).then(|| Rc::new(loops)),
+            next_loop: 0,
+        })
+    }
 
-            if let Some(mut gathered_result) = result_opt {
-                if let Some(scope) = self.scopes.last() {
-                    for (name, value) in scope.iter() {
-                        gathered_result
-                            .bindings
-                            .as_object_mut()?
-                            .insert(Value::String(name.to_string().into()), value.clone());
-                    }
-                }
-
-                if gathered_result.expressions.len() == 1 // Single expression query
-                    || gathered_result // Multi expression query where no value is false
+    fn begin_some_in<'a>(
+        &mut self,
+        stmt: &LiteralStmt,
+        tail: &'a [&'a LiteralStmt],
+        collection: &ExprRef,
+    ) -> Result<Option<StatementLoop<'a>>> {
+        let (saved_state, skip_exec) = self.apply_with_modifiers(stmt)?;
+        if skip_exec {
+            self.restore_state(saved_state)?;
+            return Ok(None);
+        }
+        let result = (|| {
+            if let Some(result) = &mut self.get_current_context_mut()?.result {
+                result
                     .expressions
-                    .iter()
-                    .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
-                        && !gathered_result.expressions.is_empty()
-                {
-                    let ctx = self.get_current_context_mut()?;
-                    ctx.results.result.push(gathered_result);
-                }
+                    .push(Self::make_expression_result(&stmt.span, &Value::Bool(true)));
+            }
+            let saved_scope = Some(self.current_scope()?.clone());
+            let module_idx = self.current_module_index;
+            let Some(BindingPlan::SomeIn {
+                key_plan,
+                value_plan,
+                ..
+            }) = self
+                .loop_hoisting_table(module_idx)
+                .get_expr_binding_plan(module_idx, collection.eidx())
+                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+                .cloned()
+            else {
+                bail!("internal error: missing binding plan for some..in expression");
+            };
+            let value = self.eval_expr(collection)?;
+            if !matches!(
+                value,
+                Value::Array(_) | Value::Set(_) | Value::Object(_) | Value::Undefined
+            ) {
+                bail!(collection.span().error(
+                    format!("`some .. in collection` expects array/set/object. Got `{value}`")
+                        .as_str()
+                ));
+            }
+            Ok(StatementLoop {
+                position: self.statement_position(tail)?,
+                cursor: statement_cursor(value, &mut || {
+                    self.memory_check()?;
+                    self.check_execution_time()
+                })?,
+                key_plan,
+                value_plan: Some(value_plan),
+                target: None,
+                previous_loop_value: None,
+                saved_scope,
+                query_result: None,
+                saved_state: None,
+                started: false,
+                success: false,
+            })
+        })();
+        match result {
+            Ok(mut frame) => {
+                frame.saved_state = saved_state;
+                Ok(Some(frame))
+            }
+            Err(error) => {
+                self.restore_state(saved_state)?;
+                Err(error)
             }
         }
+    }
 
-        Ok(eval_success)
+    fn gather_failed_statement_result(&mut self) -> Result<()> {
+        if let Some(mut result) = self.get_current_context()?.result.clone() {
+            if let Some(scope) = self.scopes.last() {
+                for (name, value) in scope {
+                    result
+                        .bindings
+                        .as_object_mut()?
+                        .insert(Value::String(name.to_string().into()), value.clone());
+                }
+            }
+            if result.expressions.len() == 1
+                || !result.expressions.is_empty()
+                    && result
+                        .expressions
+                        .iter()
+                        .all(|v| v.value != Value::Undefined && v.value != Value::Bool(false))
+            {
+                self.get_current_context_mut()?.results.result.push(result);
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_stmts_impl(&mut self, stmts: &[&LiteralStmt]) -> Result<bool> {
+        let mut position = Some(self.statement_position(stmts)?);
+        let mut frames = Vec::new();
+        let result = (|| {
+            let mut success = false;
+            loop {
+                self.memory_check()?;
+                self.check_execution_time()?;
+                if let Some(mut current) = position.take() {
+                    let Some((stmt, tail)) = current.stmts.split_first() else {
+                        success = self.eval_output_expr()?;
+                        continue;
+                    };
+                    if let Some(loop_info) = current
+                        .loops
+                        .as_ref()
+                        .and_then(|loops| loops.get(current.next_loop))
+                    {
+                        let loop_value =
+                            self.eval_loop_collection(stmt, Self::loop_collection_expr(loop_info))?;
+                        let walk_plan = self.get_walk_binding_plan(loop_info)?;
+                        let index_expr = Self::loop_index_expr(loop_info);
+                        if walk_plan.is_none() {
+                            if let Some(Expr::Var { span, .. }) = index_expr.map(|e| e.as_ref()) {
+                                if let Some(index) = self.lookup_local_var(&span.source_str()) {
+                                    if loop_value[&index] != Value::Undefined {
+                                        current.next_loop = current.next_loop.saturating_add(1);
+                                        position = Some(current);
+                                        continue;
+                                    } else if index != Value::Undefined {
+                                        success = false;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        let (key_plan, value_plan) = if let Some(plan) = walk_plan {
+                            if !matches!(loop_value, Value::Array(_) | Value::Undefined) {
+                                bail!(Self::loop_span(loop_info).error(
+                                    format!("walk expected array result, got `{loop_value}`")
+                                        .as_str()
+                                ));
+                            }
+                            (None, Some(plan))
+                        } else {
+                            let index = index_expr.ok_or_else(|| {
+                                anyhow!("internal error: no binding plan found for loop index expression")
+                            })?;
+                            let Some(BindingPlan::LoopIndex {
+                                destructuring_plan, ..
+                            }) = self
+                                .loop_hoisting_table(self.current_module_index)
+                                .get_expr_binding_plan(self.current_module_index, index.eidx())
+                                .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+                                .cloned()
+                            else {
+                                bail!("internal error: expected LoopIndex binding plan");
+                            };
+                            (Some(destructuring_plan), None)
+                        };
+                        let target = Self::loop_assignment_expr(loop_info).clone();
+                        let previous_loop_value = self.get_loop_var_value(&target)?.cloned();
+                        let query_result = self.get_current_context()?.result.clone();
+                        current.next_loop = current.next_loop.saturating_add(1);
+                        frames.push(StatementLoop {
+                            position: current,
+                            cursor: statement_cursor(loop_value, &mut || {
+                                self.memory_check()?;
+                                self.check_execution_time()
+                            })?,
+                            key_plan,
+                            value_plan,
+                            target: Some(target),
+                            previous_loop_value,
+                            saved_scope: None,
+                            query_result,
+                            saved_state: None,
+                            started: false,
+                            success: false,
+                        });
+                        self.scopes.push(Scope::default());
+                        continue;
+                    }
+                    if let Literal::SomeIn { collection, .. } = &stmt.literal {
+                        if let Some(frame) = self.begin_some_in(stmt, tail, collection)? {
+                            frames.push(frame);
+                        }
+                        success = false;
+                    } else if self.eval_stmt(stmt)? {
+                        position = Some(self.statement_position(tail)?);
+                    } else {
+                        success = false;
+                        if current.loops.is_none() {
+                            self.gather_failed_statement_result()?;
+                        }
+                    }
+                    continue;
+                }
+                // A branch finished (or a new loop needs its first item).
+                // Resume the closest choice point without calling eval_stmts
+                // again, regardless of the number of sequential statements.
+                let Some(frame) = frames.last_mut() else {
+                    return Ok(success);
+                };
+                if self.next_statement_iteration(frame, success)? {
+                    position = Some(frame.position.clone());
+                } else if let Some(completed_frame) = frames.pop() {
+                    success = completed_frame.success;
+                    self.finish_statement_loop(completed_frame)?;
+                }
+            }
+        })();
+        // On error, unwind in exactly the same order as recursive WITH/scope
+        // lifetimes, including failures while preparing a later collection.
+        self.finish_statement_loops(frames, result)
     }
 
     fn eval_query(&mut self, query: &Ref<Query>) -> Result<bool> {
@@ -2660,7 +2677,7 @@ impl Interpreter {
             // Resource-limit errors must always propagate, even in non-strict
             // mode, to prevent `not builtin(...)` from silently flipping to true.
             Err(e) if !self.compiled_policy.strict_builtin_errors => {
-                if e.downcast_ref::<crate::LimitError>().is_some() {
+                if is_evaluation_limit_error(&e) {
                     return Err(e);
                 }
                 return Ok(Value::Undefined);
@@ -2698,42 +2715,67 @@ impl Interpreter {
         path == "print" || matches!(Self::lookup_builtin(span, path), Ok(Some(_)))
     }
 
-    fn to_printable(value: &Value, s: &mut String) {
-        match value {
-            Value::Array(array) => {
-                s.push('[');
-                for (idx, e) in array.iter().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(e, s);
-                }
-                s.push(']');
-            }
-            Value::Set(set) => {
-                s.push('{');
-                for (idx, e) in set.iter().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(e, s);
-                }
-                s.push('}');
-            }
-            Value::Object(map) => {
-                s.push('{');
-                for (idx, (k, entry_value)) in map.iter_sorted().enumerate() {
-                    if idx > 0 {
-                        s.push_str(", ");
-                    }
-                    Self::to_printable(k, s);
-                    s.push_str(": ");
-                    Self::to_printable(entry_value, s);
-                }
-                s.push('}');
-            }
-            other => s.push_str(&format!("{other}")),
+    fn to_printable(root: &Value, s: &mut String) -> Result<()> {
+        enum Frame<'a> {
+            Value(&'a Value),
+            Text(&'static str),
+            Array(ArrayIter<'a>, bool),
+            Set(SetIter<'a>, bool),
+            Object(Iter<'a>, bool),
         }
+        let mut pending = vec![Frame::Value(root)];
+        while let Some(frame) = pending.pop() {
+            crate::utils::limits::check_memory_limit_if_needed()?;
+            match frame {
+                Frame::Value(Value::Array(array)) => {
+                    s.push('[');
+                    pending.push(Frame::Array(array.iter(), true));
+                }
+                Frame::Value(Value::Set(set)) => {
+                    s.push('{');
+                    pending.push(Frame::Set(set.iter(), true));
+                }
+                Frame::Value(Value::Object(object)) => {
+                    s.push('{');
+                    pending.push(Frame::Object(object.iter_sorted(), true));
+                }
+                Frame::Value(value) => s.push_str(&format!("{value}")),
+                Frame::Text(text) => s.push_str(text),
+                Frame::Array(mut values, first) => match values.next() {
+                    Some(value) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Array(values, false));
+                        pending.push(Frame::Value(value));
+                    }
+                    None => s.push(']'),
+                },
+                Frame::Set(mut values, first) => match values.next() {
+                    Some(value) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Set(values, false));
+                        pending.push(Frame::Value(value));
+                    }
+                    None => s.push('}'),
+                },
+                Frame::Object(mut values, first) => match values.next() {
+                    Some((key, value)) => {
+                        if !first {
+                            s.push_str(", ");
+                        }
+                        pending.push(Frame::Object(values, false));
+                        pending.push(Frame::Value(value));
+                        pending.push(Frame::Text(": "));
+                        pending.push(Frame::Value(key));
+                    }
+                    None => s.push('}'),
+                },
+            }
+        }
+        Ok(())
     }
 
     fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
@@ -2758,7 +2800,7 @@ impl Interpreter {
                 Value::Undefined => msg.push_str("<undefined>"),
                 // Do not print quotes for string values.
                 Value::String(s) => msg.push_str(&format!("{s}")),
-                a => Self::to_printable(&a, &mut msg),
+                a => Self::to_printable(&a, &mut msg)?,
             }
         }
 
@@ -2778,6 +2820,16 @@ impl Interpreter {
     }
 
     fn eval_call_impl(
+        &mut self,
+        span: &Span,
+        expr: &ExprRef,
+        fcn: &ExprRef,
+        params: &[ExprRef],
+    ) -> Result<Value> {
+        self.with_native_depth(|this| this.eval_call_inner(span, expr, fcn, params))
+    }
+
+    fn eval_call_inner(
         &mut self,
         span: &Span,
         expr: &ExprRef,
@@ -2891,6 +2943,7 @@ impl Interpreter {
             }
             match r {
                 Ok(v) => return Ok(v),
+                Err(e) if is_evaluation_limit_error(&e) => return Err(e),
                 Err(e) => bail!(span.error(&format!("{e}"))),
             }
         }
@@ -2989,7 +3042,7 @@ impl Interpreter {
                     // the error is swallowed below in non-strict mode.
                     self.set_current_module(prev_module)?;
                     self.scopes = scopes;
-                    if e.downcast_ref::<crate::LimitError>().is_some() {
+                    if is_evaluation_limit_error(&e) {
                         if let Some(with_functions) = with_functions_saved {
                             self.with_functions = with_functions;
                         }
@@ -3070,16 +3123,14 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             match self.eval_expr(value) {
                                 Ok(v) => results.push(v),
-                                Err(e) => {
-                                    if e.downcast_ref::<crate::LimitError>().is_some() {
-                                        self.scopes = scopes;
-                                        if let Some(with_functions) = with_functions_saved {
-                                            self.with_functions = with_functions;
-                                        }
-                                        return Err(e);
+                                Err(e) if is_evaluation_limit_error(&e) => {
+                                    self.scopes = scopes;
+                                    if let Some(with_functions) = with_functions_saved {
+                                        self.with_functions = with_functions;
                                     }
-                                    errors.push(e);
+                                    return Err(e);
                                 }
+                                Err(e) => errors.push(e),
                             }
                         }
                     }
@@ -3488,6 +3539,10 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
+        self.with_native_depth(|this| this.eval_expr_impl(expr))
+    }
+
+    fn eval_expr_impl(&mut self, expr: &ExprRef) -> Result<Value> {
         self.check_execution_time()?;
         #[cfg(feature = "coverage")]
         if self.enable_coverage {
@@ -3971,51 +4026,53 @@ impl Interpreter {
             }
 
             let scopes = core::mem::take(&mut self.scopes);
+            let result: Result<()> = (|| {
+                let module = self.current_module()?;
+                let mut path = get_rule_path_components(&module.package.refr)?;
 
-            let module = self.current_module()?;
-            let mut path = get_rule_path_components(&module.package.refr)?;
+                let (refr, index) = match refr.as_ref() {
+                    Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
+                    Expr::RefDot { .. } => (refr, None),
+                    Expr::Var { .. } => (refr, None),
+                    _ => bail!(refr
+                        .span()
+                        .error(&format!("invalid token {refr:?} with the default keyword"))),
+                };
 
-            let (refr, index) = match refr.as_ref() {
-                Expr::RefBrack { refr, index, .. } => (refr, Some(index.clone())),
-                Expr::RefDot { .. } => (refr, None),
-                Expr::Var { .. } => (refr, None),
-                _ => bail!(refr
-                    .span()
-                    .error(&format!("invalid token {refr:?} with the default keyword"))),
-            };
+                path.extend(get_rule_path_components(refr)?);
+                let paths: Vec<&str> = path.iter().map(PathComponent::value).collect();
 
-            path.extend(get_rule_path_components(refr)?);
-            let paths: Vec<&str> = path.iter().map(PathComponent::value).collect();
+                Self::check_default_value(value)?;
+                let value = self.eval_expr(value)?;
 
-            Self::check_default_value(value)?;
-            let value = self.eval_expr(value)?;
+                // Assume at this point that all the non-default rules have been evaluated.
+                // Merge the default value only if
+                // 1. The corresponding variable does not have value yet
+                // 2. The corresponding index in the object does not have value yet
+                if let Some(index) = index {
+                    let index = self.eval_expr(&index)?;
+                    let mut object = Value::new_object();
+                    object.as_object_mut()?.insert(index.clone(), value);
 
-            // Assume at this point that all the non-default rules have been evaluated.
-            // Merge the default value only if
-            // 1. The corresponding variable does not have value yet
-            // 2. The corresponding index in the object does not have value yet
-            if let Some(index) = index {
-                let index = self.eval_expr(&index)?;
-                let mut object = Value::new_object();
-                object.as_object_mut()?.insert(index.clone(), value);
+                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
 
-                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
-
-                if let Value::Object(btree) = &vref {
-                    if !btree.contains_key(&index) {
+                    if let Value::Object(btree) = &vref {
+                        if !btree.contains_key(&index) {
+                            Self::merge_rule_value(span, vref, object)?;
+                        }
+                    } else if let Value::Undefined = vref {
                         Self::merge_rule_value(span, vref, object)?;
                     }
-                } else if let Value::Undefined = vref {
-                    Self::merge_rule_value(span, vref, object)?;
-                }
-            } else {
-                let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
-                if let Value::Undefined = &vref {
-                    Self::merge_rule_value(span, vref, value)?;
-                }
-            };
-
+                } else {
+                    let vref = Self::make_or_get_value_mut(&mut self.data, &paths)?;
+                    if let Value::Undefined = &vref {
+                        Self::merge_rule_value(span, vref, value)?;
+                    }
+                };
+                Ok(())
+            })();
             self.scopes = scopes;
+            result?;
             self.processed.insert(rule.clone());
         }
 
@@ -4171,23 +4228,40 @@ impl Interpreter {
                                 )?;
                             }
                         } else if is_set {
-                            if let Ok(mut comps) = self.eval_rule_ref(refr) {
-                                let mut full_path = package_components;
-                                full_path.append(&mut comps);
-                                self.update_rule_value(span, full_path, Value::new_set(), true)?;
-                            }
-                        } else if is_object {
-                            // Fetch the rule, ignoring the key.
-                            if let Expr::RefBrack { refr, .. } = refr.as_ref() {
-                                if let Ok(mut comps) = self.eval_rule_ref(refr) {
+                            match self.eval_rule_ref(refr) {
+                                Ok(mut comps) => {
                                     let mut full_path = package_components;
                                     full_path.append(&mut comps);
                                     self.update_rule_value(
                                         span,
                                         full_path,
-                                        Value::Undefined,
-                                        false,
+                                        Value::new_set(),
+                                        true,
                                     )?;
+                                }
+                                Err(error) if is_evaluation_limit_error(&error) => {
+                                    return Err(error)
+                                }
+                                Err(_) => {}
+                            }
+                        } else if is_object {
+                            // Fetch the rule, ignoring the key.
+                            if let Expr::RefBrack { refr, .. } = refr.as_ref() {
+                                match self.eval_rule_ref(refr) {
+                                    Ok(mut comps) => {
+                                        let mut full_path = package_components;
+                                        full_path.append(&mut comps);
+                                        self.update_rule_value(
+                                            span,
+                                            full_path,
+                                            Value::Undefined,
+                                            false,
+                                        )?;
+                                    }
+                                    Err(error) if is_evaluation_limit_error(&error) => {
+                                        return Err(error);
+                                    }
+                                    Err(_) => {}
                                 }
                             }
                         }
@@ -4283,7 +4357,7 @@ impl Interpreter {
         let scopes = core::mem::take(&mut self.scopes);
         let prev_module = self.set_current_module(Some(module.clone()))?;
 
-        let res = self.eval_rule_impl(module, rule);
+        let res = self.with_native_depth(|this| this.eval_rule_impl(module, rule));
 
         self.set_current_module(prev_module)?;
         self.scopes = scopes;
@@ -4922,5 +4996,178 @@ impl Interpreter {
 
         crate::utils::limits::enforce_memory_limit().map_err(|err| anyhow!(err))?;
         Ok(self.compiled_policy.clone())
+    }
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::{
+        merge_statement_cleanup, statement_cursor, Interpreter, NativeEvaluationDepthExceeded,
+        Scope, StatementLoop, StatementPosition,
+    };
+    use crate::{LimitError, Rc, Value};
+    use alloc::collections::{BTreeMap, BTreeSet};
+    use alloc::format;
+    use anyhow::{anyhow, ensure, Result};
+
+    fn missing_scope_frame(input: bool) -> StatementLoop<'static> {
+        StatementLoop {
+            position: StatementPosition {
+                stmts: &[],
+                loops: None,
+                next_loop: 0,
+            },
+            cursor: alloc::boxed::Box::new(core::iter::empty()),
+            key_plan: None,
+            value_plan: None,
+            target: None,
+            previous_loop_value: None,
+            saved_scope: Some(Scope::new()),
+            query_result: None,
+            saved_state: Some((
+                Value::new_object(),
+                input.into(),
+                Value::new_object(),
+                BTreeSet::new(),
+                Value::new_object(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )),
+            started: true,
+            success: false,
+        }
+    }
+
+    #[test]
+    fn statement_cleanup_unwinds_all_frames_after_scope_failure() -> Result<()> {
+        let mut interpreter = Interpreter::new();
+        interpreter.scopes.clear();
+        let error = interpreter
+            .finish_statement_loops(
+                alloc::vec![missing_scope_frame(false), missing_scope_frame(true)],
+                Err(NativeEvaluationDepthExceeded.into()),
+            )
+            .err()
+            .ok_or_else(|| anyhow!("expected original fatal error"))?;
+        ensure!(error
+            .downcast_ref::<NativeEvaluationDepthExceeded>()
+            .is_some());
+        ensure!(format!("{error:#}").contains("no active scope"));
+        ensure!(interpreter.input == Value::Bool(false));
+
+        // An independent cleanup failure is still an error on a successful
+        // evaluation path, and must not prevent the outer WITH restoration.
+        let cleanup_error = interpreter
+            .finish_statement_loops(
+                alloc::vec![missing_scope_frame(false), missing_scope_frame(true)],
+                Ok(true),
+            )
+            .err()
+            .ok_or_else(|| anyhow!("successful evaluation must not hide cleanup failures"))?;
+        ensure!(format!("{cleanup_error:#}").contains("no active scope"));
+        ensure!(interpreter.input == Value::Bool(false));
+        Ok(())
+    }
+
+    #[test]
+    fn statement_cleanup_keeps_fatal_error_precedence() -> Result<()> {
+        let limit = LimitError::MemoryLimitExceeded { usage: 2, limit: 1 };
+        let error = merge_statement_cleanup::<bool>(Err(anyhow!("ordinary")), Err(limit.into()))
+            .err()
+            .ok_or_else(|| anyhow!("expected fatal cleanup error"))?;
+        ensure!(error.downcast_ref::<LimitError>() == Some(&limit));
+        ensure!(format!("{error:#}").contains("ordinary"));
+
+        let fatal_evaluation_error = merge_statement_cleanup::<bool>(
+            Err(NativeEvaluationDepthExceeded.into()),
+            Err(limit.into()),
+        )
+        .err()
+        .ok_or_else(|| anyhow!("expected original fatal evaluation error"))?;
+        ensure!(fatal_evaluation_error
+            .downcast_ref::<NativeEvaluationDepthExceeded>()
+            .is_some());
+        ensure!(format!("{fatal_evaluation_error:#}").contains("execution exceeded memory limit"));
+        ensure!(merge_statement_cleanup(Ok(true), Ok(()))?);
+        Ok(())
+    }
+
+    #[test]
+    fn statement_cursor_snapshot_checkpoints() -> Result<()> {
+        let shared = Value::from(alloc::vec![Value::Null]);
+        let Value::Array(values) = &shared else {
+            return Err(anyhow!("expected shared array"));
+        };
+        let mut object = Value::new_object();
+        for key in 0..4 {
+            object.as_object_mut()?.insert(key.into(), shared.clone());
+        }
+        let baseline = Rc::strong_count(values);
+        let mut owners = alloc::vec::Vec::new();
+        let cursor = statement_cursor(object.clone(), &mut || {
+            owners.push(Rc::strong_count(values));
+            Ok(())
+        })?;
+        // One initial checkpoint, then before/after each shallow entry push.
+        let expected = core::iter::once(baseline)
+            .chain((0_usize..4).flat_map(|index| {
+                [
+                    baseline.saturating_add(index),
+                    baseline.saturating_add(index).saturating_add(1),
+                ]
+            }))
+            .collect::<alloc::vec::Vec<_>>();
+        ensure!(owners == expected);
+        ensure!(cursor.count() == 4);
+        ensure!(Rc::strong_count(values) == baseline);
+
+        let mut set = Value::new_set();
+        for key in 0..4 {
+            set.as_set_mut()?
+                .insert(Value::from(alloc::vec![shared.clone(), key.into()]));
+        }
+        let mut checkpoints: usize = 0;
+        let set_cursor = statement_cursor(set.clone(), &mut || {
+            checkpoints = checkpoints.saturating_add(1);
+            Ok(())
+        })?;
+        ensure!(checkpoints == 9);
+        ensure!(set_cursor.count() == 4);
+
+        let array = Value::from(alloc::vec![shared; 1024]);
+        checkpoints = 0;
+        let array_cursor = statement_cursor(array, &mut || {
+            checkpoints = checkpoints.saturating_add(1);
+            Ok(())
+        })?;
+        ensure!(checkpoints == 1, "arrays retain their lazy fast path");
+        ensure!(array_cursor.count() == 1024);
+        Ok(())
+    }
+
+    #[test]
+    fn statement_cursor_snapshot_cancellation() -> Result<()> {
+        let mut object = Value::new_object();
+        let mut set = Value::new_set();
+        for key in 0..64 {
+            object.as_object_mut()?.insert(key.into(), Value::Null);
+            set.as_set_mut()?.insert(key.into());
+        }
+        let limit = LimitError::MemoryLimitExceeded { usage: 2, limit: 1 };
+        for collection in [object, set] {
+            let mut checkpoints: usize = 0;
+            let error = statement_cursor(collection, &mut || {
+                checkpoints = checkpoints.saturating_add(1);
+                if checkpoints == 4 {
+                    return Err(limit.into());
+                }
+                Ok(())
+            })
+            .err()
+            .ok_or_else(|| anyhow!("snapshot must stop at its checkpoint error"))?;
+            ensure!(checkpoints == 4);
+            ensure!(error.downcast_ref::<LimitError>() == Some(&limit));
+        }
+        Ok(())
     }
 }

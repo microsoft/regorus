@@ -77,8 +77,9 @@ impl<'de> Visitor<'de> for ObjectVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
         let mut obj = Object::new();
-        while let Some(k) = access.next_key::<Value>()? {
-            let v = access.next_value::<Value>()?;
+        let seed = crate::value::ValueSeed(crate::utils::depth::MAX_DEPTH.saturating_sub(1), None);
+        while let Some(k) = access.next_key_seed(seed)? {
+            let v = access.next_value_seed(seed)?;
             // Key-only interning: dedup key `Rc<str>` allocations across objects
             // parsed within the same interning session. String *values* are left
             // untouched.

@@ -19,18 +19,19 @@ use super::machine::RegoVM;
 impl RegoVM {
     /// Returns true if the error represents a resource-limit violation that
     /// must never be silently absorbed by rule evaluation.
-    pub(super) const fn is_fatal_vm_error(err: &VmError) -> bool {
-        matches!(
-            err,
-            VmError::TimeLimitExceeded { .. }
-                | VmError::RuleCallDepthExceeded { .. }
-                | VmError::MemoryLimitExceeded { .. }
-                | VmError::MemoryBudgetExceeded { .. }
-                | VmError::RegexSizeLimitExceeded { .. }
-                | VmError::SerializationDepthExceeded { .. }
-                | VmError::InstructionLimitExceeded { .. }
-                | VmError::NumericOverflow { .. }
-        )
+    pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
+        self.builtin_limit_exceeded
+            || matches!(
+                err,
+                VmError::TimeLimitExceeded { .. }
+                    | VmError::RuleCallDepthExceeded { .. }
+                    | VmError::MemoryLimitExceeded { .. }
+                    | VmError::MemoryBudgetExceeded { .. }
+                    | VmError::RegexSizeLimitExceeded { .. }
+                    | VmError::SerializationDepthExceeded { .. }
+                    | VmError::InstructionLimitExceeded { .. }
+                    | VmError::NumericOverflow { .. }
+            )
     }
 
     /// Restore VM state that was swapped out for rule execution.
@@ -113,7 +114,7 @@ impl RegoVM {
                 {
                     match self.jump_to(destructuring_entry_point) {
                         Ok(_result) => {}
-                        Err(e) if Self::is_fatal_vm_error(&e) => {
+                        Err(e) if self.is_fatal_vm_error(&e) => {
                             self.restore_rule_state(
                                 &mut previous_loop_stack,
                                 &mut previous_comprehension_stack,
@@ -169,7 +170,7 @@ impl RegoVM {
                             break;
                         }
                     }
-                    Err(e) if Self::is_fatal_vm_error(&e) => {
+                    Err(e) if self.is_fatal_vm_error(&e) => {
                         self.restore_rule_state(
                             &mut previous_loop_stack,
                             &mut previous_comprehension_stack,
@@ -280,6 +281,13 @@ impl RegoVM {
         }
 
         // Explicit suspendable frames do not retain native dispatch frames.
+        const MAX_SUPPORTED_NATIVE_RULE_DEPTH: usize = 17;
+        if self.max_native_rule_call_depth > MAX_SUPPORTED_NATIVE_RULE_DEPTH {
+            return Err(VmError::RuleCallDepthExceeded {
+                limit: MAX_SUPPORTED_NATIVE_RULE_DEPTH,
+                pc: self.pc,
+            });
+        }
         if self.register_stack.len() >= self.max_native_rule_call_depth {
             return Err(VmError::RuleCallDepthExceeded {
                 limit: self.max_native_rule_call_depth,

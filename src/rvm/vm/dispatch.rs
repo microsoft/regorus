@@ -25,7 +25,20 @@ impl RegoVM {
         program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
-        self.execute_load_and_move(program, instruction)
+        // Native call edges must not retain unrelated opcode-dispatch frames.
+        match instruction {
+            Instruction::CallRule { dest, rule_index } => {
+                self.execute_call_rule(dest, rule_index)?;
+            }
+            Instruction::FunctionCall { params_index } => {
+                self.execute_function_call(params_index)?;
+            }
+            Instruction::VirtualDataDocumentLookup { params_index } => {
+                self.execute_virtual_data_document_lookup(params_index)?;
+            }
+            _ => return self.execute_load_and_move(program, instruction),
+        }
+        Ok(InstructionOutcome::Continue)
     }
 
     fn execute_load_and_move(
@@ -425,17 +438,9 @@ impl RegoVM {
                     }),
                 }
             }
-            FunctionCall { params_index } => {
-                self.execute_function_call(params_index)?;
-                Ok(InstructionOutcome::Continue)
-            }
             Return { value } => {
                 let result = self.get_register(value)?.clone();
                 Ok(InstructionOutcome::Return(result))
-            }
-            CallRule { dest, rule_index } => {
-                self.execute_call_rule(dest, rule_index)?;
-                Ok(InstructionOutcome::Continue)
             }
             RuleInit {
                 result_reg,
@@ -1143,10 +1148,6 @@ impl RegoVM {
                 }
 
                 self.set_register(params.dest, current_value)?;
-                Ok(InstructionOutcome::Continue)
-            }
-            VirtualDataDocumentLookup { params_index } => {
-                self.execute_virtual_data_document_lookup(params_index)?;
                 Ok(InstructionOutcome::Continue)
             }
             ComprehensionBegin { params_index } => {

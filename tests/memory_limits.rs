@@ -74,6 +74,57 @@ fn deep_array(depth: usize) -> Value {
     (0..depth).fold(Value::Null, |value, _| Value::from(vec![value]))
 }
 
+#[test]
+#[cfg(feature = "rvm")]
+fn program_depth_admission_retries_transient_memory_failure() {
+    let mut limits = LimitGuard::lock();
+    for depth in [32, 33] {
+        let mut program = Program::new();
+        program.instructions = vec![
+            Instruction::LoadInput { dest: 0 },
+            Instruction::Return { value: 0 },
+        ];
+        program.rule_tree = (0..depth).fold(Value::Null, |value, _| {
+            Value::from(vec![value.clone(), value])
+        });
+        let program = Arc::new(program);
+
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_input(Value::from(7));
+            vm.set_execution_mode(mode);
+            limits.set_below_current_usage();
+            vm.load_program(program.clone());
+            assert!(matches!(
+                vm.execute(),
+                Err(VmError::MemoryLimitExceeded { limit: 1, .. })
+            ));
+            limits.disable_limit();
+
+            for _ in 0..2 {
+                let result = vm.execute();
+                if depth == 32 {
+                    assert_eq!(result.unwrap(), Value::from(7));
+                } else {
+                    assert!(
+                        matches!(result, Err(VmError::RuleDataConflict { .. })),
+                        "{mode:?}, depth {depth}: {result:?}"
+                    );
+                }
+            }
+            if depth == 32 {
+                limits.set_below_current_usage();
+                assert!(matches!(
+                    vm.execute(),
+                    Err(VmError::MemoryLimitExceeded { limit: 1, .. })
+                ));
+                limits.disable_limit();
+                assert_eq!(vm.execute().unwrap(), Value::from(7));
+            }
+        }
+    }
+}
+
 #[cfg(feature = "rvm")]
 fn comparison_vm(mode: ExecutionMode, timed: bool, kind: u8) -> RegoVM {
     let mut program = Program::new();
@@ -704,8 +755,8 @@ fn interpreter_indexed_default_registration_can_retry_after_memory_limit() {
     let (mut module, entrypoint) = repeated_clause_policy();
     let package_end = module.find("\n\n").expect("package declaration") + 2;
     module.insert_str(package_end, "default indexed[true] = \"bool_true\"\n\n");
-    let default_query = format!(
-        "{}.indexed[true]",
+    let default_entrypoint = format!(
+        "{}.indexed",
         entrypoint
             .strip_suffix(".items")
             .expect("entrypoint ends with items")
@@ -749,12 +800,9 @@ fn interpreter_indexed_default_registration_can_retry_after_memory_limit() {
             .expect("evaluate compiled policy after retry"),
     );
     let default_result = engine
-        .eval_query(default_query, false)
+        .eval_rule(default_entrypoint)
         .expect("evaluate indexed default after retry");
-    assert_eq!(
-        default_result.result[0].expressions[0].value,
-        Value::from("bool_true")
-    );
+    assert_eq!(default_result[&Value::Bool(true)], Value::from("bool_true"));
 }
 
 #[test]

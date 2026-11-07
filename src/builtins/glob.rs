@@ -52,6 +52,7 @@ fn make_delimiters_unix_style(s: &str, delimiters: &[char]) -> Result<String> {
 }
 
 fn make_glob(pattern: &str, span: &Span) -> Result<GlobMatcher> {
+    check_nesting(pattern)?;
     #[cfg(feature = "cache")]
     {
         {
@@ -79,6 +80,43 @@ fn make_glob(pattern: &str, span: &Span) -> Result<GlobMatcher> {
             .or_else(|_| bail!(span.error("invalid glob")))?
             .compile_matcher())
     }
+}
+
+fn check_nesting(pattern: &str) -> Result<()> {
+    let mut depth = 0_usize;
+    let mut characters = pattern.chars().peekable();
+    while let Some(character) = characters.next() {
+        crate::builtins::utils::enforce_limit()?;
+        match character {
+            '\\' if !cfg!(windows) => {
+                characters.next();
+            }
+            '[' => {
+                if matches!(characters.peek(), Some('!') | Some('^')) {
+                    characters.next();
+                }
+                if characters.peek() == Some(&']') {
+                    characters.next();
+                }
+                for character in characters.by_ref() {
+                    if character == ']' {
+                        break;
+                    }
+                }
+            }
+            '{' => {
+                if depth >= crate::utils::depth::MAX_DEPTH {
+                    return Err(
+                        crate::utils::depth::DepthExceeded(crate::utils::depth::MAX_DEPTH).into(),
+                    );
+                }
+                depth = depth.saturating_add(1);
+            }
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn glob_match(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {

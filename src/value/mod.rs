@@ -12,6 +12,7 @@
 )] // value helpers index paths directly for performance
 
 mod array;
+mod dom;
 mod object;
 mod set;
 
@@ -19,11 +20,12 @@ mod set;
 mod interning;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[allow(unused_imports)] // surface for downstream PRs
 pub use array::{Array, ArrayCursor, ArrayIntoIter, ArrayIter, ArrayIterMut};
 pub use object::{IntoIter, Iter, IterMut, Object};
+pub(crate) use set::Iter as SetIter;
 #[allow(unused_imports)] // surface for downstream PRs
 pub use set::Set;
 
@@ -72,6 +74,10 @@ use crate::*;
 /// encoding and consume no callback budget. This is not a Value nesting/admission
 /// limit and does not restrict the iterative output methods above. Stack use by
 /// the surrounding caller and serializer remains implementation-dependent.
+///
+/// Generic serde deserialization and the JSON/YAML text readers accept up to
+/// 32 nested containers, including structured keys. `Value::from(dom)` for an
+/// owned JSON/YAML DOM uses iterative traversal instead of this reader limit.
 #[derive(Clone)]
 pub enum Value {
     /// JSON null.
@@ -482,7 +488,7 @@ impl Value {
     // Keep JSON-specific traversal independent of serde's recursive callbacks.
     // Key frames capture JSON before quoting non-string object keys, including
     // objects whose keys themselves contain non-string keys.
-    fn json_string(&self, pretty: bool) -> Result<String> {
+    pub(crate) fn json_string(&self, pretty: bool) -> Result<String> {
         self.json_string_with_checkpoint(pretty, &mut || {
             crate::utils::limits::enforce_memory_limit().map_err(anyhow::Error::new)
         })
@@ -1036,9 +1042,37 @@ impl Serialize for SerializeWithBudget<'_, Value> {
     }
 }
 
-struct ValueVisitor;
+struct ValueVisitor<'a>(ValueSeed<'a>);
 
-impl<'de> Visitor<'de> for ValueVisitor {
+#[derive(Clone, Copy)]
+pub(crate) struct ValueSeed<'a>(
+    pub(crate) usize,
+    pub(crate) Option<&'a core::cell::Cell<bool>>,
+);
+
+impl<'a> ValueSeed<'a> {
+    fn child<E: de::Error>(self) -> Result<Self, E> {
+        match crate::utils::depth::descend(self.0) {
+            Ok(remaining) => Ok(Self(remaining, self.1)),
+            Err(error) => {
+                if let Some(exceeded) = self.1 {
+                    exceeded.set(true);
+                }
+                Err(E::custom(error))
+            }
+        }
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for ValueSeed<'_> {
+    type Value = Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
+        deserializer.deserialize_any(ValueVisitor(self))
+    }
+}
+
+impl<'de> Visitor<'de> for ValueVisitor<'_> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -1070,7 +1104,8 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         D: Deserializer<'de>,
     {
-        Value::deserialize(deserializer)
+        use serde::de::DeserializeSeed as _;
+        self.0.child::<D::Error>()?.deserialize(deserializer)
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
@@ -1135,8 +1170,9 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         V: SeqAccess<'de>,
     {
+        let seed = self.0.child::<V::Error>()?;
         let mut arr = vec![];
-        while let Some(v) = visitor.next_element()? {
+        while let Some(v) = visitor.next_element_seed(seed)? {
             arr.push(v);
             // Enforce allocator limit while expanding a deserialized array.
             enforce_limit_for::<V::Error>()?;
@@ -1148,7 +1184,27 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         V: MapAccess<'de>,
     {
-        if let Some((key, value)) = visitor.next_entry()? {
+        if self.0 .0 == 0 {
+            if let Some(exceeded) = self.0 .1 {
+                exceeded.set(true);
+            }
+            // serde_json presents arbitrary-precision numeric scalars as a
+            // private one-field map. Read only scalar callbacks at this boundary.
+            if visitor.next_key::<String>()?.as_deref() == Some("$serde_json::private::Number") {
+                let text = visitor.next_value::<String>()?;
+                let number = Number::from_str(&text)
+                    .map_err(|_| V::Error::custom("failed to read big number"))?;
+                if let Some(exceeded) = self.0 .1 {
+                    exceeded.set(false);
+                }
+                return Ok(Value::from(number));
+            }
+            return Err(V::Error::custom(crate::utils::depth::DepthExceeded(
+                crate::utils::depth::MAX_DEPTH,
+            )));
+        }
+        let seed = self.0.child::<V::Error>()?;
+        if let Some((key, value)) = visitor.next_entry_seed(seed, seed)? {
             if let (Value::String(k), Value::String(v)) = (&key, &value) {
                 if k.as_ref() == "$serde_json::private::Number" {
                     match Number::from_str(v) {
@@ -1161,7 +1217,7 @@ impl<'de> Visitor<'de> for ValueVisitor {
             map.insert(intern_object_key(key), value);
             // Enforce allocator limit while expanding a deserialized object.
             enforce_limit_for::<V::Error>()?;
-            while let Some((key, value)) = visitor.next_entry()? {
+            while let Some((key, value)) = visitor.next_entry_seed(seed, seed)? {
                 map.insert(intern_object_key(key), value);
                 // Enforce allocator limit while expanding a deserialized object.
                 enforce_limit_for::<V::Error>()?;
@@ -1200,7 +1256,8 @@ impl<'de> Deserialize<'de> for Value {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(ValueVisitor)
+        use serde::de::DeserializeSeed as _;
+        ValueSeed(crate::utils::depth::MAX_DEPTH, None).deserialize(deserializer)
     }
 }
 
@@ -1335,9 +1392,20 @@ impl Value {
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         let limit_error_capture =
             keep_malformed_retryable.then(ResumeDeserializationLimitErrorCapture::new);
-        match serde_json::from_str::<Value>(json) {
+        use serde::de::DeserializeSeed as _;
+        let exceeded = core::cell::Cell::new(false);
+        let mut deserializer = serde_json::Deserializer::from_str(json);
+        let decoded = ValueSeed(crate::utils::depth::MAX_DEPTH, Some(&exceeded))
+            .deserialize(&mut deserializer)
+            .and_then(|value| deserializer.end().map(|()| value));
+        match decoded {
             Ok(value) => Ok(value),
             Err(err) => {
+                if exceeded.get() {
+                    return Err(ResumeJsonError::Other(
+                        crate::utils::depth::DepthExceeded(crate::utils::depth::MAX_DEPTH).into(),
+                    ));
+                }
                 if keep_malformed_retryable
                     && matches!(
                         err.classify(),
@@ -1481,9 +1549,14 @@ impl Value {
     #[cfg(feature = "yaml")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_yaml_str(yaml: &str) -> Result<Value> {
-        let value = yaml_serde::from_str(yaml)
-            .map_err(|err| anyhow::anyhow!("Failed to parse YAML: {}", err))?;
-        Ok(value)
+        use serde::de::DeserializeSeed as _;
+        let exceeded = core::cell::Cell::new(false);
+        let result = ValueSeed(crate::utils::depth::MAX_DEPTH, Some(&exceeded))
+            .deserialize(yaml_serde::Deserializer::from_str(yaml));
+        if exceeded.get() {
+            return Err(crate::utils::depth::DepthExceeded(crate::utils::depth::MAX_DEPTH).into());
+        }
+        result.map_err(|err| anyhow::anyhow!("Failed to parse YAML: {}", err))
     }
 
     /// Deserialize a value from a file containing YAML.
@@ -1694,6 +1767,9 @@ impl From<f64> for Value {
 impl From<serde_json::Value> for Value {
     /// Create a [`Value`] from [`serde_json::Value`].
     ///
+    /// Containers are traversed iteratively; numeric scalars retain Serde's
+    /// integer or floating-point interpretation without a text round-trip.
+    ///
     /// Returns [`Value::Undefined`] in case of error.
     /// ```
     /// # use regorus::*;
@@ -1706,10 +1782,7 @@ impl From<serde_json::Value> for Value {
     /// # Ok(())
     /// # }
     fn from(v: serde_json::Value) -> Self {
-        match serde_json::from_value(v) {
-            Ok(v) => v,
-            _ => Value::Undefined,
-        }
+        dom::convert(dom::Dom::Json(v))
     }
 }
 
@@ -1717,6 +1790,9 @@ impl From<serde_json::Value> for Value {
 #[cfg_attr(docsrs, doc(cfg(feature = "yaml")))]
 impl From<yaml_serde::Value> for Value {
     /// Create a [`Value`] from [`yaml_serde::Value`].
+    ///
+    /// Containers are traversed iteratively; numeric scalars retain Serde's
+    /// integer or floating-point interpretation without a text round-trip.
     ///
     /// Returns [`Value::Undefined`] in case of error.
     /// ```
@@ -1734,10 +1810,7 @@ impl From<yaml_serde::Value> for Value {
     /// # Ok(())
     /// # }
     fn from(v: yaml_serde::Value) -> Self {
-        match yaml_serde::from_value(v) {
-            Ok(v) => v,
-            _ => Value::Undefined,
-        }
+        dom::convert(dom::Dom::Yaml(v))
     }
 }
 

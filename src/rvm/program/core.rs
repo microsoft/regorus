@@ -140,6 +140,8 @@ impl Program {
 
     /// Validate that the program stays within supported bounds
     pub fn validate_limits(&self) -> Result<(), String> {
+        crate::utils::depth::check_value(&self.rule_tree, Self::MAX_PATH_DEPTH)
+            .map_err(|error| error.to_string())?;
         if self.instructions.len() > Self::MAX_INSTRUCTIONS {
             return Err(format!(
                 "Program exceeds max instructions ({} > {})",
@@ -215,6 +217,18 @@ impl Program {
             }
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn validate_serialization_depth(&self) -> Result<(), String> {
+        for value in self
+            .literals
+            .iter()
+            .chain(self.metadata.annotations.values())
+        {
+            crate::utils::depth::check_value(value, crate::utils::depth::MAX_DEPTH)
+                .map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 

@@ -5,6 +5,9 @@ var regorus = require('./pkg/regorusjs');
 
 // Configure the global pattern caches.
 regorus.setCacheConfig({ regex: 256, glob: 128 });
+const opaqueConfig = {};
+opaqueConfig.self = opaqueConfig;
+regorus.setCacheConfig({ regex: 256, glob: 128, opaque: opaqueConfig });
 
 // Create an engine.
 var engine = new regorus.Engine();
@@ -14,6 +17,12 @@ engine.setEnableCoverage(true);
 
 // Raise the default col limit to 2000
 engine.setPolicyLengthConfig({ maxCol: 2000, maxFileBytes: 1048576, maxLines: 20000 });
+engine.setPolicyLengthConfig({
+    maxCol: 2000,
+    maxFileBytes: 1048576,
+    maxLines: 20000,
+    opaque: opaqueConfig,
+});
 
 // Add Rego policy.
 var pkg = engine.addPolicy(

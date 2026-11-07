@@ -390,6 +390,12 @@ fn compile_and_run_rvm_with_all_entry_points(
 }
 
 fn yaml_test_impl(file: &str) -> Result<()> {
+    #[cfg(not(feature = "jsonschema"))]
+    if std::path::Path::new(file).file_name() == Some(std::ffi::OsStr::new("structural_json.yaml"))
+    {
+        return Ok(());
+    }
+
     let yaml_str = fs::read_to_string(file)?;
     let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
@@ -1287,7 +1293,7 @@ fn bracketed_identifier_entrypoint_roundtrips_and_executes_by_name_and_index() -
 
 #[test]
 fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -> Result<()> {
-    for (package_component_count, rule_component_count) in [(31, 1), (32, 1), (32, 32)] {
+    for (package_component_count, rule_component_count) in [(30, 1), (31, 1), (32, 1), (32, 32)] {
         let package_components = (0..package_component_count)
             .map(|index| format!("p{index}"))
             .collect::<Vec<_>>();
@@ -1309,7 +1315,18 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
         )?;
         let dotted_entrypoint: Rc<str> = dotted_path.into();
         let compiled = engine.compile_with_entrypoint(&dotted_entrypoint)?;
-        let program = Compiler::compile_from_policy(&compiled, &[bracketed_path.as_str()])?;
+        let result = Compiler::compile_from_policy(&compiled, &[bracketed_path.as_str()]);
+        if package_component_count > 30 {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Rule path depth exceeds maximum"),
+                "unsupported rule-tree paths must report their construction error"
+            );
+            continue;
+        }
+        let program = result?;
 
         let json = program.serialize_json().map_err(anyhow::Error::msg)?;
         let json_program = Program::deserialize_json(&json).map_err(anyhow::Error::msg)?;

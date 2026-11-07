@@ -331,7 +331,10 @@ fn yaml_is_valid(
     ensure_args_count(span, name, params, args, 1)?;
 
     let yaml_str = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Value::from_yaml_str(&yaml_str).is_ok()))
+    match Value::from_yaml_str(&yaml_str) {
+        Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => Err(error),
+        result => Ok(Value::Bool(result.is_ok())),
+    }
 }
 
 #[cfg(feature = "yaml")]
@@ -372,7 +375,10 @@ fn json_is_valid(
     ensure_args_count(span, name, params, args, 1)?;
 
     let json_str = ensure_string(name, &params[0], &args[0])?;
-    Ok(Value::Bool(Value::from_json_str(&json_str).is_ok()))
+    match Value::from_json_str(&json_str) {
+        Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => Err(error),
+        result => Ok(Value::Bool(result.is_ok())),
+    }
 }
 
 fn json_marshal(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {

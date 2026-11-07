@@ -160,7 +160,7 @@ impl<'a> Compiler<'a> {
             .collect();
 
         for (rule_path, rule_index) in rule_paths_to_evaluate {
-            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path) {
+            if let Some(default_literal_index) = self.evaluate_default_rule(&rule_path)? {
                 if let Some(rule_info) = rule_infos_map.get_mut(&rule_index) {
                     rule_info.set_default_literal_index(default_literal_index);
                 }
@@ -213,9 +213,9 @@ impl<'a> Compiler<'a> {
         Ok(self.program)
     }
 
-    fn evaluate_default_rule(&mut self, rule_path: &str) -> Option<u16> {
+    fn evaluate_default_rule(&mut self, rule_path: &str) -> Result<Option<u16>> {
         if !self.policy.inner.default_rules.contains_key(rule_path) {
-            return None;
+            return Ok(None);
         }
 
         let mut interpreter = Interpreter::new_from_compiled_policy(self.policy.inner.clone());
@@ -224,13 +224,16 @@ impl<'a> Compiler<'a> {
             Ok(computed_value) => {
                 if computed_value != Value::Undefined {
                     let literal_index = self.add_literal(computed_value);
-                    return Some(literal_index);
+                    return Ok(Some(literal_index));
                 }
             }
-            Err(_e) => {}
+            Err(error) if crate::interpreter::is_evaluation_limit_error(&error) => {
+                return Err(CompilerError::from(error).into());
+            }
+            Err(_) => {}
         }
 
-        None
+        Ok(None)
     }
 
     fn extract_destructuring_blocks(&self, rule_index: u16) -> Vec<Option<u32>> {

@@ -98,6 +98,20 @@ The traversal does not memoize shared substructures. Compact shared DAGs can
 still require exponential work to finish, but covered comparisons can stop
 at a timer checkpoint instead of expanding the entire structure first.
 
+Depth admission is separate from those traversals: the shared Value depth
+validator memoizes completed container subtree heights by pointer identity.
+Its active stack is path-sized and its memo has one entry per distinct
+container, with cooperative memory checkpoints. Reusing a subtree at a deeper
+path still checks its full height. This avoids expanding every DAG occurrence
+just to admit a Value; it does not memoize `walk`, comparison, or output
+traversals, which may still expand shared occurrences.
+
+Program loading records rule-tree admission errors for execution to report.
+Structural depth failures stay rejected. Resource failures are checked again
+before execution: lifting a memory limit lets the same VM run a valid program
+without loading it again. A successful retry clears the saved error; a retry
+can still discover an actual depth violation.
+
 With memory limits but no timer, scalar set membership retains native O(log n)
 B-tree lookup, checking limits before and after the lookup. Scalar probes cannot
 descend into stored containers. Timed membership and resource-checked compound
@@ -120,8 +134,8 @@ scalar output, and indentation; native VM result formatting also checks the
 active execution budget before completing the output. These are cooperative
 checks, not a physical-OOM guarantee. Generic Serde callbacks have a separate
 64-container nesting budget; this is not an input admission limit. Program JSON
-serialization returns an error, rather than panicking, if a literal, rule tree,
-or annotation exceeds that budget.
+serialization also preserves the separate 32-container program limit for
+literals, rule trees, and annotations, returning an error rather than panicking.
 
 The FFI query-result endpoint uses `QueryResults::to_json_str`, preserving the
 pretty-JSON field order and omit-empty rules while accepting deep expression
@@ -142,12 +156,53 @@ successful string containing Display's diagnostic text. Public Display remains
 diagnostic on failure; successful JSON and scalar-conversion conventions remain
 unchanged.
 
+JSON schema and document conversion use checked compact JSON output and the
+bounded structural reader, including objects with non-string keys. Memory
+exhaustion remains a typed error, not an invalid-schema Boolean or undefined
+document. For example, `not json.verify_schema({0: input, 1: true})[0]` cannot
+succeed just because copying a large input exhausts the memory budget.
+
 Collection destruction uses the upstream iterative final-owner drain. Shared
 owners are not cloned to release them, and exhausted object iterators are freed
 before descending into their final pair. Single-child array/set chains need no
 continuation allocation; branching shapes and object key/value continuations can
 allocate. Cooperative memory limits do not prohibit cleanup allocations, and
 successful destruction under physical allocator exhaustion is not guaranteed.
+
+### Interpreter statement continuations
+
+The tree-walking interpreter retains its separate native evaluation nesting
+budget of 64. Recursive expression, rule/function, nested-query, and output-loop
+evaluation remain guarded; a resource error is not undefined, a rule default,
+or a successful negation, even with non-strict builtin errors.
+
+Sequential statement continuations, including `some .. in` and hoisted index
+or `walk` loops, use explicit heap-backed backtracking frames instead of nested
+native calls. Body width therefore does not consume that native budget.
+Frames retain collection cursors and binding plans, restore iteration scopes
+and cached loop values, and unwind active `with` state on success or error.
+Array traversal stays lazy. Object/set continuations take shallow, shared-Value
+snapshots using borrowed iteration, with memory/time checkpoints before and
+after each entry/member is accumulated. Advancing these snapshots does not
+search, hash, or structurally compare keys/members; shared DAG prefixes therefore
+do not turn cursor advancement into an unchecked structural traversal. Snapshot
+storage is proportional to the collection's entry count, not its expanded tree.
+Hoisted collection evaluation restores the complete saved state before
+propagating an error. Function-value `with` replacement also propagates typed
+resource errors instead of falling back to function-name lookup.
+Default evaluation restores the caller's scopes on every result path. Error
+unwinding attempts every frame's scope, cached-value, and saved-state cleanup:
+cleanup failures cannot downgrade an original fatal evaluation error, and an
+independent cleanup failure is returned even if evaluation otherwise succeeded.
+
+This is not an unlimited-width or constant-memory guarantee: live choice points
+and scope snapshots consume memory, and combinations can require exponential
+work. The RVM's independent 255-register window still rejects some wide bodies
+with register overflow; `with` remains unsupported by its compiler. Tests cover
+128-statement interpreter bodies, shared-backend 24-hoisted-loop and 40-some-in
+bodies with eight helper calls, and real native-nesting rejection/recovery in
+isolated 1,500,000-byte workers. These are bounded measurements, not a universal
+host-stack guarantee.
 
 ### Native rule-call depth limit
 
@@ -165,8 +220,11 @@ Rust callers can change the per-VM limit with
 evaluation, including during resume, and survives evaluation resets and program
 loads. Zero rejects calls that need a native rule frame; cached results and
 default-only rules can still return without one. There is no new binding API.
-Raising the limit does not enlarge the host thread's stack and can cause stack
-overflow.
+The private supported native ceiling is 17. Larger settings are retained by the
+setter, but a synchronous uncached rule evaluation rejects them with
+`RuleCallDepthExceeded { limit: 17, .. }` before entering its body. The configured
+setting is not clamped or reset. Explicit suspendable frames remain independent
+of this setting; synchronous virtual-document lookups still check it.
 
 This VM resource limit can reject valid, nonrecursive policies. It is separate
 from instruction, time, and memory limits. Depth 16 was tested on Windows in
@@ -177,6 +235,9 @@ patterns may behave differently. The limit does not guarantee stack safety.
 reuse those cases to check typed errors, cleanup, VM reuse, and stepping. Both
 run in subprocesses with a timeout and a 2 MiB test-thread stack.
 These subprocess-backed tests are excluded under Miri.
+Additional boundary/configuration and frontend/interpreter regressions use
+explicit 1,500,000-byte workers inside isolated subprocesses. These bounded
+checks do not establish a universal host-stack guarantee.
 
 ### Run-to-completion
 

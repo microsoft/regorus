@@ -1,33 +1,30 @@
 Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior.
 
-## Parser nesting limit
+## Parsing nested expressions
 
-While parsing a policy or query, at most 32 nested terms or `every` statements
-can be open at once. Each scalar, variable, array, set, object, function call,
-bracket index, unary `-`, parenthesized expression, comprehension, or `every`
-statement uses 1 slot while its inner tokens are parsed:
+The parser limits recursive terms and query bodies to a shared depth of 32 and
+also checks the depth of the resulting expressions and queries. Plain terms such
+as `[[1]]` use three levels. A comprehension such as `[0 | true]` also opens a
+query body, so nested comprehensions reach the limit sooner than nested arrays.
+The query-body guard also bounds nested `every` bodies without charging a second
+slot for the same statement. Sibling terms close their slot before the next
+starts, so wide shallow arrays and queries do not add to the nesting depth.
+Excessive nesting returns an `expression nesting too deep` error, not
+`Undefined`. A rejected policy is not added to the engine, which remains usable.
 
-- `[[1]]` uses 3 slots: outer array, inner array, and `1`.
-- 31 array wrappers around `1` (`[[...[1]...]]`) or 31 call wrappers around `1`
-  (`count(...count(1)...)`) use 32 slots and succeed; a 32nd wrapper fails with
-  `expression nesting too deep (>32)`.
-- Empty containers and zero-argument calls (`[]`, `{}`, `set()`, `f()`) have no
-  inner value, so 32 nested empty wrappers succeed and the 33rd fails.
-- Sibling elements (`[1, 2, 3]`, `f(1, 2, 3)`, or consecutive statements) close
-  their slot before the next sibling starts and do not add to depth.
+Before trying a comprehension or assignment, an iterative lookahead checks for
+`|`, `=`, or `:=` after the first reference. It skips nested delimiters and does
+not treat string contents as separators. For example, `[0 | [0 | true]]` must not
+parse each inner query again while checking whether the outer expression is an
+assignment. The scan stops at the reference boundary rather than reading all
+later statements, keeping long sequences of shallow statements inexpensive.
 
-Exceeding 32 slots returns a parse error (`expression nesting too deep (>32)`),
-never `Undefined`. A rejected policy is not added to the `Engine`, and the same
-`Engine` remains usable for later policies and queries.
-
-To distinguish arrays/objects from comprehensions (`|`) and expressions from
-assignments (`=`, `:=`) without parsing deep terms twice, the parser scans ahead
-iteratively across the first term before recursing.
-
-This limit only bounds recursive descent in the parser (tested on a 1 MiB worker
-thread stack in debug and release builds, not a guarantee for arbitrary stack
-sizes). It is separate from the 32-component path-ref limit below, flat binary
-operator chains (`1 + 1 + ...`), host `Value` depth, and RVM rule-call depth.
+This lookahead does not change the grammar or depth limits. In particular,
+parenthesized string indices in calls (`f[("k")](1)`) and multiline unary
+unification (`-` followed on the next line by `1 = -1`) remain supported.
+Depth errors and typed resource-limit errors are preserved across parsing
+fallbacks. These limits are separate from host `Value` limits and RVM rule-call
+limits; they are not a guarantee for arbitrary native stack sizes.
 
 ```ebnf
 
@@ -193,6 +190,24 @@ Policy-source path references are limited to 32 components, counting the
 initial identifier as one. Every dotted identifier or bracketed string adds
 one component; dots inside a bracketed string do not. A 33rd component is
 rejected by the general policy parser.
+
+The Rego frontend also limits expression/query nesting and constructed AST
+height to 32. Scalars have height one; each expression or query adds one to
+the largest child height. Statement lists do not add height per sibling.
+This includes general references and operator chains, not just parentheses.
+Parenthesized grammar nesting is checked separately, before speculative
+parsing. Unsupported structures return parser errors.
+
+The interpreter has a separate private budget of 64 simultaneously active
+evaluation entries, shared by expressions, rules/functions, destructuring and
+native loop continuations. Exhaustion is an evaluation error, including in non-strict mode;
+it is not false, undefined, or a request to select a default. Ordinary statement
+iteration does not consume an entry per statement. These structural and native
+budgets are not limits on the depth of input/data Values.
+
+The RVM compiler also enforces its existing rule-tree path limit. A policy may
+parse successfully yet fail RVM compilation when its combined registered path
+exceeds that limit; direct entry-point lookup does not bypass this check.
 
 Static public entry-point lookup uses a separate iterative parser rather than
 building the recursively nested policy AST. It accepts dotted and bracketed

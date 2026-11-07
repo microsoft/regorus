@@ -8,6 +8,9 @@
     clippy::as_conversions
 )] // small arithmetic checks are intentional
 
+pub(crate) mod depth;
+#[cfg(any(feature = "jsonschema", feature = "rvm"))]
+pub(crate) mod json;
 pub mod limits;
 
 use crate::ast::*;
@@ -108,75 +111,78 @@ pub(crate) fn split_canonical_path_root(path: &str) -> Option<(&str, &str)> {
 }
 
 pub(crate) fn get_rule_path_components(refr: &Expr) -> Result<Vec<PathComponent>> {
-    fn collect(refr: &Expr, components: &mut Vec<PathComponent>) -> Result<()> {
-        match refr {
+    let mut spine = Vec::new();
+    let mut expression = refr;
+    loop {
+        spine.push(expression);
+        match expression {
+            Expr::RefDot { refr, .. } | Expr::RefBrack { refr, .. } => expression = refr,
+            Expr::Var { .. } => break,
+            _ => bail!(expression.span().error("internal error: not a simple ref")),
+        }
+        crate::utils::limits::check_memory_limit_if_needed()?;
+    }
+    let mut components = Vec::new();
+    for expression in spine.into_iter().rev() {
+        match expression {
             Expr::Var { span, .. } => {
                 components.push(PathComponent::String(span.text().to_string()));
             }
-            Expr::RefDot { refr, field, .. } => {
-                collect(refr, components)?;
+            Expr::RefDot { field, .. } => {
                 components.push(PathComponent::String(field.0.text().to_string()));
             }
-            Expr::RefBrack { refr, index, .. } => {
-                collect(refr, components)?;
-                match index.as_ref() {
-                    Expr::String { value, .. } => components.push(PathComponent::String(
-                        value.as_string()?.as_ref().to_string(),
-                    )),
-                    Expr::Number { span, .. }
-                    | Expr::Bool { span, .. }
-                    | Expr::Null { span, .. } => {
-                        components.push(PathComponent::Raw(span.text().to_string()));
-                    }
-                    _ => {
-                        let index_components = Parser::get_path_ref_components(index)?;
-                        components.extend(
-                            index_components
-                                .iter()
-                                .map(|component| PathComponent::Raw(component.text().to_string())),
-                        );
-                    }
+            Expr::RefBrack { index, .. } => match index.as_ref() {
+                Expr::String { value, .. } => components.push(PathComponent::String(
+                    value.as_string()?.as_ref().to_string(),
+                )),
+                Expr::Number { span, .. } | Expr::Bool { span, .. } | Expr::Null { span, .. } => {
+                    components.push(PathComponent::Raw(span.text().to_string()));
                 }
-            }
-            _ => bail!("internal error: not a simple ref {refr:?}"),
+                _ => {
+                    let index_components = Parser::get_path_ref_components(index)?;
+                    components.extend(
+                        index_components
+                            .iter()
+                            .map(|component| PathComponent::Raw(component.text().to_string())),
+                    );
+                }
+            },
+            _ => bail!(expression.span().error("internal error: not a simple ref")),
         }
-        Ok(())
     }
-
-    let mut components = Vec::new();
-    collect(refr, &mut components)?;
     Ok(components)
 }
 
 pub fn get_path_string(refr: &Expr, document: Option<&str>) -> Result<String> {
-    fn collect_simple(refr: &Expr, components: &mut Vec<PathComponent>) -> Result<()> {
-        match refr {
+    let mut components = Vec::new();
+    let mut expression = refr;
+    loop {
+        match expression {
             Expr::Var { span, .. } => {
                 components.push(PathComponent::String(span.text().to_string()));
+                break;
             }
             Expr::RefDot { refr, field, .. } => {
-                collect_simple(refr, components)?;
                 components.push(PathComponent::String(field.0.text().to_string()));
+                expression = refr;
             }
             Expr::RefBrack { refr, index, .. } => {
-                collect_simple(refr, components)?;
                 if let Expr::String { value, .. } = index.as_ref() {
                     components.push(PathComponent::String(
                         value.as_string()?.as_ref().to_string(),
                     ));
                 }
+                expression = refr;
             }
-            _ => bail!("internal error: not a simple ref {refr:?}"),
+            _ => bail!(expression.span().error("internal error: not a simple ref")),
         }
-        Ok(())
+        crate::utils::limits::check_memory_limit_if_needed()?;
     }
 
-    let mut components = Vec::new();
-    collect_simple(refr, &mut components)?;
     let mut path = document.unwrap_or_default().to_string();
-    for component in components {
+    for component in components.into_iter().rev() {
         if let PathComponent::String(component) = component {
-            path = append_path_component(&path, &component)?;
+            append_path_component_to(&mut path, &component)?;
         }
     }
     Ok(path)

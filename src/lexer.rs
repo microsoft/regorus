@@ -385,6 +385,9 @@ pub struct Token(pub TokenKind, pub Span);
 #[derive(Clone)]
 pub struct Lexer<'source> {
     source: Source,
+    // Shared across snapshots so speculative rollback cannot erase measured work.
+    #[cfg(test)]
+    pub(crate) token_count: alloc::sync::Arc<core::sync::atomic::AtomicUsize>,
     iter: Peekable<CharIndices<'source>>,
     line: u32,
     col: u32,
@@ -409,6 +412,8 @@ impl<'source> Lexer<'source> {
     pub fn new(source: &'source Source) -> Self {
         Self {
             source: source.clone(),
+            #[cfg(test)]
+            token_count: alloc::sync::Arc::default(),
             iter: source.contents().char_indices().peekable(),
             line: 1,
             col: 1,
@@ -887,6 +892,13 @@ impl<'source> Lexer<'source> {
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
+        self.next_token_with_lookahead(true)
+    }
+
+    fn next_token_with_lookahead(&mut self, lookahead: bool) -> Result<Token> {
+        #[cfg(test)]
+        self.token_count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.skip_ws()?;
 
         let (start, chr) = self.peek();
@@ -1026,7 +1038,7 @@ impl<'source> Lexer<'source> {
             _ if chr.is_ascii_digit() => self.read_number()?,
             _ if chr.is_ascii_alphabetic() || chr == '_' => {
                 let mut ident = self.read_ident()?;
-                if ident.1.text() == "set" && self.peek().1 == '(' {
+                if lookahead && ident.1.text() == "set" && self.peek().1 == '(' {
                     // set immediately followed by ( is treated as set( if
                     // the next token is ).
                     let state = (self.iter.clone(), self.line, self.col);

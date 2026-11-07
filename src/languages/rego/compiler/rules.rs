@@ -752,9 +752,9 @@ impl<'a> Compiler<'a> {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
                 let package_path = package_parts.to_vec();
-                let _ =
-                    self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                self.program
+                    .add_rule_to_tree(&package_path, rule_name, rule_index as usize)
+                    .map_err(CompilerError::from)?;
             }
 
             self.register_counter = saved_register_counter;
@@ -786,9 +786,9 @@ impl<'a> Compiler<'a> {
                             message: format!("invalid registered rule path '{rule_path}'"),
                         })?;
                 let package_path = package_parts.to_vec();
-                let _ =
-                    self.program
-                        .add_rule_to_tree(&package_path, rule_name, rule_index as usize);
+                self.program
+                    .add_rule_to_tree(&package_path, rule_name, rule_index as usize)
+                    .map_err(CompilerError::from)?;
             }
 
             self.register_counter = saved_register_counter;

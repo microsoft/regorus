@@ -9,9 +9,7 @@ use serde::de::{Deserialize, Deserializer, Error as _, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
 
 use super::Array;
-use crate::value::{
-    serialization_child_budget, SerializeWithBudget, Value, MAX_SERIALIZATION_CONTAINERS,
-};
+use crate::value::{serialization_child_budget, SerializeWithBudget, MAX_SERIALIZATION_CONTAINERS};
 
 impl Serialize for Array {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -46,7 +44,10 @@ impl<'de> Visitor<'de> for ArrayVisitor {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
         let mut array = Array::new();
-        while let Some(v) = access.next_element::<Value>()? {
+        while let Some(v) = access.next_element_seed(crate::value::ValueSeed(
+            crate::utils::depth::MAX_DEPTH.saturating_sub(1),
+            None,
+        ))? {
             array.push(v);
             crate::utils::limits::check_memory_limit_if_needed().map_err(A::Error::custom)?;
         }

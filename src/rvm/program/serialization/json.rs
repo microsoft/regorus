@@ -16,6 +16,8 @@ use indexmap::IndexMap;
 impl Program {
     /// Serialize to JSON format with complete program information and proper field names
     pub fn serialize_json(&self) -> Result<String, String> {
+        self.validate_limits()?;
+        self.validate_serialization_depth()?;
         // json! unwraps serialization errors, so convert fallible Value fields first.
         let annotations = serde_json::to_value(&self.metadata.annotations)
             .map_err(|e| format!("JSON serialization failed: {e}"))?;
@@ -68,8 +70,10 @@ impl Program {
 
     /// Deserialize program from JSON format
     pub fn deserialize_json(data: &str) -> Result<Program, String> {
-        let json_data: serde_json::Value =
-            serde_json::from_str(data).map_err(|e| format!("JSON parsing failed: {}", e))?;
+        // Leave room for the format envelope around independently bounded values.
+        let json_data =
+            crate::utils::json::from_str(data, crate::utils::depth::MAX_DEPTH.saturating_add(8))
+                .map_err(|e| format!("JSON parsing failed: {e}"))?;
 
         let metadata = json_data
             .get("metadata")
@@ -167,7 +171,9 @@ impl Program {
 
         let literals: Vec<Value> = json_data
             .get("literals")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Literals deserialization failed: {e}"))?
             .unwrap_or_default();
 
         let builtin_info_table: Vec<BuiltinInfo> = json_data
@@ -197,7 +203,9 @@ impl Program {
 
         let rule_tree: Value = json_data
             .get("rule_tree")
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| Value::new_object()))
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Rule tree deserialization failed: {e}"))?
             .unwrap_or_else(Value::new_object);
 
         let mut program = Program {
@@ -238,6 +246,8 @@ impl Program {
             program.recompute_host_await_presence();
         }
 
+        program.validate_limits()?;
+        program.validate_serialization_depth()?;
         if !program.builtin_info_table.is_empty() {
             let _ = program.initialize_resolved_builtins();
         }
@@ -254,7 +264,7 @@ mod tests {
     #[test]
     fn deep_program_values_return_serialization_errors_without_panicking() {
         for field in 0..3 {
-            for depth in [64, 65] {
+            for depth in [32, 33, 64, 65] {
                 let mut value = Value::Null;
                 for _ in 0..depth {
                     value = Value::from(vec![value]);
@@ -268,10 +278,12 @@ mod tests {
                     }
                 }
                 let result = program.serialize_json();
-                if depth == 64 {
-                    assert!(result.is_ok());
+                if depth == 32 {
+                    assert!(result.is_ok(), "depth {depth} failed");
                 } else {
-                    assert!(matches!(result, Err(error) if error.contains("64 nested containers")));
+                    assert!(
+                        matches!(result, Err(error) if error.contains("supported nesting limit 32"))
+                    );
                 }
             }
         }

@@ -193,6 +193,7 @@ impl RegoVM {
             self.reset_run_to_completion_state()?;
             self.reset_execution_timer_state();
             self.execution_state = ExecutionState::Running;
+            self.validate_program_tree()?;
             self.check_initial_memory_limit()?;
             self.jump_to(0_u32)
                 .map_err(|err| self.apply_memory_budget_precedence(err))
@@ -238,6 +239,7 @@ impl RegoVM {
 
             vm.pc = start_pc;
             let result = (|| {
+                vm.validate_program_tree()?;
                 if validate_vm_state {
                     vm.validate_vm_state()?;
                 }
@@ -713,7 +715,7 @@ impl RegoVM {
         // They represent engine-level constraints, not rule-level failures.
         // Returning Ok(false) causes the caller to clear execution_stack and
         // propagate the error, terminating the evaluation entirely.
-        if RegoVM::is_fatal_vm_error(&err) {
+        if self.is_fatal_vm_error(&err) {
             return Ok(false);
         }
 
