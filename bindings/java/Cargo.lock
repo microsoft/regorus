@@ -1083,7 +1083,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regorus"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "regorus-java"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "jni",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "regorus-mimalloc"
-version = "2.2.9"
+version = "2.2.10"
 dependencies = [
  "regorus-mimalloc-sys",
 ]
