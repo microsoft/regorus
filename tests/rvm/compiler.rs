@@ -118,6 +118,61 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
             true,
         ),
         (
+            r#"f(_) := {"a":[{"b":[7,1]}]}"#,
+            r#"not f(1, {"a":[{"b":[7,2]}]})"#,
+            r#"{}"#,
+            true,
+        ),
+        (
+            r#"f(_) := {"a":[{"b":[7,1]}]}"#,
+            r#"not f(1, {"a":[{"b":[7,1]}]})"#,
+            r#"{}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not {"a":[{"b":[_,data.x]}]} = input.payload; data.x == 7"#,
+            r#"{"payload":{"a":[{"b":[9,2]}]}}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not {"a":[{"b":[_,data.x]}]} = input.payload"#,
+            r#"{"payload":{"a":[{"b":[9,7]}]}}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not {"a":[{"b":[_,data.x]}]} = input.payload; data.x == 7"#,
+            r#"{"payload":{"a":[]}}"#,
+            true,
+        ),
+        (
+            "f(_) := 1",
+            "not [_, f(1)] = [7,2]; data.x == 7",
+            r#"{}"#,
+            true,
+        ),
+        ("f(_) := 1", "not [_, f(1)] = [7,1]", r#"{}"#, false),
+        (
+            "f(_) := 1",
+            "not [_, f(input.missing)] = [7,2]; data.x == 7",
+            r#"{}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | not [1 | not 1 = input.x] == [1]] == [1]",
+            r#"{"x":2}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | every y in [input.x] { not [1 | not 1 = y] == [1] }] == [1]",
+            r#"{"x":1}"#,
+            false,
+        ),
+        (
             "",
             "input.payload[0] == 7; count(input.payload) == 1",
             r#"{"payload":[7]}"#,
@@ -294,7 +349,11 @@ fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<
         } else {
             "not f(input.missing, input.missing)"
         };
-        for body in [control, "not f(input.missing, 1 / 0)"] {
+        for body in [
+            control,
+            "not f(input.missing, 1 / 0)",
+            r#"not f(input.missing, {"a":[{"b":[1 / 0]}]})"#,
+        ] {
             let mut engine = Engine::new();
             engine.set_strict_builtin_errors(strict);
             engine.add_policy(
@@ -326,6 +385,7 @@ fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<
             outcomes.push(modes);
         }
         assert_eq!(outcomes[1], outcomes[0], "strict={strict}");
+        assert_eq!(outcomes[2], outcomes[0], "strict={strict}");
     }
     Ok(())
 }
