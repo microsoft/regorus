@@ -10,6 +10,231 @@ use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
 
+#[test]
+fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
+    let cases = [
+        ("", "x := input.missing", r#"{}"#, false),
+        ("", "_ := input.missing", r#"{}"#, false),
+        ("", "x := false", r#"{}"#, true),
+        ("", "x := null", r#"{}"#, true),
+        ("", "x := []", r#"{}"#, true),
+        ("", "count(input.missing, _)", r#"{}"#, false),
+        ("f(_) := true", "f(input.missing)", r#"{}"#, false),
+        ("f(_) := true", "f(false)", r#"{}"#, true),
+        ("f(_) := true", "f(null)", r#"{}"#, true),
+        (
+            "",
+            "{0: x} = input.payload; x == 7",
+            r#"{"payload":[7]}"#,
+            false,
+        ),
+        (
+            "",
+            "[x] = input.payload; x == 7",
+            r#"{"payload":{"0":7}}"#,
+            false,
+        ),
+        ("", "y := {0: 7}; [x] = y; x == 7", r#"{}"#, false),
+        (
+            "",
+            "[x] = input.payload; x == 7",
+            r#"{"payload":[7]}"#,
+            true,
+        ),
+        (
+            "",
+            r#"{"a": x} = input.payload; x == 7"#,
+            r#"{"payload":{"a":7,"b":8}}"#,
+            true,
+        ),
+        (
+            "f({}) := true",
+            "f(input.payload)",
+            r#"{"payload":[]}"#,
+            false,
+        ),
+        (
+            "f({}) := true",
+            "f(input.payload)",
+            r#"{"payload":{"a":7}}"#,
+            true,
+        ),
+        ("", "not _ = input.missing", r#"{}"#, true),
+        ("f(_) := true", "not f(input.missing)", r#"{}"#, true),
+        ("", "not _ = false", r#"{}"#, false),
+        ("", "not _ = null", r#"{}"#, false),
+        ("", "not {} = input.payload", r#"{"payload":[]}"#, true),
+        ("", "not [x] = input.payload", r#"{"payload":[]}"#, true),
+        ("", r#"not split("a,b", ",", ["a"])"#, r#"{}"#, true),
+        ("", r#"not split("a,b", ",", ["wrong","b"])"#, r#"{}"#, true),
+        ("", r#"not split("a,b", ",", ["a","b"])"#, r#"{}"#, false),
+        ("", "not [_, 1] = [7, 2]", r#"{}"#, true),
+        ("", "not [_, 1] = [7, 1]", r#"{}"#, false),
+        ("", "[x, y] := [false, null]", r#"{}"#, true),
+        (
+            "",
+            r#"{"a": _} = input.payload"#,
+            r#"{"payload":{}}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not {"a": [_]} = input.payload"#,
+            r#"{"payload":{"a":{}}}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", [input.x]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", ["wrong", input.x]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", ["wrong", data.x]); data.x == 7"#,
+            r#"{}"#,
+            true,
+        ),
+        (
+            "f(_, _) := true",
+            "not f(input.missing, input.x); input.x == 7",
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            "input.payload[0] == 7; count(input.payload) == 1",
+            r#"{"payload":[7]}"#,
+            true,
+        ),
+        ("", "_ = _", r#"{}"#, true),
+    ];
+    let mut divergences = Vec::new();
+    for (definitions, body, input, want) in cases {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definitions}\ndefault p := false\np if {{ {body} }}"),
+            )?;
+            let input = Value::from_json_str(input)?;
+            engine.set_input(input.clone());
+            let data = Value::from_json_str(r#"{"x":7}"#)?;
+            engine.add_data(data.clone())?;
+            let expected = Value::Bool(want);
+            assert_eq!(engine.eval_rule("data.test.p".into())?, expected, "{body}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_data(data.clone())?;
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed {
+                            result: got.clone()
+                        }
+                    );
+                }
+                if got != expected {
+                    divergences.push(format!(
+                        "{body}: {mode:?}, strict={strict}: {got:?} != {expected:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_skips_invocation_and_preserves_value_heads() -> anyhow::Result<()> {
+    for (definition, input, expected) in [
+        ("f(_) := true", r#"{}"#, Value::Undefined),
+        ("f(_) := 1 / 0", r#"{}"#, Value::Undefined),
+        ("f(x) := x", r#"{"x":false}"#, Value::Bool(false)),
+        ("f(x) := x", r#"{"x":null}"#, Value::Null),
+        ("f(x) := x", r#"{"x":[]}"#, Value::new_array()),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definition}\np := f(input.x)"),
+            )?;
+            let input = Value::from_json_str(input)?;
+            engine.set_input(input.clone());
+            assert_eq!(engine.eval_rule("data.test.p".into())?, expected);
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                assert_eq!(got, expected, "{definition}, {mode:?}, strict={strict}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: got }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
+    let mut outcomes = Vec::new();
+    for body in [
+        "p := 1 / 0",
+        "p := f(input.missing, 1 / 0)",
+        r#"p if { not split("a,b", ",", ["wrong", 1 / 0]) }"#,
+    ] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(true);
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\nf(_, _) := true\n{body}"),
+        )?;
+        assert!(engine.eval_rule("data.test.p".into()).is_err(), "{body}");
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        let mut modes = Vec::new();
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_strict_builtin_errors(true);
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            modes.push(observe_strict_probe(
+                vm.execute_entry_point_by_name("data.test.p"),
+            ));
+        }
+        outcomes.push(modes);
+    }
+    assert_eq!(outcomes[1], outcomes[0]);
+    assert_eq!(outcomes[2], outcomes[0]);
+    Ok(())
+}
+
 /// Compile a single-rule Rego module and return the program.
 fn compile_rule(module: &str) -> std::sync::Arc<regorus::rvm::program::Program> {
     let mut engine = Engine::new();

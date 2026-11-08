@@ -7,8 +7,9 @@ use crate::compiler::destructuring_planner::plans::{
     AssignmentPlan, BindingPlan, DestructuringPlan, WildcardSide,
 };
 use crate::lexer::Span;
-use crate::rvm::instructions::{GuardMode, Instruction};
+use crate::rvm::instructions::{BuiltinCallParams, GuardMode, Instruction};
 use crate::value::Value;
+use alloc::vec::Vec;
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug)]
@@ -20,19 +21,106 @@ pub enum PlanContext {
     SomeIn,
 }
 
-impl PlanContext {
-    fn require_defined_values(self) -> bool {
-        matches!(
-            self,
-            PlanContext::Assignment
-                | PlanContext::FunctionParameter
-                | PlanContext::LoopIndex
-                | PlanContext::SomeIn
-        )
-    }
-}
-
 impl<'a> Compiler<'a> {
+    pub(super) fn emit_match_failure_branch(
+        &mut self,
+        register: Register,
+        mode: GuardMode,
+        span: &Span,
+    ) -> Result<usize> {
+        let scratch = self.alloc_register()?;
+        let operand = if matches!(mode, GuardMode::NotUndefined) {
+            self.emit_instruction(
+                Instruction::Eq {
+                    dest: scratch,
+                    left: register,
+                    right: register,
+                },
+                span,
+            );
+            scratch
+        } else {
+            register
+        };
+        self.emit_instruction(
+            Instruction::Not {
+                dest: scratch,
+                operand,
+            },
+            span,
+        );
+        let branch = self.program.instructions.len();
+        self.emit_instruction(
+            Instruction::AnyOfNext {
+                check: scratch,
+                result: scratch,
+                end_pc: 0,
+            },
+            span,
+        );
+        Ok(branch)
+    }
+
+    pub(super) fn patch_match_failure_branches(&mut self, branches: &[usize]) -> Result<()> {
+        let end_pc = self
+            .program
+            .instructions
+            .len()
+            .checked_sub(1)
+            .and_then(|pc| u16::try_from(pc).ok())
+            .ok_or_else(|| {
+                anyhow::anyhow!("match branch target exceeds the RVM instruction limit")
+            })?;
+        for &branch in branches {
+            let Some(Instruction::AnyOfNext { end_pc: target, .. }) =
+                self.program.instructions.get_mut(branch)
+            else {
+                bail!("match branch instruction is missing or invalid");
+            };
+            *target = end_pc;
+        }
+        Ok(())
+    }
+
+    fn emit_match_check(
+        &mut self,
+        register: Register,
+        mode: GuardMode,
+        span: &Span,
+        failures: &mut Vec<usize>,
+    ) -> Result<()> {
+        if self.soft_assert_mode {
+            failures.push(self.emit_match_failure_branch(register, mode, span)?);
+        } else {
+            self.emit_instruction(Instruction::Guard { register, mode }, span);
+        }
+        Ok(())
+    }
+
+    fn with_match_result<F>(&mut self, span: &Span, f: F) -> Result<Option<Register>>
+    where
+        F: FnOnce(&mut Self, &mut Vec<usize>) -> Result<()>,
+    {
+        let result_register = if self.soft_assert_mode {
+            Some(self.load_bool_literal(false, span)?)
+        } else {
+            None
+        };
+        let saved_roots = (self.current_input_register, self.current_data_register);
+        let mut failures = Vec::new();
+        let result = f(self, &mut failures);
+        if result_register.is_some() {
+            // A failed match skips expressions whose root loads do not dominate the join.
+            (self.current_input_register, self.current_data_register) = saved_roots;
+        }
+        result?;
+        if let Some(dest) = result_register {
+            self.emit_instruction(Instruction::LoadBool { dest, value: true }, span);
+            self.patch_match_failure_branches(&failures)?;
+        }
+        Ok(result_register)
+    }
+
     pub fn compile_assignment_plan_using_hoisted_destructuring(
         &mut self,
         plan: &AssignmentPlan,
@@ -55,38 +143,40 @@ impl<'a> Compiler<'a> {
                 rhs_expr, lhs_plan, ..
             } => {
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                let _ = self.apply_destructuring_plan(
+                let result = self.apply_destructuring_plan(
                     lhs_plan,
                     rhs_reg,
                     span,
                     PlanContext::Assignment,
                 )?;
-                self.load_bool_literal(true, span)
+                result.map_or_else(|| self.load_bool_literal(true, span), Ok)
             }
             AssignmentPlan::EqualsBindRight {
                 lhs_expr, rhs_plan, ..
             } => {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
-                let _ = self.apply_destructuring_plan(
+                let result = self.apply_destructuring_plan(
                     rhs_plan,
                     lhs_reg,
                     span,
                     PlanContext::Assignment,
                 )?;
-                self.load_bool_literal(true, span)
+                result.map_or_else(|| self.load_bool_literal(true, span), Ok)
             }
             AssignmentPlan::EqualsBothSides { element_pairs, .. } => {
-                for (value_expr, value_plan) in element_pairs {
-                    let value_reg =
-                        self.compile_rego_expr_with_span(value_expr, value_expr.span(), false)?;
-                    let _ = self.apply_destructuring_plan(
-                        value_plan,
-                        value_reg,
-                        span,
-                        PlanContext::Assignment,
-                    )?;
-                }
-                self.load_bool_literal(true, span)
+                let result = self.with_match_result(span, |compiler, failures| {
+                    for (value_expr, value_plan) in element_pairs {
+                        let value_reg = compiler.compile_rego_expr_with_span(
+                            value_expr,
+                            value_expr.span(),
+                            false,
+                        )?;
+                        compiler
+                            .apply_destructuring_plan_impl(value_plan, value_reg, span, failures)?;
+                    }
+                    Ok(())
+                })?;
+                result.map_or_else(|| self.load_bool_literal(true, span), Ok)
             }
             AssignmentPlan::EqualityCheck { lhs_expr, rhs_expr } => {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
@@ -120,26 +210,18 @@ impl<'a> Compiler<'a> {
                 WildcardSide::Lhs => {
                     let rhs_reg =
                         self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                    self.emit_instruction(
-                        Instruction::Guard {
-                            register: rhs_reg,
-                            mode: GuardMode::NotUndefined,
-                        },
-                        span,
-                    );
-                    self.load_bool_literal(true, span)
+                    let result = self.with_match_result(span, |compiler, failures| {
+                        compiler.emit_match_check(rhs_reg, GuardMode::NotUndefined, span, failures)
+                    })?;
+                    result.map_or_else(|| self.load_bool_literal(true, span), Ok)
                 }
                 WildcardSide::Rhs => {
                     let lhs_reg =
                         self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
-                    self.emit_instruction(
-                        Instruction::Guard {
-                            register: lhs_reg,
-                            mode: GuardMode::NotUndefined,
-                        },
-                        span,
-                    );
-                    self.load_bool_literal(true, span)
+                    let result = self.with_match_result(span, |compiler, failures| {
+                        compiler.emit_match_check(lhs_reg, GuardMode::NotUndefined, span, failures)
+                    })?;
+                    result.map_or_else(|| self.load_bool_literal(true, span), Ok)
                 }
             },
         }
@@ -204,11 +286,29 @@ impl<'a> Compiler<'a> {
         plan: &DestructuringPlan,
         value_register: Register,
         span: &Span,
-        context: PlanContext,
+        _context: PlanContext,
     ) -> Result<Option<Register>> {
+        self.with_match_result(span, |compiler, failures| {
+            compiler.apply_destructuring_plan_impl(plan, value_register, span, failures)
+        })
+    }
+
+    fn apply_destructuring_plan_impl(
+        &mut self,
+        plan: &DestructuringPlan,
+        value_register: Register,
+        span: &Span,
+        failures: &mut Vec<usize>,
+    ) -> Result<()> {
+        if !matches!(
+            plan,
+            DestructuringPlan::Array { .. } | DestructuringPlan::Object { .. }
+        ) {
+            self.emit_match_check(value_register, GuardMode::NotUndefined, span, failures)?;
+        }
         match plan {
             DestructuringPlan::Var(name_span) => {
-                self.bind_variable(name_span, value_register, span, context)?;
+                self.bind_variable(name_span, value_register, span)?;
             }
             DestructuringPlan::Ignore => {}
             DestructuringPlan::EqualityExpr(expected_expr) => {
@@ -223,16 +323,7 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
-                if self.soft_assert_mode {
-                    return Ok(Some(cmp_reg));
-                }
-                self.emit_instruction(
-                    Instruction::Guard {
-                        register: cmp_reg,
-                        mode: GuardMode::Condition,
-                    },
-                    span,
-                );
+                self.emit_match_check(cmp_reg, GuardMode::Condition, span, failures)?;
             }
             DestructuringPlan::EqualityValue(expected_value) => {
                 let expected_reg = self.load_literal_value(expected_value, span)?;
@@ -245,19 +336,11 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
-                if self.soft_assert_mode {
-                    return Ok(Some(cmp_reg));
-                }
-                self.emit_instruction(
-                    Instruction::Guard {
-                        register: cmp_reg,
-                        mode: GuardMode::Condition,
-                    },
-                    span,
-                );
+                self.emit_match_check(cmp_reg, GuardMode::Condition, span, failures)?;
             }
             DestructuringPlan::Array { element_plans } => {
-                self.assert_array_length(value_register, element_plans.len(), span)?;
+                self.assert_collection_kind(value_register, "is_array", span, failures)?;
+                self.assert_array_length(value_register, element_plans.len(), span, failures)?;
                 for (index, element_plan) in element_plans.iter().enumerate() {
                     let literal_idx = self.add_literal(Value::from(index));
                     let element_reg = self.alloc_register()?;
@@ -269,23 +352,14 @@ impl<'a> Compiler<'a> {
                         },
                         span,
                     );
-                    if context.require_defined_values() {
-                        self.emit_instruction(
-                            Instruction::Guard {
-                                register: element_reg,
-                                mode: GuardMode::NotUndefined,
-                            },
-                            span,
-                        );
-                    }
-                    let _ =
-                        self.apply_destructuring_plan(element_plan, element_reg, span, context)?;
+                    self.apply_destructuring_plan_impl(element_plan, element_reg, span, failures)?;
                 }
             }
             DestructuringPlan::Object {
                 field_plans,
                 dynamic_fields,
             } => {
+                self.assert_collection_kind(value_register, "is_object", span, failures)?;
                 for (key, field_plan) in field_plans {
                     let literal_idx = self.add_literal(key.clone());
                     let field_reg = self.alloc_register()?;
@@ -297,14 +371,7 @@ impl<'a> Compiler<'a> {
                         },
                         span,
                     );
-                    self.emit_instruction(
-                        Instruction::Guard {
-                            register: field_reg,
-                            mode: GuardMode::NotUndefined,
-                        },
-                        span,
-                    );
-                    let _ = self.apply_destructuring_plan(field_plan, field_reg, span, context)?;
+                    self.apply_destructuring_plan_impl(field_plan, field_reg, span, failures)?;
                 }
 
                 for (key_expr, field_plan) in dynamic_fields {
@@ -319,18 +386,11 @@ impl<'a> Compiler<'a> {
                         },
                         span,
                     );
-                    self.emit_instruction(
-                        Instruction::Guard {
-                            register: field_reg,
-                            mode: GuardMode::NotUndefined,
-                        },
-                        span,
-                    );
-                    let _ = self.apply_destructuring_plan(field_plan, field_reg, span, context)?;
+                    self.apply_destructuring_plan_impl(field_plan, field_reg, span, failures)?;
                 }
             }
         }
-        Ok(None)
+        Ok(())
     }
 
     fn bind_variable(
@@ -338,7 +398,6 @@ impl<'a> Compiler<'a> {
         name_span: &Span,
         value_register: Register,
         span: &Span,
-        context: PlanContext,
     ) -> Result<()> {
         let var_name = name_span.text();
         if var_name == "_" {
@@ -358,16 +417,6 @@ impl<'a> Compiler<'a> {
             span,
         );
         self.add_variable(var_name, dest);
-
-        if context.require_defined_values() {
-            self.emit_instruction(
-                Instruction::Guard {
-                    register: dest,
-                    mode: GuardMode::NotUndefined,
-                },
-                span,
-            );
-        }
 
         Ok(())
     }
@@ -390,6 +439,7 @@ impl<'a> Compiler<'a> {
         array_register: Register,
         expected_length: usize,
         span: &Span,
+        failures: &mut Vec<usize>,
     ) -> Result<()> {
         let expected_literal = self.add_literal(Value::from(expected_length));
         let actual_len_reg = self.alloc_register()?;
@@ -419,13 +469,25 @@ impl<'a> Compiler<'a> {
             },
             span,
         );
-        self.emit_instruction(
-            Instruction::Guard {
-                register: cmp_reg,
-                mode: GuardMode::Condition,
-            },
-            span,
-        );
-        Ok(())
+        self.emit_match_check(cmp_reg, GuardMode::Condition, span, failures)
+    }
+
+    fn assert_collection_kind(
+        &mut self,
+        register: Register,
+        builtin: &str,
+        span: &Span,
+        failures: &mut Vec<usize>,
+    ) -> Result<()> {
+        let dest = self.alloc_register()?;
+        let builtin_index = self.get_builtin_index(builtin)?;
+        let params_index = self.program.add_builtin_call_params(BuiltinCallParams {
+            dest,
+            builtin_index,
+            num_args: 1,
+            args: [register, 0, 0, 0, 0, 0, 0, 0],
+        });
+        self.emit_instruction(Instruction::BuiltinCall { params_index }, span);
+        self.emit_match_check(dest, GuardMode::Condition, span, failures)
     }
 }

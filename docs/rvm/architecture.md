@@ -51,6 +51,15 @@ its own soft matching mode; leaving the query restores the caller's mode and
 inherited input/data root-register availability. Loads in a rejected query,
 including its yield, are not assumed to dominate subsequent expressions.
 
+Destructuring requires defined values, including ignored and unused bindings.
+Array patterns require arrays of the matching length; object patterns require
+objects but allow extra fields. Under `not`, a mismatch produces a local failed
+match rather than failing the enclosing body. User-call inputs are all evaluated
+before checking definedness; an undefined input skips invocation and output
+matching. Builtin strictness is unchanged.
+Negated relational calls evaluate binding-free expected outputs before equality
+comparison; wildcard output patterns still use local matching.
+
 Keyed membership (`key, value in collection`) checks the value at that specific
 object key or array index, not whether the value appears elsewhere. Missing or
 invalid keys produce `false`, as do keyed membership checks on sets and scalar

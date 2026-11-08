@@ -14,7 +14,9 @@ use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{ArrayCreateParams, BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::{
+    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, GuardMode,
+};
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
@@ -149,6 +151,20 @@ impl<'a> Compiler<'a> {
             self.ensure_register_capacity(3)?;
         }
         let dest = self.alloc_register()?;
+        let mut input_failure_branches = Vec::new();
+        let input_boundary_roots = (self.current_input_register, self.current_data_register);
+        if matches!(&call_target, CallTarget::User { .. }) && !arg_regs.is_empty() {
+            let literal_idx = self.add_literal(Value::Undefined);
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, &span);
+            // Evaluate all inputs first, then skip invocation and output matching
+            // on Undefined without failing the caller's enclosing condition.
+            for &register in &arg_regs {
+                input_failure_branches.push(
+                    self.emit_match_failure_branch(register, GuardMode::NotUndefined, &span)
+                        .map_err(|err| CompilerError::from(err).at(&span))?,
+                );
+            }
+        }
 
         match call_target {
             CallTarget::User { rule_index, .. } => {
@@ -340,19 +356,39 @@ impl<'a> Compiler<'a> {
         let saved_input_register = self.current_input_register;
         let saved_data_register = self.current_data_register;
         if let Some((plan, plan_span)) = &out_param_plan {
-            let plan_result = self
-                .apply_binding_plan(plan, dest, plan_span)
-                .map_err(|err| CompilerError::from(err).at(plan_span))?;
-            if let Some(result_reg) = plan_result {
+            let compare_output = self.soft_assert_mode
+                && matches!(plan, BindingPlan::Parameter { destructuring_plan, .. }
+                    if !destructuring_plan.introduces_binding());
+            if compare_output {
+                // Negated calls compare an evaluated output expression; they do
+                // not bind a pattern or skip later operands on an early mismatch.
+                let expected_expr = params.last().ok_or_else(|| CompilerError::General {
+                    message: "missing relational output expression".to_string(),
+                })?;
+                let expected = self.compile_rego_expr_with_span(expected_expr, plan_span, false)?;
                 self.emit_instruction(
-                    Instruction::Move {
+                    Instruction::Eq {
                         dest,
-                        src: result_reg,
+                        left: dest,
+                        right: expected,
                     },
                     &span,
                 );
             } else {
-                self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                let plan_result = self
+                    .apply_binding_plan(plan, dest, plan_span)
+                    .map_err(|err| CompilerError::from(err).at(plan_span))?;
+                if let Some(result_reg) = plan_result {
+                    self.emit_instruction(
+                        Instruction::Move {
+                            dest,
+                            src: result_reg,
+                        },
+                        &span,
+                    );
+                } else {
+                    self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                }
             }
         }
 
@@ -394,6 +430,11 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        if !input_failure_branches.is_empty() {
+            (self.current_input_register, self.current_data_register) = input_boundary_roots;
+            self.patch_match_failure_branches(&input_failure_branches)
+                .map_err(|err| CompilerError::from(err).at(&span))?;
+        }
         Ok(dest)
     }
 
