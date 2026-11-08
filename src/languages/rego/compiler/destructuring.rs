@@ -28,7 +28,15 @@ impl<'a> Compiler<'a> {
         mode: GuardMode,
         span: &Span,
     ) -> Result<usize> {
-        let scratch = self.alloc_register()?;
+        // AnyOfNext consumes this temporary before another check can overwrite it.
+        let scratch = match self.match_scratch_register {
+            Some(scratch_register) => scratch_register,
+            None => {
+                let scratch_register = self.alloc_register()?;
+                self.match_scratch_register = Some(scratch_register);
+                scratch_register
+            }
+        };
         let operand = if matches!(mode, GuardMode::NotUndefined) {
             self.emit_instruction(
                 Instruction::Eq {

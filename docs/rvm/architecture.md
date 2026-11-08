@@ -58,7 +58,11 @@ match rather than failing the enclosing body. User-call inputs are all evaluated
 before checking definedness; an undefined input skips invocation and output
 matching. Builtin strictness is unchanged.
 Negated relational calls evaluate binding-free expected outputs before equality
-comparison; wildcard output patterns still use local matching.
+comparison even when undefined inputs skip invocation; wildcard output patterns
+still use local matching.
+Sequential failure checks share a temporary register, separate from the match
+result. Skipped user calls retain their actual undefined input rather than a
+serialized undefined literal.
 
 Keyed membership (`key, value in collection`) checks the value at that specific
 object key or array index, not whether the value appears elsewhere. Missing or

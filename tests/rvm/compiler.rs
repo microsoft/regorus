@@ -61,6 +61,16 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
         ),
         ("", "not _ = input.missing", r#"{}"#, true),
         ("f(_) := true", "not f(input.missing)", r#"{}"#, true),
+        ("f(_) := true", "not f(input.missing, 7)", r#"{}"#, true),
+        ("f(_) := true", "f(input.missing, 1 / 0)", r#"{}"#, false),
+        ("f(_) := 1 / 0", "not f(input.missing)", r#"{}"#, true),
+        ("f(_) := true", "f(input.missing, _)", r#"{}"#, false),
+        (
+            "f(_) := true",
+            "not f(input.missing, data.x); data.x == 7",
+            r#"{}"#,
+            true,
+        ),
         ("", "not _ = false", r#"{}"#, false),
         ("", "not _ = null", r#"{}"#, false),
         ("", "not {} = input.payload", r#"{"payload":[]}"#, true),
@@ -202,6 +212,125 @@ fn undefined_user_input_skips_invocation_and_preserves_value_heads() -> anyhow::
 }
 
 #[test]
+fn wide_soft_match_and_successive_calls_remain_compilable() -> anyhow::Result<()> {
+    let wildcards = vec!["_"; 128].join(",");
+    let ones = vec!["1"; 128].join(",");
+    for (definitions, body, want) in [
+        ("", format!("not [{wildcards}] = [{ones}]"), false),
+        ("f(_) := true", vec!["f(1)"; 100].join(";"), true),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\n{definitions}\ndefault p := false\np if {{ {body} }}"),
+        )?;
+        let expected = Value::Bool(want);
+        assert_eq!(engine.eval_rule("data.test.p".into())?, expected);
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            let got = vm.execute_entry_point_by_name("data.test.p")?;
+            assert_eq!(got, expected, "{mode:?}");
+            if mode == ExecutionMode::Suspendable {
+                assert_eq!(
+                    vm.execution_state(),
+                    &ExecutionState::Completed { result: got }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_survives_program_json_round_trip() -> anyhow::Result<()> {
+    let input = Value::from_json_str(r#"{"x":7}"#)?;
+    for args in [
+        "input.missing",
+        "input.missing, input.x",
+        "input.x, input.missing",
+    ] {
+        let parameters = if args.contains(',') { "_, _" } else { "_" };
+        let mut engine = Engine::new();
+        engine.set_input(input.clone());
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\nf({parameters}) := true\ndefault p := false\np if {{ f({args}) }}"),
+        )?;
+        assert_eq!(engine.eval_rule("data.test.p".into())?, Value::Bool(false));
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let round_trip = Rc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+        for program in [program, round_trip] {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                assert_eq!(got, Value::Bool(false), "{args}, {mode:?}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: got }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<()> {
+    for strict in [true, false] {
+        let mut outcomes = Vec::new();
+        let control = if strict {
+            "not input.missing == 1 / 0"
+        } else {
+            "not f(input.missing, input.missing)"
+        };
+        for body in [control, "not f(input.missing, 1 / 0)"] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!(
+                    "package test\nimport rego.v1\nf(_) := true\ndefault p := false\np if {{ {body} }}"
+                ),
+            )?;
+            let input = Value::from_json_str("{}")?;
+            engine.set_input(input.clone());
+            let interpreted = engine.eval_rule("data.test.p".into());
+            if strict {
+                assert!(interpreted.is_err(), "{body}");
+            } else {
+                assert_eq!(interpreted?, Value::Bool(false), "{body}");
+            }
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            let mut modes = Vec::new();
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let result = vm.execute_entry_point_by_name("data.test.p");
+                modes.push(observe_strict_probe(&vm, result));
+            }
+            outcomes.push(modes);
+        }
+        assert_eq!(outcomes[1], outcomes[0], "strict={strict}");
+    }
+    Ok(())
+}
+
+#[test]
 fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
     let mut outcomes = Vec::new();
     for body in [
@@ -224,9 +353,8 @@ fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
             vm.set_strict_builtin_errors(true);
             vm.set_execution_mode(mode);
             vm.load_program(program.clone());
-            modes.push(observe_strict_probe(
-                vm.execute_entry_point_by_name("data.test.p"),
-            ));
+            let result = vm.execute_entry_point_by_name("data.test.p");
+            modes.push(observe_strict_probe(&vm, result));
         }
         outcomes.push(modes);
     }
@@ -892,7 +1020,17 @@ enum StrictProbeOutcome {
     DivisionError,
 }
 
-fn observe_strict_probe(result: Result<Value, VmError>) -> StrictProbeOutcome {
+fn observe_strict_probe(vm: &RegoVM, result: Result<Value, VmError>) -> StrictProbeOutcome {
+    if vm.get_execution_mode() == ExecutionMode::Suspendable {
+        if let Ok(value) = &result {
+            assert_eq!(
+                vm.execution_state(),
+                &ExecutionState::Completed {
+                    result: value.clone()
+                }
+            );
+        }
+    }
     match result {
         Ok(value) => StrictProbeOutcome::Value(value),
         Err(VmError::InvalidDivision { .. }) => StrictProbeOutcome::DivisionError,
@@ -1073,7 +1211,7 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
             ));
             vm.resume(Some(Value::from("first-response")))
         };
-        let first_outcome = observe_strict_probe(first_result);
+        let first_outcome = observe_strict_probe(&vm, first_result);
 
         let second_result = if is_run_to_completion {
             vm.execute_entry_point_by_index(1)
@@ -1099,7 +1237,7 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
             vm.resume(Some(Value::from("second-response")))
         };
 
-        Ok((first_outcome, observe_strict_probe(second_result)))
+        Ok((first_outcome, observe_strict_probe(&vm, second_result)))
     };
 
     let mut division_program = Program::new();

@@ -154,11 +154,16 @@ impl<'a> Compiler<'a> {
         let mut input_failure_branches = Vec::new();
         let input_boundary_roots = (self.current_input_register, self.current_data_register);
         if matches!(&call_target, CallTarget::User { .. }) && !arg_regs.is_empty() {
-            let literal_idx = self.add_literal(Value::Undefined);
-            self.emit_instruction(Instruction::Load { dest, literal_idx }, &span);
-            // Evaluate all inputs first, then skip invocation and output matching
-            // on Undefined without failing the caller's enclosing condition.
+            // Undefined skips invocation and binding-pattern matching, but not
+            // a negated call's binding-free expected-output expression.
             for &register in &arg_regs {
+                self.emit_instruction(
+                    Instruction::Move {
+                        dest,
+                        src: register,
+                    },
+                    &span,
+                );
                 input_failure_branches.push(
                     self.emit_match_failure_branch(register, GuardMode::NotUndefined, &span)
                         .map_err(|err| CompilerError::from(err).at(&span))?,
@@ -360,6 +365,13 @@ impl<'a> Compiler<'a> {
                 && matches!(plan, BindingPlan::Parameter { destructuring_plan, .. }
                     if !destructuring_plan.introduces_binding());
             if compare_output {
+                if !input_failure_branches.is_empty() {
+                    (self.current_input_register, self.current_data_register) =
+                        input_boundary_roots;
+                    self.patch_match_failure_branches(&input_failure_branches)
+                        .map_err(|err| CompilerError::from(err).at(&span))?;
+                    input_failure_branches.clear();
+                }
                 // Negated calls compare an evaluated output expression; they do
                 // not bind a pattern or skip later operands on an early mismatch.
                 let expected_expr = params.last().ok_or_else(|| CompilerError::General {

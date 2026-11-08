@@ -448,6 +448,7 @@ impl<'a> Compiler<'a> {
                 if let Rule::Spec { head, bodies, span } = rule_ref.as_ref() {
                     self.push_scope();
                     self.register_counter = 0;
+                    self.match_scratch_register = None;
 
                     let result_register = self.alloc_register()?;
 
