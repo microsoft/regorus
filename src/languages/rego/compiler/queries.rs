@@ -17,12 +17,13 @@ use alloc::vec::Vec;
 impl<'a> Compiler<'a> {
     pub(super) fn compile_query(&mut self, query: &Query) -> Result<()> {
         self.push_scope();
+        let saved_roots = (self.current_input_register, self.current_data_register);
 
-        let result = {
-            let schedule = match &self.policy.inner.schedule {
+        let result = self.with_soft_assert_mode(false, |compiler| {
+            let schedule = match &compiler.policy.inner.schedule {
                 Some(s) => s
                     .queries
-                    .get_checked(self.current_module_index, query.qidx)
+                    .get_checked(compiler.current_module_index, query.qidx)
                     .map_err(|err| {
                         CompilerError::General {
                             message: format!("schedule out of bounds: {err}"),
@@ -40,9 +41,11 @@ impl<'a> Compiler<'a> {
                     .collect(),
                 None => query.stmts.iter().collect(),
             };
-            self.hoist_loops_and_compile_statements(&ordered_stmts)
-        };
+            compiler.hoist_loops_and_compile_statements(&ordered_stmts)
+        });
 
+        // A rejected filter can skip root loads in later statements or the yield.
+        (self.current_input_register, self.current_data_register) = saved_roots;
         self.pop_scope();
 
         result
