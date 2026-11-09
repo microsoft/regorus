@@ -45,6 +45,12 @@ The Rego VM uses a register-based architecture with the following traits:
 
 ## 1. Compilation Outputs
 
+Nested comprehension and `every` queries compile their positive filters in
+assertion mode, even inside a negated expression. A nested `not` establishes
+its own soft matching mode; leaving the query restores the caller's mode and
+inherited input/data root-register availability. Loads in a rejected query,
+including its yield, are not assumed to dominate subsequent expressions.
+
 Keyed membership (`key, value in collection`) checks the value at that specific
 object key or array index, not whether the value appears elsewhere. Missing or
 invalid keys produce `false`, as do keyed membership checks on sets and scalar

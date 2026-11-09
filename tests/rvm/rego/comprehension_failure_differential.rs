@@ -10,7 +10,7 @@
 
 use anyhow::{bail, Result};
 use regorus::languages::rego::compiler::Compiler;
-use regorus::rvm::vm::{ExecutionMode, RegoVM};
+use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM};
 use regorus::{Engine, Value};
 
 const ENTRYPOINT: &str = "data.t.p";
@@ -133,5 +133,160 @@ fn comprehension_condition_failures_match_interpreter() -> Result<()> {
         divergences.len(),
         divergences.join("\n")
     );
+    Ok(())
+}
+
+#[test]
+fn rejected_query_preserves_root_availability() -> Result<()> {
+    let cases = [
+        "not [input.x | 1 = 2] == [1]; input.x == 7",
+        "not [data.x | 1 = 2] == [1]; data.x == 7",
+        "input.x == 7; not [input.x | 1 = 2] == [1]; input.x == 7",
+        "data.x == 7; not [data.x | 1 = 2] == [1]; data.x == 7",
+        "not [[input.x, data.x] | 1 = 2] == [1]; input.x == 7; data.x == 7",
+        "not {input.x | 1 = 2} == {1}; input.x == 7",
+        r#"not {"k": data.x | 1 = 2} == {"k": 1}; data.x == 7"#,
+        "not [input.x | 1 = 1] == [1]; input.x == 7",
+        "not [data.x | 1 = 1] == [1]; data.x == 7",
+        "not [input.x | not [data.x | 1 = 2] = [1]] = [1]; input.x == 7; data.x == 7",
+        "not [input.x | every y in [1] { not [data.x | 1 = 2] = [1] }] = [1]; input.x == 7; data.x == 7",
+        "every y in [] { input.x == y }; input.x == 7",
+        "every y in [] { data.x == y }; data.x == 7",
+        "[input.x | 1 = 2] == []; input.x == 7",
+        "[data.x | 1 = 2] == []; data.x == 7",
+    ];
+    let mut divergences = Vec::new();
+    for body in cases {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "t.rego".into(),
+            format!("package t\nimport rego.v1\ndefault p := false\np if {{ {body} }}"),
+        )?;
+        let roots = Value::from_json_str(r#"{"x":7}"#)?;
+        engine.set_input(roots.clone());
+        engine.add_data(roots.clone())?;
+        let expected = Value::Bool(true);
+        assert_eq!(engine.eval_rule(ENTRYPOINT.into())?, expected, "{body}");
+        let compiled = engine.compile_with_entrypoint(&ENTRYPOINT.into())?;
+        let program = Compiler::compile_from_policy(&compiled, &[ENTRYPOINT])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            vm.set_input(roots.clone());
+            vm.set_data(roots.clone())?;
+            let got = vm.execute_entry_point_by_name(ENTRYPOINT)?;
+            if mode == ExecutionMode::Suspendable {
+                assert_eq!(
+                    vm.execution_state(),
+                    &ExecutionState::Completed {
+                        result: got.clone()
+                    }
+                );
+            }
+            if got != expected {
+                divergences.push(format!("{body}, {mode:?}: {got:?} != {expected:?}"));
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn nested_query_assertion_mode_matches_interpreter() -> Result<()> {
+    let cases = [
+        ("not [1 | not [1 | not 1 = input.x] == [1]] = [1]", 2, true),
+        ("not [1 | not [1 | not 1 = input.x] == [1]] = [1]", 1, false),
+        (
+            "not [1 | every y in [input.x] { not [1 | not 1 = y] == [1] }] = [1]",
+            2,
+            true,
+        ),
+        (
+            "not [1 | every y in [input.x] { not [1 | not 1 = y] == [1] }] = [1]",
+            1,
+            false,
+        ),
+        ("not [1 | 1 = input.x] = [1]", 2, true),
+        ("not [1 | 1 = input.x] = [1]", 1, false),
+        ("not [1 | 1 = input.missing] = [1]", 2, true),
+        ("not [1 | 1 = input.x] = input.missing", 2, true),
+        ("not [1 | [y] := input.payload] = []", 2, false),
+        ("not [1 | [y] := input.payload] = [1]", 2, true),
+        ("not [1 | [y] := input.payload] = [1]", 1, false),
+        ("not [1 | [1] = input.elements] = [1]", 2, true),
+        ("not [1 | [1] = input.elements] = [1]", 1, false),
+        ("not [1 | [input.expected] = input.elements] = [1]", 2, true),
+        (
+            "not [1 | [input.expected] = input.elements] = [1]",
+            1,
+            false,
+        ),
+        // Binding y selects destructuring, not a whole-array EqualityCheck.
+        ("not [1 | [y, 1] = input.pattern_elements] = [1]", 2, true),
+        ("not [1 | [y, 1] = input.pattern_elements] = [1]", 1, false),
+        (
+            "not [1 | [y, input.expected] = input.pattern_elements] = [1]",
+            2,
+            true,
+        ),
+        (
+            "not [1 | [y, input.expected] = input.pattern_elements] = [1]",
+            1,
+            false,
+        ),
+        ("not [1 | 1 = input.x] == [1]", 2, true),
+        ("not [1 | 1 = input.x] == [1]", 1, false),
+        ("[1 | 1 = input.x] == []", 2, true),
+        ("[1 | 1 = input.x] == [1]", 1, true),
+        ("not [1 | not 1 = input.x] == [1]", 2, false),
+        ("not [1 | not 1 = input.x] == [1]", 1, true),
+        ("not {1 | 1 = input.x} == {1}", 2, true),
+        (r#"not {"k": 1 | 1 = input.x} == {"k": 1}"#, 2, true),
+        ("not [1 | every x in [input.x] { 1 = x }] == [1]", 2, true),
+    ];
+    let mut divergences = Vec::new();
+    for (body, x, want) in cases {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "t.rego".to_string(),
+                format!("package t\nimport rego.v1\ndefault p := false\np if {{ {body} }}"),
+            )?;
+            let payload = if x == 1 { "[7]" } else { "[]" };
+            let input = Value::from_json_str(&format!(
+                r#"{{"x": {x}, "payload": {payload}, "elements": [{x}], "pattern_elements": [7, {x}], "expected": 1}}"#
+            ))?;
+            engine.set_input(input.clone());
+            let expected = Value::Bool(want);
+            assert_eq!(engine.eval_rule(ENTRYPOINT.into())?, expected, "{body}");
+            let compiled = engine.compile_with_entrypoint(&ENTRYPOINT.into())?;
+            let program = Compiler::compile_from_policy(&compiled, &[ENTRYPOINT])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name(ENTRYPOINT)?;
+                if got != expected {
+                    divergences.push(format!(
+                        "{body}, x={x}, {mode:?}, strict={strict}: {got:?} != {expected:?}"
+                    ));
+                }
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed {
+                            result: got.clone()
+                        }
+                    );
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
     Ok(())
 }
