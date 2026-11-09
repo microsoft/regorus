@@ -22,6 +22,17 @@ pub enum PlanContext {
 }
 
 impl<'a> Compiler<'a> {
+    fn match_scratch_register(&mut self) -> Result<Register> {
+        match self.match_scratch_register {
+            Some(scratch_register) => Ok(scratch_register),
+            None => {
+                let scratch_register = self.alloc_register()?;
+                self.match_scratch_register = Some(scratch_register);
+                Ok(scratch_register)
+            }
+        }
+    }
+
     pub(super) fn emit_match_failure_branch(
         &mut self,
         register: Register,
@@ -29,14 +40,7 @@ impl<'a> Compiler<'a> {
         span: &Span,
     ) -> Result<usize> {
         // AnyOfNext consumes this temporary before another check can overwrite it.
-        let scratch = match self.match_scratch_register {
-            Some(scratch_register) => scratch_register,
-            None => {
-                let scratch_register = self.alloc_register()?;
-                self.match_scratch_register = Some(scratch_register);
-                scratch_register
-            }
-        };
+        let scratch = self.match_scratch_register()?;
         let operand = if matches!(mode, GuardMode::NotUndefined) {
             self.emit_instruction(
                 Instruction::Eq {
@@ -487,7 +491,7 @@ impl<'a> Compiler<'a> {
         span: &Span,
         failures: &mut Vec<usize>,
     ) -> Result<()> {
-        let dest = self.alloc_register()?;
+        let dest = self.match_scratch_register()?;
         let builtin_index = self.get_builtin_index(builtin)?;
         let params_index = self.program.add_builtin_call_params(BuiltinCallParams {
             dest,

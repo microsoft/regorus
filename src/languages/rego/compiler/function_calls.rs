@@ -10,7 +10,7 @@
 )]
 
 use super::{Compiler, CompilerError, Register, Result};
-use crate::ast::ExprRef;
+use crate::ast::{Expr, ExprRef};
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
@@ -363,7 +363,7 @@ impl<'a> Compiler<'a> {
         if let Some((plan, plan_span)) = &out_param_plan {
             let compare_output = self.soft_assert_mode
                 && matches!(plan, BindingPlan::Parameter { destructuring_plan, .. }
-                    if !destructuring_plan.introduces_binding());
+                    if destructuring_plan.bound_vars().is_empty());
             if compare_output {
                 if !input_failure_branches.is_empty() {
                     (self.current_input_register, self.current_data_register) =
@@ -377,15 +377,28 @@ impl<'a> Compiler<'a> {
                 let expected_expr = params.last().ok_or_else(|| CompilerError::General {
                     message: "missing relational output expression".to_string(),
                 })?;
-                let expected = self.compile_rego_expr_with_span(expected_expr, plan_span, false)?;
-                self.emit_instruction(
-                    Instruction::Eq {
-                        dest,
-                        left: dest,
-                        right: expected,
-                    },
-                    &span,
-                );
+                let has_wildcards = matches!(plan, BindingPlan::Parameter { destructuring_plan, .. }
+                    if destructuring_plan.contains_wildcards());
+                if has_wildcards {
+                    self.emit_instruction(Instruction::LoadBool { dest, value: false }, &span);
+                    let roots = (self.current_input_register, self.current_data_register);
+                    let mut failures = Vec::new();
+                    self.compile_negated_output_prefix(expected_expr, &mut failures)?;
+                    self.patch_match_failure_branches(&failures)
+                        .map_err(|err| CompilerError::from(err).at(&span))?;
+                    (self.current_input_register, self.current_data_register) = roots;
+                } else {
+                    let expected =
+                        self.compile_rego_expr_with_span(expected_expr, plan_span, false)?;
+                    self.emit_instruction(
+                        Instruction::Eq {
+                            dest,
+                            left: dest,
+                            right: expected,
+                        },
+                        &span,
+                    );
+                }
             } else {
                 let plan_result = self
                     .apply_binding_plan(plan, dest, plan_span)
@@ -448,6 +461,43 @@ impl<'a> Compiler<'a> {
                 .map_err(|err| CompilerError::from(err).at(&span))?;
         }
         Ok(dest)
+    }
+
+    // A wildcard cannot produce a defined expected output. Evaluate only the
+    // prefix before it, in expression order, rather than matching the call's
+    // result (whose shape or earlier mismatches must not suppress these effects).
+    fn compile_negated_output_prefix(
+        &mut self,
+        expr: &ExprRef,
+        failures: &mut Vec<usize>,
+    ) -> Result<bool> {
+        match expr.as_ref() {
+            Expr::Var { span, .. } if span.text() == "_" => return Ok(false),
+            Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                for item in items {
+                    if !self.compile_negated_output_prefix(item, failures)? {
+                        return Ok(false);
+                    }
+                }
+            }
+            Expr::Object { fields, .. } => {
+                for (_, key, value) in fields {
+                    if !self.compile_negated_output_prefix(key, failures)?
+                        || !self.compile_negated_output_prefix(value, failures)?
+                    {
+                        return Ok(false);
+                    }
+                }
+            }
+            _ => {
+                let register = self.compile_rego_expr_with_span(expr, expr.span(), false)?;
+                failures.push(
+                    self.emit_match_failure_branch(register, GuardMode::NotUndefined, expr.span())
+                        .map_err(|err| CompilerError::from(err).at(expr.span()))?,
+                );
+            }
+        }
+        Ok(true)
     }
 
     /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to

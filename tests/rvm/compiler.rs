@@ -73,6 +73,18 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
         ),
         ("", "not _ = false", r#"{}"#, false),
         ("", "not _ = null", r#"{}"#, false),
+        (
+            "",
+            r#"not split("a,b,c", ",", [input.missing, 1 / 0, _]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b,c", ",", {input.missing: [1 / 0, _]}); data.x == 7"#,
+            r#"{}"#,
+            true,
+        ),
         ("", "not {} = input.payload", r#"{"payload":[]}"#, true),
         ("", "not [x] = input.payload", r#"{"payload":[]}"#, true),
         ("", r#"not split("a,b", ",", ["a"])"#, r#"{}"#, true),
@@ -270,9 +282,26 @@ fn undefined_user_input_skips_invocation_and_preserves_value_heads() -> anyhow::
 fn wide_soft_match_and_successive_calls_remain_compilable() -> anyhow::Result<()> {
     let wildcards = vec!["_"; 128].join(",");
     let ones = vec!["1"; 128].join(",");
+    let fields = (0..43)
+        .map(|i| format!(r#""k{i}":[_]"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let values = (0..43)
+        .map(|i| format!(r#""k{i}":[false]"#))
+        .collect::<Vec<_>>()
+        .join(",");
     for (definitions, body, want) in [
-        ("", format!("not [{wildcards}] = [{ones}]"), false),
-        ("f(_) := true", vec!["f(1)"; 100].join(";"), true),
+        (
+            String::new(),
+            format!("not [{wildcards}] = [{ones}]"),
+            false,
+        ),
+        ("f(_) := true".into(), vec!["f(1)"; 100].join(";"), true),
+        (
+            format!("f({{{fields}}}) := true"),
+            format!("f({{{values}}});\nf({{{values}}})"),
+            true,
+        ),
     ] {
         let mut engine = Engine::new();
         engine.add_policy(
@@ -397,6 +426,8 @@ fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
         "p := 1 / 0",
         "p := f(input.missing, 1 / 0)",
         r#"p if { not split("a,b", ",", ["wrong", 1 / 0]) }"#,
+        r#"p if { not split("a,b,c", ",", ["wrong", 1 / 0, _]) }"#,
+        r#"p if { not split("a,b,c", ",", {"z": [1 / 0, _]}) }"#,
     ] {
         let mut engine = Engine::new();
         engine.set_strict_builtin_errors(true);
@@ -418,8 +449,52 @@ fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
         }
         outcomes.push(modes);
     }
-    assert_eq!(outcomes[1], outcomes[0]);
-    assert_eq!(outcomes[2], outcomes[0]);
+    for outcome in &outcomes[1..] {
+        assert_eq!(*outcome, outcomes[0]);
+    }
+    Ok(())
+}
+
+#[test]
+fn negated_wildcard_output_preserves_non_strict_undefined_prefix() -> anyhow::Result<()> {
+    for body in [
+        r#"not split("a,b,c", ",", ["wrong", 1 / 0, _]); input.x == 7"#,
+        r#"not split("a,b,c", ",", {"z":[1 / 0, _]}); input.x == 7"#,
+        r#"not f(1, [1 / 0, _]); input.x == 7"#,
+    ] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(false);
+        engine.add_policy(
+            "test.rego".into(),
+            format!(
+                "package test\nimport rego.v1\nf(_) := true\ndefault p := false\np if {{ {body} }}"
+            ),
+        )?;
+        let input = Value::from_json_str(r#"{"x":7}"#)?;
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule("data.test.p".into())?,
+            Value::Bool(true),
+            "{body}"
+        );
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_strict_builtin_errors(false);
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            vm.set_input(input.clone());
+            let got = vm.execute_entry_point_by_name("data.test.p")?;
+            assert_eq!(got, Value::Bool(true), "{body}, {mode:?}");
+            if mode == ExecutionMode::Suspendable {
+                assert_eq!(
+                    vm.execution_state(),
+                    &ExecutionState::Completed { result: got }
+                );
+            }
+        }
+    }
     Ok(())
 }
 
