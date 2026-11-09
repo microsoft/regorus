@@ -67,6 +67,14 @@ impl std::error::Error for ReservationError {
 /// is cooperative, so another thread can allocate after this snapshot.
 pub fn check_allocation(bytes: usize, limit: u64) -> Result<(), MemoryLimitExceeded> {
     let live = global_allocation_stats_snapshot().allocated;
+    check_projected_allocation(live, bytes, limit)
+}
+
+fn check_projected_allocation(
+    live: u64,
+    bytes: usize,
+    limit: u64,
+) -> Result<(), MemoryLimitExceeded> {
     let usage = u64::try_from(bytes)
         .ok()
         .and_then(|bytes| live.checked_add(bytes));
@@ -110,4 +118,25 @@ pub fn try_reserve_string(
         .try_reserve_exact(capacity - output.len())
         .map_err(ReservationError::Allocation)?;
     check_allocation(0, limit).map_err(ReservationError::LimitExceeded)
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod tests {
+    use super::{check_projected_allocation, MemoryLimitExceeded};
+
+    #[test]
+    fn projected_usage_overflow_exceeds_even_the_maximum_limit() {
+        assert_eq!(
+            check_projected_allocation(1, usize::MAX, u64::MAX),
+            Err(MemoryLimitExceeded {
+                usage: u64::MAX,
+                limit: u64::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn projected_usage_equal_to_the_maximum_limit_succeeds() {
+        assert_eq!(check_projected_allocation(0, usize::MAX, u64::MAX), Ok(()));
+    }
 }

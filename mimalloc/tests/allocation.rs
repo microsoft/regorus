@@ -51,11 +51,3 @@ fn allocation_check_reports_projected_usage_before_allocating() {
     assert!(error.usage >= 1024 * 1024);
     check_allocation(0, u64::MAX).unwrap();
 }
-
-#[cfg(target_pointer_width = "64")]
-#[test]
-fn projected_usage_overflow_exceeds_even_the_maximum_limit() {
-    let error = check_allocation(usize::MAX, u64::MAX).unwrap_err();
-    assert_eq!(error.limit, u64::MAX);
-    assert_eq!(error.usage, u64::MAX);
-}
