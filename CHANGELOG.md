@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
+
+### Added
+
+- *(sprintf)* support full %q format specifications ([#810](https://github.com/microsoft/regorus/pull/810))
+- *(azure_policy)* parse alias paths with a quote-aware bracket grammar ([#894](https://github.com/microsoft/regorus/pull/894))
+- *(explain)* make explanation attribution contracts explicit ([#896](https://github.com/microsoft/regorus/pull/896))
+- *(azure_policy)* resolve dynamic tag field paths like literal tag fields ([#889](https://github.com/microsoft/regorus/pull/889))
+
+### Fixed
+
+- prevent builtin and alias parsing panics ([#921](https://github.com/microsoft/regorus/pull/921))
+- *(sprintf)* check memory before BigInt decimal conversion ([#907](https://github.com/microsoft/regorus/pull/907))
+- *(rvm)* reject malformed compiled program blobs ([#847](https://github.com/microsoft/regorus/pull/847))
+- *(builtins)* align strings.count with OPA match semantics ([#796](https://github.com/microsoft/regorus/pull/796))
+- *(builtins)* harden numbers.range_step validation and allocation ([#801](https://github.com/microsoft/regorus/pull/801))
+- *(rvm)* bind every key and value for the whole quantifier body ([#895](https://github.com/microsoft/regorus/pull/895))
+- *(rvm)* correct source spans for multi-module programs, some-in patterns and object literals ([#892](https://github.com/microsoft/regorus/pull/892))
+- *(azure_policy)* bind count bracket-suffix paths to the current element ([#890](https://github.com/microsoft/regorus/pull/890))
+
+### Other
+
+- Harden core boundaries and avoid repeated comprehension parsing ([#924](https://github.com/microsoft/regorus/pull/924))
+- Restore value equality shortcuts and preserve fallible serialization errors ([#927](https://github.com/microsoft/regorus/pull/927))
+- Bound parser recursion across nested terms and every bodies ([#922](https://github.com/microsoft/regorus/pull/922))
+- Harden timed value traversal and serialization resource errors ([#920](https://github.com/microsoft/regorus/pull/920))
+- Remove external-body from float comparison ([#901](https://github.com/microsoft/regorus/pull/901))
+- *(deps)* bump the rust-dependencies group across 2 directories with 3 updates ([#910](https://github.com/microsoft/regorus/pull/910))
+- *(readme)* highlight RVM performance on Cedar benchmarks ([#918](https://github.com/microsoft/regorus/pull/918))
+- Check RVM execution deadlines inside comparisons ([#917](https://github.com/microsoft/regorus/pull/917))
+- Serialize host-await FFI arguments as compact JSON ([#884](https://github.com/microsoft/regorus/pull/884))
+- Bound RVM native rule-call depth with per-VM configuration ([#913](https://github.com/microsoft/regorus/pull/913))
+- *(deps)* bump the github-actions group with 2 updates ([#911](https://github.com/microsoft/regorus/pull/911))
+- Document URL query escaping differences from OPA ([#903](https://github.com/microsoft/regorus/pull/903))
+- Fix boolean sprintf output ([#902](https://github.com/microsoft/regorus/pull/902))
+- Fix RVM missing-field rule and comprehension yields ([#887](https://github.com/microsoft/regorus/pull/887))
+- Fix RVM keyed membership to check the requested pair ([#905](https://github.com/microsoft/regorus/pull/905))
+- Fix scalar URL query decoding ([#904](https://github.com/microsoft/regorus/pull/904))
+- *(azure_policy)* pin numeric subscripts on objects as missing fields ([#899](https://github.com/microsoft/regorus/pull/899))
+- isolate shared-state FFI tests and stabilize rand.intn assertions ([#786](https://github.com/microsoft/regorus/pull/786))
+- *(azure_policy)* enable quoted-wildcard-key count prefix cases ([#893](https://github.com/microsoft/regorus/pull/893))
+
 ## [0.14.1](https://github.com/microsoft/regorus/compare/regorus-v0.14.0...regorus-v0.14.1) - 2026-11-02
 
 ### Added
