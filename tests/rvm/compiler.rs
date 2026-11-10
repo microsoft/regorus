@@ -59,7 +59,7 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
             r#"{"payload":{"a":7}}"#,
             true,
         ),
-        ("", "not _ = input.missing", r#"{}"#, true),
+        ("", "not [1 | _ = input.missing] == [1]", r#"{}"#, true),
         ("f(_) := true", "not f(input.missing)", r#"{}"#, true),
         ("f(_) := true", "not f(input.missing, 7)", r#"{}"#, true),
         ("f(_) := true", "f(input.missing, 1 / 0)", r#"{}"#, false),
@@ -71,8 +71,8 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
             r#"{}"#,
             true,
         ),
-        ("", "not _ = false", r#"{}"#, false),
-        ("", "not _ = null", r#"{}"#, false),
+        ("", "not [1 | _ = false] == [1]", r#"{}"#, false),
+        ("", "not [1 | _ = null] == [1]", r#"{}"#, false),
         (
             "",
             r#"not split("a,b,c", ",", [input.missing, 1 / 0, _]); input.x == 7"#,
@@ -85,13 +85,23 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
             r#"{}"#,
             true,
         ),
-        ("", "not {} = input.payload", r#"{"payload":[]}"#, true),
-        ("", "not [x] = input.payload", r#"{"payload":[]}"#, true),
+        (
+            "",
+            "not [1 | {} = input.payload] == [1]",
+            r#"{"payload":[]}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | [x] = input.payload] == [1]",
+            r#"{"payload":[]}"#,
+            true,
+        ),
         ("", r#"not split("a,b", ",", ["a"])"#, r#"{}"#, true),
         ("", r#"not split("a,b", ",", ["wrong","b"])"#, r#"{}"#, true),
         ("", r#"not split("a,b", ",", ["a","b"])"#, r#"{}"#, false),
-        ("", "not [_, 1] = [7, 2]", r#"{}"#, true),
-        ("", "not [_, 1] = [7, 1]", r#"{}"#, false),
+        ("", "not [1 | [_, 1] = [7, 2]] == [1]", r#"{}"#, true),
+        ("", "not [1 | [_, 1] = [7, 1]] == [1]", r#"{}"#, false),
         ("", "[x, y] := [false, null]", r#"{}"#, true),
         (
             "",
@@ -101,7 +111,7 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
         ),
         (
             "",
-            r#"not {"a": [_]} = input.payload"#,
+            r#"not [1 | {"a": [_]} = input.payload] == [1]"#,
             r#"{"payload":{"a":{}}}"#,
             true,
         ),
@@ -143,44 +153,49 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
         ),
         (
             "",
-            r#"not {"a":[{"b":[_,data.x]}]} = input.payload; data.x == 7"#,
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]; data.x == 7"#,
             r#"{"payload":{"a":[{"b":[9,2]}]}}"#,
             true,
         ),
         (
             "",
-            r#"not {"a":[{"b":[_,data.x]}]} = input.payload"#,
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]"#,
             r#"{"payload":{"a":[{"b":[9,7]}]}}"#,
             false,
         ),
         (
             "",
-            r#"not {"a":[{"b":[_,data.x]}]} = input.payload; data.x == 7"#,
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]; data.x == 7"#,
             r#"{"payload":{"a":[]}}"#,
             true,
         ),
         (
             "f(_) := 1",
-            "not [_, f(1)] = [7,2]; data.x == 7",
+            "not [1 | [_, f(1)] = [7,2]] == [1]; data.x == 7",
             r#"{}"#,
             true,
         ),
-        ("f(_) := 1", "not [_, f(1)] = [7,1]", r#"{}"#, false),
         (
             "f(_) := 1",
-            "not [_, f(input.missing)] = [7,2]; data.x == 7",
+            "not [1 | [_, f(1)] = [7,1]] == [1]",
+            r#"{}"#,
+            false,
+        ),
+        (
+            "f(_) := 1",
+            "not [1 | [_, f(input.missing)] = [7,2]] == [1]; data.x == 7",
             r#"{}"#,
             true,
         ),
         (
             "",
-            "not [1 | not [1 | not 1 = input.x] == [1]] == [1]",
+            "not [1 | not [1 | not 1 == input.x] == [1]] == [1]",
             r#"{"x":2}"#,
             true,
         ),
         (
             "",
-            "not [1 | every y in [input.x] { not [1 | not 1 = y] == [1] }] == [1]",
+            "not [1 | every y in [input.x] { not [1 | not 1 == y] == [1] }] == [1]",
             r#"{"x":1}"#,
             false,
         ),
@@ -279,7 +294,7 @@ fn undefined_user_input_skips_invocation_and_preserves_value_heads() -> anyhow::
 }
 
 #[test]
-fn wide_soft_match_and_successive_calls_remain_compilable() -> anyhow::Result<()> {
+fn wide_nested_match_and_successive_calls_remain_compilable() -> anyhow::Result<()> {
     let wildcards = vec!["_"; 128].join(",");
     let ones = vec!["1"; 128].join(",");
     let fields = (0..43)
@@ -293,7 +308,7 @@ fn wide_soft_match_and_successive_calls_remain_compilable() -> anyhow::Result<()
     for (definitions, body, want) in [
         (
             String::new(),
-            format!("not [{wildcards}] = [{ones}]"),
+            format!("not [1 | [{wildcards}] = [{ones}]] == [1]"),
             false,
         ),
         ("f(_) := true".into(), vec!["f(1)"; 100].join(";"), true),
