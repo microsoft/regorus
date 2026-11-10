@@ -101,9 +101,9 @@ pub struct RuleInfo {
     /// accumulate independent bodies but must short-circuit else branches.
     #[serde(default)]
     pub else_bodies: Vec<Vec<bool>>,
-    /// If true, all definitions are statically known to produce the same result
-    /// value, so the VM can stop after the first successful definition without
-    /// checking consistency with remaining definitions.
+    /// Legacy static-output metadata, retained for serialization compatibility.
+    /// The VM must still evaluate independent definitions: equal outputs do not
+    /// imply their bodies are free of errors or nested conflicts.
     #[serde(default)]
     pub early_exit_on_first_success: bool,
 }

@@ -45,6 +45,7 @@ impl<'a> Compiler<'a> {
             value_expr: value_expr.cloned(),
             span: span.clone(),
             key_value_loops_hoisted: false,
+            constant_rule_reference: false,
         };
         self.push_context(context);
         self.compile_query(query)?;

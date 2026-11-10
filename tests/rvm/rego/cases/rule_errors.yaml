@@ -3,6 +3,524 @@
 
 # Every case checks the interpreter and all three VM execution paths.
 cases:
+  - note: rule_error_single_body_distinct_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: &yield_rules
+      - |
+        package yields
+        p := x if { some x in input.items }
+        f(items) := x if { some x in items }
+        function_result := f(input.items)
+        destructured([items]) := x if { some x in items }
+        destructured_result := destructured([input.items])
+        selected := x if { some x in input.items } else := "empty"
+        selected_function(items) := x if { some x in items } else := "empty"
+        selected_function_result := selected_function(input.items)
+        defined := v if { some x in input.items; v := x.value }
+        partial_set contains x if { some x in input.items }
+        partial_object[k] := x if { some k, x in input.items }
+    input: &distinct_yields {items: [1, 2]}
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: rule_error_single_body_distinct_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: rule_error_single_body_equal_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: &equal_yields {items: [1, 1]}
+    query: data.yields.p
+    want_result: 1
+
+  - note: rule_error_single_body_equal_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *equal_yields
+    query: data.yields.p
+    want_result: 1
+
+  - note: rule_error_single_body_empty_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: &empty_yields {items: []}
+    query: data.yields.p
+    want_result: "#undefined"
+
+  - note: rule_error_single_body_empty_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *empty_yields
+    query: data.yields.p
+    want_result: "#undefined"
+
+  - note: rule_error_single_body_single_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: &single_yield {items: [7]}
+    query: data.yields.p
+    want_result: 7
+
+  - note: rule_error_single_body_single_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *single_yield
+    query: data.yields.p
+    want_result: 7
+
+  - note: rule_error_function_body_distinct_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.function_result
+    want_error: conflicts
+
+  - note: rule_error_function_body_distinct_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.function_result
+    want_error: conflicts
+
+  - note: rule_error_function_body_equal_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *equal_yields
+    query: data.yields.function_result
+    want_result: 1
+
+  - note: rule_error_function_body_equal_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *equal_yields
+    query: data.yields.function_result
+    want_result: 1
+
+  - note: rule_error_function_body_empty_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *empty_yields
+    query: data.yields.function_result
+    want_result: "#undefined"
+
+  - note: rule_error_function_body_empty_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *empty_yields
+    query: data.yields.function_result
+    want_result: "#undefined"
+
+  - note: rule_error_function_body_single_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *single_yield
+    query: data.yields.function_result
+    want_result: 7
+
+  - note: rule_error_function_body_single_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *single_yield
+    query: data.yields.function_result
+    want_result: 7
+
+  - note: rule_error_destructured_body_distinct
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.destructured_result
+    want_error: conflicts
+
+  - note: rule_error_else_body_distinct
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.selected
+    want_error: conflicts
+
+  - note: rule_error_else_function_body_distinct
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.selected_function_result
+    want_error: conflicts
+
+  - note: rule_error_else_body_empty
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: *empty_yields
+    query: data.yields.selected
+    want_result: empty
+
+  - note: rule_error_else_function_body_empty
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *empty_yields
+    query: data.yields.selected_function_result
+    want_result: empty
+
+  - note: rule_error_yield_undefined_then_defined
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: {items: [{}, {value: 1}, {}]}
+    query: data.yields.defined
+    want_result: 1
+
+  - note: rule_error_yield_defined_undefined_distinct
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: {items: [{value: 1}, {}, {value: 2}]}
+    query: data.yields.defined
+    want_error: conflicts
+
+  - note: rule_error_yield_partial_set_accumulation
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *yield_rules
+    input: {items: [1, 2, 1]}
+    query: data.yields.partial_set
+    want_result: {set!: [1, 2]}
+
+  - note: rule_error_yield_partial_object_accumulation
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *yield_rules
+    input: *distinct_yields
+    query: data.yields.partial_object
+    want_result: {0: 1, 1: 2}
+
+  - note: rule_error_static_first_success_later_error_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &static_rules
+      - |
+        package static
+        allow if input.enabled
+        allow if time.parse_rfc3339_ns(input.published) >= 0
+        reverse if time.parse_rfc3339_ns(input.published) >= 0
+        reverse if input.enabled
+        f(x) if x
+        f(x) if time.parse_rfc3339_ns(input.published) >= 0
+        function_result := f(input.enabled)
+        reverse_f(x) if time.parse_rfc3339_ns(input.published) >= 0
+        reverse_f(x) if x
+        reverse_function_result := reverse_f(input.enabled)
+        nested := 1
+        nested := 2
+        conflict if input.enabled
+        conflict if nested > 0
+        reverse_conflict if nested > 0
+        reverse_conflict if input.enabled
+        conflict_f(x) if x
+        conflict_f(x) if nested > 0
+        function_conflict := conflict_f(input.enabled)
+        reverse_conflict_f(x) if nested > 0
+        reverse_conflict_f(x) if x
+        reverse_function_conflict := reverse_conflict_f(input.enabled)
+        selected if input.enabled else if time.parse_rfc3339_ns(input.published) >= 0
+        selected_f(x) if x else if nested > 0
+        selected_function := selected_f(input.enabled)
+    input: &static_input {enabled: true, published: yesterday}
+    query: data.static.allow
+    want_error: Failed to parse datetime
+
+  - note: rule_error_static_first_success_later_error_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.allow
+    want_result: true
+
+  - note: rule_error_static_first_error_later_success_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse
+    want_error: Failed to parse datetime
+
+  - note: rule_error_static_first_error_later_success_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse
+    want_result: true
+
+  - note: rule_error_static_function_later_error_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.function_result
+    want_error: Failed to parse datetime
+
+  - note: rule_error_static_function_later_error_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.function_result
+    want_result: true
+
+  - note: rule_error_static_function_first_error_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_function_result
+    want_error: Failed to parse datetime
+
+  - note: rule_error_static_function_first_error_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_function_result
+    want_result: true
+
+  - note: rule_error_static_later_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.conflict
+    want_error: conflicts
+
+  - note: rule_error_static_later_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.conflict
+    want_error: conflicts
+
+  - note: rule_error_static_first_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_first_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_function_later_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.function_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_function_later_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    # The interpreter currently swallows nested rule conflicts in function bodies.
+    allow_interpreter_success: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.function_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_function_first_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_function_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_function_first_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    allow_interpreter_success: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.reverse_function_conflict
+    want_error: conflicts
+
+  - note: rule_error_static_else_still_short_circuits_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.selected
+    want_result: true
+
+  - note: rule_error_static_else_still_short_circuits_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.selected
+    want_result: true
+
+  - note: rule_error_static_function_else_still_short_circuits_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *static_rules
+    input: *static_input
+    query: data.static.selected_function
+    want_result: true
+
+  - note: rule_error_static_function_else_still_short_circuits_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *static_rules
+    input: *static_input
+    query: data.static.selected_function
+    want_result: true
+
+  - note: rule_error_constant_head_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &constant_loop_rules
+      - |
+        package constant_loop
+        allow if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        f(items) if { some x in items; time.parse_rfc3339_ns(x) >= 0 }
+        function_result := f(input.items)
+        partial_set contains "ok" if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        partial_object[k] := true if { k := "ok"; some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        nested if { some group in input.groups; some x in group; time.parse_rfc3339_ns(x) >= 0 }
+        indexed if { x := input.items[_]; time.parse_rfc3339_ns(x) >= 0 }
+        comprehension if { xs := [time.parse_rfc3339_ns(x) | some x in input.items]; count(xs) > 0 }
+        array_head := [1] if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+    input: &first_witness {items: ["1970-01-01T00:00:00Z", yesterday]}
+    query: data.constant_loop.allow
+    want_result: true
+
+  - note: rule_error_constant_head_error_before_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: &last_witness {items: [yesterday, "1970-01-01T00:00:00Z"]}
+    query: data.constant_loop.allow
+    want_error: Failed to parse datetime
+
+  - note: rule_error_constant_function_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.function_result
+    want_error: Failed to parse datetime
+
+  - note: rule_error_constant_function_error_before_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *last_witness
+    query: data.constant_loop.function_result
+    want_error: Failed to parse datetime
+
+  - note: rule_error_constant_set_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.partial_set
+    want_result: {set!: [ok]}
+
+  - note: rule_error_constant_set_error_before_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *last_witness
+    query: data.constant_loop.partial_set
+    want_error: Failed to parse datetime
+
+  - note: rule_error_variable_object_key_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.partial_object
+    want_error: Failed to parse datetime
+
+  - note: rule_error_variable_object_key_error_before_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *last_witness
+    query: data.constant_loop.partial_object
+    want_error: Failed to parse datetime
+
+  - note: rule_error_constant_nested_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: {groups: [[], ["1970-01-01T00:00:00Z"], [yesterday]]}
+    query: data.constant_loop.nested
+    want_result: true
+
+  - note: rule_error_constant_nested_no_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: {groups: [[], []]}
+    query: data.constant_loop.nested
+    want_result: "#undefined"
+
+  - note: rule_error_constant_indexed_first_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.indexed
+    want_result: true
+
+  - note: rule_error_constant_comprehension_not_short_circuited
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.comprehension
+    want_error: Failed to parse datetime
+
+  - note: rule_error_array_head_not_short_circuited
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *constant_loop_rules
+    input: *first_witness
+    query: data.constant_loop.array_head
+    want_error: Failed to parse datetime
+
   - note: issue_932_tier_conflict_nonstrict
     execution_mode: all
     strict_builtin_errors: false

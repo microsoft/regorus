@@ -131,7 +131,10 @@ impl RegoVM {
                                 let current_result = self.get_register(result_reg)?.clone();
                                 if current_result != Value::Undefined {
                                     if let Some(ref expected) = first_successful_result {
-                                        if *expected != current_result {
+                                        if !self
+                                            .compare_values(expected, &current_result, true)?
+                                            .is_eq()
+                                        {
                                             return Err(VmError::RuleOutputConflict {
                                                 rule: rule_info.name.clone(),
                                                 pc: self.pc,
@@ -139,11 +142,6 @@ impl RegoVM {
                                         }
                                     } else {
                                         first_successful_result = Some(current_result.clone());
-                                        // All definitions produce the same static value;
-                                        // no need to verify consistency with the rest.
-                                        if rule_info.early_exit_on_first_success {
-                                            break 'outer;
-                                        }
                                     }
                                 }
                             }
@@ -673,7 +671,10 @@ impl RegoVM {
 
             if current_result != Value::Undefined {
                 if let Some(ref expected) = frame_data.accumulated_result {
-                    if *expected != current_result {
+                    if !self
+                        .compare_values(expected, &current_result, true)?
+                        .is_eq()
+                    {
                         return Err(VmError::RuleOutputConflict {
                             rule: rule_info.name.clone(),
                             pc: self.pc,
@@ -681,13 +682,6 @@ impl RegoVM {
                     }
                 } else {
                     frame_data.accumulated_result = Some(current_result);
-                    // All definitions produce the same static value;
-                    // skip remaining definitions.
-                    if rule_info.early_exit_on_first_success {
-                        frame_data.current_definition_index = frame_data.total_definitions;
-                        frame_data.phase = RuleFramePhase::Finalizing;
-                        return Ok(None);
-                    }
                 }
             }
         }

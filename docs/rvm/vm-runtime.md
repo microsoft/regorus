@@ -272,6 +272,15 @@ checks do not establish a universal host-stack guarantee.
   `resume(resume_value)` to continue.
 - Completion: when `execution_stack` becomes empty the VM sets
   `ExecutionState::Completed { result }`.
+- Errors and execution-state diagnostics summarize container values instead of
+  recursively expanding them. This also bounds state inspection and invalid
+  resume diagnostics after an execution budget has ended.
+- Independent rule/function definitions are evaluated even when their static
+  outputs agree; `early_exit_on_first_success` remains serialized legacy metadata
+  only. Explicit `else` chains still stop on success. Within a non-function rule
+  body, simple constant heads use existential loops that stop at the first
+  witness, matching the interpreter. Variable outputs and comprehension bodies
+  still evaluate all candidates.
 - With `allocator-memory-limits`, the VM retains a checked requested-byte
   scalar across suspendable segments. The allocator shim selects it in
   thread-local state only while a synchronous segment runs, charging every

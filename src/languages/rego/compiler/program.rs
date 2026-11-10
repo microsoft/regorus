@@ -112,9 +112,8 @@ impl<'a> Compiler<'a> {
                         .collect()
                 });
 
-            // Compute early_exit_on_first_success: if every definition has
-            // the same static value, the VM can stop after the first success.
-            // Only relevant for Complete rules and function rules with ≥2 defs.
+            // Retain legacy static-output metadata for serialized programs.
+            // Equal outputs do not permit skipping bodies that may fail.
             let static_values = self.rule_definition_static_values.get(rule_index as usize);
             if let Some(svs) = static_values {
                 if svs.len() >= 2 {

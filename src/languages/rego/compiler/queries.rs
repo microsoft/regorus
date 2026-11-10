@@ -85,10 +85,14 @@ impl<'a> Compiler<'a> {
                     // per-iteration context yields produce the results), the
                     // `every` body has no yield, so the loop result register is
                     // otherwise discarded. Guard on it so a `some` that matches
-                    // nothing fails the enclosing `every` iteration.
+                    // nothing fails the enclosing `every` iteration. Existential
+                    // rule loops also need this guard for empty nested loops.
                     if matches!(
                         self.context_stack.last().map(|c| &c.context_type),
                         Some(ContextType::Every)
+                    ) || matches!(
+                        self.rule_loop_mode(),
+                        crate::rvm::instructions::LoopMode::Any
                     ) {
                         self.emit_instruction(
                             Instruction::Guard {
@@ -176,7 +180,14 @@ impl<'a> Compiler<'a> {
                 self.emit_instruction(
                     Instruction::Guard {
                         register: value_register,
-                        mode: GuardMode::NotUndefined,
+                        mode: if matches!(
+                            context.context_type,
+                            ContextType::Rule(RuleType::Complete)
+                        ) {
+                            GuardMode::RuleOutput
+                        } else {
+                            GuardMode::NotUndefined
+                        },
                     },
                     span,
                 );

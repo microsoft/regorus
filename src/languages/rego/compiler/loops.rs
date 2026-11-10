@@ -21,6 +21,51 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
+    pub(super) fn rule_loop_mode(&self) -> LoopMode {
+        // Match the interpreter's within-body witness shortcut, not the legacy
+        // optimization that skipped independent constant-output definitions.
+        let short_circuits = self.context_stack.last().is_some_and(|context| {
+            context.constant_rule_reference
+                && context
+                    .key_expr
+                    .as_ref()
+                    .is_none_or(Self::is_simple_rule_literal)
+                && context
+                    .value_expr
+                    .as_ref()
+                    .is_none_or(Self::is_simple_rule_literal)
+        });
+        if short_circuits {
+            LoopMode::Any
+        } else {
+            LoopMode::ForEach
+        }
+    }
+
+    pub(super) fn is_simple_rule_literal(expr: &ExprRef) -> bool {
+        matches!(
+            expr.as_ref(),
+            ast::Expr::String { .. }
+                | ast::Expr::RawString { .. }
+                | ast::Expr::Bool { .. }
+                | ast::Expr::Null { .. }
+                | ast::Expr::Number { .. }
+        )
+    }
+
+    pub(super) fn is_constant_rule_reference(mut expr: &ExprRef) -> bool {
+        loop {
+            match expr.as_ref() {
+                ast::Expr::Var { .. } => return true,
+                ast::Expr::RefDot { refr, .. } => expr = refr,
+                ast::Expr::RefBrack { refr, index, .. } if Self::is_simple_rule_literal(index) => {
+                    expr = refr;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(super) fn get_statement_loops(&self, stmt: &LiteralStmt) -> Result<Vec<HoistedLoop>> {
         let loops = self
             .policy
@@ -159,6 +204,7 @@ impl<'a> Compiler<'a> {
             value_expr: None,
             span: span.clone(),
             key_value_loops_hoisted: false,
+            constant_rule_reference: false,
         };
         self.push_context(every_context);
 
@@ -274,7 +320,7 @@ impl<'a> Compiler<'a> {
         }
 
         let loop_params_index = self.program.add_loop_params(LoopStartParams {
-            mode: LoopMode::ForEach,
+            mode: self.rule_loop_mode(),
             collection: collection_reg,
             key_reg,
             value_reg,
@@ -330,11 +376,13 @@ impl<'a> Compiler<'a> {
         // nothing the iteration must fail. The `every` body emits no context
         // yield, so the loop result register is otherwise discarded (same
         // situation as `some ... in`). Guard on it so a non-matching indexed
-        // reference fails the enclosing `every` iteration.
+        // reference fails the enclosing `every` iteration. Existential rule
+        // loops likewise must not count an empty nested loop as a witness.
         if matches!(
             self.context_stack.last().map(|c| &c.context_type),
             Some(ContextType::Every)
-        ) {
+        ) || matches!(self.rule_loop_mode(), LoopMode::Any)
+        {
             self.emit_instruction(
                 Instruction::Guard {
                     register: result_reg,
@@ -372,7 +420,7 @@ impl<'a> Compiler<'a> {
         let result_reg = self.alloc_register()?;
 
         let loop_params_index = self.program.add_loop_params(LoopStartParams {
-            mode: LoopMode::ForEach,
+            mode: self.rule_loop_mode(),
             collection: collection_reg,
             key_reg,
             value_reg,

@@ -8,6 +8,38 @@ use alloc::vec::Vec;
 use core::time::Duration;
 use thiserror::Error;
 
+pub(super) struct VmErrorDiagnostic<'a>(&'a VmError);
+
+impl VmError {
+    pub(super) const fn diagnostic(&self) -> VmErrorDiagnostic<'_> {
+        VmErrorDiagnostic(self)
+    }
+}
+
+impl core::fmt::Debug for VmErrorDiagnostic<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Preserve existing state diagnostics except where Debug would expand
+        // policy values; those errors already have bounded Display renderings.
+        match *self.0 {
+            VmError::RegisterNotObject { .. }
+            | VmError::ObjectCreateInvalidTemplate { .. }
+            | VmError::RegisterNotArray { .. }
+            | VmError::RegisterNotSet { .. }
+            | VmError::InvalidRuleIndex { .. }
+            | VmError::InvalidRuleTreeEntry { .. }
+            | VmError::InvalidAddition { .. }
+            | VmError::InvalidSubtraction { .. }
+            | VmError::InvalidMultiplication { .. }
+            | VmError::InvalidDivision { .. }
+            | VmError::ModuloOnFloat { .. }
+            | VmError::InvalidModulo { .. }
+            | VmError::InvalidIteration { .. }
+            | VmError::HostAwaitResponseMissing { .. } => core::fmt::Display::fmt(self.0, f),
+            _ => core::fmt::Debug::fmt(self.0, f),
+        }
+    }
+}
+
 /// VM execution errors
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum VmError {
@@ -48,24 +80,24 @@ pub enum VmError {
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 
-    #[error("Register {register} does not contain an object (value={value:?}, pc={pc})")]
+    #[error("Register {register} does not contain an object (value={}, pc={pc})", .value.diagnostic())]
     RegisterNotObject {
         register: u8,
         value: Value,
         pc: usize,
     },
 
-    #[error("ObjectCreate: template is not an object (pc={pc}, template={template:?})")]
+    #[error("ObjectCreate: template is not an object (pc={pc}, template={})", .template.diagnostic())]
     ObjectCreateInvalidTemplate { template: Value, pc: usize },
 
-    #[error("Register {register} does not contain an array (value={value:?}, pc={pc})")]
+    #[error("Register {register} does not contain an array (value={}, pc={pc})", .value.diagnostic())]
     RegisterNotArray {
         register: u8,
         value: Value,
         pc: usize,
     },
 
-    #[error("Register {register} does not contain a set (value={value:?}, pc={pc})")]
+    #[error("Register {register} does not contain a set (value={}, pc={pc})", .value.diagnostic())]
     RegisterNotSet {
         register: u8,
         value: Value,
@@ -149,10 +181,10 @@ pub enum VmError {
         available: usize,
     },
 
-    #[error("Invalid rule index: {rule_index:?} (pc={pc})")]
+    #[error("Invalid rule index: {} (pc={pc})", .rule_index.diagnostic())]
     InvalidRuleIndex { rule_index: Value, pc: usize },
 
-    #[error("Invalid rule tree entry: {value:?} (pc={pc})")]
+    #[error("Invalid rule tree entry: {} (pc={pc})", .value.diagnostic())]
     InvalidRuleTreeEntry { value: Value, pc: usize },
 
     #[error("Builtin function expects exactly {expected} arguments, got {actual} (pc={pc})")]
@@ -165,52 +197,52 @@ pub enum VmError {
     #[error("Builtin function not resolved: {name} (pc={pc})")]
     BuiltinNotResolved { name: String, pc: usize },
 
-    #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
+    #[error("Cannot add {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
     InvalidAddition {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("Cannot subtract {left:?} and {right:?} (pc={pc})")]
+    #[error("Cannot subtract {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
     InvalidSubtraction {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("Cannot multiply {left:?} and {right:?} (pc={pc})")]
+    #[error("Cannot multiply {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
     InvalidMultiplication {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("Cannot divide {left:?} and {right:?} (pc={pc})")]
+    #[error("Cannot divide {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
     InvalidDivision {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("modulo on floating-point number (left={left:?}, right={right:?}, pc={pc})")]
+    #[error("modulo on floating-point number (left={}, right={}, pc={pc})", .left.diagnostic(), .right.diagnostic())]
     ModuloOnFloat {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("Cannot modulo {left:?} and {right:?} (pc={pc})")]
+    #[error("Cannot modulo {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
     InvalidModulo {
         left: Value,
         right: Value,
         pc: usize,
     },
 
-    #[error("Cannot iterate over {value:?} (pc={pc})")]
+    #[error("Cannot iterate over {} (pc={pc})", .value.diagnostic())]
     InvalidIteration { value: Value, pc: usize },
 
-    #[error("HostAwait executed but no response provided for destination register {dest} (id: {identifier:?}, pc={pc})")]
+    #[error("HostAwait executed but no response provided for destination register {dest} (id: {}, pc={pc})", .identifier.diagnostic())]
     HostAwaitResponseMissing {
         dest: u8,
         identifier: Value,
@@ -270,16 +302,16 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Suspend reason {reason:?} is not supported in run-to-completion execution (pc={pc})")]
+    #[error("Suspend reason {reason} is not supported in run-to-completion execution (pc={pc})")]
     UnsupportedSuspendInRunToCompletion { reason: SuspendReason, pc: usize },
 
     #[error("Cannot resume VM when execution state is {state} (pc={pc})")]
     InvalidResumeState { state: String, pc: usize },
 
-    #[error("HostAwait suspension requires a resume value for reason {reason:?} (pc={pc})")]
+    #[error("HostAwait suspension requires a resume value for reason {reason} (pc={pc})")]
     MissingResumeValue { reason: SuspendReason, pc: usize },
 
-    #[error("Unexpected resume value supplied for reason {reason:?} (pc={pc})")]
+    #[error("Unexpected resume value supplied for reason {reason} (pc={pc})")]
     UnexpectedResumeValue { reason: SuspendReason, pc: usize },
 
     #[error("Missing execution frame: {context} (pc={pc})")]

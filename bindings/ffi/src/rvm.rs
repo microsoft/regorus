@@ -1163,6 +1163,7 @@ result := [value, value, value, value, value, value, value, value]
     #[test]
     fn ffi_unbudgeted_child_resume_error_does_not_charge_parent_budget() {
         const CHILD_ARGUMENT_BYTES: usize = 128 * 1024;
+        const CHILD_RESUME_ATTEMPTS: usize = 256;
 
         let program = compiled_suspendable_host_await_program();
         let mut child_vm = suspendable_host_await_vm(&program, None);
@@ -1179,9 +1180,11 @@ result := [value, value, value, value, value, value, value, value]
             .execute()
             .expect("outer VM should suspend at HostAwait within its budget");
 
-        let mut child_error = None;
+        let mut child_errors = Vec::with_capacity(CHILD_RESUME_ATTEMPTS);
         let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
-            child_error = Some(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            for _ in 0..CHILD_RESUME_ATTEMPTS {
+                child_errors.push(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            }
             Ok(Some(String::from("\"response\"")))
         });
         let parent_resume_succeeded = match resumed {
@@ -1189,27 +1192,26 @@ result := [value, value, value, value, value, value, value, value]
             Err(_) => false,
         };
 
-        let child_error = child_error.expect("child resume error");
-        let child_error_is_reported = matches!(child_error.status, RegorusStatus::Error)
-            && child_error.output.is_null()
-            && !child_error.error_message.is_null();
-        let child_error_length = if child_error.error_message.is_null() {
-            0
-        } else {
-            unsafe { CStr::from_ptr(child_error.error_message) }
+        let mut child_error_bytes = 0usize;
+        for child_error in child_errors {
+            assert!(matches!(child_error.status, RegorusStatus::Error));
+            assert!(child_error.output.is_null());
+            assert!(!child_error.error_message.is_null());
+            let length = unsafe { CStr::from_ptr(child_error.error_message) }
                 .to_bytes()
-                .len()
-        };
+                .len();
+            assert!(length < 512, "individual diagnostics must stay bounded");
+            child_error_bytes = child_error_bytes.saturating_add(length);
+            regorus_result_drop(child_error);
+        }
         assert_execution_state(child_vm, "Suspended {");
 
-        regorus_result_drop(child_error);
         regorus_rvm_drop(child_vm);
         assert!(
             parent_resume_succeeded,
             "unbudgeted child error formatting should not consume the outer budget"
         );
-        assert!(child_error_is_reported);
-        assert!(child_error_length > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
+        assert!(child_error_bytes > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
     }
 
     #[test]
@@ -2056,6 +2058,44 @@ mod host_await_tests {
 
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
+    }
+
+    #[test]
+    fn error_execution_state_bounds_shared_value_diagnostics() {
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        let _lock = crate::TEST_GLOBAL_MEMORY_LIMIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut engine = regorus::Engine::new();
+        engine
+            .add_policy(
+                "test.rego".into(),
+                "package test\nresult := input + 1".into(),
+            )
+            .expect("add policy");
+        let compiled = engine
+            .compile_with_entrypoint(&"data.test.result".into())
+            .expect("compile policy");
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.result"])
+            .expect("compile VM program");
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::clone(&program));
+            vm.set_execution_mode(mode);
+            vm.set_strict_builtin_errors(true);
+            vm.set_input((0..12).fold(Value::Null, |value, _| {
+                Value::from(vec![value.clone(), value])
+            }));
+            assert!(vm.execute().is_err());
+            let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+            let state = regorus_rvm_get_execution_state(vm);
+            assert_eq!(state.status, RegorusStatus::Ok);
+            let text = unsafe { CStr::from_ptr(state.output) }.to_bytes();
+            assert!(text.starts_with(b"Error { error: "));
+            assert!(text.len() < 512);
+            regorus_result_drop(state);
+            regorus_rvm_drop(vm);
+        }
     }
 
     #[test]

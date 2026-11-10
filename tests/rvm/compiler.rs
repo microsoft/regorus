@@ -166,6 +166,132 @@ fn function_rule_conflict_is_an_error_in_rvm_and_interpreter() {
 }
 
 #[test]
+fn strict_rule_error_diagnostics_bound_shared_values() -> anyhow::Result<()> {
+    let program = compile_rule("package test\np := input + 1");
+    let shared = (0..12).fold(Value::Null, |value, _| {
+        Value::from(vec![value.clone(), value])
+    });
+    for (mode, step) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_step_mode(step);
+        vm.set_strict_builtin_errors(true);
+        vm.set_input(shared.clone());
+        let mut result = vm.execute();
+        while result.is_ok() && matches!(vm.execution_state(), ExecutionState::Suspended { .. }) {
+            result = vm.resume(None);
+        }
+        let error = result.expect_err("strict arithmetic error must propagate");
+        assert!(matches!(error, VmError::InvalidAddition { .. }));
+        assert!(error.to_string().len() < 256);
+        // The FFI state getter and invalid-resume errors use this Debug formatter.
+        let state = format!("{:?}", vm.execution_state());
+        assert!(state.starts_with("Error { error: "));
+        assert!(state.len() < 512);
+        let resume_error = vm.resume(None).expect_err("failed execution is terminal");
+        assert!(resume_error.to_string().len() < 1024);
+    }
+
+    let reason = SuspendReason::HostAwait {
+        dest: 0,
+        argument: shared.clone(),
+        identifier: shared.clone(),
+    };
+    assert!(format!("{reason:?}").len() < 256);
+    for error in [
+        VmError::MissingResumeValue {
+            reason: reason.clone(),
+            pc: 0,
+        },
+        VmError::UnexpectedResumeValue {
+            reason: reason.clone(),
+            pc: 0,
+        },
+    ] {
+        assert!(error.to_string().len() < 512);
+    }
+    for state in [
+        ExecutionState::Completed {
+            result: shared.clone(),
+        },
+        ExecutionState::Suspended {
+            reason,
+            pc: 0,
+            last_result: shared,
+        },
+    ] {
+        assert!(format!("{state:?}").len() < 512);
+    }
+    Ok(())
+}
+
+#[test]
+fn rule_output_comparisons_observe_execution_timer() -> anyhow::Result<()> {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+    use std::time::Duration;
+
+    for module in [
+        "package test\np := x if { some x in input }",
+        "package test\nf(items) := x if { some x in items }\np := f(input)",
+        "package test\np := input[0]\np := input[1]",
+    ] {
+        let program = compile_rule(module);
+        let serialized = program
+            .serialize_binary()
+            .expect("serialize compiled program");
+        let program =
+            match Program::deserialize_binary(&serialized).expect("deserialize compiled program") {
+                DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+                DeserializationResult::Partial(_) => panic!("expected complete compiled program"),
+            };
+        let dag = || {
+            (0..16).fold(Value::Null, |value, _| {
+                Value::from(vec![value.clone(), value])
+            })
+        };
+        // Equal but independently allocated DAGs must be interruptible, rather
+        // than relying on pointer identity or comparing after budgets end.
+        let input = Value::from(vec![dag(), dag()]);
+        for (mode, step) in [
+            (ExecutionMode::RunToCompletion, false),
+            (ExecutionMode::Suspendable, false),
+            (ExecutionMode::Suspendable, true),
+        ] {
+            for strict in [false, true] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_step_mode(step);
+                vm.set_strict_builtin_errors(strict);
+                vm.set_input(input.clone());
+                vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+                    limit: Duration::ZERO,
+                    // Dispatch alone cannot reach this checkpoint.
+                    check_interval: NonZeroU32::new(256).unwrap(),
+                }));
+                let mut result = vm.execute();
+                while result.is_ok()
+                    && matches!(vm.execution_state(), ExecutionState::Suspended { .. })
+                {
+                    result = vm.resume(None);
+                }
+                assert!(
+                    matches!(result, Err(VmError::TimeLimitExceeded { .. })),
+                    "{module}, {mode:?}, step={step}, strict={strict}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn propagated_rule_errors_are_terminal_and_vm_is_reusable() -> anyhow::Result<()> {
     let mut engine = Engine::new();
     engine.add_policy(

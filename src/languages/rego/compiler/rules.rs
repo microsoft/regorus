@@ -575,6 +575,12 @@ impl<'a> Compiler<'a> {
                         value_expr,
                         span,
                         key_value_loops_hoisted: false,
+                        constant_rule_reference: match head {
+                            RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. } => {
+                                Self::is_constant_rule_reference(refr)
+                            }
+                            RuleHead::Func { .. } => false,
+                        },
                     };
                     self.push_context(context);
                     let mut body_entry_points = Vec::new();
@@ -654,6 +660,15 @@ impl<'a> Compiler<'a> {
                                 );
                             }
 
+                            if matches!(rule_type, RuleType::Complete) {
+                                self.emit_instruction(
+                                    Instruction::Guard {
+                                        register: result_register,
+                                        mode: crate::rvm::instructions::GuardMode::NotUndefined,
+                                    },
+                                    &body.span,
+                                );
+                            }
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);
 
                             if let Some(context) = self.context_stack.last_mut() {

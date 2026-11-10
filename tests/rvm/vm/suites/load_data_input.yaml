@@ -191,7 +191,7 @@ cases:
       - "Load { dest: 1, literal_idx: 0 }"
       - "Add { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_error: "Cannot add Object({}) and Number(1)"
+    want_error: "Cannot add Object(len=0) and 1"
 
   - note: load_input_in_comparison
     description: Compare input to literal object

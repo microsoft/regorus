@@ -130,7 +130,7 @@ impl ExecutionStack {
 }
 
 /// Represents the current execution state of the VM
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub enum ExecutionState {
     #[default]
     Ready,
@@ -148,8 +148,35 @@ pub enum ExecutionState {
     },
 }
 
+impl core::fmt::Debug for ExecutionState {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::Ready => f.write_str("Ready"),
+            Self::Running => f.write_str("Running"),
+            Self::Suspended {
+                ref reason,
+                pc,
+                ref last_result,
+            } => f
+                .debug_struct("Suspended")
+                .field("reason", &format_args!("{reason}"))
+                .field("pc", &pc)
+                .field("last_result", &format_args!("{}", last_result.diagnostic()))
+                .finish(),
+            Self::Completed { ref result } => f
+                .debug_struct("Completed")
+                .field("result", &format_args!("{}", result.diagnostic()))
+                .finish(),
+            Self::Error { ref error } => f
+                .debug_struct("Error")
+                .field("error", &error.diagnostic())
+                .finish(),
+        }
+    }
+}
+
 /// Reasons why execution may suspend
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum SuspendReason {
     SuspendInstruction,
     Breakpoint {
@@ -163,6 +190,34 @@ pub enum SuspendReason {
         argument: Value,
         identifier: Value,
     },
+}
+
+impl core::fmt::Debug for SuspendReason {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::HostAwait {
+                dest,
+                ref argument,
+                ref identifier,
+            } => write!(
+                f,
+                "HostAwait {{ dest: {dest}, argument: {}, identifier: {} }}",
+                argument.diagnostic(),
+                identifier.diagnostic()
+            ),
+            Self::SuspendInstruction => f.write_str("SuspendInstruction"),
+            Self::Breakpoint { pc } => f.debug_struct("Breakpoint").field("pc", &pc).finish(),
+            Self::Step => f.write_str("Step"),
+            Self::InstructionLimit => f.write_str("InstructionLimit"),
+            Self::External => f.write_str("External"),
+        }
+    }
+}
+
+impl core::fmt::Display for SuspendReason {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(self, f)
+    }
 }
 
 /// Execution mode controls whether the VM runs straight through or supports suspension

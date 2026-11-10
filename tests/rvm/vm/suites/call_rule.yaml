@@ -2,6 +2,26 @@
 # Validates rule caching, partial structures, defaults, and inconsistencies.
 
 cases:
+  - note: call_rule_same_body_output_guard
+    description: Distinct defined yields conflict before overwriting the result register
+    literals: [1, 2]
+    rule_infos:
+      - rule_type: Complete
+        definitions: [[2]]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "Load { dest: 2, literal_idx: 0 }"
+      - "AssertRuleOutput { register: 2 }"
+      - "Move { dest: 1, src: 2 }"
+      - "Load { dest: 2, literal_idx: 1 }"
+      - "AssertRuleOutput { register: 2 }"
+      - "Move { dest: 1, src: 2 }"
+      - "RuleReturn {}"
+    want_error: "conflicts"
+    want_error_strict: "conflicts"
+
   - note: call_rule_basic_cache
     description: CallRule caches results after first evaluation
     literals:
