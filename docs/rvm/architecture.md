@@ -61,7 +61,12 @@ Negated relational calls evaluate binding-free expected outputs before equality
 comparison even when undefined inputs skip invocation. Wildcard outputs evaluate
 the prefix before the first wildcard in expression order, stopping when an operand
 is undefined; a structural mismatch in the call result does not suppress those
-effects. Reaching an unbound wildcard in the interpreter still reports an
+effects. Wildcard-free expected collections also stop at the first undefined
+element or object key/value. This call-local comparison preserves the invocation
+result while evaluating the expected output: two undefined outputs compare equal,
+and exactly one undefined output compares unequal. General VM equality and other
+collection-expression evaluation are unchanged.
+Reaching an unbound wildcard in the interpreter still reports an
 unsafe-variable error; the VM does not reproduce that existing error.
 Collection-kind checks and sequential failure checks share a temporary register
 per rule-definition window, separate from preserved match results. Skipped user

@@ -62,6 +62,18 @@ fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
         ("", "not [1 | _ = input.missing] == [1]", r#"{}"#, true),
         ("f(_) := true", "not f(input.missing)", r#"{}"#, true),
         ("f(_) := true", "not f(input.missing, 7)", r#"{}"#, true),
+        (
+            "f(_) := true",
+            "not f(input.missing, [input.missing, _])",
+            r#"{}"#,
+            false,
+        ),
+        (
+            "",
+            "not count(input.missing, [input.missing, 1 / 0])",
+            r#"{}"#,
+            false,
+        ),
         ("f(_) := true", "f(input.missing, 1 / 0)", r#"{}"#, false),
         ("f(_) := 1 / 0", "not f(input.missing)", r#"{}"#, true),
         ("f(_) := true", "f(input.missing, _)", r#"{}"#, false),
@@ -388,6 +400,8 @@ fn undefined_user_input_survives_program_json_round_trip() -> anyhow::Result<()>
 fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<()> {
     for strict in [true, false] {
         let mut outcomes = Vec::new();
+        // F25 strict-error transport differs by VM mode; non-strict values below
+        // must agree with the interpreter rather than merely another VM probe.
         let control = if strict {
             "not input.missing == 1 / 0"
         } else {
@@ -409,11 +423,14 @@ fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<
             let input = Value::from_json_str("{}")?;
             engine.set_input(input.clone());
             let interpreted = engine.eval_rule("data.test.p".into());
-            if strict {
+            let expected = if strict {
                 assert!(interpreted.is_err(), "{body}");
+                None
             } else {
-                assert_eq!(interpreted?, Value::Bool(false), "{body}");
-            }
+                let expected = interpreted?;
+                assert_eq!(expected, Value::Bool(false), "{body}");
+                Some(expected)
+            };
             let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
             let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
             let mut modes = Vec::new();
@@ -424,6 +441,13 @@ fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<
                 vm.load_program(program.clone());
                 vm.set_input(input.clone());
                 let result = vm.execute_entry_point_by_name("data.test.p");
+                if let Some(expected) = &expected {
+                    assert_eq!(
+                        result.as_ref().expect("non-strict execution"),
+                        expected,
+                        "{body}, {mode:?}"
+                    );
+                }
                 modes.push(observe_strict_probe(&vm, result));
             }
             outcomes.push(modes);
@@ -431,6 +455,76 @@ fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<
         assert_eq!(outcomes[1], outcomes[0], "strict={strict}");
         assert_eq!(outcomes[2], outcomes[0], "strict={strict}");
     }
+    Ok(())
+}
+
+#[test]
+fn negated_structural_outputs_preserve_undefined_and_short_circuit() -> anyhow::Result<()> {
+    let mut divergences = Vec::new();
+    for (definition, call, expected) in [
+        ("", "count(input.missing, [input.missing, _])", "[]"),
+        ("", "count(input.missing, [input.missing])", "[]"),
+        ("", "count(input.missing, [input.missing, 1 / 0])", "[]"),
+        ("f(_) := true", "f(input.missing, [input.missing, _])", "[]"),
+        ("f(_) := true", "f(input.missing, [input.missing])", "[]"),
+        (
+            "",
+            r#"count(input.missing, {"a":[input.missing, 1 / 0]})"#,
+            "[]",
+        ),
+        ("", "count(input.missing, {input.missing, 1 / 0})", "[]"),
+        ("", "count(input.missing, {input.missing: 1 / 0})", "[]"),
+        ("", "count([], [input.missing, 1 / 0])", "[1]"),
+        ("f(_) := [false, null]", "f(1, [1 == 2, null])", "[]"),
+        ("f(_) := [false, null]", "f(1, [null, false])", "[1]"),
+        (
+            r#"f(_) := {"a":[false, null]}"#,
+            r#"f(1, {concat("", ["a"]): [1 == 2, null]})"#,
+            "[]",
+        ),
+        ("f(_) := {false, null}", "f(1, {1 == 2, null})", "[]"),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.set_input(Value::new_object());
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definition}\np := [1 | not {call}]"),
+            )?;
+            let expected = Value::from_json_str(expected)?;
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            assert_eq!(interpreted, expected, "{call}, strict={strict}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(Value::new_object());
+                match vm.execute_entry_point_by_name("data.test.p") {
+                    Ok(actual) => {
+                        if actual != interpreted {
+                            divergences.push(format!(
+                                "{call}, {mode:?}, strict={strict}: {actual:?} != {interpreted:?}"
+                            ));
+                        }
+                        if mode == ExecutionMode::Suspendable {
+                            assert_eq!(
+                                vm.execution_state(),
+                                &ExecutionState::Completed { result: actual }
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        divergences.push(format!("{call}, {mode:?}, strict={strict}: {error}"))
+                    }
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
     Ok(())
 }
 
