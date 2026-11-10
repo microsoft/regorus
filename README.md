@@ -385,7 +385,7 @@ The workflows in `.github/workflows` invoke the same commands, so keeping local 
 
 ## OPA Conformance
 
-Regorus has been verified to be compliant with [OPA v1.2.0](https://github.com/open-policy-agent/opa/releases/tag/v1.2.0)
+Regorus is tested against [OPA v1.2.0](https://github.com/open-policy-agent/opa/releases/tag/v1.2.0)
 using a [test driver](https://github.com/microsoft/regorus/blob/main/tests/opa.rs) that loads and runs the OPA testsuite using Regorus, and verifies that expected outputs are produced.
 
 The test driver can be invoked by running:
@@ -394,7 +394,11 @@ The test driver can be invoked by running:
 $ cargo test -r --test opa --features opa-testutil,serde_json/arbitrary_precision
 ```
 
-Currently, Regorus passes all the non-builtin specific tests.
+Regorus passes the non-builtin specific tests except for intentional compatibility
+rejections of direct negated unification (`not x = value`). Regorus rejects both
+direct negated `=` and `:=`; use `not x == value` for negated equality.
+See the [grammar restriction](docs/grammar.md). The test driver checks these
+expected rejections and reports them separately from conformance passes.
 See [passing tests suites](https://github.com/microsoft/regorus/blob/main/tests/opa.passing).
 
 The following test suites don't pass fully due to missing builtins:

@@ -83,7 +83,7 @@ some-vars        ::= 'some' var ( ',' var )*
 some-in          ::= 'some' ref ( ',' ref )? 'in'
 every            ::= 'every' var ( ',' var )? 'in' bool-expr '{' query '}'
 expr             ::= assign-expr
-not-expr         ::= 'not' assign-expr
+not-expr         ::= 'not' membership-expr
 assign-expr      ::= ref assign-op membership-expr
 membership-expr  ::=  membership-expr 'in' bool-expr
                  | bool-expr ',' bool-expr
@@ -606,7 +606,7 @@ referenced by:
 ![not-expr](diagram/not-expr.svg)
 
 ```
-not-expr ::= 'not' assign-expr
+not-expr ::= 'not' membership-expr
 ```
 
 referenced by:
@@ -625,7 +625,6 @@ assign-expr
 referenced by:
 
 * expr
-* not-expr
 
 **membership-expr:**
 
@@ -639,6 +638,7 @@ membership-expr
 referenced by:
 
 * assign-expr
+* not-expr
 * object-rule
 * parens-expr
 * rule-assign
