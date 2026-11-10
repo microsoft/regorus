@@ -9,7 +9,7 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::expressions::try_eval_literal;
+use super::expressions::{try_eval_const, try_eval_literal};
 use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::{Expr, ExprRef};
 use crate::builtins;
@@ -498,11 +498,8 @@ impl<'a> Compiler<'a> {
         expr: &ExprRef,
         failures: &mut Vec<usize>,
     ) -> Result<Option<Register>> {
-        if let Some(value) = try_eval_literal(expr.as_ref()) {
-            let dest = self.alloc_register()?;
-            let literal_idx = self.add_literal(value);
-            self.emit_instruction(Instruction::Load { dest, literal_idx }, expr.span());
-            return Ok(Some(dest));
+        if let Some(value) = try_eval_const(expr.as_ref()) {
+            return Ok(Some(self.compile_constant_value(&value, expr.span())?));
         }
         let register = match expr.as_ref() {
             Expr::Var { span, .. } if span.text() == "_" => {

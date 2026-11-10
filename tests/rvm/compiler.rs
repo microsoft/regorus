@@ -609,6 +609,180 @@ fn reached_negated_output_wildcards_reject_the_active_query() -> anyhow::Result<
 }
 
 #[test]
+fn typed_constant_collections_reuse_construction_registers() -> anyhow::Result<()> {
+    let fields = (0..300)
+        .map(|n| format!("{n}: {n}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let object = format!("{{{fields}}}");
+    let set = format!(
+        "{{{}}}",
+        (0..300)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",\n")
+    );
+    let items = (0..300)
+        .map(|n| format!("{{{n}: {n}}}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let nested_fields = (0..300)
+        .map(|n| format!(r#""k{n}": {{{n}: {n}}}"#))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let compound_fields = (0..300)
+        .map(|n| format!("[{{{n}: {n}}}]: {n}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let mixed_items = (0..200)
+        .map(|n| format!("{{{n}: {n}}}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let mixed_array = format!("[{mixed_items},\ninput.marker]");
+    let mut failures = Vec::new();
+    for (name, value, body) in [
+        (
+            "actual count",
+            object.clone(),
+            "p := [1 | not count(f(1), 300)]".into(),
+        ),
+        (
+            "expected object",
+            object.clone(),
+            format!("p := [1 | not f(1, {object})]"),
+        ),
+        ("typed object", object, "p := f(1)".into()),
+        ("constant set", set, "p := f(1)".into()),
+        ("nested array", format!("[{items}]"), "p := f(1)".into()),
+        ("nested set", format!("{{{items}}}"), "p := f(1)".into()),
+        (
+            "nested object",
+            format!("{{{nested_fields}}}"),
+            "p := f(1)".into(),
+        ),
+        (
+            "compound keys",
+            format!("{{{compound_fields}}}"),
+            "p := f(1)".into(),
+        ),
+        ("mixed array", mixed_array.clone(), "p := f(1)".into()),
+        (
+            "mixed expected array",
+            mixed_array.clone(),
+            format!("p := [1 | not f(1, {mixed_array})]"),
+        ),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\nf(_) := {value}\n{body}"),
+            )?;
+            let input = Value::from_json_str(r#"{"marker":true}"#)?;
+            engine.set_input(input.clone());
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            if name == "actual count"
+                || name.starts_with("expected")
+                || name == "mixed expected array"
+            {
+                assert_eq!(interpreted, Value::from_json_str("[]")?, "{name}");
+            }
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = match Compiler::compile_from_policy(&compiled, &["data.test.p"]) {
+                Ok(program) => program,
+                Err(error) => {
+                    failures.push(format!("{name}, strict={strict}: {error}"));
+                    continue;
+                }
+            };
+            let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+            let round_trip =
+                std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+            for (snapshot, program) in [("original", program), ("round-trip", round_trip)] {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    let mut vm = RegoVM::new();
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_execution_mode(mode);
+                    vm.load_program(program.clone());
+                    vm.set_input(input.clone());
+                    let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                    if actual != interpreted {
+                        failures.push(format!(
+                            "{name}, {snapshot}, strict={strict}, {mode:?}: typed value mismatch"
+                        ));
+                    }
+                    if mode == ExecutionMode::Suspendable {
+                        assert_eq!(
+                            vm.execution_state(),
+                            &ExecutionState::Completed { result: actual }
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn typed_constant_collections_preserve_sets_after_json_round_trip() -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for body in [
+        r#"p := [1 | not object.union({"s": object.keys({"a": 1})}, {}, {"s": {"a"}})]"#,
+        r#"p := [1 | not object.keys({"a": 1}, {"a"})]"#,
+        r#"p := [1 | not array.concat([object.keys({"a": 1})], [], [{"a"}])]"#,
+        r#"p := [1 | not object.union({"s": [object.keys({"a": 1})]}, {}, {"s": [{"a"}]})]"#,
+        r#"p := {"a"}"#,
+        r#"p := {{"a"}}"#,
+        r#"p := {"s": {"a"}}"#,
+        r#"p := [1 | not object.union({"s": object.keys({"<undefined>": 1})}, {}, {"s": {"<undefined>"}})]"#,
+        r#"f(x) := {x, {"a"}}
+p := f("b")"#,
+        r#"f(x) := {"s": {"a"}, "x": x}
+p := f(1)"#,
+        r#"f(x) := {x: "v"}
+p := [1 | not f(object.keys({"a": 1}), {{"a"}: "v"})]"#,
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{body}"),
+            )?;
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+            let round_trip =
+                std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+            for (snapshot, program) in [("original", program), ("round-trip", round_trip)] {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    let mut vm = RegoVM::new();
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_execution_mode(mode);
+                    vm.load_program(program.clone());
+                    let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                    if actual != interpreted {
+                        failures.push(format!("{body}, {snapshot}, strict={strict}, {mode:?}: {actual:?} != {interpreted:?}"));
+                    }
+                    if mode == ExecutionMode::Suspendable {
+                        assert_eq!(
+                            vm.execution_state(),
+                            &ExecutionState::Completed { result: actual }
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
 fn negated_output_constants_survive_json_round_trip() -> anyhow::Result<()> {
     let mut divergences = Vec::new();
     for (definition, output) in [
@@ -911,21 +1085,28 @@ fn constant_array_is_hoisted() {
 }
 
 #[test]
-fn constant_set_is_hoisted() {
+fn constant_set_preserves_type_after_json_round_trip() -> anyhow::Result<()> {
     let program = compile_rule(
         r#"
         package test
         p := x if { x := {1, 2, 3} }
     "#,
     );
-    assert_no_collection_create(&program);
     let expected_set = Value::from(
         [1, 2, 3]
             .into_iter()
             .map(Value::from)
             .collect::<BTreeSet<_>>(),
     );
-    assert_literal_exists(&program, &expected_set);
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let round_trip =
+        std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+    for program in [program, round_trip] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        assert_eq!(vm.execute_entry_point_by_name("data.test.p")?, expected_set);
+    }
+    Ok(())
 }
 
 #[test]

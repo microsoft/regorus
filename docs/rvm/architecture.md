@@ -68,14 +68,19 @@ and exactly one undefined output compares unequal. General VM equality and other
 collection-expression evaluation order are unchanged.
 Expected-output object fields retain source-order insertion across constant and
 dynamic keys, including collisions. Whole constant collections remain hoisted
-only when their literal representation preserves key types through program JSON
-serialization; objects with non-string keys, including nested constants, are
-constructed at runtime. This lossless-folding check also applies to ordinary
+only when their literal representation preserves types through program JSON
+serialization; sets and objects with non-string keys, including nested constants,
+are constructed at runtime. This lossless-folding check also applies to ordinary
 collection literals, so constant function results retain the same key types as
 their expected outputs after serialization. Runtime object templates contain
 only string keys; other keys are inserted from typed registers or scalar
 literals. Constant keys following a dynamic key reuse the match scratch for
-insertion. Value serialization and its wire schema are unchanged.
+insertion. Constant construction uses a separate per-definition temporary pool,
+reusing registers after each insertion; temporary demand follows nesting depth,
+not collection width. Pure constant subtrees use this path even inside dynamic
+collections, without retaining their construction temporaries in parent elements.
+Undefined is never an eligible folded literal. Value serialization and its wire
+schema are unchanged.
 Reaching an unbound wildcard rejects the active VM query using an assertion
 guard at the wildcard, rather than producing a comparison that negation could
 turn into success. An earlier undefined prefix skips this guard. The interpreter
