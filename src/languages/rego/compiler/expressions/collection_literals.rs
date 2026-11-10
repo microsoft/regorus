@@ -50,13 +50,31 @@ pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Optio
     }
 }
 
+fn literal_round_trips(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().all(literal_round_trips),
+        Value::Set(values) => values.iter().all(literal_round_trips),
+        // JSON object literals stringify non-string keys. Construct those
+        // objects at runtime, even when nested in a constant collection.
+        Value::Object(fields) => fields.iter().all(|(key, field_value)| {
+            matches!(key, Value::String(_)) && literal_round_trips(field_value)
+        }),
+        _ => true,
+    }
+}
+
+pub(in crate::languages::rego::compiler) fn try_eval_literal(expr: &Expr) -> Option<Value> {
+    try_eval_const(expr).filter(literal_round_trips)
+}
+
 impl<'a> Compiler<'a> {
     pub(super) fn compile_array_literal(
         &mut self,
         items: &[ExprRef],
         span: &Span,
     ) -> Result<Register> {
-        let all_const: Option<Vec<_>> = items.iter().map(|i| try_eval_const(i.as_ref())).collect();
+        let all_const: Option<Vec<_>> =
+            items.iter().map(|i| try_eval_literal(i.as_ref())).collect();
         if let Some(values) = all_const {
             let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::from_array(values));
@@ -89,7 +107,7 @@ impl<'a> Compiler<'a> {
         span: &Span,
     ) -> Result<Register> {
         let all_const: Option<BTreeSet<_>> =
-            items.iter().map(|i| try_eval_const(i.as_ref())).collect();
+            items.iter().map(|i| try_eval_literal(i.as_ref())).collect();
         if let Some(values) = all_const {
             let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::from_set(values));
@@ -120,9 +138,11 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let all_const: Option<Object> = fields
             .iter()
-            .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
+            .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_literal(v.as_ref())?)))
             .collect();
-        if let Some(obj) = all_const {
+        if let Some(obj) =
+            all_const.filter(|object| object.keys().all(|key| matches!(key, Value::String(_))))
+        {
             let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(Value::Object(Rc::new(obj)));
             self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
@@ -165,6 +185,7 @@ impl<'a> Compiler<'a> {
 
         let template_literal_idx = {
             let mut template_keys = literal_keys.clone();
+            template_keys.retain(|key| matches!(key, Value::String(_)));
             template_keys.sort();
 
             let mut template_obj = Object::new();

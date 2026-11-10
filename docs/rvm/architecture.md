@@ -65,14 +65,17 @@ effects. Wildcard-free expected collections also stop at the first undefined
 element or object key/value. This call-local comparison preserves the invocation
 result while evaluating the expected output: two undefined outputs compare equal,
 and exactly one undefined output compares unequal. General VM equality and other
-collection-expression evaluation are unchanged.
+collection-expression evaluation order are unchanged.
 Expected-output object fields retain source-order insertion across constant and
 dynamic keys, including collisions. Whole constant collections remain hoisted
 only when their literal representation preserves key types through program JSON
 serialization; objects with non-string keys, including nested constants, are
-constructed at runtime. Constant keys following a dynamic key reuse the match
-scratch for insertion. General literal serialization and its wire schema are
-unchanged.
+constructed at runtime. This lossless-folding check also applies to ordinary
+collection literals, so constant function results retain the same key types as
+their expected outputs after serialization. Runtime object templates contain
+only string keys; other keys are inserted from typed registers or scalar
+literals. Constant keys following a dynamic key reuse the match scratch for
+insertion. Value serialization and its wire schema are unchanged.
 Reaching an unbound wildcard rejects the active VM query using an assertion
 guard at the wildcard, rather than producing a comparison that negation could
 turn into success. An earlier undefined prefix skips this guard. The interpreter

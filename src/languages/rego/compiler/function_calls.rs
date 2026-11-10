@@ -9,7 +9,7 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::expressions::try_eval_const;
+use super::expressions::try_eval_literal;
 use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::{Expr, ExprRef};
 use crate::builtins;
@@ -55,23 +55,6 @@ enum CallTarget {
         identifier: String,
         arg_count: usize,
     },
-}
-
-fn output_literal_round_trips(value: &Value) -> bool {
-    match value {
-        Value::Array(values) => values.iter().all(output_literal_round_trips),
-        Value::Set(values) => values.iter().all(output_literal_round_trips),
-        // JSON object literals stringify non-string keys. Construct those
-        // objects at runtime, even when nested in a constant collection.
-        Value::Object(fields) => fields.iter().all(|(key, field_value)| {
-            matches!(key, Value::String(_)) && output_literal_round_trips(field_value)
-        }),
-        _ => true,
-    }
-}
-
-fn try_eval_output_literal(expr: &Expr) -> Option<Value> {
-    try_eval_const(expr).filter(output_literal_round_trips)
 }
 
 impl<'a> Compiler<'a> {
@@ -515,7 +498,7 @@ impl<'a> Compiler<'a> {
         expr: &ExprRef,
         failures: &mut Vec<usize>,
     ) -> Result<Option<Register>> {
-        if let Some(value) = try_eval_output_literal(expr.as_ref()) {
+        if let Some(value) = try_eval_literal(expr.as_ref()) {
             let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(value);
             self.emit_instruction(Instruction::Load { dest, literal_idx }, expr.span());
@@ -573,7 +556,7 @@ impl<'a> Compiler<'a> {
                 let mut literal_key_fields = Vec::new();
                 let mut ordered_fields = Vec::new();
                 for (_, key, value) in fields {
-                    let literal_key = try_eval_output_literal(key.as_ref());
+                    let literal_key = try_eval_literal(key.as_ref());
                     let key_register = if literal_key.is_none() {
                         let Some(register) = self.compile_negated_expected_output(key, failures)?
                         else {
