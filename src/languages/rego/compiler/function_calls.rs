@@ -16,8 +16,8 @@ use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
 use crate::rvm::instructions::{
-    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, GuardMode, ObjectCreateParams,
-    SetCreateParams,
+    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, GuardMode, LiteralOrRegister,
+    ObjectCreateParams, SetCreateParams,
 };
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
@@ -55,6 +55,23 @@ enum CallTarget {
         identifier: String,
         arg_count: usize,
     },
+}
+
+fn output_literal_round_trips(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().all(output_literal_round_trips),
+        Value::Set(values) => values.iter().all(output_literal_round_trips),
+        // JSON object literals stringify non-string keys. Construct those
+        // objects at runtime, even when nested in a constant collection.
+        Value::Object(fields) => fields.iter().all(|(key, field_value)| {
+            matches!(key, Value::String(_)) && output_literal_round_trips(field_value)
+        }),
+        _ => true,
+    }
+}
+
+fn try_eval_output_literal(expr: &Expr) -> Option<Value> {
+    try_eval_const(expr).filter(output_literal_round_trips)
 }
 
 impl<'a> Compiler<'a> {
@@ -492,19 +509,41 @@ impl<'a> Compiler<'a> {
     }
 
     // Evaluate expected collections in source order, exiting on Undefined before
-    // later effects. None denotes reaching a wildcard rather than a value.
+    // later effects. None denotes a wildcard that rejects the active query.
     fn compile_negated_expected_output(
         &mut self,
         expr: &ExprRef,
         failures: &mut Vec<usize>,
     ) -> Result<Option<Register>> {
-        if try_eval_const(expr.as_ref()).is_some() {
-            return self
-                .compile_rego_expr_with_span(expr, expr.span(), false)
-                .map(Some);
+        if let Some(value) = try_eval_output_literal(expr.as_ref()) {
+            let dest = self.alloc_register()?;
+            let literal_idx = self.add_literal(value);
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, expr.span());
+            return Ok(Some(dest));
         }
         let register = match expr.as_ref() {
-            Expr::Var { span, .. } if span.text() == "_" => return Ok(None),
+            Expr::Var { span, .. } if span.text() == "_" => {
+                let scratch = self
+                    .match_scratch_register()
+                    .map_err(|err| CompilerError::from(err).at(span))?;
+                self.emit_instruction(
+                    Instruction::LoadBool {
+                        dest: scratch,
+                        value: false,
+                    },
+                    span,
+                );
+                // This must reject the query, not become a failed comparison
+                // that the surrounding negation turns into success.
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: scratch,
+                        mode: GuardMode::Condition,
+                    },
+                    span,
+                );
+                return Ok(None);
+            }
             Expr::Array { items, .. } | Expr::Set { items, .. } => {
                 let mut elements = Vec::with_capacity(items.len());
                 for item in items {
@@ -532,9 +571,9 @@ impl<'a> Compiler<'a> {
             }
             Expr::Object { fields, .. } => {
                 let mut literal_key_fields = Vec::new();
-                let mut dynamic_fields = Vec::new();
+                let mut ordered_fields = Vec::new();
                 for (_, key, value) in fields {
-                    let literal_key = try_eval_const(key.as_ref());
+                    let literal_key = try_eval_output_literal(key.as_ref());
                     let key_register = if literal_key.is_none() {
                         let Some(register) = self.compile_negated_expected_output(key, failures)?
                         else {
@@ -550,9 +589,18 @@ impl<'a> Compiler<'a> {
                         return Ok(None);
                     };
                     if let Some(literal_value) = literal_key {
-                        literal_key_fields.push((self.add_literal(literal_value), value_register));
+                        let literal_idx = self.add_literal(literal_value);
+                        if ordered_fields.is_empty() {
+                            literal_key_fields.push((literal_idx, value_register));
+                        } else {
+                            ordered_fields
+                                .push((LiteralOrRegister::Literal(literal_idx), value_register));
+                        }
                     } else if let Some(dynamic_key_register) = key_register {
-                        dynamic_fields.push((dynamic_key_register, value_register));
+                        ordered_fields.push((
+                            LiteralOrRegister::Register(dynamic_key_register),
+                            value_register,
+                        ));
                     }
                 }
                 literal_key_fields.sort_by(|a, b| {
@@ -567,9 +615,37 @@ impl<'a> Compiler<'a> {
                             dest,
                             template_literal_idx,
                             literal_key_fields,
-                            fields: dynamic_fields,
+                            fields: Vec::new(),
                         });
                 self.emit_instruction(Instruction::ObjectCreate { params_index }, expr.span());
+                // Literal keys after a dynamic key can collide with it. Insert
+                // this suffix in source order without allocating a register per key.
+                for (key, value) in ordered_fields {
+                    let key_register = match key {
+                        LiteralOrRegister::Register(register) => register,
+                        LiteralOrRegister::Literal(literal_idx) => {
+                            let scratch = self
+                                .match_scratch_register()
+                                .map_err(|err| CompilerError::from(err).at(expr.span()))?;
+                            self.emit_instruction(
+                                Instruction::Load {
+                                    dest: scratch,
+                                    literal_idx,
+                                },
+                                expr.span(),
+                            );
+                            scratch
+                        }
+                    };
+                    self.emit_instruction(
+                        Instruction::ObjectSet {
+                            obj: dest,
+                            key: key_register,
+                            value,
+                        },
+                        expr.span(),
+                    );
+                }
                 dest
             }
             _ => {

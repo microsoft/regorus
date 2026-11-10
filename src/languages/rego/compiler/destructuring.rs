@@ -12,17 +12,8 @@ use crate::value::Value;
 use alloc::vec::Vec;
 use anyhow::{bail, Result};
 
-#[derive(Clone, Copy, Debug)]
-pub enum PlanContext {
-    ColonAssignment,
-    Assignment,
-    FunctionParameter,
-    LoopIndex,
-    SomeIn,
-}
-
 impl<'a> Compiler<'a> {
-    fn match_scratch_register(&mut self) -> Result<Register> {
+    pub(super) fn match_scratch_register(&mut self) -> Result<Register> {
         match self.match_scratch_register {
             Some(scratch_register) => Ok(scratch_register),
             None => {
@@ -143,36 +134,21 @@ impl<'a> Compiler<'a> {
                 rhs_expr, lhs_plan, ..
             } => {
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                let _ = self.apply_destructuring_plan(
-                    lhs_plan,
-                    rhs_reg,
-                    span,
-                    PlanContext::ColonAssignment,
-                )?;
+                let _ = self.apply_destructuring_plan(lhs_plan, rhs_reg, span)?;
                 Ok(rhs_reg)
             }
             AssignmentPlan::EqualsBindLeft {
                 rhs_expr, lhs_plan, ..
             } => {
                 let rhs_reg = self.compile_rego_expr_with_span(rhs_expr, rhs_expr.span(), false)?;
-                let result = self.apply_destructuring_plan(
-                    lhs_plan,
-                    rhs_reg,
-                    span,
-                    PlanContext::Assignment,
-                )?;
+                let result = self.apply_destructuring_plan(lhs_plan, rhs_reg, span)?;
                 result.map_or_else(|| self.load_bool_literal(true, span), Ok)
             }
             AssignmentPlan::EqualsBindRight {
                 lhs_expr, rhs_plan, ..
             } => {
                 let lhs_reg = self.compile_rego_expr_with_span(lhs_expr, lhs_expr.span(), false)?;
-                let result = self.apply_destructuring_plan(
-                    rhs_plan,
-                    lhs_reg,
-                    span,
-                    PlanContext::Assignment,
-                )?;
+                let result = self.apply_destructuring_plan(rhs_plan, lhs_reg, span)?;
                 result.map_or_else(|| self.load_bool_literal(true, span), Ok)
             }
             AssignmentPlan::EqualsBothSides { element_pairs, .. } => {
@@ -251,20 +227,10 @@ impl<'a> Compiler<'a> {
             }
             BindingPlan::LoopIndex {
                 destructuring_plan, ..
-            } => self.apply_destructuring_plan(
-                destructuring_plan,
-                value_register,
-                span,
-                PlanContext::LoopIndex,
-            ),
+            } => self.apply_destructuring_plan(destructuring_plan, value_register, span),
             BindingPlan::Parameter {
                 destructuring_plan, ..
-            } => self.apply_destructuring_plan(
-                destructuring_plan,
-                value_register,
-                span,
-                PlanContext::FunctionParameter,
-            ),
+            } => self.apply_destructuring_plan(destructuring_plan, value_register, span),
             BindingPlan::SomeIn { .. } => {
                 bail!("use apply_some_in_binding_plan for SomeIn bindings")
             }
@@ -282,14 +248,9 @@ impl<'a> Compiler<'a> {
     ) -> Result<()> {
         if let (Some(plan), Some(register)) = (key_plan, key_register) {
             let span = key_span.unwrap_or(value_span);
-            let _ = self.apply_destructuring_plan(plan, register, span, PlanContext::SomeIn)?;
+            let _ = self.apply_destructuring_plan(plan, register, span)?;
         }
-        let _ = self.apply_destructuring_plan(
-            value_plan,
-            value_register,
-            value_span,
-            PlanContext::SomeIn,
-        )?;
+        let _ = self.apply_destructuring_plan(value_plan, value_register, value_span)?;
         Ok(())
     }
 
@@ -298,7 +259,6 @@ impl<'a> Compiler<'a> {
         plan: &DestructuringPlan,
         value_register: Register,
         span: &Span,
-        _context: PlanContext,
     ) -> Result<Option<Register>> {
         self.with_match_result(span, |compiler, failures| {
             compiler.apply_destructuring_plan_impl(plan, value_register, span, failures)
