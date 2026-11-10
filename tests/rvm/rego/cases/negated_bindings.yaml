@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: negated equality after positive unification
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if { x = false; not x == true }
+    query: data.test.p
+    want_result: true
+
+  - note: negated equality after null assignment
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if { x := null; not x == false }
+    query: data.test.p
+    want_result: true
+
+  - note: positive destructuring inside negated comprehension
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if { not [1 | [_] := [false]; 1 = 1] == [] }
+    query: data.test.p
+    want_result: true
+
+  - note: positive bindings inside every inside negated comprehension
+    modules:
+      - |
+        package test
+        import rego.v1
+        p if { not [1 | every x in [1] { y := x; y = 1 }] == [] }
+    query: data.test.p
+    want_result: true
