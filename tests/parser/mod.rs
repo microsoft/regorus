@@ -813,6 +813,88 @@ fn run(path: &str) {
 }
 
 #[test]
+fn negated_assignment_and_unification_are_rejected_in_policies_and_queries() -> Result<()> {
+    for body in [
+        "not x := input.payload",
+        "not _ := false",
+        "not _ = false",
+        "not [_] := input.payload",
+        "not [_] = input.payload",
+        r#"not {"a":[_]} := input.payload"#,
+        "not [1 | not [_] := input.payload] == []",
+        "not [1 | not 1 = input.x] == []",
+        "every x in [1] { not _ := x }",
+    ] {
+        let mut engine = Engine::new();
+        let policy_error = engine
+            .add_policy(
+                "negated-assignment.rego".into(),
+                format!("package test\nimport rego.v1\np if {{ {body} }}"),
+            )
+            .expect_err("negated assignment must be rejected before evaluation or RVM compilation");
+        assert!(
+            policy_error
+                .to_string()
+                .contains("use == for negated equality"),
+            "{body}: {policy_error}"
+        );
+        let query_error = engine
+            .eval_query(body.into(), false)
+            .expect_err("invalid query");
+        assert!(
+            query_error
+                .to_string()
+                .contains("use == for negated equality"),
+            "{body}: {query_error}"
+        );
+        assert_eq!(engine.eval_query("true".into(), false)?.result.len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn negation_preserves_equality_and_nested_positive_bindings() -> Result<()> {
+    for body in [
+        "x = false; not x == true",
+        "x := null; not x == false",
+        "not [1 | [_] := [false]; 1 = 1] == []",
+        "not [1 | every x in [1] { y := x; y = 1 }] == []",
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "valid-negation.rego".into(),
+            format!("package test\nimport rego.v1\ndefault p := false\np if {{ {body} }}"),
+        )?;
+        assert_eq!(
+            engine.eval_rule("data.test.p".into())?,
+            Value::Bool(true),
+            "{body}"
+        );
+        #[cfg(feature = "rvm")]
+        {
+            use regorus::languages::rego::compiler::Compiler;
+            use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM};
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                assert_eq!(got, Value::Bool(true), "{body}, {mode:?}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: got }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn object_field_spans_start_at_their_key() -> Result<()> {
     // Fields on the first line, on later lines, with the colon on a
     // different line from the key, and with string and compound keys.

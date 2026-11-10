@@ -1,5 +1,11 @@
 Regorus uses the following grammar that has been derived from the official [OPA grammar](https://www.openpolicyagent.org/docs/latest/policy-reference/#grammar) as well as observed OPA behavior.
 
+Regorus intentionally rejects direct negated assignment (`not x := value`) and
+negated unification (`not x = value`). Use `not x == value` for negated equality.
+The unification restriction is stricter than OPA; it is not a claim that OPA
+rejects all such policies. Positive `=` and `:=` filters inside a comprehension
+or `every` body remain allowed when the enclosing expression is negated.
+
 ## Parsing nested expressions
 
 The parser limits recursive terms and query bodies to a shared depth of 32 and

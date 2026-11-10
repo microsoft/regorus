@@ -1611,6 +1611,11 @@ impl<'source> Parser<'source> {
         let expr = Ref::new(self.parse_assign_expr()?);
         span.end = self.end;
         if not_expr {
+            if matches!(expr.as_ref(), Expr::AssignExpr { .. }) {
+                bail!(span.error(
+                    "negated assignment or unification is not supported; use == for negated equality"
+                ));
+            }
             Ok(Literal::NotExpr { span, expr })
         } else {
             Ok(Literal::Expr { span, expr })
@@ -1645,7 +1650,7 @@ impl<'source> Parser<'source> {
 
     fn parse_query_inner(&mut self, mut span: Span, end_delim: &str) -> Result<Query> {
         let state = self.clone();
-        let is_definite_query = matches!(self.token_text(), "some" | "every");
+        let is_definite_query = matches!(self.token_text(), "some" | "every" | "not");
 
         // TODO: empty query?
         let mut literals = vec![];
