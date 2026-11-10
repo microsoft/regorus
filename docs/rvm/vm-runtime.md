@@ -381,6 +381,16 @@ Rule destructuring relies on `CallRuleContext`,
 `RuleFramePhase::ExecutingDestructuring`, and the `DestructuringSuccess`
 instruction to detect when pattern matching succeeded before entering the body.
 
+Both execution paths use `should_propagate_rule_error` for rule recovery.
+Resource-limit errors and `VmError::RuleOutputConflict` always propagate.
+Complete rules and functions may produce the same output more than once, but
+different outputs are errors, never `Undefined`. With strict builtin errors
+enabled, other semantic errors also propagate through nested rules, functions,
+and collections instead of selecting an `else` or default value. Ordinary
+assertion failures (including false conditions and destructuring mismatches)
+still fail only the current body. Propagated errors are terminal during initial
+and resumed execution; the VM can subsequently execute another entrypoint.
+
 ---
 
 ## 6. Virtual data lookups

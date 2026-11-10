@@ -5,7 +5,6 @@ use crate::rvm::instructions::{GuardMode, Instruction, LiteralOrRegister};
 use crate::rvm::program::Program;
 use crate::value::Value;
 use alloc::vec::Vec;
-use core::mem;
 
 use super::errors::{Result, VmError};
 use super::execution_model::{ExecutionMode, SuspendReason};
@@ -218,16 +217,6 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={}, right={})",
-                            a.summary(), b.summary()
-                        ),
-                        pc: self.pc,
-                    });
-                }
-
                 let result = self.compare_registers(left, right, false)?.is_lt();
                 self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
@@ -239,16 +228,6 @@ impl RegoVM {
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
-                }
-
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={}, right={})",
-                            a.summary(), b.summary()
-                        ),
-                        pc: self.pc,
-                    });
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_le();
@@ -264,16 +243,6 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={}, right={})",
-                            a.summary(), b.summary()
-                        ),
-                        pc: self.pc,
-                    });
-                }
-
                 let result = self.compare_registers(left, right, false)?.is_gt();
                 self.set_register(dest, Value::Bool(result))?;
                 Ok(InstructionOutcome::Continue)
@@ -285,16 +254,6 @@ impl RegoVM {
                 if a == &Value::Undefined || b == &Value::Undefined {
                     self.set_register(dest, Value::Undefined)?;
                     return Ok(InstructionOutcome::Continue);
-                }
-
-                if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
-                        message: alloc::format!(
-                            "#undefined: cannot compare values of different types (left={}, right={})",
-                            a.summary(), b.summary()
-                        ),
-                        pc: self.pc,
-                    });
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_ge();

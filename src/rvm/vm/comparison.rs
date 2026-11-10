@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn checked_comparisons_keep_undefined_and_strict_type_errors() -> Result<()> {
+    fn checked_comparisons_keep_undefined_and_cross_type_ordering() -> Result<()> {
         let _guard = acquire_limits_test_lock();
         for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
             for (instruction, _) in comparisons() {
@@ -682,21 +682,35 @@ mod tests {
                     vm.set_execution_mode(mode);
                     vm.set_strict_builtin_errors(strict);
                     vm.set_execution_timer_config(Some(timer(Duration::from_secs(60))));
-                    vm.set_input(Value::Undefined);
-                    vm.set_data(Value::Null)?;
-                    assert_eq!(vm.execute()?, Value::Undefined);
+                    for (left, right) in [
+                        (Value::Undefined, Value::Null),
+                        (Value::Null, Value::Undefined),
+                    ] {
+                        vm.set_input(left);
+                        vm.set_data(right)?;
+                        assert_eq!(vm.execute()?, Value::Undefined);
+                    }
 
-                    vm.set_input(Value::Bool(true));
-                    let result = vm.execute();
-                    if strict
-                        && !matches!(instruction, Instruction::Eq { .. } | Instruction::Ne { .. })
-                    {
-                        assert!(matches!(
-                            result,
-                            Err(VmError::ArithmeticError { pc: 2, .. })
-                        ));
-                    } else {
-                        assert!(matches!(result?, Value::Bool(_)));
+                    for (left, right, less) in [
+                        (Value::Bool(true), Value::Null, false),
+                        (Value::Null, Value::Bool(true), true),
+                        (Value::from("text"), Value::from(0), false),
+                        (Value::from(0), Value::from("text"), true),
+                    ] {
+                        let expected = match instruction {
+                            Instruction::Eq { .. } => false,
+                            Instruction::Ne { .. } => true,
+                            Instruction::Lt { .. } | Instruction::Le { .. } => less,
+                            Instruction::Gt { .. } | Instruction::Ge { .. } => !less,
+                            _ => continue,
+                        };
+                        vm.set_input(left);
+                        vm.set_data(right)?;
+                        assert_eq!(
+                            vm.execute()?,
+                            Value::Bool(expected),
+                            "{mode:?}, strict={strict}: {instruction:?}"
+                        );
                     }
                 }
             }

@@ -103,7 +103,7 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
 }
 
 #[test]
-fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn complete_rule_conflict_is_an_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         p := input.left if input.enabled
@@ -111,10 +111,12 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    assert!(matches!(
+        run_rvm_policy(module, conflict_input)
+            .unwrap_err()
+            .downcast_ref::<VmError>(),
+        Some(VmError::RuleOutputConflict { rule, .. }) if rule == "data.test.p"
+    ));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -132,7 +134,7 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
 }
 
 #[test]
-fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn function_rule_conflict_is_an_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         f(x) := input.left if input.enabled
@@ -141,10 +143,12 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    assert!(matches!(
+        run_rvm_policy(module, conflict_input)
+            .unwrap_err()
+            .downcast_ref::<VmError>(),
+        Some(VmError::RuleOutputConflict { rule, .. }) if rule == "data.test.f"
+    ));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -159,6 +163,107 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
         run_interpreter_policy(module, equal_input).unwrap(),
         Value::from(1)
     );
+}
+
+#[test]
+fn propagated_rule_errors_are_terminal_and_vm_is_reusable() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "terminal.rego".to_string(),
+        r#"
+        package test
+        conflict := input.left
+        conflict := input.right
+        conflict_result := [conflict | some _ in input.items]
+        parsed(x) := time.parse_rfc3339_ns(x)
+        builtin_result := [parsed(x) | some x in input.items]
+        good := [y | some x in input.items; is_number(x); y := x + 1]
+        "#
+        .to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.conflict_result"))?;
+    let program = Compiler::compile_from_policy(
+        &compiled,
+        &[
+            "data.test.conflict_result",
+            "data.test.builtin_result",
+            "data.test.good",
+        ],
+    )?;
+    for (mode, step) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        for (entry, strict, input) in [
+            (
+                "data.test.conflict_result",
+                false,
+                r#"{"left":1,"right":2,"items":[1,2]}"#,
+            ),
+            (
+                "data.test.conflict_result",
+                true,
+                r#"{"left":1,"right":2,"items":[1,2]}"#,
+            ),
+            (
+                "data.test.builtin_result",
+                true,
+                r#"{"items":["1970-01-01T00:00:00Z","yesterday"]}"#,
+            ),
+        ] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_step_mode(step);
+            vm.set_strict_builtin_errors(strict);
+            vm.set_input(Value::from_json_str(input)?);
+            let mut result = vm.execute_entry_point_by_name(entry);
+            let mut resumes = 0;
+            while result.is_ok()
+                && matches!(
+                    vm.execution_state(),
+                    ExecutionState::Suspended {
+                        reason: SuspendReason::Step,
+                        ..
+                    }
+                )
+            {
+                resumes += 1;
+                result = vm.resume(None);
+            }
+            let error = result.expect_err("semantic errors must propagate");
+            if entry == "data.test.conflict_result" {
+                assert!(matches!(error, VmError::RuleOutputConflict { .. }));
+            } else {
+                assert!(error.to_string().contains("Failed to parse datetime"));
+            }
+            assert_eq!(step, resumes > 0);
+            assert!(
+                matches!(vm.execution_state(), ExecutionState::Error { error: stored } if stored == &error),
+                "{mode:?}, step={step}, strict={strict}: {:?}",
+                vm.execution_state()
+            );
+            assert!(
+                vm.resume(None).is_err(),
+                "failed execution must be terminal"
+            );
+
+            vm.set_input(Value::from_json_str(r#"{"items":[1,2]}"#)?);
+            let mut result = vm.execute_entry_point_by_name("data.test.good")?;
+            while matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended {
+                    reason: SuspendReason::Step,
+                    ..
+                }
+            ) {
+                result = vm.resume(None)?;
+            }
+            assert_eq!(result, Value::from_json_str("[2,3]")?);
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -849,6 +954,8 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
             vm.resume(Some(Value::from("first-response")))
         };
         let first_outcome = observe_strict_probe(first_result);
+        assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+        assert!(vm.resume(None).is_err());
 
         let second_result = if is_run_to_completion {
             vm.execute_entry_point_by_index(1)
@@ -931,8 +1038,8 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
         );
         assert_eq!(
             registered.0,
-            StrictProbeOutcome::Value(Value::Bool(false)),
-            "the default-false rule should absorb the output-expression failure"
+            StrictProbeOutcome::DivisionError,
+            "a default must not absorb a strict output-expression error"
         );
         assert_eq!(
             registered.1,

@@ -195,9 +195,9 @@ cases:
       - "Return { value: 2 }"
     want_result: false
 
-  # Comparison operations with incompatible types
+  # Comparison operations with different types use Rego's total order.
   - note: compare_string_lt_int
-    description: Comparing string < int returns ordering result in non-strict; errors in strict
+    description: Comparing string < int returns false in both strictness modes
     example_rego: "\"abc\" < 5"
     literals:
       - "abc"
@@ -208,10 +208,10 @@ cases:
       - "Lt { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
     want_result: false
-    want_error_strict: "#undefined"
+    want_result_strict: false
 
   - note: compare_bool_gt_array
-    description: Comparing bool > array returns ordering result in non-strict; errors in strict
+    description: Comparing bool > array returns false in both strictness modes
     example_rego: "true > [1, 2]"
     literals:
       - [1, 2]
@@ -221,4 +221,4 @@ cases:
       - "Gt { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
     want_result: false
-    want_error_strict: "#undefined"
+    want_result_strict: false

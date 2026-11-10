@@ -1,0 +1,573 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Every case checks the interpreter and all three VM execution paths.
+cases:
+  - note: issue_932_tier_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: &repro_input {gold: true, silver: true, published: yesterday, key: tier}
+    modules: &repro
+      - |
+        package repro
+        tier := "gold" if input.gold
+        tier := "silver" if input.silver
+        age := time.now_ns() - time.parse_rfc3339_ns(input.published)
+        deny contains "published less than a day ago" if {
+          age < ((24 * 60) * 60) * 1000000000
+        }
+        nested := tier
+        parsed(x) := time.parse_rfc3339_ns(x)
+        parsed_result := parsed(input.published)
+        f(x) := input.gold if x
+        f(x) := input.silver if x
+        function_result := f(true)
+        default fallback := "fallback"
+        fallback := parsed_result
+        default allow := true
+        allow := false if count(deny) > 0
+        default conflict_default := "fallback"
+        conflict_default := tier
+        conflict_else := tier if input.gold else := "fallback"
+        parse_else := parsed_result if input.gold else := "fallback"
+        conflict_set contains tier
+        conflict_object[k] := tier if k := input.key
+        parsed_object[k] := parsed_result if k := input.key
+        loop_result := [tier | some _ in input.items]
+        parsed_loop := [parsed(x) | some x in input.items]
+        negated if not parsed_result
+    query: data.repro.tier
+    want_error: conflicts
+
+  - note: issue_932_tier_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.tier
+    want_error: conflicts
+
+  - note: issue_932_tier_false_conditions_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {gold: false, silver: false}
+    modules: *repro
+    query: data.repro.tier
+    want_result: "#undefined"
+
+  - note: issue_932_tier_missing_conditions_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: {}
+    modules: *repro
+    query: data.repro.tier
+    want_result: "#undefined"
+
+  - note: issue_932_age_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.age
+    want_error: Failed to parse datetime
+
+  - note: issue_932_age_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.age
+    want_result: "#undefined"
+
+  - note: issue_932_age_missing_input_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {}
+    modules: *repro
+    query: data.repro.age
+    want_result: "#undefined"
+
+  - note: rule_error_missing_input_default_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {}
+    modules: *repro
+    query: data.repro.fallback
+    want_result: fallback
+
+  - note: issue_932_deny_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.deny
+    want_error: Failed to parse datetime
+
+  - note: issue_932_deny_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.deny
+    want_result: {set!: []}
+
+  - note: rule_error_nested_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.nested
+    want_error: conflicts
+
+  - note: rule_error_nested_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.nested
+    want_error: conflicts
+
+  - note: rule_error_function_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parsed_result
+    want_error: Failed to parse datetime
+
+  - note: rule_error_function_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parsed_result
+    want_result: "#undefined"
+
+  - note: rule_error_function_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: {gold: 1, silver: 2}
+    modules: *repro
+    query: data.repro.function_result
+    want_error: conflicts
+
+  - note: rule_error_function_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {gold: 1, silver: 2}
+    modules: *repro
+    query: data.repro.function_result
+    want_error: conflicts
+
+  - note: rule_error_function_equal_outputs_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: {gold: 1, silver: 1}
+    modules: *repro
+    query: data.repro.function_result
+    want_result: 1
+
+  - note: rule_error_function_equal_outputs_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {gold: 1, silver: 1}
+    modules: *repro
+    query: data.repro.function_result
+    want_result: 1
+
+  - note: rule_error_default_cannot_mask_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.fallback
+    want_error: Failed to parse datetime
+
+  - note: rule_error_default_recovers_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.fallback
+    want_result: fallback
+
+  - note: rule_error_authorization_default_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.allow
+    want_error: Failed to parse datetime
+
+  - note: rule_error_authorization_default_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.allow
+    want_result: true
+
+  - note: rule_error_default_cannot_mask_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_default
+    want_error: conflicts
+
+  - note: rule_error_default_cannot_mask_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_default
+    want_error: conflicts
+
+  - note: rule_error_else_cannot_mask_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_else
+    want_error: conflicts
+
+  - note: rule_error_else_cannot_mask_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_else
+    want_error: conflicts
+
+  - note: rule_error_else_cannot_mask_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parse_else
+    want_error: Failed to parse datetime
+
+  - note: rule_error_else_recovers_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parse_else
+    want_result: fallback
+
+  - note: rule_error_partial_set_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_set
+    want_error: conflicts
+
+  - note: rule_error_partial_object_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.conflict_object
+    want_error: conflicts
+
+  - note: rule_error_partial_object_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parsed_object
+    want_error: Failed to parse datetime
+
+  - note: rule_error_partial_object_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.parsed_object
+    want_result: {}
+
+  - note: rule_error_comprehension_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: {gold: true, silver: true, items: [1, 2]}
+    modules: *repro
+    query: data.repro.loop_result
+    want_error: conflicts
+
+  - note: rule_error_comprehension_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: {items: ["1970-01-01T00:00:00Z", yesterday]}
+    modules: *repro
+    query: data.repro.parsed_loop
+    want_error: Failed to parse datetime
+
+  - note: rule_error_comprehension_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: {items: ["1970-01-01T00:00:00Z", yesterday]}
+    modules: *repro
+    query: data.repro.parsed_loop
+    want_result: [0]
+
+  - note: rule_error_negation_builtin_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *repro_input
+    modules: *repro
+    query: data.repro.negated
+    want_error: Failed to parse datetime
+
+  - note: rule_error_negation_builtin_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *repro_input
+    modules: *repro
+    query: data.repro.negated
+    want_result: true
+
+  - note: rule_error_controls_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &controls_input {value: 7, enabled: true, items: [1, 2, 3]}
+    modules: &controls
+      - |
+        package controls
+        same := input.value if input.enabled
+        same := input.value if input.enabled
+        missing := input.missing
+        failed if false
+        false_value := false
+        default defaulted := "default"
+        defaulted := "body" if input.disabled
+        alternative := "first" if input.disabled else := "else"
+        pattern([x, y]) := x + y
+        pattern([x]) := x
+        pattern_result := pattern([9])
+        mismatched := pattern([1, 2, 3])
+        missing_ok if not missing
+        failed_ok if not failed
+        mismatch_ok if not mismatched
+        filtered := [x | some x in input.items; x > 1]
+        result := {
+          "same": same,
+          "missing": missing_ok,
+          "failed": failed_ok,
+          "false": false_value,
+          "default": defaulted,
+          "else": alternative,
+          "pattern": pattern_result,
+          "mismatch": mismatch_ok,
+          "filtered": filtered,
+        }
+    query: data.controls.result
+    want_result: &controls_result
+      same: 7
+      missing: true
+      failed: true
+      "false": false
+      default: default
+      else: else
+      pattern: 9
+      mismatch: true
+      filtered: [2, 3]
+
+  - note: rule_error_controls_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *controls_input
+    modules: *controls
+    query: data.controls.result
+    want_result: *controls_result
+
+  - note: rule_error_arithmetic_default_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &division_input {n: 1, d: 0}
+    modules: &division
+      - |
+        package division
+        default quotient := 99
+        quotient := input.n / input.d
+    query: data.division.quotient
+    want_error: Cannot divide
+
+  - note: rule_error_arithmetic_default_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *division_input
+    modules: *division
+    query: data.division.quotient
+    want_result: 99
+
+  - note: rule_error_ordering_lt_string_number_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &string_number {left: text, right: 0}
+    modules: &relational_ordering
+      - |
+        package ordering
+        default lt := false
+        lt if input.left < input.right
+        default le := false
+        le if input.left <= input.right
+        default gt := false
+        gt if input.left > input.right
+        default ge := false
+        ge if input.left >= input.right
+        result := {"lt": lt, "le": le, "gt": gt, "ge": ge}
+    query: data.ordering.lt
+    want_result: false
+
+  - note: rule_error_ordering_lt_string_number_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.lt
+    want_result: false
+
+  - note: rule_error_ordering_lt_number_string_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &number_string {left: 0, right: text}
+    modules: *relational_ordering
+    query: data.ordering.lt
+    want_result: true
+
+  - note: rule_error_ordering_lt_number_string_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.lt
+    want_result: true
+
+  - note: rule_error_ordering_le_string_number_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.le
+    want_result: false
+
+  - note: rule_error_ordering_le_string_number_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.le
+    want_result: false
+
+  - note: rule_error_ordering_le_number_string_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.le
+    want_result: true
+
+  - note: rule_error_ordering_le_number_string_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.le
+    want_result: true
+
+  - note: rule_error_ordering_gt_string_number_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.gt
+    want_result: true
+
+  - note: rule_error_ordering_gt_string_number_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.gt
+    want_result: true
+
+  - note: rule_error_ordering_gt_number_string_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.gt
+    want_result: false
+
+  - note: rule_error_ordering_gt_number_string_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.gt
+    want_result: false
+
+  - note: rule_error_ordering_ge_string_number_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.ge
+    want_result: true
+
+  - note: rule_error_ordering_ge_string_number_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *string_number
+    modules: *relational_ordering
+    query: data.ordering.ge
+    want_result: true
+
+  - note: rule_error_ordering_ge_number_string_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.ge
+    want_result: false
+
+  - note: rule_error_ordering_ge_number_string_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *number_string
+    modules: *relational_ordering
+    query: data.ordering.ge
+    want_result: false
+
+  - note: rule_error_ordering_undefined_left_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &undefined_left {right: 0}
+    modules: *relational_ordering
+    query: data.ordering.result
+    want_result: &undefined_ordering {lt: false, le: false, gt: false, ge: false}
+
+  - note: rule_error_ordering_undefined_left_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *undefined_left
+    modules: *relational_ordering
+    query: data.ordering.result
+    want_result: *undefined_ordering
+
+  - note: rule_error_ordering_undefined_right_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    input: &undefined_right {left: 0}
+    modules: *relational_ordering
+    query: data.ordering.result
+    want_result: *undefined_ordering
+
+  - note: rule_error_ordering_undefined_right_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    input: *undefined_right
+    modules: *relational_ordering
+    query: data.ordering.result
+    want_result: *undefined_ordering

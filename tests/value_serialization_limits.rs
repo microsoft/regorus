@@ -474,7 +474,7 @@ mod rvm {
     }
 
     #[test]
-    fn malformed_options_remain_nonfatal_rule_failures() {
+    fn malformed_options_respect_strict_errors_before_serialization() {
         for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
             for strict in [false, true] {
                 for options in [
@@ -493,11 +493,19 @@ mod rvm {
                         mode,
                     );
                     vm.set_input(nested(LIMIT + 1, 0));
-                    assert_eq!(
-                        vm.execute_entry_point_by_name("data.test.p").unwrap(),
-                        Value::from("fallback"),
-                        "{mode:?}, {strict}: {options}"
-                    );
+                    let result = vm.execute_entry_point_by_name("data.test.p");
+                    if strict {
+                        assert!(
+                            matches!(result, Err(VmError::ArithmeticError { .. })),
+                            "{mode:?}: {options}: {result:?}"
+                        );
+                    } else {
+                        assert_eq!(
+                            result.unwrap(),
+                            Value::from("fallback"),
+                            "{mode:?}: {options}"
+                        );
+                    }
                 }
             }
         }

@@ -53,7 +53,7 @@ impl RegoVM {
         error
     }
 
-    /// Publish an initial suspendable execution error without discarding legacy unbudgeted state.
+    /// Publish an initial suspendable execution error after applying failure cleanup.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_initial_suspendable_execution(&mut self, error: VmError) -> VmError {
         if self.active_memory_budget_config.is_some() {
@@ -76,9 +76,9 @@ impl RegoVM {
         error
     }
 
-    /// Release state after a failed budgeted suspendable execution.
+    /// Release state after a failed suspendable execution.
     ///
-    /// Resource failures also release state; other unbudgeted errors preserve legacy state.
+    /// Unbudgeted errors retain legacy snapshots, but are still terminal.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
         if matches!(
@@ -91,6 +91,9 @@ impl RegoVM {
             return self.fail_run_to_completion(error);
         }
         if self.active_memory_budget_config.is_none() {
+            self.execution_state = ExecutionState::Error {
+                error: error.clone(),
+            };
             return error;
         }
 
@@ -112,6 +115,9 @@ impl RegoVM {
         ) {
             return self.fail_run_to_completion(error);
         }
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
         error
     }
 

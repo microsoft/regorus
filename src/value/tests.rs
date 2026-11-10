@@ -308,27 +308,33 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
             #[cfg(feature = "rvm")]
             {
                 use crate::rvm::{Instruction, Program, RegoVM};
-                let mut program = Program::new();
-                program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
-                program.add_instruction(Instruction::LoadTrue { dest: 1 }, None);
-                program.add_instruction(
-                    Instruction::Lt {
-                        dest: 0,
-                        left: 0,
-                        right: 1,
-                    },
-                    None,
-                );
-                program.add_instruction(Instruction::Return { value: 0 }, None);
+                let program = |instruction| {
+                    let mut program = Program::new();
+                    program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+                    program.add_instruction(Instruction::LoadTrue { dest: 1 }, None);
+                    program.add_instruction(instruction, None);
+                    program.add_instruction(Instruction::Return { value: 0 }, None);
+                    alloc::sync::Arc::new(program)
+                };
                 let mut vm = RegoVM::new();
-                vm.load_program(alloc::sync::Arc::new(program));
+                vm.load_program(program(Instruction::Lt {
+                    dest: 0,
+                    left: 0,
+                    right: 1,
+                }));
                 vm.set_input(a.clone());
                 assert_eq!(vm.execute().unwrap(), Value::Bool(false));
                 vm.set_strict_builtin_errors(true);
+                assert_eq!(vm.execute().unwrap(), Value::Bool(false));
+                vm.load_program(program(Instruction::And {
+                    dest: 0,
+                    left: 0,
+                    right: 1,
+                }));
                 let error = vm.execute().unwrap_err().to_string();
-                assert!(error.contains(
-                    "cannot compare values of different types (left=Array(len=1), right=Bool)"
-                ));
+                assert!(
+                    error.contains("logical AND expects booleans (left=Array(len=1), right=Bool)")
+                );
                 vm.set_input(Value::Null);
             }
             drop(a);
