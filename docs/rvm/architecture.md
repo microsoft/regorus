@@ -51,6 +51,46 @@ its own soft matching mode; leaving the query restores the caller's mode and
 inherited input/data root-register availability. Loads in a rejected query,
 including its yield, are not assumed to dominate subsequent expressions.
 
+Destructuring requires defined values, including ignored and unused bindings.
+Array patterns require arrays of the matching length; object patterns require
+objects but allow extra fields. Under `not`, a mismatch produces a local failed
+match rather than failing the enclosing body. User-call inputs are all evaluated
+before checking definedness; an undefined input skips invocation and output
+matching. Builtin strictness is unchanged.
+Negated relational calls evaluate binding-free expected outputs before equality
+comparison even when undefined inputs skip invocation. Wildcard outputs evaluate
+the prefix before the first wildcard in expression order, stopping when an operand
+is undefined; a structural mismatch in the call result does not suppress those
+effects. Wildcard-free expected collections also stop at the first undefined
+element or object key/value. This call-local comparison preserves the invocation
+result while evaluating the expected output: two undefined outputs compare equal,
+and exactly one undefined output compares unequal. General VM equality and other
+collection-expression evaluation order are unchanged.
+Expected-output object fields retain source-order insertion across constant and
+dynamic keys, including collisions. Whole constant collections remain hoisted
+only when their literal representation preserves types through program JSON
+serialization; sets and objects with non-string keys, including nested constants,
+are constructed at runtime. This lossless-folding check also applies to ordinary
+collection literals, so constant function results retain the same key types as
+their expected outputs after serialization. Runtime object templates contain
+only string keys; other keys are inserted from typed registers or scalar
+literals. Constant keys following a dynamic key reuse the match scratch for
+insertion. Constant construction uses a separate per-definition temporary pool,
+reusing registers after each insertion; temporary demand follows nesting depth,
+not collection width. Pure constant subtrees use this path even inside dynamic
+collections, without retaining their construction temporaries in parent elements.
+Undefined is never an eligible folded literal. Value serialization and its wire
+schema are unchanged.
+Reaching an unbound wildcard rejects the active VM query using an assertion
+guard at the wildcard, rather than producing a comparison that negation could
+turn into success. An earlier undefined prefix skips this guard. The interpreter
+instead reports an unsafe-variable error; VM query rejection (for example, an
+empty comprehension) is not diagnostic/error parity.
+Collection-kind checks and sequential failure checks share a temporary register
+per rule-definition window, separate from preserved match results. Skipped user
+calls retain their actual undefined input rather than a serialized undefined
+literal.
+
 Keyed membership (`key, value in collection`) checks the value at that specific
 object key or array index, not whether the value appears elsewhere. Missing or
 invalid keys produce `false`, as do keyed membership checks on sets and scalar

@@ -6,7 +6,7 @@
     clippy::pattern_type_mismatch
 )]
 
-use super::{Compiler, Register, Result};
+use super::{Compiler, CompilerError, Register, Result};
 use crate::ast::{Expr, ExprRef};
 use crate::lexer::Span;
 use crate::rvm::instructions::{ArrayCreateParams, ObjectCreateParams, SetCreateParams};
@@ -50,7 +50,115 @@ pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Optio
     }
 }
 
+fn literal_round_trips(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().all(literal_round_trips),
+        Value::Set(_) | Value::Undefined => false,
+        // JSON object literals stringify non-string keys. Construct those
+        // objects at runtime, even when nested in a constant collection.
+        Value::Object(fields) => fields.iter().all(|(key, field_value)| {
+            matches!(key, Value::String(_)) && literal_round_trips(field_value)
+        }),
+        _ => true,
+    }
+}
+
+pub(in crate::languages::rego::compiler) fn try_eval_literal(expr: &Expr) -> Option<Value> {
+    try_eval_const(expr).filter(literal_round_trips)
+}
+
 impl<'a> Compiler<'a> {
+    fn constant_scratch_register(&mut self, depth: usize) -> Result<Register> {
+        while self.constant_scratch_registers.len() <= depth {
+            let register = self.alloc_register()?;
+            self.constant_scratch_registers.push(register);
+        }
+        Ok(self.constant_scratch_registers[depth])
+    }
+
+    pub(in crate::languages::rego::compiler) fn compile_constant_value(
+        &mut self,
+        value: &Value,
+        span: &Span,
+    ) -> Result<Register> {
+        let dest = self.alloc_register()?;
+        self.emit_constant_value(value, dest, 0, span)?;
+        Ok(dest)
+    }
+
+    fn emit_constant_value(
+        &mut self,
+        value: &Value,
+        dest: Register,
+        depth: usize,
+        span: &Span,
+    ) -> Result<()> {
+        if literal_round_trips(value) {
+            let literal_idx = self.add_literal(value.clone());
+            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
+            return Ok(());
+        }
+
+        // Only constant construction uses this pool: children have no effects,
+        // bindings or root caches. Their temporaries die after each insertion.
+        match value {
+            Value::Array(values) => {
+                self.emit_instruction(Instruction::ArrayNew { dest }, span);
+                for child in values.iter() {
+                    let element = self.constant_scratch_register(depth)?;
+                    self.emit_constant_value(child, element, depth.saturating_add(1), span)?;
+                    self.emit_instruction(
+                        Instruction::ArrayPush {
+                            arr: dest,
+                            value: element,
+                        },
+                        span,
+                    );
+                }
+            }
+            Value::Set(values) => {
+                self.emit_instruction(Instruction::SetNew { dest }, span);
+                for child in values.iter() {
+                    let element = self.constant_scratch_register(depth)?;
+                    self.emit_constant_value(child, element, depth.saturating_add(1), span)?;
+                    self.emit_instruction(
+                        Instruction::SetAdd {
+                            set: dest,
+                            value: element,
+                        },
+                        span,
+                    );
+                }
+            }
+            Value::Object(fields) => {
+                let literal_idx = self.add_literal(Value::new_object());
+                self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
+                for (field_key, field_value) in fields.iter() {
+                    let key_register = self.constant_scratch_register(depth)?;
+                    let value_register = self.constant_scratch_register(depth.saturating_add(1))?;
+                    let child_depth = depth.saturating_add(2);
+                    self.emit_constant_value(field_key, key_register, child_depth, span)?;
+                    self.emit_constant_value(field_value, value_register, child_depth, span)?;
+                    self.emit_instruction(
+                        Instruction::ObjectSet {
+                            obj: dest,
+                            key: key_register,
+                            value: value_register,
+                        },
+                        span,
+                    );
+                }
+            }
+            _ => {
+                return Err(CompilerError::General {
+                    message: "constant is not representable as a typed literal".into(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn compile_array_literal(
         &mut self,
         items: &[ExprRef],
@@ -58,10 +166,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Register> {
         let all_const: Option<Vec<_>> = items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
-            let dest = self.alloc_register()?;
-            let literal_idx = self.add_literal(Value::from_array(values));
-            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
-            return Ok(dest);
+            return self.compile_constant_value(&Value::from_array(values), span);
         }
 
         let mut element_registers = Vec::with_capacity(items.len());
@@ -91,10 +196,7 @@ impl<'a> Compiler<'a> {
         let all_const: Option<BTreeSet<_>> =
             items.iter().map(|i| try_eval_const(i.as_ref())).collect();
         if let Some(values) = all_const {
-            let dest = self.alloc_register()?;
-            let literal_idx = self.add_literal(Value::from_set(values));
-            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
-            return Ok(dest);
+            return self.compile_constant_value(&Value::from_set(values), span);
         }
 
         let mut element_registers = Vec::with_capacity(items.len());
@@ -123,10 +225,7 @@ impl<'a> Compiler<'a> {
             .map(|(_, k, v)| Some((try_eval_const(k.as_ref())?, try_eval_const(v.as_ref())?)))
             .collect();
         if let Some(obj) = all_const {
-            let dest = self.alloc_register()?;
-            let literal_idx = self.add_literal(Value::Object(Rc::new(obj)));
-            self.emit_instruction(Instruction::Load { dest, literal_idx }, span);
-            return Ok(dest);
+            return self.compile_constant_value(&Value::Object(Rc::new(obj)), span);
         }
 
         let dest = self.alloc_register()?;
@@ -165,6 +264,7 @@ impl<'a> Compiler<'a> {
 
         let template_literal_idx = {
             let mut template_keys = literal_keys.clone();
+            template_keys.retain(|key| matches!(key, Value::String(_)));
             template_keys.sort();
 
             let mut template_obj = Object::new();

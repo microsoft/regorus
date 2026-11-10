@@ -9,12 +9,16 @@
     clippy::pattern_type_mismatch
 )]
 
+use super::expressions::{try_eval_const, try_eval_literal};
 use super::{Compiler, CompilerError, Register, Result};
-use crate::ast::ExprRef;
+use crate::ast::{Expr, ExprRef};
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{ArrayCreateParams, BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::{
+    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, GuardMode, LiteralOrRegister,
+    ObjectCreateParams, SetCreateParams,
+};
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
@@ -149,6 +153,25 @@ impl<'a> Compiler<'a> {
             self.ensure_register_capacity(3)?;
         }
         let dest = self.alloc_register()?;
+        let mut input_failure_branches = Vec::new();
+        let input_boundary_roots = (self.current_input_register, self.current_data_register);
+        if matches!(&call_target, CallTarget::User { .. }) && !arg_regs.is_empty() {
+            // Undefined skips invocation and binding-pattern matching, but not
+            // a negated call's binding-free expected-output expression.
+            for &register in &arg_regs {
+                self.emit_instruction(
+                    Instruction::Move {
+                        dest,
+                        src: register,
+                    },
+                    &span,
+                );
+                input_failure_branches.push(
+                    self.emit_match_failure_branch(register, GuardMode::NotUndefined, &span)
+                        .map_err(|err| CompilerError::from(err).at(&span))?,
+                );
+            }
+        }
 
         match call_target {
             CallTarget::User { rule_index, .. } => {
@@ -340,19 +363,85 @@ impl<'a> Compiler<'a> {
         let saved_input_register = self.current_input_register;
         let saved_data_register = self.current_data_register;
         if let Some((plan, plan_span)) = &out_param_plan {
-            let plan_result = self
-                .apply_binding_plan(plan, dest, plan_span)
-                .map_err(|err| CompilerError::from(err).at(plan_span))?;
-            if let Some(result_reg) = plan_result {
+            let compare_output = self.soft_assert_mode
+                && matches!(plan, BindingPlan::Parameter { destructuring_plan, .. }
+                    if destructuring_plan.bound_vars().is_empty());
+            if compare_output {
+                if !input_failure_branches.is_empty() {
+                    (self.current_input_register, self.current_data_register) =
+                        input_boundary_roots;
+                    self.patch_match_failure_branches(&input_failure_branches)
+                        .map_err(|err| CompilerError::from(err).at(&span))?;
+                    input_failure_branches.clear();
+                }
+                // Negated calls compare an evaluated output expression; they do
+                // not bind a pattern or skip later operands on an early mismatch.
+                let expected_expr = params.last().ok_or_else(|| CompilerError::General {
+                    message: "missing relational output expression".to_string(),
+                })?;
+                let roots = (self.current_input_register, self.current_data_register);
+                let result = self.alloc_register()?;
+                // Keep the invocation value intact. If expected evaluation exits
+                // Undefined, relational equality succeeds only when both are Undefined.
                 self.emit_instruction(
-                    Instruction::Move {
-                        dest,
-                        src: result_reg,
+                    Instruction::Eq {
+                        dest: result,
+                        left: dest,
+                        right: dest,
                     },
                     &span,
                 );
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: result,
+                        operand: result,
+                    },
+                    &span,
+                );
+                let mut undefined_expected = Vec::new();
+                let expected =
+                    self.compile_negated_expected_output(expected_expr, &mut undefined_expected)?;
+                self.emit_instruction(
+                    Instruction::LoadBool {
+                        dest: result,
+                        value: false,
+                    },
+                    &span,
+                );
+                if let Some(expected) = expected {
+                    let undefined_actual = self
+                        .emit_match_failure_branch(dest, GuardMode::NotUndefined, &span)
+                        .map_err(|err| CompilerError::from(err).at(&span))?;
+                    self.emit_instruction(
+                        Instruction::Eq {
+                            dest: result,
+                            left: dest,
+                            right: expected,
+                        },
+                        &span,
+                    );
+                    self.patch_match_failure_branches(&[undefined_actual])
+                        .map_err(|err| CompilerError::from(err).at(&span))?;
+                }
+                self.patch_match_failure_branches(&undefined_expected)
+                    .map_err(|err| CompilerError::from(err).at(&span))?;
+                self.emit_instruction(Instruction::Move { dest, src: result }, &span);
+                (self.current_input_register, self.current_data_register) = roots;
             } else {
-                self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                let plan_result = self
+                    .apply_binding_plan(plan, dest, plan_span)
+                    .map_err(|err| CompilerError::from(err).at(plan_span))?;
+                if let Some(result_reg) = plan_result {
+                    self.emit_instruction(
+                        Instruction::Move {
+                            dest,
+                            src: result_reg,
+                        },
+                        &span,
+                    );
+                } else {
+                    self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                }
             }
         }
 
@@ -394,7 +483,161 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        if !input_failure_branches.is_empty() {
+            (self.current_input_register, self.current_data_register) = input_boundary_roots;
+            self.patch_match_failure_branches(&input_failure_branches)
+                .map_err(|err| CompilerError::from(err).at(&span))?;
+        }
         Ok(dest)
+    }
+
+    // Evaluate expected collections in source order, exiting on Undefined before
+    // later effects. None denotes a wildcard that rejects the active query.
+    fn compile_negated_expected_output(
+        &mut self,
+        expr: &ExprRef,
+        failures: &mut Vec<usize>,
+    ) -> Result<Option<Register>> {
+        if let Some(value) = try_eval_const(expr.as_ref()) {
+            return Ok(Some(self.compile_constant_value(&value, expr.span())?));
+        }
+        let register = match expr.as_ref() {
+            Expr::Var { span, .. } if span.text() == "_" => {
+                let scratch = self
+                    .match_scratch_register()
+                    .map_err(|err| CompilerError::from(err).at(span))?;
+                self.emit_instruction(
+                    Instruction::LoadBool {
+                        dest: scratch,
+                        value: false,
+                    },
+                    span,
+                );
+                // This must reject the query, not become a failed comparison
+                // that the surrounding negation turns into success.
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: scratch,
+                        mode: GuardMode::Condition,
+                    },
+                    span,
+                );
+                return Ok(None);
+            }
+            Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                let mut elements = Vec::with_capacity(items.len());
+                for item in items {
+                    let Some(register) = self.compile_negated_expected_output(item, failures)?
+                    else {
+                        return Ok(None);
+                    };
+                    elements.push(register);
+                }
+                let dest = self.alloc_register()?;
+                if matches!(expr.as_ref(), Expr::Array { .. }) {
+                    let params_index = self
+                        .program
+                        .instruction_data
+                        .add_array_create_params(ArrayCreateParams { dest, elements });
+                    self.emit_instruction(Instruction::ArrayCreate { params_index }, expr.span());
+                } else {
+                    let params_index = self
+                        .program
+                        .instruction_data
+                        .add_set_create_params(SetCreateParams { dest, elements });
+                    self.emit_instruction(Instruction::SetCreate { params_index }, expr.span());
+                }
+                dest
+            }
+            Expr::Object { fields, .. } => {
+                let mut literal_key_fields = Vec::new();
+                let mut ordered_fields = Vec::new();
+                for (_, key, value) in fields {
+                    let literal_key = try_eval_literal(key.as_ref());
+                    let key_register = if literal_key.is_none() {
+                        let Some(register) = self.compile_negated_expected_output(key, failures)?
+                        else {
+                            return Ok(None);
+                        };
+                        Some(register)
+                    } else {
+                        None
+                    };
+                    let Some(value_register) =
+                        self.compile_negated_expected_output(value, failures)?
+                    else {
+                        return Ok(None);
+                    };
+                    if let Some(literal_value) = literal_key {
+                        let literal_idx = self.add_literal(literal_value);
+                        if ordered_fields.is_empty() {
+                            literal_key_fields.push((literal_idx, value_register));
+                        } else {
+                            ordered_fields
+                                .push((LiteralOrRegister::Literal(literal_idx), value_register));
+                        }
+                    } else if let Some(dynamic_key_register) = key_register {
+                        ordered_fields.push((
+                            LiteralOrRegister::Register(dynamic_key_register),
+                            value_register,
+                        ));
+                    }
+                }
+                literal_key_fields.sort_by(|a, b| {
+                    self.program.literals[a.0 as usize].cmp(&self.program.literals[b.0 as usize])
+                });
+                let dest = self.alloc_register()?;
+                let template_literal_idx = self.add_literal(Value::new_object());
+                let params_index =
+                    self.program
+                        .instruction_data
+                        .add_object_create_params(ObjectCreateParams {
+                            dest,
+                            template_literal_idx,
+                            literal_key_fields,
+                            fields: Vec::new(),
+                        });
+                self.emit_instruction(Instruction::ObjectCreate { params_index }, expr.span());
+                // Literal keys after a dynamic key can collide with it. Insert
+                // this suffix in source order without allocating a register per key.
+                for (key, value) in ordered_fields {
+                    let key_register = match key {
+                        LiteralOrRegister::Register(register) => register,
+                        LiteralOrRegister::Literal(literal_idx) => {
+                            let scratch = self
+                                .match_scratch_register()
+                                .map_err(|err| CompilerError::from(err).at(expr.span()))?;
+                            self.emit_instruction(
+                                Instruction::Load {
+                                    dest: scratch,
+                                    literal_idx,
+                                },
+                                expr.span(),
+                            );
+                            scratch
+                        }
+                    };
+                    self.emit_instruction(
+                        Instruction::ObjectSet {
+                            obj: dest,
+                            key: key_register,
+                            value,
+                        },
+                        expr.span(),
+                    );
+                }
+                dest
+            }
+            _ => {
+                let register = self.compile_rego_expr_with_span(expr, expr.span(), false)?;
+                failures.push(
+                    self.emit_match_failure_branch(register, GuardMode::NotUndefined, expr.span())
+                        .map_err(|err| CompilerError::from(err).at(expr.span()))?,
+                );
+                register
+            }
+        };
+        Ok(Some(register))
     }
 
     /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to

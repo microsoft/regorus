@@ -10,6 +10,917 @@ use regorus::rvm::Instruction;
 use regorus::{Engine, Rc, Value};
 use std::collections::BTreeSet;
 
+#[test]
+fn match_boundaries_match_interpreter() -> anyhow::Result<()> {
+    let cases = [
+        ("", "x := input.missing", r#"{}"#, false),
+        ("", "_ := input.missing", r#"{}"#, false),
+        ("", "x := false", r#"{}"#, true),
+        ("", "x := null", r#"{}"#, true),
+        ("", "x := []", r#"{}"#, true),
+        ("", "count(input.missing, _)", r#"{}"#, false),
+        ("f(_) := true", "f(input.missing)", r#"{}"#, false),
+        ("f(_) := true", "f(false)", r#"{}"#, true),
+        ("f(_) := true", "f(null)", r#"{}"#, true),
+        (
+            "",
+            "{0: x} = input.payload; x == 7",
+            r#"{"payload":[7]}"#,
+            false,
+        ),
+        (
+            "",
+            "[x] = input.payload; x == 7",
+            r#"{"payload":{"0":7}}"#,
+            false,
+        ),
+        ("", "y := {0: 7}; [x] = y; x == 7", r#"{}"#, false),
+        (
+            "",
+            "[x] = input.payload; x == 7",
+            r#"{"payload":[7]}"#,
+            true,
+        ),
+        (
+            "",
+            r#"{"a": x} = input.payload; x == 7"#,
+            r#"{"payload":{"a":7,"b":8}}"#,
+            true,
+        ),
+        (
+            "f({}) := true",
+            "f(input.payload)",
+            r#"{"payload":[]}"#,
+            false,
+        ),
+        (
+            "f({}) := true",
+            "f(input.payload)",
+            r#"{"payload":{"a":7}}"#,
+            true,
+        ),
+        ("", "not [1 | _ = input.missing] == [1]", r#"{}"#, true),
+        ("f(_) := true", "not f(input.missing)", r#"{}"#, true),
+        ("f(_) := true", "not f(input.missing, 7)", r#"{}"#, true),
+        (
+            "f(_) := true",
+            "not f(input.missing, [input.missing, _])",
+            r#"{}"#,
+            false,
+        ),
+        (
+            "",
+            "not count(input.missing, [input.missing, 1 / 0])",
+            r#"{}"#,
+            false,
+        ),
+        ("f(_) := true", "f(input.missing, 1 / 0)", r#"{}"#, false),
+        ("f(_) := 1 / 0", "not f(input.missing)", r#"{}"#, true),
+        ("f(_) := true", "f(input.missing, _)", r#"{}"#, false),
+        (
+            "f(_) := true",
+            "not f(input.missing, data.x); data.x == 7",
+            r#"{}"#,
+            true,
+        ),
+        ("", "not [1 | _ = false] == [1]", r#"{}"#, false),
+        ("", "not [1 | _ = null] == [1]", r#"{}"#, false),
+        (
+            "",
+            r#"not split("a,b,c", ",", [input.missing, 1 / 0, _]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b,c", ",", {input.missing: [1 / 0, _]}); data.x == 7"#,
+            r#"{}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | {} = input.payload] == [1]",
+            r#"{"payload":[]}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | [x] = input.payload] == [1]",
+            r#"{"payload":[]}"#,
+            true,
+        ),
+        ("", r#"not split("a,b", ",", ["a"])"#, r#"{}"#, true),
+        ("", r#"not split("a,b", ",", ["wrong","b"])"#, r#"{}"#, true),
+        ("", r#"not split("a,b", ",", ["a","b"])"#, r#"{}"#, false),
+        ("", "not [1 | [_, 1] = [7, 2]] == [1]", r#"{}"#, true),
+        ("", "not [1 | [_, 1] = [7, 1]] == [1]", r#"{}"#, false),
+        ("", "[x, y] := [false, null]", r#"{}"#, true),
+        (
+            "",
+            r#"{"a": _} = input.payload"#,
+            r#"{"payload":{}}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not [1 | {"a": [_]} = input.payload] == [1]"#,
+            r#"{"payload":{"a":{}}}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", [input.x]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", ["wrong", input.x]); input.x == 7"#,
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not split("a,b", ",", ["wrong", data.x]); data.x == 7"#,
+            r#"{}"#,
+            true,
+        ),
+        (
+            "f(_, _) := true",
+            "not f(input.missing, input.x); input.x == 7",
+            r#"{"x":7}"#,
+            true,
+        ),
+        (
+            r#"f(_) := {"a":[{"b":[7,1]}]}"#,
+            r#"not f(1, {"a":[{"b":[7,2]}]})"#,
+            r#"{}"#,
+            true,
+        ),
+        (
+            r#"f(_) := {"a":[{"b":[7,1]}]}"#,
+            r#"not f(1, {"a":[{"b":[7,1]}]})"#,
+            r#"{}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]; data.x == 7"#,
+            r#"{"payload":{"a":[{"b":[9,2]}]}}"#,
+            true,
+        ),
+        (
+            "",
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]"#,
+            r#"{"payload":{"a":[{"b":[9,7]}]}}"#,
+            false,
+        ),
+        (
+            "",
+            r#"not [1 | {"a":[{"b":[_,data.x]}]} = input.payload] == [1]; data.x == 7"#,
+            r#"{"payload":{"a":[]}}"#,
+            true,
+        ),
+        (
+            "f(_) := 1",
+            "not [1 | [_, f(1)] = [7,2]] == [1]; data.x == 7",
+            r#"{}"#,
+            true,
+        ),
+        (
+            "f(_) := 1",
+            "not [1 | [_, f(1)] = [7,1]] == [1]",
+            r#"{}"#,
+            false,
+        ),
+        (
+            "f(_) := 1",
+            "not [1 | [_, f(input.missing)] = [7,2]] == [1]; data.x == 7",
+            r#"{}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | not [1 | not 1 == input.x] == [1]] == [1]",
+            r#"{"x":2}"#,
+            true,
+        ),
+        (
+            "",
+            "not [1 | every y in [input.x] { not [1 | not 1 == y] == [1] }] == [1]",
+            r#"{"x":1}"#,
+            false,
+        ),
+        (
+            "",
+            "input.payload[0] == 7; count(input.payload) == 1",
+            r#"{"payload":[7]}"#,
+            true,
+        ),
+        ("", "_ = _", r#"{}"#, true),
+    ];
+    let mut divergences = Vec::new();
+    for (definitions, body, input, want) in cases {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definitions}\ndefault p := false\np if {{ {body} }}"),
+            )?;
+            let input = Value::from_json_str(input)?;
+            engine.set_input(input.clone());
+            let data = Value::from_json_str(r#"{"x":7}"#)?;
+            engine.add_data(data.clone())?;
+            let expected = Value::Bool(want);
+            assert_eq!(engine.eval_rule("data.test.p".into())?, expected, "{body}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_data(data.clone())?;
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed {
+                            result: got.clone()
+                        }
+                    );
+                }
+                if got != expected {
+                    divergences.push(format!(
+                        "{body}: {mode:?}, strict={strict}: {got:?} != {expected:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_skips_invocation_and_preserves_value_heads() -> anyhow::Result<()> {
+    for (definition, input, expected) in [
+        ("f(_) := true", r#"{}"#, Value::Undefined),
+        ("f(_) := 1 / 0", r#"{}"#, Value::Undefined),
+        ("f(x) := x", r#"{"x":false}"#, Value::Bool(false)),
+        ("f(x) := x", r#"{"x":null}"#, Value::Null),
+        ("f(x) := x", r#"{"x":[]}"#, Value::new_array()),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definition}\np := f(input.x)"),
+            )?;
+            let input = Value::from_json_str(input)?;
+            engine.set_input(input.clone());
+            assert_eq!(engine.eval_rule("data.test.p".into())?, expected);
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                assert_eq!(got, expected, "{definition}, {mode:?}, strict={strict}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: got }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn wide_nested_match_and_successive_calls_remain_compilable() -> anyhow::Result<()> {
+    let wildcards = vec!["_"; 128].join(",");
+    let ones = vec!["1"; 128].join(",");
+    let fields = (0..43)
+        .map(|i| format!(r#""k{i}":[_]"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let values = (0..43)
+        .map(|i| format!(r#""k{i}":[false]"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    for (definitions, body, want) in [
+        (
+            String::new(),
+            format!("not [1 | [{wildcards}] = [{ones}]] == [1]"),
+            false,
+        ),
+        ("f(_) := true".into(), vec!["f(1)"; 100].join(";"), true),
+        (
+            format!("f({{{fields}}}) := true"),
+            format!("f({{{values}}});\nf({{{values}}})"),
+            true,
+        ),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\n{definitions}\ndefault p := false\np if {{ {body} }}"),
+        )?;
+        let expected = Value::Bool(want);
+        assert_eq!(engine.eval_rule("data.test.p".into())?, expected);
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            let got = vm.execute_entry_point_by_name("data.test.p")?;
+            assert_eq!(got, expected, "{mode:?}");
+            if mode == ExecutionMode::Suspendable {
+                assert_eq!(
+                    vm.execution_state(),
+                    &ExecutionState::Completed { result: got }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_survives_program_json_round_trip() -> anyhow::Result<()> {
+    let input = Value::from_json_str(r#"{"x":7}"#)?;
+    for args in [
+        "input.missing",
+        "input.missing, input.x",
+        "input.x, input.missing",
+    ] {
+        let parameters = if args.contains(',') { "_, _" } else { "_" };
+        let mut engine = Engine::new();
+        engine.set_input(input.clone());
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\nf({parameters}) := true\ndefault p := false\np if {{ f({args}) }}"),
+        )?;
+        assert_eq!(engine.eval_rule("data.test.p".into())?, Value::Bool(false));
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+        let round_trip =
+            std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+        for program in [program, round_trip] {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let got = vm.execute_entry_point_by_name("data.test.p")?;
+                assert_eq!(got, Value::Bool(false), "{args}, {mode:?}");
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: got }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn undefined_user_input_preserves_negated_output_evaluation() -> anyhow::Result<()> {
+    for strict in [true, false] {
+        let mut outcomes = Vec::new();
+        // F25 strict-error transport differs by VM mode; non-strict values below
+        // must agree with the interpreter rather than merely another VM probe.
+        let control = if strict {
+            "not input.missing == 1 / 0"
+        } else {
+            "not f(input.missing, input.missing)"
+        };
+        for body in [
+            control,
+            "not f(input.missing, 1 / 0)",
+            r#"not f(input.missing, {"a":[{"b":[1 / 0]}]})"#,
+        ] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!(
+                    "package test\nimport rego.v1\nf(_) := true\ndefault p := false\np if {{ {body} }}"
+                ),
+            )?;
+            let input = Value::from_json_str("{}")?;
+            engine.set_input(input.clone());
+            let interpreted = engine.eval_rule("data.test.p".into());
+            let expected = if strict {
+                assert!(interpreted.is_err(), "{body}");
+                None
+            } else {
+                let expected = interpreted?;
+                assert_eq!(expected, Value::Bool(false), "{body}");
+                Some(expected)
+            };
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            let mut modes = Vec::new();
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                let result = vm.execute_entry_point_by_name("data.test.p");
+                if let Some(expected) = &expected {
+                    assert_eq!(
+                        result.as_ref().expect("non-strict execution"),
+                        expected,
+                        "{body}, {mode:?}"
+                    );
+                }
+                modes.push(observe_strict_probe(&vm, result));
+            }
+            outcomes.push(modes);
+        }
+        assert_eq!(outcomes[1], outcomes[0], "strict={strict}");
+        assert_eq!(outcomes[2], outcomes[0], "strict={strict}");
+    }
+    Ok(())
+}
+
+#[test]
+fn negated_structural_outputs_preserve_undefined_and_short_circuit() -> anyhow::Result<()> {
+    let constant_set = format!(
+        "f(1, [{{{}}}, input.missing, _])",
+        (0..300)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",\n")
+    );
+    let object_fields = (0..200)
+        .map(|i| format!(r#""k{i}":{i}"#))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let wide_definition = format!("f(_) := {{[1]: 2, {object_fields}}}");
+    let wide_call = format!("f(1, {{[1 + 0]: 1, [1]: 2, {object_fields}}})");
+    let mut divergences = Vec::new();
+    for (definition, call, expected) in [
+        ("", "count(input.missing, [input.missing, _])", "[]"),
+        ("", "count(input.missing, [input.missing])", "[]"),
+        ("", "count(input.missing, [input.missing, 1 / 0])", "[]"),
+        ("f(_) := true", "f(input.missing, [input.missing, _])", "[]"),
+        ("f(_) := true", "f(input.missing, [input.missing])", "[]"),
+        (
+            "",
+            r#"count(input.missing, {"a":[input.missing, 1 / 0]})"#,
+            "[]",
+        ),
+        ("", "count(input.missing, {input.missing, 1 / 0})", "[]"),
+        ("", "count(input.missing, {input.missing: 1 / 0})", "[]"),
+        ("", "count([], [input.missing, 1 / 0])", "[1]"),
+        ("f(_) := [false, null]", "f(1, [1 == 2, null])", "[]"),
+        ("f(_) := [false, null]", "f(1, [null, false])", "[1]"),
+        (
+            r#"f(_) := {"a":[false, null]}"#,
+            r#"f(1, {concat("", ["a"]): [1 == 2, null]})"#,
+            "[]",
+        ),
+        ("f(_) := {false, null}", "f(1, {1 == 2, null})", "[]"),
+        ("f(_) := {[1]: 2}", "f(1, {[1 + 0]: 1, [1]: 2})", "[]"),
+        ("f(_) := {[1]: 1}", "f(1, {[1]: 2, [1 + 0]: 1})", "[]"),
+        (
+            r#"f(_) := {"a": 2}"#,
+            r#"f(1, {concat("", ["a"]): 1, "a": 2})"#,
+            "[]",
+        ),
+        (r#"f(_) := {"k": 2}"#, r#"f(1, {input.k: 1, "k": 2})"#, "[]"),
+        (
+            "f(_) := {[1]: 3}",
+            "f(1, {[1]: 0, [1 + 0]: 1, [1]: 2, [1 + 0]: 3})",
+            "[]",
+        ),
+        ("f(_) := true", constant_set.as_str(), "[1]"),
+        (wide_definition.as_str(), wide_call.as_str(), "[]"),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            let input = Value::from_json_str(r#"{"k":"k"}"#)?;
+            engine.set_input(input.clone());
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definition}\np := [1 | not {call}]"),
+            )?;
+            let expected = Value::from_json_str(expected)?;
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            assert_eq!(interpreted, expected, "{call}, strict={strict}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(input.clone());
+                match vm.execute_entry_point_by_name("data.test.p") {
+                    Ok(actual) => {
+                        if actual != interpreted {
+                            divergences.push(format!(
+                                "{call}, {mode:?}, strict={strict}: {actual:?} != {interpreted:?}"
+                            ));
+                        }
+                        if mode == ExecutionMode::Suspendable {
+                            assert_eq!(
+                                vm.execution_state(),
+                                &ExecutionState::Completed { result: actual }
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        divergences.push(format!("{call}, {mode:?}, strict={strict}: {error}"))
+                    }
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn reached_negated_output_wildcards_reject_the_active_query() -> anyhow::Result<()> {
+    let mut divergences = Vec::new();
+    for (definition, call) in [
+        ("", "count([1], _)"),
+        ("", "count([1], [_, 1 / 0])"),
+        ("", "count([1], {_})"),
+        ("f(_) := true", "f(input.missing, _)"),
+        ("f(_) := true", r#"f(1, {"a": [_, 1 / 0]})"#),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.set_input(Value::new_object());
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{definition}\np := [1 | not {call}]"),
+            )?;
+            let error = engine.eval_rule("data.test.p".into()).unwrap_err();
+            assert!(
+                error.to_string().contains("unsafe"),
+                "{call}, strict={strict}: {error}"
+            );
+            eprintln!("{call}, strict={strict}: interpreter {error}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.set_strict_builtin_errors(strict);
+                vm.set_execution_mode(mode);
+                vm.load_program(program.clone());
+                vm.set_input(Value::new_object());
+                // RVM query rejection is not interpreter unsafe-variable error parity.
+                let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                if actual != Value::new_array() {
+                    divergences.push(format!("{call}, strict={strict}, {mode:?}: {actual:?}"));
+                }
+                if mode == ExecutionMode::Suspendable {
+                    assert_eq!(
+                        vm.execution_state(),
+                        &ExecutionState::Completed { result: actual }
+                    );
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn typed_constant_collections_reuse_construction_registers() -> anyhow::Result<()> {
+    let fields = (0..300)
+        .map(|n| format!("{n}: {n}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let object = format!("{{{fields}}}");
+    let set = format!(
+        "{{{}}}",
+        (0..300)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",\n")
+    );
+    let items = (0..300)
+        .map(|n| format!("{{{n}: {n}}}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let nested_fields = (0..300)
+        .map(|n| format!(r#""k{n}": {{{n}: {n}}}"#))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let compound_fields = (0..300)
+        .map(|n| format!("[{{{n}: {n}}}]: {n}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let mixed_items = (0..200)
+        .map(|n| format!("{{{n}: {n}}}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let mixed_array = format!("[{mixed_items},\ninput.marker]");
+    let mut failures = Vec::new();
+    for (name, value, body) in [
+        (
+            "actual count",
+            object.clone(),
+            "p := [1 | not count(f(1), 300)]".into(),
+        ),
+        (
+            "expected object",
+            object.clone(),
+            format!("p := [1 | not f(1, {object})]"),
+        ),
+        ("typed object", object, "p := f(1)".into()),
+        ("constant set", set, "p := f(1)".into()),
+        ("nested array", format!("[{items}]"), "p := f(1)".into()),
+        ("nested set", format!("{{{items}}}"), "p := f(1)".into()),
+        (
+            "nested object",
+            format!("{{{nested_fields}}}"),
+            "p := f(1)".into(),
+        ),
+        (
+            "compound keys",
+            format!("{{{compound_fields}}}"),
+            "p := f(1)".into(),
+        ),
+        ("mixed array", mixed_array.clone(), "p := f(1)".into()),
+        (
+            "mixed expected array",
+            mixed_array.clone(),
+            format!("p := [1 | not f(1, {mixed_array})]"),
+        ),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\nf(_) := {value}\n{body}"),
+            )?;
+            let input = Value::from_json_str(r#"{"marker":true}"#)?;
+            engine.set_input(input.clone());
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            if name == "actual count"
+                || name.starts_with("expected")
+                || name == "mixed expected array"
+            {
+                assert_eq!(interpreted, Value::from_json_str("[]")?, "{name}");
+            }
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = match Compiler::compile_from_policy(&compiled, &["data.test.p"]) {
+                Ok(program) => program,
+                Err(error) => {
+                    failures.push(format!("{name}, strict={strict}: {error}"));
+                    continue;
+                }
+            };
+            let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+            let round_trip =
+                std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+            for (snapshot, program) in [("original", program), ("round-trip", round_trip)] {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    let mut vm = RegoVM::new();
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_execution_mode(mode);
+                    vm.load_program(program.clone());
+                    vm.set_input(input.clone());
+                    let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                    if actual != interpreted {
+                        failures.push(format!(
+                            "{name}, {snapshot}, strict={strict}, {mode:?}: typed value mismatch"
+                        ));
+                    }
+                    if mode == ExecutionMode::Suspendable {
+                        assert_eq!(
+                            vm.execution_state(),
+                            &ExecutionState::Completed { result: actual }
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn typed_constant_collections_preserve_sets_after_json_round_trip() -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for body in [
+        r#"p := [1 | not object.union({"s": object.keys({"a": 1})}, {}, {"s": {"a"}})]"#,
+        r#"p := [1 | not object.keys({"a": 1}, {"a"})]"#,
+        r#"p := [1 | not array.concat([object.keys({"a": 1})], [], [{"a"}])]"#,
+        r#"p := [1 | not object.union({"s": [object.keys({"a": 1})]}, {}, {"s": [{"a"}]})]"#,
+        r#"p := {"a"}"#,
+        r#"p := {{"a"}}"#,
+        r#"p := {"s": {"a"}}"#,
+        r#"p := [1 | not object.union({"s": object.keys({"<undefined>": 1})}, {}, {"s": {"<undefined>"}})]"#,
+        r#"f(x) := {x, {"a"}}
+p := f("b")"#,
+        r#"f(x) := {"s": {"a"}, "x": x}
+p := f(1)"#,
+        r#"f(x) := {x: "v"}
+p := [1 | not f(object.keys({"a": 1}), {{"a"}: "v"})]"#,
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!("package test\nimport rego.v1\n{body}"),
+            )?;
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+            let round_trip =
+                std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+            for (snapshot, program) in [("original", program), ("round-trip", round_trip)] {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    let mut vm = RegoVM::new();
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_execution_mode(mode);
+                    vm.load_program(program.clone());
+                    let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                    if actual != interpreted {
+                        failures.push(format!("{body}, {snapshot}, strict={strict}, {mode:?}: {actual:?} != {interpreted:?}"));
+                    }
+                    if mode == ExecutionMode::Suspendable {
+                        assert_eq!(
+                            vm.execution_state(),
+                            &ExecutionState::Completed { result: actual }
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn negated_output_constants_survive_json_round_trip() -> anyhow::Result<()> {
+    let mut divergences = Vec::new();
+    for (definition, output) in [
+        (r#"f(x) := {x: "v"}"#, r#"{1: "v"}"#),
+        (r#"f(x) := [{x: "v"}]"#, r#"[{1: "v"}]"#),
+        (r#"f(x) := {"a": {x: "v"}}"#, r#"{"a": {1: "v"}}"#),
+        (r#"f(x) := {{x: "v"}}"#, r#"{{1: "v"}}"#),
+        (r#"f(x) := {[x]: "v"}"#, r#"{[1]: "v"}"#),
+        (r#"f(x) := {{x: "v"}: "outer"}"#, r#"{{1: "v"}: "outer"}"#),
+        ("f(_) := {[1]: 2}", "{[1 + 0]: 1, [1]: 2}"),
+        (r#"f(_) := {1: "v"}"#, r#"{1: "v"}"#),
+        (r#"f(_) := [{1: "v"}]"#, r#"[{1: "v"}]"#),
+        (r#"f(_) := {"a": {1: "v"}}"#, r#"{"a": {1: "v"}}"#),
+        (r#"f(_) := {{1: "v"}}"#, r#"{{1: "v"}}"#),
+        (r#"f(x) := {"a": x}"#, r#"{"a": 1}"#),
+    ] {
+        for strict in [false, true] {
+            let mut engine = Engine::new();
+            engine.set_strict_builtin_errors(strict);
+            engine.add_policy(
+                "test.rego".into(),
+                format!(
+                    "package test\nimport rego.v1\n{definition}\ndefault p := false\np if {{ not f(1, {output}) }}"
+                ),
+            )?;
+            let interpreted = engine.eval_rule("data.test.p".into())?;
+            assert_eq!(interpreted, Value::Bool(false), "{output}");
+            let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+            let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+            let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+            let round_trip =
+                std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+            for (snapshot, program) in [("original", program), ("round-trip", round_trip)] {
+                for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                    let mut vm = RegoVM::new();
+                    vm.set_strict_builtin_errors(strict);
+                    vm.set_execution_mode(mode);
+                    vm.load_program(program.clone());
+                    let actual = vm.execute_entry_point_by_name("data.test.p")?;
+                    eprintln!("{output}, {snapshot}, strict={strict}, {mode:?}: {actual:?}");
+                    if actual != interpreted {
+                        divergences.push(format!(
+                            "{output}, {snapshot}, strict={strict}, {mode:?}: {actual:?} != {interpreted:?}"
+                        ));
+                    }
+                    if mode == ExecutionMode::Suspendable {
+                        assert_eq!(
+                            vm.execution_state(),
+                            &ExecutionState::Completed { result: actual }
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(divergences.is_empty(), "{}", divergences.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn match_boundaries_preserve_strict_error_evaluation() -> anyhow::Result<()> {
+    let mut outcomes = Vec::new();
+    for body in [
+        "p := 1 / 0",
+        "p := f(input.missing, 1 / 0)",
+        r#"p if { not split("a,b", ",", ["wrong", 1 / 0]) }"#,
+        r#"p if { not split("a,b,c", ",", ["wrong", 1 / 0, _]) }"#,
+        r#"p if { not split("a,b,c", ",", {"z": [1 / 0, _]}) }"#,
+    ] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(true);
+        engine.add_policy(
+            "test.rego".into(),
+            format!("package test\nimport rego.v1\nf(_, _) := true\n{body}"),
+        )?;
+        assert!(engine.eval_rule("data.test.p".into()).is_err(), "{body}");
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        let mut modes = Vec::new();
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_strict_builtin_errors(true);
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            let result = vm.execute_entry_point_by_name("data.test.p");
+            modes.push(observe_strict_probe(&vm, result));
+        }
+        outcomes.push(modes);
+    }
+    for outcome in &outcomes[1..] {
+        assert_eq!(*outcome, outcomes[0]);
+    }
+    Ok(())
+}
+
+#[test]
+fn negated_wildcard_output_preserves_non_strict_undefined_prefix() -> anyhow::Result<()> {
+    for body in [
+        r#"not split("a,b,c", ",", ["wrong", 1 / 0, _]); input.x == 7"#,
+        r#"not split("a,b,c", ",", {"z":[1 / 0, _]}); input.x == 7"#,
+        r#"not f(1, [1 / 0, _]); input.x == 7"#,
+    ] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(false);
+        engine.add_policy(
+            "test.rego".into(),
+            format!(
+                "package test\nimport rego.v1\nf(_) := true\ndefault p := false\np if {{ {body} }}"
+            ),
+        )?;
+        let input = Value::from_json_str(r#"{"x":7}"#)?;
+        engine.set_input(input.clone());
+        assert_eq!(
+            engine.eval_rule("data.test.p".into())?,
+            Value::Bool(true),
+            "{body}"
+        );
+        let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+        let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            let mut vm = RegoVM::new();
+            vm.set_strict_builtin_errors(false);
+            vm.set_execution_mode(mode);
+            vm.load_program(program.clone());
+            vm.set_input(input.clone());
+            let got = vm.execute_entry_point_by_name("data.test.p")?;
+            assert_eq!(got, Value::Bool(true), "{body}, {mode:?}");
+            if mode == ExecutionMode::Suspendable {
+                assert_eq!(
+                    vm.execution_state(),
+                    &ExecutionState::Completed { result: got }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Compile a single-rule Rego module and return the program.
 fn compile_rule(module: &str) -> std::sync::Arc<regorus::rvm::program::Program> {
     let mut engine = Engine::new();
@@ -174,21 +1085,28 @@ fn constant_array_is_hoisted() {
 }
 
 #[test]
-fn constant_set_is_hoisted() {
+fn constant_set_preserves_type_after_json_round_trip() -> anyhow::Result<()> {
     let program = compile_rule(
         r#"
         package test
         p := x if { x := {1, 2, 3} }
     "#,
     );
-    assert_no_collection_create(&program);
     let expected_set = Value::from(
         [1, 2, 3]
             .into_iter()
             .map(Value::from)
             .collect::<BTreeSet<_>>(),
     );
-    assert_literal_exists(&program, &expected_set);
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let round_trip =
+        std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+    for program in [program, round_trip] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program);
+        assert_eq!(vm.execute_entry_point_by_name("data.test.p")?, expected_set);
+    }
+    Ok(())
 }
 
 #[test]
@@ -667,7 +1585,17 @@ enum StrictProbeOutcome {
     DivisionError,
 }
 
-fn observe_strict_probe(result: Result<Value, VmError>) -> StrictProbeOutcome {
+fn observe_strict_probe(vm: &RegoVM, result: Result<Value, VmError>) -> StrictProbeOutcome {
+    if vm.get_execution_mode() == ExecutionMode::Suspendable {
+        if let Ok(value) = &result {
+            assert_eq!(
+                vm.execution_state(),
+                &ExecutionState::Completed {
+                    result: value.clone()
+                }
+            );
+        }
+    }
     match result {
         Ok(value) => StrictProbeOutcome::Value(value),
         Err(VmError::InvalidDivision { .. }) => StrictProbeOutcome::DivisionError,
@@ -848,7 +1776,7 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
             ));
             vm.resume(Some(Value::from("first-response")))
         };
-        let first_outcome = observe_strict_probe(first_result);
+        let first_outcome = observe_strict_probe(&vm, first_result);
 
         let second_result = if is_run_to_completion {
             vm.execute_entry_point_by_index(1)
@@ -874,7 +1802,7 @@ fn registered_host_await_strict_output_division_matches_explicit_control_in_both
             vm.resume(Some(Value::from("second-response")))
         };
 
-        Ok((first_outcome, observe_strict_probe(second_result)))
+        Ok((first_outcome, observe_strict_probe(&vm, second_result)))
     };
 
     let mut division_program = Program::new();

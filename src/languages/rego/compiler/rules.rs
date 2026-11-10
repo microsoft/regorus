@@ -401,6 +401,8 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
+        let saved_constant_scratch_registers =
+            core::mem::take(&mut self.constant_scratch_registers);
         if let Some(rule_definitions) = rules.get(rule_path) {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
@@ -448,6 +450,8 @@ impl<'a> Compiler<'a> {
                 if let Rule::Spec { head, bodies, span } = rule_ref.as_ref() {
                     self.push_scope();
                     self.register_counter = 0;
+                    self.match_scratch_register = None;
+                    self.constant_scratch_registers.clear();
 
                     let result_register = self.alloc_register()?;
 
@@ -796,6 +800,7 @@ impl<'a> Compiler<'a> {
             self.current_module_index = saved_module_index;
         }
 
+        self.constant_scratch_registers = saved_constant_scratch_registers;
         Ok(())
     }
 }
