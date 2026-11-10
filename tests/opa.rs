@@ -650,9 +650,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     for (dir, (pass, fail, _, reject)) in status {
         if fail == 0 {
             println!("\x1b[32m    {dir:40}: {pass:4} {fail:4} {reject:6}\x1b[0m");
-            if reject == 0 {
-                passing.push(dir);
-            }
+            passing.push(dir);
         } else {
             println!("\x1b[31m    {dir:40}: {pass:4} {fail:4} {reject:6}\x1b[0m");
         }

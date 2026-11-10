@@ -815,7 +815,12 @@ fn run(path: &str) {
 #[test]
 fn rejected_negated_query_preserves_diagnostic_and_engine_state() -> Result<()> {
     let mut engine = Engine::new();
-    for body in ["not x := input.payload", "not _ = false"] {
+    for body in [
+        "not x := input.payload",
+        "not _ = false",
+        "x := [1 | not 1 = 2]",
+        "x := [1 | not y := 2]",
+    ] {
         let query_error = engine
             .eval_query(body.into(), false)
             .expect_err("negated assignment or unification must be rejected");

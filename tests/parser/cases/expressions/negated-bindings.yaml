@@ -64,3 +64,17 @@ cases:
       import rego.v1
       p if { every x in [1] { not _ := x } }
     error: "use == for negated equality"
+
+  - note: nested unification diagnostic survives positive outer binding
+    rego: |
+      package test
+      import rego.v1
+      p if { x := [1 | not 1 = 2] }
+    error: "use == for negated equality"
+
+  - note: nested assignment diagnostic survives positive outer binding
+    rego: |
+      package test
+      import rego.v1
+      p if { x := [1 | not y := 2] }
+    error: "use == for negated equality"
