@@ -18,8 +18,8 @@ impl RegoVM {
         match (a, b) {
             (&Value::Number(ref x), &Value::Number(ref y)) => Ok(Value::from(x.add(y)?)),
             _ => Err(VmError::InvalidAddition {
-                left: a.clone(),
-                right: b.clone(),
+                left: a.clone().into(),
+                right: b.clone().into(),
                 pc: self.pc,
             }),
         }
@@ -33,8 +33,8 @@ impl RegoVM {
                 Ok(Value::from(left.difference(right)))
             }
             _ => Err(VmError::InvalidSubtraction {
-                left: a.clone(),
-                right: b.clone(),
+                left: a.clone().into(),
+                right: b.clone().into(),
                 pc: self.pc,
             }),
         }
@@ -45,8 +45,8 @@ impl RegoVM {
         match (a, b) {
             (&Value::Number(ref x), &Value::Number(ref y)) => Ok(Value::from(x.mul(y)?)),
             _ => Err(VmError::InvalidMultiplication {
-                left: a.clone(),
-                right: b.clone(),
+                left: a.clone().into(),
+                right: b.clone().into(),
                 pc: self.pc,
             }),
         }
@@ -59,8 +59,8 @@ impl RegoVM {
                 if *y == Number::from(0_u64) {
                     if self.strict_builtin_errors {
                         return Err(VmError::InvalidDivision {
-                            left: a.clone(),
-                            right: b.clone(),
+                            left: a.clone().into(),
+                            right: b.clone().into(),
                             pc: self.pc,
                         });
                     }
@@ -70,8 +70,8 @@ impl RegoVM {
                 Ok(Value::from(x.clone().divide(y)?))
             }
             _ => Err(VmError::InvalidDivision {
-                left: a.clone(),
-                right: b.clone(),
+                left: a.clone().into(),
+                right: b.clone().into(),
                 pc: self.pc,
             }),
         }
@@ -84,8 +84,8 @@ impl RegoVM {
                 if *y == Number::from(0_u64) {
                     if self.strict_builtin_errors {
                         return Err(VmError::InvalidModulo {
-                            left: a.clone(),
-                            right: b.clone(),
+                            left: a.clone().into(),
+                            right: b.clone().into(),
                             pc: self.pc,
                         });
                     }
@@ -94,8 +94,8 @@ impl RegoVM {
 
                 if !x.is_integer() || !y.is_integer() {
                     return Err(VmError::ModuloOnFloat {
-                        left: a.clone(),
-                        right: b.clone(),
+                        left: a.clone().into(),
+                        right: b.clone().into(),
                         pc: self.pc,
                     });
                 }
@@ -103,8 +103,8 @@ impl RegoVM {
                 Ok(Value::from(x.clone().modulo(y)?))
             }
             _ => Err(VmError::InvalidModulo {
-                left: a.clone(),
-                right: b.clone(),
+                left: a.clone().into(),
+                right: b.clone().into(),
                 pc: self.pc,
             }),
         }

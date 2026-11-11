@@ -22,7 +22,72 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::{Object, Set};
-use crate::value::Value;
+use crate::{DiagnosticValue, Value};
+
+#[test]
+fn diagnostic_value_formats_each_value_kind_without_replacing_the_payload() {
+    use core::str::FromStr as _;
+
+    let big_number = crate::number::Number::from_str("10000000000000000000000000000000000000000")
+        .expect("large integer");
+    for (value, expected) in [
+        (Value::Null, "null"),
+        (Value::Bool(false), "false"),
+        (Value::from(-1_i64), "-1"),
+        (Value::from(u64::MAX), "18446744073709551615"),
+        (Value::from(1.5_f64), "1.5"),
+        (Value::from(big_number), "Number"),
+        (Value::from("small"), "\"small\""),
+        (Value::from("a".repeat(65)), "String(bytes=65)"),
+        (Value::new_array(), "Array(len=0)"),
+        (Value::new_set(), "Set(len=0)"),
+        (Value::new_object(), "Object(len=0)"),
+        (Value::Undefined, "\"<undefined>\""),
+    ] {
+        let diagnostic = DiagnosticValue::from(value.clone());
+        for text in [
+            format!("{diagnostic}"),
+            format!("{diagnostic:?}"),
+            format!("{diagnostic:#?}"),
+        ] {
+            assert_eq!(text, expected);
+        }
+        assert_eq!(diagnostic.as_value(), &value);
+        assert_eq!(diagnostic.into_value(), value);
+    }
+}
+
+#[test]
+fn diagnostic_value_does_not_expand_shared_values_in_derived_debug() {
+    #[derive(Debug)]
+    struct Context {
+        value: DiagnosticValue,
+    }
+
+    let value = (0..12).fold(Value::Null, |value, _| {
+        Value::from(vec![value.clone(), value])
+    });
+    let context = Context {
+        value: value.clone().into(),
+    };
+    for text in [format!("{context:?}"), format!("{context:#?}")] {
+        assert!(text.contains("Array(len=2)"));
+        assert!(text.len() < 100);
+    }
+    assert_eq!(context.value.into_value(), value);
+}
+
+#[test]
+fn diagnostic_value_escapes_control_characters_in_both_formats() {
+    let diagnostic = DiagnosticValue::from(Value::from("input:\0\n\"\\"));
+    for text in [
+        format!("{diagnostic}"),
+        format!("{diagnostic:?}"),
+        format!("{diagnostic:#?}"),
+    ] {
+        assert_eq!(text, r#""input:\u0000\n\"\\""#);
+    }
+}
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 #[test]

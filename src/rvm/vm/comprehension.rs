@@ -232,7 +232,7 @@ impl RegoVM {
             context
         } else {
             return Err(VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension")),
+                value: Value::String(Arc::from("No active comprehension")).into(),
                 pc: self.pc,
             });
         };
@@ -271,7 +271,7 @@ impl RegoVM {
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: Value::String(Arc::from("Object comprehension requires key")).into(),
                         pc: self.pc,
                     });
                 }
@@ -281,7 +281,7 @@ impl RegoVM {
                 self.set_register(result_reg, current_result)?;
                 self.comprehension_stack.push(comprehension_context);
                 return Err(VmError::InvalidIteration {
-                    value: offending,
+                    value: offending.into(),
                     pc: self.pc,
                 });
             }
@@ -326,7 +326,7 @@ impl RegoVM {
                     .is_some_and(|frame| matches!(frame.kind, FrameKind::Comprehension { .. }))
             })
             .ok_or(VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension")),
+                value: Value::String(Arc::from("No active comprehension")).into(),
                 pc: self.pc,
             })?;
 
@@ -335,7 +335,7 @@ impl RegoVM {
                 self.execution_stack
                     .get(comprehension_index)
                     .ok_or(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("No active comprehension")),
+                        value: Value::String(Arc::from("No active comprehension")).into(),
                         pc: self.pc,
                     })?;
 
@@ -361,7 +361,7 @@ impl RegoVM {
                 )
             } else {
                 return Err(VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 });
             }
@@ -390,7 +390,7 @@ impl RegoVM {
                 } else {
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: Value::String(Arc::from("Object comprehension requires key")).into(),
                         pc: self.pc,
                     });
                 }
@@ -399,7 +399,7 @@ impl RegoVM {
                 let offending = core::mem::replace(other, Value::Undefined);
                 self.set_register(result_reg_idx, current_result)?;
                 return Err(VmError::InvalidIteration {
-                    value: offending,
+                    value: offending.into(),
                     pc: self.pc,
                 });
             }
@@ -410,7 +410,7 @@ impl RegoVM {
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(
                 VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 },
             )?;
@@ -430,7 +430,7 @@ impl RegoVM {
                 )
             } else {
                 return Err(VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 });
             }
@@ -562,7 +562,7 @@ impl RegoVM {
         self.comprehension_stack
             .pop()
             .ok_or_else(|| VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension context")),
+                value: Value::String(Arc::from("No active comprehension context")).into(),
                 pc: self.pc,
             })?;
         Ok(())
@@ -580,7 +580,7 @@ impl RegoVM {
                         self.execution_stack.push(restored);
                     }
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("No active comprehension context")),
+                        value: Value::String(Arc::from("No active comprehension context")).into(),
                         pc: self.pc,
                     });
                 }

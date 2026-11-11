@@ -410,6 +410,12 @@ of the global `data` namespace.
 - `HostAwaitResponseMissing`
 - `Internal(String)` for invariant violations
 
+Value-bearing error fields use `regorus::DiagnosticValue`. Construct them with
+`value.into()`; Display and Debug summarize the value without expanding shared
+containers or oversized scalar payloads. Use `as_value()` to inspect the original
+`Value`, or `into_value()` to recover it. The wrapper preserves the original
+payload and does not guarantee PII redaction.
+
 `execution.rs::handle_instruction_error` centralises error propagation. In
 suspendable mode it unwinds frames while preserving partial results where
 possible. Run-to-completion mode returns the error immediately.

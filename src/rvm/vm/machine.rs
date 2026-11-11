@@ -491,7 +491,7 @@ impl RegoVM {
     ) -> Result<Value> {
         let missing_error = || VmError::HostAwaitResponseMissing {
             dest,
-            identifier: identifier.clone(),
+            identifier: identifier.clone().into(),
             pc: self.pc,
         };
 

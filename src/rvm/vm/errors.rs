@@ -3,7 +3,7 @@
 
 use super::execution_model::SuspendReason;
 use crate::utils::diagnostic::bounded;
-use crate::value::Value;
+use crate::value::DiagnosticValue;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::time::Duration;
@@ -11,7 +11,7 @@ use thiserror::Error;
 
 /// VM execution errors.
 ///
-/// Display and Debug summarize payloads for diagnostics; Value fields retain their original data.
+/// Display and Debug summarize payloads; [`DiagnosticValue`] fields retain their original data.
 #[derive(Error, Clone, PartialEq)]
 pub enum VmError {
     #[error("Rule call depth exceeded limit {limit} (pc={pc})")]
@@ -51,27 +51,30 @@ pub enum VmError {
     #[error("Literal index {index} out of bounds (pc={pc})")]
     LiteralIndexOutOfBounds { index: u16, pc: usize },
 
-    #[error("Register {register} does not contain an object (value={}, pc={pc})", .value.diagnostic())]
+    #[error("Register {register} does not contain an object (value={value:?}, pc={pc})")]
     RegisterNotObject {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("ObjectCreate: template is not an object (pc={pc}, template={})", .template.diagnostic())]
-    ObjectCreateInvalidTemplate { template: Value, pc: usize },
+    #[error("ObjectCreate: template is not an object (pc={pc}, template={template:?})")]
+    ObjectCreateInvalidTemplate {
+        template: DiagnosticValue,
+        pc: usize,
+    },
 
-    #[error("Register {register} does not contain an array (value={}, pc={pc})", .value.diagnostic())]
+    #[error("Register {register} does not contain an array (value={value:?}, pc={pc})")]
     RegisterNotArray {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Register {register} does not contain a set (value={}, pc={pc})", .value.diagnostic())]
+    #[error("Register {register} does not contain a set (value={value:?}, pc={pc})")]
     RegisterNotSet {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
@@ -152,11 +155,14 @@ pub enum VmError {
         available: usize,
     },
 
-    #[error("Invalid rule index: {} (pc={pc})", .rule_index.diagnostic())]
-    InvalidRuleIndex { rule_index: Value, pc: usize },
+    #[error("Invalid rule index: {rule_index:?} (pc={pc})")]
+    InvalidRuleIndex {
+        rule_index: DiagnosticValue,
+        pc: usize,
+    },
 
-    #[error("Invalid rule tree entry: {} (pc={pc})", .value.diagnostic())]
-    InvalidRuleTreeEntry { value: Value, pc: usize },
+    #[error("Invalid rule tree entry: {value:?} (pc={pc})")]
+    InvalidRuleTreeEntry { value: DiagnosticValue, pc: usize },
 
     #[error("Builtin function expects exactly {expected} arguments, got {actual} (pc={pc})")]
     BuiltinArgumentMismatch {
@@ -168,55 +174,55 @@ pub enum VmError {
     #[error("Builtin function not resolved: {} (pc={pc})", bounded(format_args!("{name}")))]
     BuiltinNotResolved { name: String, pc: usize },
 
-    #[error("Cannot add {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
     InvalidAddition {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Cannot subtract {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("Cannot subtract {left:?} and {right:?} (pc={pc})")]
     InvalidSubtraction {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Cannot multiply {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("Cannot multiply {left:?} and {right:?} (pc={pc})")]
     InvalidMultiplication {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Cannot divide {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("Cannot divide {left:?} and {right:?} (pc={pc})")]
     InvalidDivision {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("modulo on floating-point number (left={}, right={}, pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("modulo on floating-point number (left={left:?}, right={right:?}, pc={pc})")]
     ModuloOnFloat {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Cannot modulo {} and {} (pc={pc})", .left.diagnostic(), .right.diagnostic())]
+    #[error("Cannot modulo {left:?} and {right:?} (pc={pc})")]
     InvalidModulo {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
-    #[error("Cannot iterate over {} (pc={pc})", .value.diagnostic())]
-    InvalidIteration { value: Value, pc: usize },
+    #[error("Cannot iterate over {value:?} (pc={pc})")]
+    InvalidIteration { value: DiagnosticValue, pc: usize },
 
-    #[error("HostAwait executed but no response provided for destination register {dest} (id: {}, pc={pc})", .identifier.diagnostic())]
+    #[error("HostAwait executed but no response provided for destination register {dest} (id: {identifier:?}, pc={pc})")]
     HostAwaitResponseMissing {
         dest: u8,
-        identifier: Value,
+        identifier: DiagnosticValue,
         pc: usize,
     },
 
@@ -483,6 +489,7 @@ pub type Result<T> = core::result::Result<T, VmError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Value;
     use alloc::{format, string::ToString as _, vec};
 
     #[test]
@@ -498,8 +505,8 @@ mod tests {
         };
         for error in [
             VmError::InvalidAddition {
-                left: value,
-                right: Value::from(message.clone()),
+                left: value.into(),
+                right: Value::from(message.clone()).into(),
                 pc: 7,
             },
             VmError::UnsupportedSuspendInRunToCompletion {
