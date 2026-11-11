@@ -1163,6 +1163,7 @@ result := [value, value, value, value, value, value, value, value]
     #[test]
     fn ffi_unbudgeted_child_resume_error_does_not_charge_parent_budget() {
         const CHILD_ARGUMENT_BYTES: usize = 128 * 1024;
+        const CHILD_RESUME_ATTEMPTS: usize = 256;
 
         let program = compiled_suspendable_host_await_program();
         let mut child_vm = suspendable_host_await_vm(&program, None);
@@ -1179,9 +1180,11 @@ result := [value, value, value, value, value, value, value, value]
             .execute()
             .expect("outer VM should suspend at HostAwait within its budget");
 
-        let mut child_error = None;
+        let mut child_errors = Vec::with_capacity(CHILD_RESUME_ATTEMPTS);
         let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
-            child_error = Some(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            for _ in 0..CHILD_RESUME_ATTEMPTS {
+                child_errors.push(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            }
             Ok(Some(String::from("\"response\"")))
         });
         let parent_resume_succeeded = match resumed {
@@ -1189,27 +1192,26 @@ result := [value, value, value, value, value, value, value, value]
             Err(_) => false,
         };
 
-        let child_error = child_error.expect("child resume error");
-        let child_error_is_reported = matches!(child_error.status, RegorusStatus::Error)
-            && child_error.output.is_null()
-            && !child_error.error_message.is_null();
-        let child_error_length = if child_error.error_message.is_null() {
-            0
-        } else {
-            unsafe { CStr::from_ptr(child_error.error_message) }
+        let mut child_error_bytes = 0usize;
+        for child_error in child_errors {
+            assert!(matches!(child_error.status, RegorusStatus::Error));
+            assert!(child_error.output.is_null());
+            assert!(!child_error.error_message.is_null());
+            let length = unsafe { CStr::from_ptr(child_error.error_message) }
                 .to_bytes()
-                .len()
-        };
+                .len();
+            assert!(length > 0 && length < 512);
+            child_error_bytes = child_error_bytes.saturating_add(length);
+            regorus_result_drop(child_error);
+        }
         assert_execution_state(child_vm, "Suspended {");
 
-        regorus_result_drop(child_error);
         regorus_rvm_drop(child_vm);
         assert!(
             parent_resume_succeeded,
             "unbudgeted child error formatting should not consume the outer budget"
         );
-        assert!(child_error_is_reported);
-        assert!(child_error_length > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
+        assert!(child_error_bytes > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
     }
 
     #[test]
