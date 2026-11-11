@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 use crate::rvm::instructions::Instruction;
 use crate::rvm::program::Program;
+use crate::utils::diagnostic::bounded;
 use crate::value::Value;
 use alloc::string::String;
 use core::convert::TryFrom as _;
@@ -336,17 +337,24 @@ impl RegoVM {
         // for any non-`Suspended` state. A `debug_assert!` here would diverge
         // debug vs release behavior and, when invoked via FFI, would trip the
         // unwind guard and poison the engine on a recoverable misuse.
-        let (reason, mut last_result) = match self.execution_state.clone() {
+        let (reason, mut last_result) = match self.execution_state {
             ExecutionState::Suspended {
-                reason,
-                last_result,
+                ref reason,
+                ref last_result,
                 ..
-            } => (reason, last_result),
-            current_state => {
-                return Err(VmError::InvalidResumeState {
-                    state: alloc::format!("{:?}", current_state),
-                    pc: self.pc,
-                });
+            } => (reason.clone(), last_result.clone()),
+            ref current_state => {
+                let state = match *current_state {
+                    ExecutionState::Completed { ref result } => alloc::format!(
+                        "{}",
+                        bounded(format_args!(
+                            "Completed {{ result: {} }}",
+                            result.diagnostic()
+                        ))
+                    ),
+                    _ => alloc::format!("{}", bounded(format_args!("{current_state:?}"))),
+                };
+                return Err(VmError::InvalidResumeState { state, pc: self.pc });
             }
         };
 
@@ -964,6 +972,35 @@ mod tests {
         assert_eq!(vm.executed_instructions, 2);
         assert_eq!(vm.execute(), Ok(Value::Bool(true)));
         assert_eq!(vm.executed_instructions, 2);
+    }
+
+    #[test]
+    fn completed_resume_diagnostics_do_not_expand_shared_results() {
+        let value = (0..12).fold(Value::Null, |value, _| {
+            Value::from(alloc::vec![value.clone(), value])
+        });
+        let mut program = Program::new();
+        program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(Arc::new(program));
+        vm.set_input(value.clone());
+        assert_eq!(vm.execute(), Ok(value.clone()));
+
+        for resume_value in [None, Some(Value::Null)] {
+            assert!(matches!(
+                vm.resume(resume_value),
+                Err(VmError::InvalidResumeState { ref state, .. })
+                    if state.len() <= 259
+                        && state.contains("Completed")
+                        && state.contains("Array(len=2)")
+            ));
+            assert!(matches!(
+                *vm.execution_state(),
+                ExecutionState::Completed { ref result } if result == &value
+            ));
+        }
     }
 
     #[test]

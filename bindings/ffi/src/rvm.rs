@@ -2054,10 +2054,54 @@ pub(crate) fn convert_c_host_await_builtins(
 mod host_await_tests {
     use super::*;
     use crate::common::regorus_result_drop;
+    use regorus::rvm::instructions::{BuiltinCallParams, Instruction};
+    use regorus::rvm::program::BuiltinInfo;
     use std::ffi::{CStr, CString};
 
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
+    }
+
+    #[test]
+    fn execution_state_error_escapes_embedded_nul() {
+        let mut program = Program::new();
+        let builtin_index = program.add_builtin_info(BuiltinInfo {
+            name: "net.cidr_contains".into(),
+            num_args: 2,
+        });
+        let params_index = program.add_builtin_call_params(BuiltinCallParams {
+            dest: 0,
+            builtin_index,
+            num_args: 2,
+            args: [0; 8],
+        });
+        program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+        program.add_instruction(Instruction::BuiltinCall { params_index }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        program
+            .initialize_resolved_builtins()
+            .expect("resolve builtin");
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_strict_builtin_errors(true);
+        vm.load_program(Arc::new(program));
+        vm.set_input(Value::from("bad\0cidr"));
+        let error = vm.execute().expect_err("invalid CIDR");
+        assert!(error.to_string().contains('\0'));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let result = regorus_rvm_get_execution_state(vm);
+        assert_eq!(result.status, RegorusStatus::Ok);
+        assert!(!result.output.is_null());
+        let output = unsafe { CStr::from_ptr(result.output) }
+            .to_str()
+            .expect("UTF-8 execution state")
+            .to_owned();
+        regorus_result_drop(result);
+        regorus_rvm_drop(vm);
+
+        assert!(output.starts_with("Error { error: ArithmeticError"));
+        assert!(output.contains("bad\\0cidr"));
     }
 
     #[test]

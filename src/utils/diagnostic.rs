@@ -74,4 +74,50 @@ mod tests {
         assert_eq!(writes.get(), 86);
         assert_eq!(format!("{}", bounded(format_args!("short"))), "short");
     }
+
+    #[test]
+    fn truncates_only_after_the_exact_byte_limit() {
+        let exact = "a".repeat(256);
+        assert_eq!(format!("{}", bounded(format_args!("{exact}"))), exact);
+        let over = format!("{exact}b");
+        assert_eq!(
+            format!("{}", bounded(format_args!("{over}"))),
+            format!("{exact}...")
+        );
+    }
+
+    #[test]
+    fn propagates_formatting_and_output_errors() {
+        struct Producer;
+        impl fmt::Display for Producer {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("prefix")?;
+                Err(fmt::Error)
+            }
+        }
+
+        struct Sink;
+        impl fmt::Write for Sink {
+            fn write_str(&mut self, _: &str) -> fmt::Result {
+                Err(fmt::Error)
+            }
+        }
+
+        let mut output = alloc::string::String::new();
+        assert_eq!(
+            fmt::write(
+                &mut output,
+                format_args!("{}", bounded(format_args!("{Producer}")))
+            ),
+            Err(fmt::Error)
+        );
+        assert_eq!(output, "prefix");
+        assert_eq!(
+            fmt::write(
+                &mut Sink,
+                format_args!("{}", bounded(format_args!("short")))
+            ),
+            Err(fmt::Error)
+        );
+    }
 }
