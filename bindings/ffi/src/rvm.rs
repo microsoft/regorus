@@ -2066,27 +2066,25 @@ mod host_await_tests {
     fn execution_state_error_escapes_embedded_nul() {
         let mut program = Program::new();
         let builtin_index = program.add_builtin_info(BuiltinInfo {
-            name: "net.cidr_contains".into(),
-            num_args: 2,
+            name: "test.nul_error".into(),
+            num_args: 0,
         });
         let params_index = program.add_builtin_call_params(BuiltinCallParams {
             dest: 0,
             builtin_index,
-            num_args: 2,
+            num_args: 0,
             args: [0; 8],
         });
-        program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
         program.add_instruction(Instruction::BuiltinCall { params_index }, None);
         program.add_instruction(Instruction::Return { value: 0 }, None);
         program
-            .initialize_resolved_builtins()
-            .expect("resolve builtin");
+            .resolved_builtins
+            .push((|_, _, _, _| Err(anyhow!("invalid input: \0")), 0));
         let mut vm = RegoVM::new();
         vm.set_execution_mode(ExecutionMode::Suspendable);
         vm.set_strict_builtin_errors(true);
         vm.load_program(Arc::new(program));
-        vm.set_input(Value::from("bad\0cidr"));
-        let error = vm.execute().expect_err("invalid CIDR");
+        let error = vm.execute().expect_err("synthetic builtin error");
         assert!(error.to_string().contains('\0'));
         let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
 
@@ -2101,7 +2099,7 @@ mod host_await_tests {
         regorus_rvm_drop(vm);
 
         assert!(output.starts_with("Error { error: ArithmeticError"));
-        assert!(output.contains("bad\\0cidr"));
+        assert!(output.contains("invalid input: \\0"));
     }
 
     #[test]
