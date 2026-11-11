@@ -1578,11 +1578,26 @@ impl Number {
                 None => result is None,
             },
     )]
-    pub fn neg(&self) -> Option<Number> {
+    pub fn bitwise_not(&self) -> Option<Number> {
         let mut value = self.ensure_integer()?;
         proof! { axiom_bigint_not_spec(value); }
         value = !value;
         Some(Number::from_bigint_owned(value))
+    }
+
+    #[deprecated(note = "use bitwise_not() for bitwise complement")]
+    #[verus_spec(result =>
+        ensures
+            match self@.to_int() {
+                Some(value) => {
+                    result matches Some(r)
+                    && r@ == NumberView::Integer(-value - 1)
+                },
+                None => result is None,
+            },
+    )]
+    pub fn neg(&self) -> Option<Number> {
+        self.bitwise_not()
     }
 
     #[verus_spec(result =>

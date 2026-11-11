@@ -28,7 +28,9 @@ pub(in crate::languages::rego::compiler) fn try_eval_const(expr: &Expr) -> Optio
             Expr::Number {
                 value: Value::Number(n),
                 ..
-            } => Some(Value::Number(n.neg()?)),
+            } if !expr.span().text().starts_with('-') => Some(Value::Number(
+                crate::number::Number::from(0_u64).sub(n).ok()?,
+            )),
             _ => None,
         },
         Expr::Array { items, .. } => items

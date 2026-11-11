@@ -222,6 +222,68 @@ fn nested_constant_collection_is_hoisted() {
 }
 
 #[test]
+fn unary_constants_preserve_arithmetic_negation_after_json_round_trip() -> anyhow::Result<()> {
+    let module = r#"
+        package test
+        p if {
+            [-(1), -(0), -(2)] == [-1, 0, -2]
+            [-(1.5)] == [-1.5]
+            [-(18446744073709551616)] == [-18446744073709551616]
+            [{"n": -(3)}, [-(2)]] == [{"n": -3}, [-2]]
+            {-(1), -(0)} == {-1, 0}
+            {-(1): -(2)} == {-1: -2}
+        }
+    "#;
+    let interpreter = run_interpreter_policy(module, "{}")?;
+    assert_eq!(interpreter, Value::Bool(true));
+
+    let program = compile_rule(module);
+    let json = program.serialize_json().map_err(anyhow::Error::msg)?;
+    let json_program =
+        std::sync::Arc::new(Program::deserialize_json(&json).map_err(anyhow::Error::msg)?);
+    for (snapshot, program) in [("native", program), ("json", json_program)] {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for strict in [false, true] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(strict);
+                assert_eq!(
+                    vm.execute_entry_point_by_name("data.test.p")?,
+                    interpreter,
+                    "{snapshot}, {mode:?}, strict={strict}"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn unary_rule_values_disable_early_exit_on_conflict() {
+    let module = r#"
+        package test
+        p := -(1) if input.a
+        p := -2 if input.b
+    "#;
+    let program = compile_rule(module);
+    let rule = program
+        .rule_infos
+        .iter()
+        .find(|rule| rule.name == "data.test.p")
+        .expect("missing compiled rule");
+    assert!(!rule.early_exit_on_first_success);
+
+    let interpreter_error = run_interpreter_policy(module, r#"{"a":true,"b":true}"#)
+        .expect_err("different unary rule values should conflict");
+    assert!(
+        interpreter_error.to_string().contains("rule conflicts"),
+        "unexpected interpreter error: {interpreter_error}"
+    );
+}
+
+#[test]
 fn non_constant_array_is_not_hoisted() {
     let program = compile_rule(
         r#"

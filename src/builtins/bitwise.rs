@@ -67,7 +67,7 @@ fn negate(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Re
         return Ok(Value::Undefined);
     }
 
-    Ok(match v.neg() {
+    Ok(match v.bitwise_not() {
         Some(v) => Value::from(v),
         _ => Value::Undefined,
     })
