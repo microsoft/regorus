@@ -1,0 +1,80 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: negated variable assignment
+    rego: |
+      package test
+      import rego.v1
+      p if { not x := input.payload }
+    error: "use == for negated equality"
+
+  - note: negated wildcard assignment
+    rego: |
+      package test
+      import rego.v1
+      p if { not _ := false }
+    error: "use == for negated equality"
+
+  - note: negated wildcard unification
+    rego: |
+      package test
+      import rego.v1
+      p if { not _ = false }
+    error: "use == for negated equality"
+
+  - note: negated array assignment
+    rego: |
+      package test
+      import rego.v1
+      p if { not [_] := input.payload }
+    error: "use == for negated equality"
+
+  - note: negated array unification
+    rego: |
+      package test
+      import rego.v1
+      p if { not [_] = input.payload }
+    error: "use == for negated equality"
+
+  - note: negated nested object assignment
+    rego: |
+      package test
+      import rego.v1
+      p if { not {"a": [_]} := input.payload }
+    error: "use == for negated equality"
+
+  - note: negated assignment inside comprehension
+    rego: |
+      package test
+      import rego.v1
+      p if { not [1 | not [_] := input.payload] == [] }
+    error: "use == for negated equality"
+
+  - note: negated unification inside comprehension
+    rego: |
+      package test
+      import rego.v1
+      p if { not [1 | not 1 = input.x] == [] }
+    error: "use == for negated equality"
+
+  - note: negated assignment inside every
+    rego: |
+      package test
+      import rego.v1
+      p if { every x in [1] { not _ := x } }
+    error: "use == for negated equality"
+
+  - note: nested unification diagnostic survives positive outer binding
+    rego: |
+      package test
+      import rego.v1
+      p if { x := [1 | not 1 = 2] }
+    error: "use == for negated equality"
+
+  - note: nested assignment diagnostic survives positive outer binding
+    rego: |
+      package test
+      import rego.v1
+      p if { x := [1 | not y := 2] }
+    error: "use == for negated equality"

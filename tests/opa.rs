@@ -20,6 +20,8 @@ const OPA_REPO: &str = "https://github.com/open-policy-agent/opa";
 const OPA_BRANCH: &str = "v1.2.0";
 const PARTIAL_OBJECT_OVERRIDE_NOTE: &str =
     "regression/partial-object override, different key type, query";
+const NEGATED_UNIFICATION_NOTES: &[&str] =
+    &["arithmetic/arity 2 ref dest (2)", "negation/neg: constants"];
 
 const OPA_TODO_FOLDERS: &[&str] = &[
     "aggregates",
@@ -379,7 +381,7 @@ fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
 fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     println!("OPA TESTSUITE: {opa_tests_dir}");
     let tests_path = Path::new(&opa_tests_dir);
-    let mut status = BTreeMap::<String, (u32, u32, u32)>::new();
+    let mut status = BTreeMap::<String, (u32, u32, u32, u32)>::new();
     let mut n = 0;
     let mut missing_functions = BTreeMap::new();
     for entry in WalkDir::new(&opa_tests_dir)
@@ -417,7 +419,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         }
 
         let is_rego_v0_test = path_dir_str.starts_with("v0/") || path_dir.starts_with("v0\\");
-        let entry = status.entry(path_dir_str).or_insert((0, 0, 0));
+        let entry = status.entry(path_dir_str).or_insert((0, 0, 0, 0));
 
         let yaml_str = std::fs::read_to_string(&path_str)?;
         let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
@@ -498,6 +500,21 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
 
             print!("{:4}: {:90}", entry.2, case.note);
             entry.2 += 1;
+            if NEGATED_UNIFICATION_NOTES.contains(&case.note.as_str()) {
+                match eval_test_case(&case, is_rego_v0_test) {
+                    Err(error) if error.to_string().contains("use == for negated equality") => {
+                        entry.3 += 1;
+                        println!(
+                            "  EXPECTED ADMISSION REJECTION (Regorus compatibility restriction)"
+                        );
+                    }
+                    result => {
+                        entry.1 += 1;
+                        println!("  expected negated-unification rejection, got {result:?}");
+                    }
+                }
+                continue;
+            }
             match (eval_test_case(&case, is_rego_v0_test), &case.want_result) {
                 (Ok(actual), Some(expected))
                     if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
@@ -624,29 +641,39 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     }
 
     println!("\nOPA TESTSUITE STATUS");
-    println!("    {:40}  {:4} {:4}", "FOLDER", "PASS", "FAIL");
-    let (mut npass, mut nfail) = (0, 0);
+    println!(
+        "    {:40}  {:4} {:4} {:6}",
+        "FOLDER", "PASS", "FAIL", "REJECT"
+    );
+    let (mut npass, mut nfail, mut nreject) = (0, 0, 0);
     let mut passing = vec![];
-    for (dir, (pass, fail, _)) in status {
+    for (dir, (pass, fail, _, reject)) in status {
         if fail == 0 {
-            println!("\x1b[32m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
+            println!("\x1b[32m    {dir:40}: {pass:4} {fail:4} {reject:6}\x1b[0m");
             passing.push(dir);
         } else {
-            println!("\x1b[31m    {dir:40}: {pass:4} {fail:4}\x1b[0m");
+            println!("\x1b[31m    {dir:40}: {pass:4} {fail:4} {reject:6}\x1b[0m");
         }
         npass += pass;
         nfail += fail;
+        nreject += reject;
     }
     println!();
 
     std::fs::write("target/opa.passing", passing.join("\n"))?;
 
-    if npass == 0 && nfail == 0 {
+    if npass == 0 && nfail == 0 && nreject == 0 {
         bail!("no matching tests found.");
     } else if nfail == 0 {
-        println!("\x1b[32m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!(
+            "\x1b[32m    {:40}: {npass:4} {nfail:4} {nreject:6}\x1b[0m",
+            "TOTAL"
+        );
     } else {
-        println!("\x1b[31m    {:40}: {npass:4} {nfail:4}\x1b[0m", "TOTAL");
+        println!(
+            "\x1b[31m    {:40}: {npass:4} {nfail:4} {nreject:6}\x1b[0m",
+            "TOTAL"
+        );
     }
 
     if !missing_functions.is_empty() {

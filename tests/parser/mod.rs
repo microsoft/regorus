@@ -813,6 +813,29 @@ fn run(path: &str) {
 }
 
 #[test]
+fn rejected_negated_query_preserves_diagnostic_and_engine_state() -> Result<()> {
+    let mut engine = Engine::new();
+    for body in [
+        "not x := input.payload",
+        "not _ = false",
+        "x := [1 | not 1 = 2]",
+        "x := [1 | not y := 2]",
+    ] {
+        let query_error = engine
+            .eval_query(body.into(), false)
+            .expect_err("negated assignment or unification must be rejected");
+        assert!(
+            query_error
+                .to_string()
+                .contains("use == for negated equality"),
+            "{body}: {query_error}"
+        );
+        assert_eq!(engine.eval_query("true".into(), false)?.result.len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
 fn object_field_spans_start_at_their_key() -> Result<()> {
     // Fields on the first line, on later lines, with the colon on a
     // different line from the key, and with string and compound keys.
