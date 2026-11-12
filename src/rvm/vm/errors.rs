@@ -232,6 +232,9 @@ pub enum VmError {
     #[error("Rule-data conflict: {} (pc={pc})", bounded(format_args!("{message}")))]
     RuleDataConflict { message: String, pc: usize },
 
+    #[error("Rule '{}' conflicts: complete rules and functions must not produce multiple outputs (pc={pc})", bounded(format_args!("{rule}")))]
+    RuleOutputConflict { rule: String, pc: usize },
+
     #[error("Arithmetic error: {} (pc={pc})", bounded(format_args!("{message}")))]
     ArithmeticError { message: String, pc: usize },
 
@@ -525,6 +528,10 @@ mod tests {
             },
             VmError::ArithmeticError {
                 message: message.clone(),
+                pc: 7,
+            },
+            VmError::RuleOutputConflict {
+                rule: message.clone(),
                 pc: 7,
             },
         ] {
