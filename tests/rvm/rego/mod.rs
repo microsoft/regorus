@@ -415,19 +415,17 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let mut skipped_count = 0usize;
 
     let cases = test.cases.into_iter().flat_map(|case| {
-        if case.execution_mode.as_deref() == Some("all") {
-            ["run-to-completion", "suspendable", "step"]
-                .into_iter()
-                .map(|mode| {
-                    let mut case = case.clone();
-                    case.execution_mode = Some(mode.to_string());
-                    case.note = format!("{} ({mode})", case.note);
-                    case
-                })
-                .collect::<Vec<_>>()
+        let cases = if case.execution_mode.as_deref() == Some("all") {
+            ["run-to-completion", "suspendable", "step"].map(|mode| {
+                let mut case = case.clone();
+                case.execution_mode = Some(mode.to_string());
+                case.note = format!("{} ({mode})", case.note);
+                Some(case)
+            })
         } else {
-            vec![case]
-        }
+            [Some(case), None, None]
+        };
+        cases.into_iter().flatten()
     });
     for case in cases {
         let mut last_listing: Option<String> = None;

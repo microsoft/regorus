@@ -50,3 +50,54 @@ cases:
     input: {key: function, published: "1970-01-01T00:00:00Z", after: "1970-01-01T00:00:01Z"}
     query: data.consumer.after
     want_result: [0, 1000000000]
+
+  - note: caller_continues_after_virtual_function_comprehension_awaits
+    execution_mode: all
+    strict_builtin_errors: true
+    skip_interpreter: true
+    modules:
+      - |
+        package bridge
+        fetch(value) := __builtin_host_await(value, "auth")
+        q := [fetch(value) | some value in input.items]
+      - &await_caller |
+        package consumer
+        virtual := data.bridge[input.key]
+        after := [virtual, __builtin_host_await("after", "auth")]
+    input: {key: q, items: [first, second]}
+    query: data.consumer.after
+    host_await_responses_run_to_completion: &native_responses
+      - id: auth
+        value: false
+      - id: auth
+        value: true
+      - id: auth
+        value: done
+    host_await_responses_suspendable: &suspendable_responses
+      - id: auth
+        args: first
+        value: false
+      - id: auth
+        args: second
+        value: true
+      - id: auth
+        args: after
+        value: done
+    want_result: [[false, true], done]
+
+  - note: caller_continues_after_virtual_subobject_awaits
+    execution_mode: all
+    strict_builtin_errors: true
+    skip_interpreter: true
+    modules:
+      - |
+        package bridge.nested
+        q := __builtin_host_await("first", "auth")
+        r := __builtin_host_await("second", "auth")
+      - *await_caller
+    data: {bridge: {nested: {base: 17}}}
+    input: {key: nested}
+    query: data.consumer.after
+    host_await_responses_run_to_completion: *native_responses
+    host_await_responses_suspendable: *suspendable_responses
+    want_result: [{base: 17, q: false, r: true}, done]
