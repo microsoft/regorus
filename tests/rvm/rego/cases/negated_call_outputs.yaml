@@ -1,0 +1,49 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: negated_call_output_definedness
+    data: {}
+    modules: &policy
+      - |
+        package test
+
+        actual(case) := case.actual
+
+        builtin(case) := true if {
+          not count(case.items, case.expected)
+        } else := false
+
+        user_function(case) := true if {
+          not actual(case, case.expected)
+        } else := false
+
+        main := [{"builtin": builtin(case), "user_function": user_function(case)} |
+          case := input[_]
+        ]
+    input: &inputs
+      - {}
+      - {items: [], actual: 0}
+      - {expected: 0}
+      - {items: [], actual: 0, expected: 0}
+      - {items: [], actual: 0, expected: 1}
+      - {items: [], actual: false, expected: false}
+      - {items: [], actual: null, expected: null}
+    query: data.test.main
+    want_result: &results
+      - {builtin: true, user_function: true}
+      - {builtin: true, user_function: true}
+      - {builtin: true, user_function: true}
+      - {builtin: false, user_function: false}
+      - {builtin: true, user_function: true}
+      - {builtin: true, user_function: false}
+      - {builtin: true, user_function: false}
+
+  - note: negated_call_output_definedness_suspendable
+    data: {}
+    modules: *policy
+    input: *inputs
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    query: data.test.main
+    want_result: *results
