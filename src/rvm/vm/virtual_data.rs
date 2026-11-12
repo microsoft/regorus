@@ -404,7 +404,7 @@ impl RegoVM {
                         .as_u64()
                         .and_then(|value| u16::try_from(value).ok())
                         .ok_or_else(|| VmError::InvalidRuleIndex {
-                            rule_index: Value::Number(index),
+                            rule_index: Value::Number(index).into(),
                             pc: self.pc,
                         })?;
                     if let Some(cached) = self.cached_virtual_rule_result(&data.root_path, &path) {

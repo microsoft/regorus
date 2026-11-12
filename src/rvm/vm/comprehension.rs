@@ -630,6 +630,7 @@ impl RegoVM {
                         FrameKind::Rule(_) => "Rule",
                         FrameKind::Loop { .. } => "Loop",
                         FrameKind::Comprehension { .. } => "Comprehension",
+                        FrameKind::VirtualDataLookup(_) => "VirtualDataLookup",
                     };
                     let message = format!(
                         "Mismatched comprehension frame: frame={frame_name} stack_depth={} unwound_loops={}",

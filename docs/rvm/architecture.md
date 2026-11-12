@@ -205,8 +205,8 @@ Key state:
 - **Loop/comprehension stacks**: Track iteration state, completion criteria, and
   pending yields.
 - **Execution stack**: Present in suspendable mode. Stores `ExecutionFrame`
-  objects (`FrameKind::Rule`, `Loop`, `Comprehension`, `VirtualDataLookup`) so that the VM can pause
-  and resume evaluation cleanly.
+  objects (`FrameKind::Rule`, `Loop`, `Comprehension`, `VirtualDataLookup`) so that
+  the VM can pause and resume evaluation cleanly.
 - **Host await responses**: For run-to-completion execution, pre-defined values
   keyed by identifier. Suspendable mode instead returns a
   `SuspendReason::HostAwait` to the caller.
