@@ -49,6 +49,102 @@ cases:
     query: data.test.main
     want_result: 3
 
+  - note: unary_constant_integer_and_zero
+    modules:
+      - |
+        package test
+        p := [-(1), -(0), -(2)] == [-1, 0, -2]
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_fraction
+    modules:
+      - |
+        package test
+        p := [-(1.5)] == [-1.5]
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_large_integer
+    modules:
+      - |
+        package test
+        p := [-(18446744073709551616)] == [-18446744073709551616]
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_nested_collections
+    modules:
+      - |
+        package test
+        p := [{"n": -(3)}, [-(2)]] == [{"n": -3}, [-2]]
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_set
+    modules:
+      - |
+        package test
+        p := {-(1), -(0)} == {-1, 0}
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_object_key_and_value
+    modules:
+      - |
+        package test
+        p := {-(1): -(2)} == {-1: -2}
+    query: data.test.p
+    want_result: true
+
+  - note: unary_constant_reject_negative_fraction_array
+    modules:
+      - |
+        package test
+        p := [-(-1.5)]
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
+  - note: unary_constant_reject_negative_fraction_set
+    modules:
+      - |
+        package test
+        p := {-(-1.5)}
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
+  - note: unary_constant_reject_negative_fraction_object_key
+    modules:
+      - |
+        package test
+        p := {-(-1.5): 1}
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
+  - note: unary_constant_reject_negative_integer
+    modules:
+      - |
+        package test
+        p := [-(-1)]
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
+  - note: unary_constant_reject_negative_zero
+    modules:
+      - |
+        package test
+        p := [-(-0)]
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
+  - note: unary_constant_reject_negative_fraction_with_whitespace
+    modules:
+      - |
+        package test
+        p := [-( -1.5 )]
+    query: data.test.p
+    want_error: "unary - can only be used with numeric literals"
+
   # OPA v1.21.2 returns finite values for all four cases by using big.Int or a
   # bounded-precision, wide-exponent big.Float. Regorus deliberately fails closed
   # because its fractional representation is binary64. These errors are a breaking

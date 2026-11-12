@@ -67,6 +67,19 @@ fn serialize_number() -> Result<()> {
 }
 
 #[test]
+#[allow(deprecated)]
+fn bitwise_not_preserves_neg_api() -> Result<()> {
+    let value = Value::from(1);
+    let number = value.as_number()?;
+    assert_eq!(number.neg().map(Value::Number), Some(Value::from(-2)));
+    assert_eq!(number.neg(), number.bitwise_not());
+
+    let fraction = Value::from(1.5);
+    assert!(fraction.as_number()?.neg().is_none());
+    Ok(())
+}
+
+#[test]
 fn serialize_string() -> Result<()> {
     assert_eq!(
         Value::String("Hello, World\n".into()).to_json_str()?,
