@@ -103,6 +103,24 @@ impl RegoVM {
         })
     }
 
+    pub(super) fn compare_rule_outputs(&mut self, left: u8, right: u8) -> Result<Ordering> {
+        let pc = self.pc;
+        let (left, right) = operands(&self.registers, pc, left, right)?;
+        let (left, right) = (left.clone(), right.clone());
+        compare_checked(&left, &right, true, &mut || {
+            if self.executed_instructions >= self.max_instructions {
+                return Err(VmError::InstructionLimitExceeded {
+                    limit: self.max_instructions,
+                    executed: self.executed_instructions,
+                    pc,
+                });
+            }
+            self.executed_instructions = self.executed_instructions.saturating_add(1);
+            Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
+            self.check_initial_memory_limit()
+        })
+    }
+
     pub(super) fn contains_registers(&mut self, collection: u8, value: u8) -> Result<bool> {
         let pc = self.pc;
         let (value, collection) = operands(&self.registers, pc, value, collection)?;

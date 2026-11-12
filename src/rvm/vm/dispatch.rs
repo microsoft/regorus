@@ -393,7 +393,7 @@ impl RegoVM {
                             let result_reg = context.result_reg;
                             let rule_index = context.rule_index;
                             if self.get_register(result_reg)? != &Value::Undefined
-                                && !self.compare_registers(result_reg, register, true)?.is_eq()
+                                && !self.compare_rule_outputs(result_reg, register)?.is_eq()
                             {
                                 let rule_info = program
                                     .rule_infos

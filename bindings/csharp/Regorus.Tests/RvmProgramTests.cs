@@ -594,7 +594,7 @@ allow if { get_account(input.account_id) == "allow" }
             "006:     HostAwait",
             "007:     Load",
             "008:     HostAwait",
-            "009:     AssertNotUndefined",
+            "009:     AssertRuleOutput",
             "010:     Move",
             "011: } return from rule",
         };

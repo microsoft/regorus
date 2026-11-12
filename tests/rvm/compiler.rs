@@ -183,6 +183,8 @@ fn rule_yield_conflicts_roundtrip_and_leave_vm_reusable() -> anyhow::Result<()> 
         "#,
     );
     let bytes = original.serialize_binary().map_err(anyhow::Error::msg)?;
+    assert_eq!(&bytes[4..8], &7_u32.to_le_bytes());
+    assert!(Program::can_deserialize(&bytes).map_err(anyhow::Error::msg)?);
     let program = match Program::deserialize_binary(&bytes).map_err(anyhow::Error::msg)? {
         DeserializationResult::Complete(program) => std::sync::Arc::new(program),
         DeserializationResult::Partial(_) => {
@@ -275,6 +277,53 @@ fn rule_yield_conflicts_observe_execution_timer() -> anyhow::Result<()> {
                     matches!(result, Err(VmError::TimeLimitExceeded { .. })),
                     "{mode:?}, step={step}, strict={strict}"
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rule_yield_conflicts_observe_instruction_budget_without_timer() -> anyhow::Result<()> {
+    for module in [
+        "package test\np := x if { some x in input }",
+        "package test\nf(items) := x if { some x in items }\np := f(input)",
+    ] {
+        let program = compile_rule(module);
+        let dag = || (0..12).fold(Value::Null, |v, _| Value::from(vec![v.clone(), v]));
+        for (mode, step) in [
+            (ExecutionMode::RunToCompletion, false),
+            (ExecutionMode::Suspendable, false),
+            (ExecutionMode::Suspendable, true),
+        ] {
+            for strict in [false, true] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_step_mode(step);
+                vm.set_strict_builtin_errors(strict);
+                vm.set_max_instructions(128);
+                vm.set_input(Value::from(vec![dag(), dag()]));
+                let mut result = vm.execute();
+                while result.is_ok()
+                    && matches!(vm.execution_state(), ExecutionState::Suspended { .. })
+                {
+                    result = vm.resume(None);
+                }
+                assert!(
+                    matches!(
+                        result,
+                        Err(VmError::InstructionLimitExceeded {
+                            limit: 128,
+                            executed: 128,
+                            ..
+                        })
+                    ),
+                    "{mode:?}, step={step}, strict={strict}"
+                );
+                vm.set_step_mode(false);
+                vm.set_input(Value::from(vec![Value::from(1)]));
+                assert_eq!(vm.execute()?, Value::from(1));
             }
         }
     }

@@ -70,8 +70,10 @@ instructions.
 
 Complete rules and functions use `GuardMode::RuleOutput` before overwriting
 their result register. Conflicting yields raise `VmError::RuleOutputConflict`
-in both strict modes. Recompile previously serialized policies to obtain these
-per-yield checks; existing guard discriminants are unchanged.
+in both strict modes. Output-comparison traversal checkpoints charge the
+instruction budget, even without an execution timer. New artifacts use format
+version 7; version-6 artifacts remain readable without recompilation. Recompile
+old policies to obtain per-yield checks; existing guard discriminants are unchanged.
 
 ---
 
