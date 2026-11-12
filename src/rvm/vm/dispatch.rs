@@ -750,13 +750,14 @@ impl RegoVM {
                 collection,
                 value,
             } => {
-                let result = if self.get_register(collection)? == &Value::Undefined
-                    || self.get_register(value)? == &Value::Undefined
-                {
-                    Value::Undefined
-                } else {
-                    Value::Bool(self.contains_registers(collection, value)?)
-                };
+                let collection_value = self.get_register(collection)?;
+                let value_value = self.get_register(value)?;
+                let result =
+                    if collection_value == &Value::Undefined || value_value == &Value::Undefined {
+                        Value::Undefined
+                    } else {
+                        Value::Bool(self.contains_registers(collection, value)?)
+                    };
 
                 self.set_register(dest, result)?;
                 Ok(InstructionOutcome::Continue)

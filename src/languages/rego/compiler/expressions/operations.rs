@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #![allow(clippy::pattern_type_mismatch)]
 
-use super::{Compiler, CompilerError, Register, Result};
+use super::{try_eval_const, Compiler, CompilerError, Register, Result};
 use crate::ast::{ArithOp, BinOp, BoolOp, ExprRef};
 use crate::lexer::Span;
 use crate::rvm::instructions::BuiltinCallParams;
@@ -193,7 +193,10 @@ impl<'a> Compiler<'a> {
             let is_object_reg = self.alloc_register()?;
             let mut branch_indices = Vec::new();
             // Preserve source Undefined without turning a missing lookup into Undefined.
-            for operand in [value_reg, collection_reg] {
+            for (operand, expr) in [(value_reg, value), (collection_reg, collection)] {
+                if try_eval_const(expr).is_some_and(|constant| constant != Value::Undefined) {
+                    continue;
+                }
                 self.emit_instruction(
                     Instruction::Eq {
                         dest,
@@ -261,30 +264,32 @@ impl<'a> Compiler<'a> {
             let saved_input_register = self.current_input_register;
             let saved_data_register = self.current_data_register;
             let key_reg = self.compile_rego_expr_with_span(key, key.span(), false)?;
-            self.emit_instruction(
-                Instruction::Eq {
-                    dest,
-                    left: key_reg,
-                    right: key_reg,
-                },
-                span,
-            );
-            self.emit_instruction(
-                Instruction::Not {
-                    dest: is_array_reg,
-                    operand: dest,
-                },
-                span,
-            );
-            branch_indices.push(self.program.instructions.len());
-            self.emit_instruction(
-                Instruction::AnyOfNext {
-                    check: is_array_reg,
-                    result: is_array_reg,
-                    end_pc: 0,
-                },
-                span,
-            );
+            if try_eval_const(key).is_none_or(|constant| constant == Value::Undefined) {
+                self.emit_instruction(
+                    Instruction::Eq {
+                        dest,
+                        left: key_reg,
+                        right: key_reg,
+                    },
+                    span,
+                );
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: is_array_reg,
+                        operand: dest,
+                    },
+                    span,
+                );
+                branch_indices.push(self.program.instructions.len());
+                self.emit_instruction(
+                    Instruction::AnyOfNext {
+                        check: is_array_reg,
+                        result: is_array_reg,
+                        end_pc: 0,
+                    },
+                    span,
+                );
+            }
             let indexed_reg = self.alloc_register()?;
             self.emit_instruction(
                 Instruction::Index {

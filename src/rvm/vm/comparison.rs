@@ -543,6 +543,29 @@ mod tests {
     }
 
     #[test]
+    fn membership_validates_both_registers() {
+        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+            for (collection, value) in [(0, u8::MAX), (u8::MAX, 0)] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program(Instruction::Contains {
+                    dest: 2,
+                    collection,
+                    value,
+                }));
+                vm.set_execution_mode(mode);
+                vm.set_input(Value::Undefined);
+                assert!(
+                    matches!(
+                        vm.execute(),
+                        Err(VmError::RegisterIndexOutOfBounds { index: u8::MAX, .. })
+                    ),
+                    "{mode:?} collection={collection} value={value}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn checked_membership_preserves_native_results() -> Result<()> {
         let _guard = acquire_limits_test_lock();
         let needle = Value::from(vec![Value::Null]);
