@@ -30,7 +30,7 @@ impl<'a> Compiler<'a> {
     /// Extract a compile-time constant `Value` from an optional expression.
     /// Returns `Some(Value::Bool(true))` for the implicit-true case (`expr_ref`
     /// is `None`), delegates to `try_eval_const` for actual expressions.
-    pub(super) fn static_value_of_expr(expr_ref: &Option<ExprRef>) -> Option<Value> {
+    fn static_value_of_expr(expr_ref: &Option<ExprRef>) -> Option<Value> {
         match expr_ref {
             None => Some(Value::Bool(true)),
             Some(expr) => super::expressions::try_eval_const(expr.as_ref()),

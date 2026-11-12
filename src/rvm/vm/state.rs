@@ -92,6 +92,9 @@ impl RegoVM {
             return self.fail_run_to_completion(error);
         }
         if self.active_memory_budget_config.is_none() {
+            self.execution_state = ExecutionState::Error {
+                error: error.clone(),
+            };
             return error;
         }
 
@@ -114,6 +117,9 @@ impl RegoVM {
         ) {
             return self.fail_run_to_completion(error);
         }
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
         error
     }
 

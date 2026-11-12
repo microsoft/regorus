@@ -14,7 +14,6 @@ use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::compiler::hoist::{HoistedLoop, LoopType};
 use crate::lexer::Span;
 use crate::rvm::instructions::{GuardMode, LoopMode, LoopStartParams};
-use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
 use crate::Value;
 use alloc::format;
@@ -22,18 +21,6 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
-    pub(super) fn rule_loop_mode(&self) -> LoopMode {
-        // A constant complete output needs only one witness, including in functions.
-        if self.context_stack.last().is_some_and(|context| {
-            matches!(context.context_type, ContextType::Rule(RuleType::Complete))
-                && Self::static_value_of_expr(&context.value_expr).is_some()
-        }) {
-            LoopMode::Any
-        } else {
-            LoopMode::ForEach
-        }
-    }
-
     pub(super) fn get_statement_loops(&self, stmt: &LiteralStmt) -> Result<Vec<HoistedLoop>> {
         let loops = self
             .policy
@@ -287,7 +274,7 @@ impl<'a> Compiler<'a> {
         }
 
         let loop_params_index = self.program.add_loop_params(LoopStartParams {
-            mode: self.rule_loop_mode(),
+            mode: LoopMode::ForEach,
             collection: collection_reg,
             key_reg,
             value_reg,
@@ -343,12 +330,11 @@ impl<'a> Compiler<'a> {
         // nothing the iteration must fail. The `every` body emits no context
         // yield, so the loop result register is otherwise discarded (same
         // situation as `some ... in`). Guard on it so a non-matching indexed
-        // reference fails the enclosing `every` iteration or existential witness.
+        // reference fails the enclosing `every` iteration.
         if matches!(
             self.context_stack.last().map(|c| &c.context_type),
             Some(ContextType::Every)
-        ) || matches!(self.rule_loop_mode(), LoopMode::Any)
-        {
+        ) {
             self.emit_instruction(
                 Instruction::Guard {
                     register: result_reg,
@@ -386,7 +372,7 @@ impl<'a> Compiler<'a> {
         let result_reg = self.alloc_register()?;
 
         let loop_params_index = self.program.add_loop_params(LoopStartParams {
-            mode: self.rule_loop_mode(),
+            mode: LoopMode::ForEach,
             collection: collection_reg,
             key_reg,
             value_reg,

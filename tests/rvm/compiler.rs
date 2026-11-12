@@ -321,6 +321,16 @@ fn rule_yield_conflicts_observe_instruction_budget_without_timer() -> anyhow::Re
                     ),
                     "{mode:?}, step={step}, strict={strict}"
                 );
+                assert!(matches!(
+                    vm.execution_state(),
+                    ExecutionState::Error {
+                        error: VmError::InstructionLimitExceeded {
+                            limit: 128,
+                            executed: 128,
+                            ..
+                        }
+                    }
+                ));
                 vm.set_step_mode(false);
                 vm.set_input(Value::from(vec![Value::from(1)]));
                 assert_eq!(vm.execute()?, Value::from(1));

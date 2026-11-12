@@ -140,15 +140,6 @@ impl RegoVM {
     }
 
     pub(super) fn jump_to(&mut self, target: u32) -> Result<Value> {
-        // Virtual-document lookups can enter native dispatch from a stackless frame.
-        let execution_mode = self.execution_mode;
-        self.execution_mode = ExecutionMode::RunToCompletion;
-        let result = self.jump_to_run_to_completion(target);
-        self.execution_mode = execution_mode;
-        result
-    }
-
-    fn jump_to_run_to_completion(&mut self, target: u32) -> Result<Value> {
         let program = self.program.clone();
         let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
