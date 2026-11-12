@@ -1,0 +1,52 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: virtual_function_strict_success
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &rules
+      - |
+        package bridge
+        parsed([value]) := time.parse_rfc3339_ns(value)
+        function := parsed([input.published])
+        comprehension := [parsed([value]) | some value in input.items]
+      - |
+        package consumer
+        virtual := data.bridge[input.key]
+        after := [virtual, data.bridge.parsed([input.after])]
+    input: {key: function, published: "1970-01-01T00:00:00Z"}
+    query: data.consumer.virtual
+    want_result: 0
+
+  - note: virtual_function_nonstrict_error
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {key: function, published: yesterday}
+    query: data.consumer.virtual
+    want_result: "#undefined"
+
+  - note: virtual_comprehension_strict_success
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {key: comprehension, items: ["1970-01-01T00:00:00Z", "1970-01-01T00:00:01Z"]}
+    query: data.consumer.virtual
+    want_result: [0, 1000000000]
+
+  - note: virtual_comprehension_nonstrict_error
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {key: comprehension, items: ["1970-01-01T00:00:00Z", yesterday]}
+    query: data.consumer.virtual
+    want_result: [0]
+
+  - note: caller_continues_after_virtual_lookup
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {key: function, published: "1970-01-01T00:00:00Z", after: "1970-01-01T00:00:01Z"}
+    query: data.consumer.after
+    want_result: [0, 1000000000]
