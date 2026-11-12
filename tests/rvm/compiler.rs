@@ -36,6 +36,77 @@ fn compile_rule_with_host_await(
     )?)
 }
 
+#[test]
+fn virtual_lookup_preserves_suspendable_host_decisions() -> anyhow::Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "caller.rego".to_string(),
+        "package test\np := data.target[input.key]".to_string(),
+    )?;
+    engine.add_policy(
+        "target.rego".to_string(),
+        "package target\nq := __builtin_host_await(input.token, \"auth\")".to_string(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.test.p"))?;
+    let program = Compiler::compile_from_policy(&compiled, &["data.test.p"])?;
+    assert!(program
+        .instructions
+        .iter()
+        .any(|instruction| matches!(instruction, Instruction::VirtualDataDocumentLookup { .. })));
+    for queued in [vec![], vec![Value::Bool(true)]] {
+        for (mode, step) in [
+            (ExecutionMode::RunToCompletion, false),
+            (ExecutionMode::Suspendable, false),
+            (ExecutionMode::Suspendable, true),
+        ] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_step_mode(step);
+            vm.set_host_await_responses([(Value::from("auth"), queued.clone())]);
+            vm.set_input(Value::from_json_str(
+                r#"{"key":"q","token":"fresh-request"}"#,
+            )?);
+            let mut result = vm.execute()?;
+            while matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended {
+                    reason: SuspendReason::Step,
+                    ..
+                }
+            ) {
+                result = vm.resume(None)?;
+            }
+            let expected = if mode == ExecutionMode::Suspendable {
+                assert!(
+                    matches!(
+                        vm.execution_state(),
+                        ExecutionState::Suspended {
+                            reason: SuspendReason::HostAwait { argument, identifier, .. },
+                            ..
+                        } if argument == &Value::from("fresh-request")
+                            && identifier == &Value::from("auth")
+                    ),
+                    "step={step}, queued={queued:?}, result={result:?}"
+                );
+                result = vm.resume(Some(Value::Bool(false)))?;
+                while matches!(vm.execution_state(), ExecutionState::Suspended { .. }) {
+                    result = vm.resume(None)?;
+                }
+                Value::Bool(false)
+            } else {
+                queued.first().cloned().unwrap_or(Value::Undefined)
+            };
+            assert_eq!(result, expected);
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Completed { result } if result == &expected
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Assert that the program's instruction stream contains no collection-create
 /// instructions (ArrayCreate, SetCreate, ObjectCreate), meaning the collections
 /// were hoisted into the literal table.

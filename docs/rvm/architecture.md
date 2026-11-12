@@ -205,7 +205,7 @@ Key state:
 - **Loop/comprehension stacks**: Track iteration state, completion criteria, and
   pending yields.
 - **Execution stack**: Present in suspendable mode. Stores `ExecutionFrame`
-  objects (`FrameKind::Rule`, `Loop`, `Comprehension`) so that the VM can pause
+  objects (`FrameKind::Rule`, `Loop`, `Comprehension`, `VirtualDataLookup`) so that the VM can pause
   and resume evaluation cleanly.
 - **Host await responses**: For run-to-completion execution, pre-defined values
   keyed by identifier. Suspendable mode instead returns a
@@ -236,7 +236,10 @@ The VM supports two execution styles selected via `set_execution_mode`.
   a main `ExecutionFrame` and dispatches instructions through
   `run_stackless_loop`.
 - Frames: Each instruction can adjust the currently active frame or push/pop
-  new frames (rule calls, loops, comprehensions).
+  new frames (rule calls, loops, comprehensions, virtual-document lookups).
+- Virtual lookups: Rule evaluation stays on explicit frames, including host
+  awaits. These frames do not consume queued run-to-completion responses or
+  depend on the native rule-call depth limit.
 - Suspension: `InstructionOutcome::Suspend` transitions the VM into
   `ExecutionState::Suspended` with a `SuspendReason` (host await, breakpoint,
   single-step). The host must call `resume` with an optional value to continue.
