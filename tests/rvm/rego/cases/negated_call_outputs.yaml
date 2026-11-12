@@ -47,3 +47,80 @@ cases:
     strict_builtin_errors: true
     query: data.test.main
     want_result: *results
+
+  - note: negated_call_composite_outputs
+    data: {}
+    input: {}
+    modules: &composite_policy
+      - |
+        package test
+
+        identity(x) := x
+
+        default allow := false
+        allow if { not count(input.missing, [input.expected]) }
+
+        undefined_object if { not count(input.missing, {"x": input.expected}) }
+        defined_actual if { not count([], [input.expected]) }
+        defined_expected if { not count(input.missing, [0]) }
+        wrong_length if { not split("a,b", ",", ["a"]) }
+        wrong_type if { not count([], []) }
+        nested_mismatch if { not identity([[1]], [[2]]) }
+        missing_field if { not identity({"a": 1}, {"b": 1}) }
+        extra_field if { not identity({"a": 1, "b": 2}, {"a": 1}) }
+        dynamic_key if { not identity({"a": 1}, {input.missing: 1}) }
+        undefined_prefix if { not identity(1, [input.missing, count(1)]) }
+        undefined_key if { not identity(1, {input.missing: count(1)}) }
+        negative_match if { not identity([0 - 5], [- 5]) }
+        typed_match if { not identity({7: {"a"}}, {7: {"a"}}) }
+        source_order_match if { not identity({"a": 2}, {lower("A"): 1, "a": 2}) }
+        array_match if { not split("a,b", ",", ["a", "b"]) }
+        object_match if { not identity({"a": [false, null]}, {"a": [false, null]}) }
+
+        main := {
+          "allow": allow,
+          "undefined_object": undefined_object,
+          "defined_actual": defined_actual,
+          "defined_expected": defined_expected,
+          "wrong_length": wrong_length,
+          "wrong_type": wrong_type,
+          "nested_mismatch": nested_mismatch,
+          "missing_field": missing_field,
+          "extra_field": extra_field,
+          "dynamic_key": dynamic_key,
+          "undefined_prefix": undefined_prefix,
+          "undefined_key": undefined_key,
+          "negative_match": [true | negative_match],
+          "typed_match": [true | typed_match],
+          "source_order_match": [true | source_order_match],
+          "array_match": [true | array_match],
+          "object_match": [true | object_match],
+        }
+    query: data.test.main
+    want_result: &composite_result
+      allow: true
+      undefined_object: true
+      defined_actual: true
+      defined_expected: true
+      wrong_length: true
+      wrong_type: true
+      nested_mismatch: true
+      missing_field: true
+      extra_field: true
+      dynamic_key: true
+      undefined_prefix: true
+      undefined_key: true
+      negative_match: []
+      typed_match: []
+      source_order_match: []
+      array_match: []
+      object_match: []
+
+  - note: negated_call_composite_outputs_suspendable
+    data: {}
+    input: {}
+    modules: *composite_policy
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    query: data.test.main
+    want_result: *composite_result

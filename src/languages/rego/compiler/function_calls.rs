@@ -10,11 +10,13 @@
 )]
 
 use super::{Compiler, CompilerError, Register, Result};
-use crate::ast::ExprRef;
+use crate::ast::{Expr, ExprRef};
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{ArrayCreateParams, BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::{
+    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, ObjectCreateParams, SetCreateParams,
+};
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
@@ -340,19 +342,47 @@ impl<'a> Compiler<'a> {
         let saved_input_register = self.current_input_register;
         let saved_data_register = self.current_data_register;
         if let Some((plan, plan_span)) = &out_param_plan {
-            let plan_result = self
-                .apply_binding_plan(plan, dest, plan_span)
-                .map_err(|err| CompilerError::from(err).at(plan_span))?;
-            if let Some(result_reg) = plan_result {
+            let expected_expr = match plan {
+                BindingPlan::Parameter {
+                    param_expr,
+                    destructuring_plan,
+                } if self.soft_assert_mode
+                    && !destructuring_plan.introduces_binding()
+                    && matches!(
+                        param_expr.as_ref(),
+                        Expr::Array { .. } | Expr::Object { .. }
+                    ) =>
+                {
+                    Some(param_expr)
+                }
+                _ => None,
+            };
+            if let Some(expected_expr) = expected_expr {
+                // Negated calls compare values; destructuring guards would bypass Not.
+                let expected_reg = self.compile_negated_output_value(expected_expr)?;
                 self.emit_instruction(
-                    Instruction::Move {
+                    Instruction::Eq {
                         dest,
-                        src: result_reg,
+                        left: dest,
+                        right: expected_reg,
                     },
                     &span,
                 );
             } else {
-                self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                let plan_result = self
+                    .apply_binding_plan(plan, dest, plan_span)
+                    .map_err(|err| CompilerError::from(err).at(plan_span))?;
+                if let Some(result_reg) = plan_result {
+                    self.emit_instruction(
+                        Instruction::Move {
+                            dest,
+                            src: result_reg,
+                        },
+                        &span,
+                    );
+                } else {
+                    self.emit_instruction(Instruction::LoadBool { dest, value: true }, &span);
+                }
             }
         }
 
@@ -395,6 +425,136 @@ impl<'a> Compiler<'a> {
         }
 
         Ok(dest)
+    }
+
+    fn compile_negated_output_value(&mut self, expr: &ExprRef) -> Result<Register> {
+        let roots = (self.current_input_register, self.current_data_register);
+        let dest = self.alloc_register()?;
+        let predicate = self.alloc_register()?;
+        let mut failures = Vec::new();
+        self.compile_negated_output_value_inner(expr, dest, predicate, &mut failures)?;
+
+        let end_pc = self
+            .program
+            .instructions
+            .len()
+            .checked_sub(1)
+            .and_then(|pc| u16::try_from(pc).ok())
+            .ok_or_else(|| CompilerError::General {
+                message: "negated output branch target exceeds the RVM instruction limit"
+                    .to_string(),
+            })?;
+        for branch in failures {
+            match self.program.instructions.get_mut(branch) {
+                Some(Instruction::AnyOfNext {
+                    end_pc: branch_end_pc,
+                    ..
+                }) => *branch_end_pc = end_pc,
+                _ => {
+                    return Err(CompilerError::General {
+                        message: "negated output branch instruction is missing or invalid"
+                            .to_string(),
+                    }
+                    .into());
+                }
+            }
+        }
+        (self.current_input_register, self.current_data_register) = roots;
+        Ok(dest)
+    }
+
+    fn compile_negated_output_value_inner(
+        &mut self,
+        expr: &ExprRef,
+        result: Register,
+        predicate: Register,
+        failures: &mut Vec<usize>,
+    ) -> Result<Register> {
+        expr.check_depth()
+            .map_err(|error| CompilerError::from(error).at(expr.span()))?;
+        let value = match expr.as_ref() {
+            Expr::Array { items, .. } | Expr::Set { items, .. } => {
+                let mut elements = Vec::with_capacity(items.len());
+                for item in items {
+                    elements.push(
+                        self.compile_negated_output_value_inner(item, result, predicate, failures)?,
+                    );
+                }
+                let dest = self.alloc_register()?;
+                let instruction = if matches!(expr.as_ref(), Expr::Array { .. }) {
+                    let params_index = self
+                        .program
+                        .instruction_data
+                        .add_array_create_params(ArrayCreateParams { dest, elements });
+                    Instruction::ArrayCreate { params_index }
+                } else {
+                    let params_index = self
+                        .program
+                        .instruction_data
+                        .add_set_create_params(SetCreateParams { dest, elements });
+                    Instruction::SetCreate { params_index }
+                };
+                self.emit_instruction(instruction, expr.span());
+                dest
+            }
+            Expr::Object { fields, .. } => {
+                let mut registers = Vec::with_capacity(fields.len());
+                for (_, key, value) in fields {
+                    let key =
+                        self.compile_negated_output_value_inner(key, result, predicate, failures)?;
+                    let value = self
+                        .compile_negated_output_value_inner(value, result, predicate, failures)?;
+                    registers.push((key, value));
+                }
+                let dest = self.alloc_register()?;
+                let template_literal_idx = self.add_literal(Value::new_object());
+                let params_index =
+                    self.program
+                        .instruction_data
+                        .add_object_create_params(ObjectCreateParams {
+                            dest,
+                            template_literal_idx,
+                            literal_key_fields: Vec::new(),
+                            fields: registers,
+                        });
+                self.emit_instruction(Instruction::ObjectCreate { params_index }, expr.span());
+                dest
+            }
+            _ => self.compile_rego_expr_with_span(expr, expr.span(), false)?,
+        };
+        // Stop at the first undefined child, as interpreter collection evaluation does.
+        self.emit_instruction(
+            Instruction::Move {
+                dest: result,
+                src: value,
+            },
+            expr.span(),
+        );
+        self.emit_instruction(
+            Instruction::Eq {
+                dest: predicate,
+                left: value,
+                right: value,
+            },
+            expr.span(),
+        );
+        self.emit_instruction(
+            Instruction::Not {
+                dest: predicate,
+                operand: predicate,
+            },
+            expr.span(),
+        );
+        failures.push(self.program.instructions.len());
+        self.emit_instruction(
+            Instruction::AnyOfNext {
+                check: predicate,
+                result: predicate,
+                end_pc: 0,
+            },
+            expr.span(),
+        );
+        Ok(value)
     }
 
     /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to
