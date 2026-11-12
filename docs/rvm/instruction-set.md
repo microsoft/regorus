@@ -173,6 +173,9 @@ Parameter tables:
 - `BuiltinCallParams` / `FunctionCallParams` store destination register, index
   into builtin table / rule index, argument count and up to eight argument
   register numbers.
+- `FunctionCall` returns undefined without invoking the function if any input
+  argument is undefined. Defined values such as `false` and `null` remain valid
+  arguments.
 - The VM dynamically resizes registers when a callee requires a larger window
   using program metadata (`max_rule_window_size`).
 
