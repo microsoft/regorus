@@ -22,7 +22,7 @@ mod every_binding_differential;
 #[path = "../../native_depth_support/mod.rs"]
 mod native_depth_support;
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct TestCase {
     pub data: Option<Value>,
     pub input: Option<ValueOrVec>,
@@ -81,6 +81,7 @@ type HostAwaitResponseMap = BTreeMap<Value, VecDeque<(Option<Value>, Value)>>;
 #[derive(Debug, Clone)]
 struct RvmExecutionOptions {
     execution_mode: ExecutionMode,
+    step_mode: bool,
     strict_builtin_errors: bool,
     host_await_responses_run_to_completion: Option<Vec<(Value, Vec<Value>)>>,
     host_await_responses_suspendable: Option<HostAwaitResponseMap>,
@@ -91,6 +92,7 @@ impl Default for RvmExecutionOptions {
     fn default() -> Self {
         Self {
             execution_mode: ExecutionMode::RunToCompletion,
+            step_mode: false,
             strict_builtin_errors: false,
             host_await_responses_run_to_completion: None,
             host_await_responses_suspendable: None,
@@ -144,7 +146,7 @@ fn build_host_await_response_vec(
 fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOptions> {
     let execution_mode = match case.execution_mode.as_deref() {
         None | Some("run-to-completion") => ExecutionMode::RunToCompletion,
-        Some("suspendable") => ExecutionMode::Suspendable,
+        Some("suspendable" | "step") => ExecutionMode::Suspendable,
         Some(other) => {
             return Err(anyhow::anyhow!("unsupported execution_mode: {other}"));
         }
@@ -181,6 +183,7 @@ fn build_execution_options(case: &TestCase) -> anyhow::Result<RvmExecutionOption
 
     Ok(RvmExecutionOptions {
         execution_mode,
+        step_mode: case.execution_mode.as_deref() == Some("step"),
         strict_builtin_errors: case.strict_builtin_errors.unwrap_or(false),
         host_await_responses_run_to_completion: rtc_responses,
         host_await_responses_suspendable: suspendable_responses,
@@ -298,6 +301,7 @@ fn compile_and_run_rvm_with_all_entry_points(
 
     let mut vm = RegoVM::new();
     vm.set_strict_builtin_errors(execution_options.strict_builtin_errors);
+    vm.set_step_mode(execution_options.step_mode);
     vm.load_program(program);
     vm.set_data(data.clone())?;
     vm.set_input(input.clone());
@@ -366,6 +370,9 @@ fn compile_and_run_rvm_with_all_entry_points(
                             }
                             vm.resume(Some(response))?;
                         }
+                        SuspendReason::Step if execution_options.step_mode => {
+                            vm.resume(None)?;
+                        }
                         other => {
                             return Err(anyhow::anyhow!(
                                 "Unexpected suspension reason: {:?}",
@@ -407,7 +414,22 @@ fn yaml_test_impl(file: &str) -> Result<()> {
     let mut executed_count = 0usize;
     let mut skipped_count = 0usize;
 
-    for case in test.cases {
+    let cases = test.cases.into_iter().flat_map(|case| {
+        if case.execution_mode.as_deref() == Some("all") {
+            ["run-to-completion", "suspendable", "step"]
+                .into_iter()
+                .map(|mode| {
+                    let mut case = case.clone();
+                    case.execution_mode = Some(mode.to_string());
+                    case.note = format!("{} ({mode})", case.note);
+                    case
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![case]
+        }
+    });
+    for case in cases {
         let mut last_listing: Option<String> = None;
         if !should_run_test_case(&case.note) {
             println!("case {} filtered out", case.note);
@@ -426,6 +448,9 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         executed_count += 1;
 
         let mut engine = Engine::new();
+        if let Some(strict) = case.strict_builtin_errors {
+            engine.set_strict_builtin_errors(strict);
+        }
         engine.set_rego_v0(case.rego_v0 == Some(true));
         for (idx, module) in case.modules.iter().enumerate() {
             engine.add_policy(format!("rego_{idx}"), module.clone())?;
@@ -846,6 +871,79 @@ fn yaml_test_impl(file: &str) -> Result<()> {
         file, executed_count, skipped_count
     );
 
+    Ok(())
+}
+
+#[test]
+fn strict_rule_errors_leave_vm_reusable() -> Result<()> {
+    let entrypoint = "data.recovery.result";
+    let mut engine = Engine::new();
+    engine.set_strict_builtin_errors(true);
+    engine.add_policy(
+        "recovery.rego".into(),
+        r#"
+        package recovery
+        parsed([value]) := time.parse_rfc3339_ns(value)
+        default result := ["fallback"]
+        result := [parsed([value]) | some value in input.values]
+        "#
+        .into(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&entrypoint.into())?;
+    let program = Compiler::compile_from_policy(&compiled, &[entrypoint])?;
+
+    for (mode, step) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_step_mode(step);
+        vm.set_strict_builtin_errors(true);
+
+        for values in [
+            r#"["1970-01-01T00:00:00Z", "yesterday"]"#,
+            r#"["1970-01-01T00:00:00Z"]"#,
+            r#"["yesterday"]"#,
+            r#"["1970-01-01T00:00:00Z"]"#,
+        ] {
+            let input = Value::from_json_str(&format!(r#"{{"values":{values}}}"#))?;
+            engine.set_input(input.clone());
+            let expected = engine.eval_rule(entrypoint.into());
+            vm.set_input(input);
+            let mut actual = vm.execute_entry_point_by_name(entrypoint);
+            while actual.is_ok()
+                && matches!(
+                    vm.execution_state(),
+                    ExecutionState::Suspended {
+                        reason: SuspendReason::Step,
+                        ..
+                    }
+                )
+            {
+                actual = vm.resume(None);
+            }
+            match expected {
+                Ok(value) => assert_eq!(actual?, value, "{mode:?}, step={step}"),
+                Err(_) => {
+                    let error = actual.unwrap_err();
+                    assert!(
+                        error.to_string().contains("Failed to parse datetime"),
+                        "{error}"
+                    );
+                    assert!(matches!(vm.execution_state(), ExecutionState::Error { .. }));
+                    if mode == ExecutionMode::Suspendable {
+                        assert!(matches!(
+                            vm.resume(None),
+                            Err(VmError::InvalidResumeState { .. })
+                        ));
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
