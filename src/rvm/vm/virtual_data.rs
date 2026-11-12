@@ -42,11 +42,12 @@ impl RegoVM {
         Ok(result_subobject)
     }
 
-    fn set_nested_value(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
-        Self::set_nested_value_static(target, path, value)
-    }
-
-    fn set_nested_value_static(target: &mut Value, path: &[Value], value: Value) -> Result<()> {
+    fn set_nested_value(
+        target: &mut Value,
+        path: &[Value],
+        value: Value,
+        insert_undefined: bool,
+    ) -> Result<()> {
         let Some((head, tail)) = path.split_first() else {
             *target = value;
             return Ok(());
@@ -57,12 +58,15 @@ impl RegoVM {
         }
 
         if let Value::Object(ref mut map) = *target {
+            if !insert_undefined && tail.is_empty() && value == Value::Undefined {
+                return Ok(());
+            }
             if !map.contains_key(head) {
                 crate::Rc::make_mut(map).insert(head.clone(), Value::Undefined);
             }
 
             if let Some(next_target) = crate::Rc::make_mut(map).get_mut(head) {
-                Self::set_nested_value_static(next_target, tail, value)?;
+                Self::set_nested_value(next_target, tail, value, insert_undefined)?;
             }
         } else {
             return Err(VmError::InvalidRuleTreeEntry {
@@ -164,16 +168,22 @@ impl RegoVM {
                                 cache_path.extend_from_slice(root_path);
                                 cache_path.extend_from_slice(&relative_path);
                                 cache_path.push(Value::Undefined);
-                                Self::set_nested_value_static(
+                                Self::set_nested_value(
                                     &mut self.evaluated,
                                     &cache_path,
                                     result.clone(),
+                                    true,
                                 )?;
 
                                 result
                             };
 
-                            Self::set_nested_value(result_subobject, &relative_path, rule_result)?;
+                            Self::set_nested_value(
+                                result_subobject,
+                                &relative_path,
+                                rule_result,
+                                false,
+                            )?;
                         } else {
                             return Err(VmError::InvalidRuleIndex {
                                 rule_index: Value::Number(rule_idx.clone()),

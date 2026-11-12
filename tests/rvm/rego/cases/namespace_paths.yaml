@@ -240,3 +240,69 @@ cases:
     entry_points:
       - data.graph["version"].value
     want_result: 7
+
+  - note: undefined namespace child is not counted rtc
+    modules: &undefined_child_count
+      - |
+        package lib
+        missing := input.missing
+      - |
+        package consumer
+        result := count(object.keys(data.lib))
+    query: data.consumer.result
+    want_result: 0
+
+  - note: undefined namespace child is not counted suspendable
+    execution_mode: suspendable
+    modules: *undefined_child_count
+    query: data.consumer.result
+    want_result: 0
+
+  - note: namespace omission preserves defined children and cached reads rtc
+    modules: &undefined_children
+      - |
+        package lib
+        missing := input.missing
+        false_value := false
+        null_value := null
+      - |
+        package lib.nested
+        missing := input.missing
+      - |
+        package consumer
+        result := [data.lib, data.lib]
+    query: data.consumer.result
+    want_result: &defined_children
+      - &defined_child_object
+        false_value: false
+        null_value: null
+        nested: {}
+      - *defined_child_object
+
+  - note: namespace omission preserves defined children and cached reads suspendable
+    execution_mode: suspendable
+    modules: *undefined_children
+    query: data.consumer.result
+    want_result: *defined_children
+
+  - note: namespace omission preserves base data rtc
+    modules: *undefined_children
+    data: &namespace_base_data
+      lib:
+        base: 7
+        nested: {base: 8}
+    query: data.consumer.result
+    want_result: &namespace_with_base_data
+      - &namespace_base_object
+        base: 7
+        false_value: false
+        null_value: null
+        nested: {base: 8}
+      - *namespace_base_object
+
+  - note: namespace omission preserves base data suspendable
+    execution_mode: suspendable
+    modules: *undefined_children
+    data: *namespace_base_data
+    query: data.consumer.result
+    want_result: *namespace_with_base_data
