@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn checked_comparisons_keep_undefined_and_strict_type_errors() -> Result<()> {
+    fn comparisons_keep_undefined_and_cross_type_ordering_in_strict_mode() -> Result<()> {
         let _guard = acquire_limits_test_lock();
         for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
             for (instruction, _) in comparisons() {
@@ -677,26 +677,51 @@ mod tests {
                     continue;
                 }
                 for strict in [false, true] {
-                    let mut vm = RegoVM::new();
-                    vm.load_program(program(instruction));
-                    vm.set_execution_mode(mode);
-                    vm.set_strict_builtin_errors(strict);
-                    vm.set_execution_timer_config(Some(timer(Duration::from_secs(60))));
-                    vm.set_input(Value::Undefined);
-                    vm.set_data(Value::Null)?;
-                    assert_eq!(vm.execute()?, Value::Undefined);
+                    for timed in [false, true] {
+                        let mut vm = RegoVM::new();
+                        vm.load_program(program(instruction));
+                        vm.set_execution_mode(mode);
+                        vm.set_strict_builtin_errors(strict);
+                        vm.set_execution_timer_config(
+                            timed.then(|| timer(Duration::from_secs(60))),
+                        );
+                        for (left, right) in [
+                            (Value::Undefined, Value::Null),
+                            (Value::Null, Value::Undefined),
+                        ] {
+                            vm.set_input(left);
+                            vm.set_data(right)?;
+                            assert_eq!(vm.execute()?, Value::Undefined);
+                        }
 
-                    vm.set_input(Value::Bool(true));
-                    let result = vm.execute();
-                    if strict
-                        && !matches!(instruction, Instruction::Eq { .. } | Instruction::Ne { .. })
-                    {
-                        assert!(matches!(
-                            result,
-                            Err(VmError::ArithmeticError { pc: 2, .. })
-                        ));
-                    } else {
-                        assert!(matches!(result?, Value::Bool(_)));
+                        for (lower, higher) in [
+                            (Value::Null, Value::Bool(false)),
+                            (Value::Bool(true), Value::from(0)),
+                            (Value::from(1), Value::from("text")),
+                            (Value::from("text"), Value::new_array()),
+                            (Value::new_array(), Value::new_object()),
+                            (Value::new_array(), Value::new_set()),
+                        ] {
+                            for (left, right, less) in [
+                                (lower.clone(), higher.clone(), true),
+                                (higher, lower, false),
+                            ] {
+                                let expected = match instruction {
+                                    Instruction::Eq { .. } => false,
+                                    Instruction::Ne { .. } => true,
+                                    Instruction::Lt { .. } | Instruction::Le { .. } => less,
+                                    Instruction::Gt { .. } | Instruction::Ge { .. } => !less,
+                                    _ => continue,
+                                };
+                                vm.set_input(left);
+                                vm.set_data(right)?;
+                                assert_eq!(
+                                    vm.execute()?,
+                                    Value::Bool(expected),
+                                    "{mode:?}, strict={strict}, timed={timed}: {instruction:?}"
+                                );
+                            }
+                        }
                     }
                 }
             }

@@ -49,6 +49,46 @@ cases:
     query: data.test.main
     want_result: true
 
+  - note: strict_mixed_type_comparisons
+    data: {}
+    input: {left: 1, right: text}
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+
+        main := [
+          input.left < input.right,
+          input.left <= input.right,
+          input.left > input.right,
+          input.left >= input.right,
+          input.right < input.left,
+          input.right <= input.left,
+          input.right > input.left,
+          input.right >= input.left,
+        ]
+    query: data.test.main
+    want_result: [true, true, false, false, false, false, true, true]
+
+  - note: strict_mixed_type_comparisons_suspendable
+    data: {}
+    input: {value: false}
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+
+        main := [
+          null < input.value,
+          input.value < 0,
+          "text" < [input.value],
+          [input.value] < {"k": input.value},
+          [input.value] < {input.value},
+        ]
+    query: data.test.main
+    want_result: [true, true, true, true, true]
+
   - note: equality_literal_failure
     data: {}
     modules:

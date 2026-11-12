@@ -359,19 +359,19 @@ fn vm_walks() {
             assert_eq!(vm.execute().unwrap(), Value::Bool(true));
         }
 
-        vm.load_program(program(Instruction::Lt {
+        vm.load_program(program(Instruction::And {
             dest: 2,
             left: 0,
             right: 1,
         }));
         vm.set_input(nested(8192, Value::Null, 0));
-        vm.set_data(Value::from(1)).unwrap();
+        vm.set_data(Value::Bool(true)).unwrap();
         vm.set_strict_builtin_errors(true);
         vm.set_execution_timer_config(None);
         let error = vm.execute().unwrap_err().to_string();
-        assert!(error.contains("left=Array(len=1), right=Number"), "{error}");
+        assert!(error.contains("left=Array(len=1), right=Bool"), "{error}");
         assert!(error.len() < 256);
-        vm.set_input(Value::from(0));
+        vm.set_input(Value::Bool(true));
         assert_eq!(vm.execute().unwrap(), Value::Bool(true));
 
         let mut echo = Program::new();
