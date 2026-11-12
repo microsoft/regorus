@@ -2,6 +2,21 @@
 # Licensed under the MIT License.
 
 cases:
+  # OPA Playground returns false here; Regorus propagates the undefined comparison
+  # through the call before applying negation, matching RVM.
+  - note: negated-call-undefined-output-OPA-INCOMPATIBLE
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        default allow := false
+        allow if { not count(input.missing, input.expected) }
+    query: data.test.allow
+    want_result: true
+
   - note: not-false
     data: {}
     modules:

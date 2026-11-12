@@ -3209,6 +3209,9 @@ impl Interpreter {
                 }
             } else {
                 let expected = self.eval_expr(last_param)?;
+                if value == Value::Undefined || expected == Value::Undefined {
+                    return Ok(Value::Undefined);
+                }
                 Ok(Value::Bool(value == expected))
             }
         } else {

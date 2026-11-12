@@ -103,6 +103,47 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
 }
 
 #[test]
+fn negated_composite_output_preserves_undefined_after_round_trip() {
+    let module = r#"
+        package test
+        identity(x) := x
+        default p := false
+        p if { not identity(input.actual, [input.expected]) }
+    "#;
+    let program = compile_rule(module);
+    let json = program.serialize_json().expect("failed to serialize JSON");
+    let json_program =
+        std::sync::Arc::new(Program::deserialize_json(&json).expect("failed to deserialize JSON"));
+    let binary = program
+        .serialize_binary()
+        .expect("failed to serialize binary");
+    let binary_program =
+        match Program::deserialize_binary(&binary).expect("failed to deserialize binary") {
+            DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+            DeserializationResult::Partial(_) => panic!("expected a complete program"),
+        };
+
+    for (input, expected) in [
+        (r#"{"actual":"<undefined>"}"#, true),
+        (r#"{"actual":[0],"expected":0}"#, false),
+        (r#"{"actual":[0]}"#, true),
+    ] {
+        let expected = Value::Bool(expected);
+        assert_eq!(run_interpreter_policy(module, input).unwrap(), expected);
+        for program in [&program, &json_program, &binary_program] {
+            for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_strict_builtin_errors(true);
+                vm.set_input(Value::from_json_str(input).unwrap());
+                assert_eq!(vm.execute().unwrap(), expected, "{input}, {mode:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     let module = r#"
         package test
