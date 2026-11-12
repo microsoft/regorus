@@ -14,7 +14,9 @@ use crate::ast::ExprRef;
 use crate::builtins;
 use crate::compiler::destructuring_planner::plans::BindingPlan;
 use crate::lexer::Span;
-use crate::rvm::instructions::{ArrayCreateParams, BuiltinCallParams, FunctionCallParams};
+use crate::rvm::instructions::{
+    ArrayCreateParams, BuiltinCallParams, FunctionCallParams, GuardMode,
+};
 use crate::rvm::Instruction;
 use crate::utils::{append_path_component, get_path_string, split_canonical_path_root};
 use crate::value::Value;
@@ -340,6 +342,15 @@ impl<'a> Compiler<'a> {
         let saved_input_register = self.current_input_register;
         let saved_data_register = self.current_data_register;
         if let Some((plan, plan_span)) = &out_param_plan {
+            if !self.soft_assert_mode {
+                self.emit_instruction(
+                    Instruction::Guard {
+                        register: dest,
+                        mode: GuardMode::NotUndefined,
+                    },
+                    &span,
+                );
+            }
             let plan_result = self
                 .apply_binding_plan(plan, dest, plan_span)
                 .map_err(|err| CompilerError::from(err).at(plan_span))?;

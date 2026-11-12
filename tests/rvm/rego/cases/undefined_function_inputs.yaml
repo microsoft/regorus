@@ -1,0 +1,120 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: undefined_function_input
+    data: {}
+    input: {}
+    modules: &undefined_input
+      - |
+        package test
+        f(_) := true
+        main := f(input.missing)
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_input_suspendable
+    data: {}
+    input: {}
+    modules: *undefined_input
+    execution_mode: suspendable
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_inputs_preserve_defined_values_and_negation
+    data: {}
+    input: {}
+    modules: &input_boundaries
+      - |
+        package test
+        f(_) := true
+        identity(x) := x
+        pair(_, _) := true
+        constant() := true
+        main if {
+          not f(input.missing)
+          not pair(input.missing, 1)
+          not pair(1, input.missing)
+          f(false)
+          f(null)
+          f(0)
+          f("")
+          f([])
+          f({})
+          f(set())
+          constant()
+          f(false, _)
+          identity(false, false_result)
+          false_result == false
+          identity(null, null_result)
+          null_result == null
+          [f(item.value) | some item in [{}, {"value": false}, {}, {"value": null}]] == [true, true]
+        }
+    query: data.test.main
+    want_result: true
+
+  - note: undefined_function_input_ignored_output
+    data: {}
+    input: {}
+    modules: &ignored_output
+      - |
+        package test
+        f(_) := true
+        main if { f(input.missing, _) }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_input_ignored_output_suspendable
+    data: {}
+    input: {}
+    modules: *ignored_output
+    execution_mode: suspendable
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_input_named_output
+    data: {}
+    input: {}
+    modules: &named_output
+      - |
+        package test
+        f(_) := true
+        main if { f(input.missing, unused) }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_input_named_output_suspendable
+    data: {}
+    input: {}
+    modules: *named_output
+    execution_mode: suspendable
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_result_ignored_output
+    data: {}
+    input: {}
+    modules: &undefined_result
+      - |
+        package test
+        f(_) := input.missing
+        main if { f(1, _) }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_result_ignored_output_suspendable
+    data: {}
+    input: {}
+    modules: *undefined_result
+    execution_mode: suspendable
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: undefined_function_inputs_preserve_defined_values_and_negation_suspendable
+    data: {}
+    input: {}
+    modules: *input_boundaries
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    query: data.test.main
+    want_result: true

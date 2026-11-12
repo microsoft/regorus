@@ -6,6 +6,25 @@
 # across variable bindings, equality checks, scheduler ordering, and literals.
 
 cases:
+  - note: builtin_out_param_undefined_input_ignored_output
+    data: {}
+    input: {}
+    modules: &undefined_input_ignored_output
+      - |
+        package test
+
+        main if { count(input.missing, _) }
+    query: data.test.main
+    want_result: "#undefined"
+
+  - note: builtin_out_param_undefined_input_ignored_output_suspendable
+    data: {}
+    input: {}
+    modules: *undefined_input_ignored_output
+    execution_mode: suspendable
+    query: data.test.main
+    want_result: "#undefined"
+
   - note: builtin_out_param_simple_binding
     data: {}
     modules:
