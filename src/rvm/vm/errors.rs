@@ -2,14 +2,17 @@
 // Licensed under the MIT License.
 
 use super::execution_model::SuspendReason;
-use crate::value::Value;
+use crate::utils::diagnostic::bounded;
+use crate::value::DiagnosticValue;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::time::Duration;
 use thiserror::Error;
 
-/// VM execution errors
-#[derive(Error, Debug, Clone, PartialEq)]
+/// VM execution errors.
+///
+/// Display and Debug summarize payloads; [`DiagnosticValue`] fields retain their original data.
+#[derive(Error, Clone, PartialEq)]
 pub enum VmError {
     #[error("Rule call depth exceeded limit {limit} (pc={pc})")]
     RuleCallDepthExceeded { limit: usize, pc: usize },
@@ -51,24 +54,27 @@ pub enum VmError {
     #[error("Register {register} does not contain an object (value={value:?}, pc={pc})")]
     RegisterNotObject {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
     #[error("ObjectCreate: template is not an object (pc={pc}, template={template:?})")]
-    ObjectCreateInvalidTemplate { template: Value, pc: usize },
+    ObjectCreateInvalidTemplate {
+        template: DiagnosticValue,
+        pc: usize,
+    },
 
     #[error("Register {register} does not contain an array (value={value:?}, pc={pc})")]
     RegisterNotArray {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Register {register} does not contain a set (value={value:?}, pc={pc})")]
     RegisterNotSet {
         register: u8,
-        value: Value,
+        value: DiagnosticValue,
         pc: usize,
     },
 
@@ -150,10 +156,13 @@ pub enum VmError {
     },
 
     #[error("Invalid rule index: {rule_index:?} (pc={pc})")]
-    InvalidRuleIndex { rule_index: Value, pc: usize },
+    InvalidRuleIndex {
+        rule_index: DiagnosticValue,
+        pc: usize,
+    },
 
     #[error("Invalid rule tree entry: {value:?} (pc={pc})")]
-    InvalidRuleTreeEntry { value: Value, pc: usize },
+    InvalidRuleTreeEntry { value: DiagnosticValue, pc: usize },
 
     #[error("Builtin function expects exactly {expected} arguments, got {actual} (pc={pc})")]
     BuiltinArgumentMismatch {
@@ -162,68 +171,68 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Builtin function not resolved: {name} (pc={pc})")]
+    #[error("Builtin function not resolved: {} (pc={pc})", bounded(format_args!("{name}")))]
     BuiltinNotResolved { name: String, pc: usize },
 
     #[error("Cannot add {left:?} and {right:?} (pc={pc})")]
     InvalidAddition {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Cannot subtract {left:?} and {right:?} (pc={pc})")]
     InvalidSubtraction {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Cannot multiply {left:?} and {right:?} (pc={pc})")]
     InvalidMultiplication {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Cannot divide {left:?} and {right:?} (pc={pc})")]
     InvalidDivision {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("modulo on floating-point number (left={left:?}, right={right:?}, pc={pc})")]
     ModuloOnFloat {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Cannot modulo {left:?} and {right:?} (pc={pc})")]
     InvalidModulo {
-        left: Value,
-        right: Value,
+        left: DiagnosticValue,
+        right: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Cannot iterate over {value:?} (pc={pc})")]
-    InvalidIteration { value: Value, pc: usize },
+    InvalidIteration { value: DiagnosticValue, pc: usize },
 
     #[error("HostAwait executed but no response provided for destination register {dest} (id: {identifier:?}, pc={pc})")]
     HostAwaitResponseMissing {
         dest: u8,
-        identifier: Value,
+        identifier: DiagnosticValue,
         pc: usize,
     },
 
     #[error("Assertion failed (pc={pc})")]
     AssertionFailed { pc: usize },
 
-    #[error("Rule-data conflict: {message} (pc={pc})")]
+    #[error("Rule-data conflict: {} (pc={pc})", bounded(format_args!("{message}")))]
     RuleDataConflict { message: String, pc: usize },
 
-    #[error("Arithmetic error: {message} (pc={pc})")]
+    #[error("Arithmetic error: {} (pc={pc})", bounded(format_args!("{message}")))]
     ArithmeticError { message: String, pc: usize },
 
     #[error("numeric overflow in {operation} (pc={pc})")]
@@ -236,14 +245,14 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Entry point '{name}' not found (pc={pc}). Available entry points: {available:?}")]
+    #[error("Entry point '{}' not found (pc={pc}). Available entry points: {}", bounded(format_args!("{name}")), bounded(format_args!("{available:?}")))]
     EntryPointNotFound {
         name: String,
         available: Vec<String>,
         pc: usize,
     },
 
-    #[error("Entry point PC {pc} >= instruction count {instruction_count} for entry point '{entry_point}'")]
+    #[error("Entry point PC {pc} >= instruction count {instruction_count} for entry point '{}'", bounded(format_args!("{entry_point}")))]
     EntryPointPcOutOfBounds {
         pc: usize,
         instruction_count: usize,
@@ -267,22 +276,31 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Suspend reason {reason:?} is not supported in run-to-completion execution (pc={pc})")]
+    #[error(
+        "Suspend reason {} is not supported in run-to-completion execution (pc={pc})",
+        SuspendDiagnostic(reason)
+    )]
     UnsupportedSuspendInRunToCompletion { reason: SuspendReason, pc: usize },
 
-    #[error("Cannot resume VM when execution state is {state} (pc={pc})")]
+    #[error("Cannot resume VM when execution state is {} (pc={pc})", bounded(format_args!("{state}")))]
     InvalidResumeState { state: String, pc: usize },
 
-    #[error("HostAwait suspension requires a resume value for reason {reason:?} (pc={pc})")]
+    #[error(
+        "HostAwait suspension requires a resume value for reason {} (pc={pc})",
+        SuspendDiagnostic(reason)
+    )]
     MissingResumeValue { reason: SuspendReason, pc: usize },
 
-    #[error("Unexpected resume value supplied for reason {reason:?} (pc={pc})")]
+    #[error(
+        "Unexpected resume value supplied for reason {} (pc={pc})",
+        SuspendDiagnostic(reason)
+    )]
     UnexpectedResumeValue { reason: SuspendReason, pc: usize },
 
     #[error("Missing execution frame: {context} (pc={pc})")]
     MissingExecutionFrame { context: &'static str, pc: usize },
 
-    #[error("Unhandled instruction variant: {instruction} (pc={pc})")]
+    #[error("Unhandled instruction variant: {} (pc={pc})", bounded(format_args!("{instruction}")))]
     UnhandledInstruction { instruction: String, pc: usize },
 
     #[error("Invalid function call params index: {index} (pc={pc}, available={available})")]
@@ -319,8 +337,107 @@ pub enum VmError {
         pc: usize,
     },
 
-    #[error("Internal VM error: {message} (pc={pc})")]
+    #[error("Internal VM error: {} (pc={pc})", bounded(format_args!("{message}")))]
     Internal { message: String, pc: usize },
+}
+
+impl core::fmt::Debug for VmError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = match *self {
+            Self::RuleCallDepthExceeded { .. } => "RuleCallDepthExceeded",
+            Self::InstructionLimitExceeded { .. } => "InstructionLimitExceeded",
+            Self::TimeLimitExceeded { .. } => "TimeLimitExceeded",
+            Self::MemoryLimitExceeded { .. } => "MemoryLimitExceeded",
+            Self::MemoryBudgetExceeded { .. } => "MemoryBudgetExceeded",
+            Self::MemoryBudgetUnsupportedInSuspendableExecution { .. } => {
+                "MemoryBudgetUnsupportedInSuspendableExecution"
+            }
+            Self::RegexSizeLimitExceeded { .. } => "RegexSizeLimitExceeded",
+            Self::SerializationDepthExceeded { .. } => "SerializationDepthExceeded",
+            Self::LiteralIndexOutOfBounds { .. } => "LiteralIndexOutOfBounds",
+            Self::RegisterNotObject { .. } => "RegisterNotObject",
+            Self::ObjectCreateInvalidTemplate { .. } => "ObjectCreateInvalidTemplate",
+            Self::RegisterNotArray { .. } => "RegisterNotArray",
+            Self::RegisterNotSet { .. } => "RegisterNotSet",
+            Self::RegisterIndexOutOfBounds { .. } => "RegisterIndexOutOfBounds",
+            Self::RuleIndexOutOfBounds { .. } => "RuleIndexOutOfBounds",
+            Self::RuleInfoMissing { .. } => "RuleInfoMissing",
+            Self::InvalidObjectCreateParams { .. } => "InvalidObjectCreateParams",
+            Self::InvalidTemplateLiteralIndex { .. } => "InvalidTemplateLiteralIndex",
+            Self::InvalidChainedIndexParams { .. } => "InvalidChainedIndexParams",
+            Self::InvalidArrayCreateParams { .. } => "InvalidArrayCreateParams",
+            Self::InvalidSetCreateParams { .. } => "InvalidSetCreateParams",
+            Self::InvalidVirtualDataDocumentLookupParams { .. } => {
+                "InvalidVirtualDataDocumentLookupParams"
+            }
+            Self::InvalidComprehensionBeginParams { .. } => "InvalidComprehensionBeginParams",
+            Self::InvalidLoopParams { .. } => "InvalidLoopParams",
+            Self::InvalidRuleIndex { .. } => "InvalidRuleIndex",
+            Self::InvalidRuleTreeEntry { .. } => "InvalidRuleTreeEntry",
+            Self::BuiltinArgumentMismatch { .. } => "BuiltinArgumentMismatch",
+            Self::BuiltinNotResolved { .. } => "BuiltinNotResolved",
+            Self::InvalidAddition { .. } => "InvalidAddition",
+            Self::InvalidSubtraction { .. } => "InvalidSubtraction",
+            Self::InvalidMultiplication { .. } => "InvalidMultiplication",
+            Self::InvalidDivision { .. } => "InvalidDivision",
+            Self::ModuloOnFloat { .. } => "ModuloOnFloat",
+            Self::InvalidModulo { .. } => "InvalidModulo",
+            Self::InvalidIteration { .. } => "InvalidIteration",
+            Self::HostAwaitResponseMissing { .. } => "HostAwaitResponseMissing",
+            Self::AssertionFailed { .. } => "AssertionFailed",
+            Self::RuleDataConflict { .. } => "RuleDataConflict",
+            Self::ArithmeticError { .. } => "ArithmeticError",
+            Self::NumericOverflow { .. } => "NumericOverflow",
+            Self::InvalidEntryPointIndex { .. } => "InvalidEntryPointIndex",
+            Self::EntryPointNotFound { .. } => "EntryPointNotFound",
+            Self::EntryPointPcOutOfBounds { .. } => "EntryPointPcOutOfBounds",
+            Self::RegisterCountBelowBase { .. } => "RegisterCountBelowBase",
+            Self::ProgramCounterOutOfBounds { .. } => "ProgramCounterOutOfBounds",
+            Self::RuleCacheSizeMismatch { .. } => "RuleCacheSizeMismatch",
+            Self::UnsupportedSuspendInRunToCompletion { .. } => {
+                "UnsupportedSuspendInRunToCompletion"
+            }
+            Self::InvalidResumeState { .. } => "InvalidResumeState",
+            Self::MissingResumeValue { .. } => "MissingResumeValue",
+            Self::UnexpectedResumeValue { .. } => "UnexpectedResumeValue",
+            Self::MissingExecutionFrame { .. } => "MissingExecutionFrame",
+            Self::UnhandledInstruction { .. } => "UnhandledInstruction",
+            Self::InvalidFunctionCallParamsIndex { .. } => "InvalidFunctionCallParamsIndex",
+            Self::InvalidBuiltinCallParamsIndex { .. } => "InvalidBuiltinCallParamsIndex",
+            Self::InvalidBuiltinInfoIndex { .. } => "InvalidBuiltinInfoIndex",
+            Self::RuleFrameMissingInitialPc { .. } => "RuleFrameMissingInitialPc",
+            Self::CallRuleStackUnderflow { .. } => "CallRuleStackUnderflow",
+            Self::CallRuleStackMismatch { .. } => "CallRuleStackMismatch",
+            Self::Internal { .. } => "Internal",
+        };
+        f.debug_struct(name)
+            .field("message", &alloc::format!("{self}"))
+            .finish()
+    }
+}
+
+struct SuspendDiagnostic<'a>(&'a SuspendReason);
+
+impl core::fmt::Display for SuspendDiagnostic<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self.0 {
+            SuspendReason::HostAwait {
+                dest,
+                ref argument,
+                ref identifier,
+            } => write!(
+                f,
+                "HostAwait {{ dest: {dest}, argument: {}, identifier: {} }}",
+                argument.diagnostic(),
+                identifier.diagnostic()
+            ),
+            SuspendReason::SuspendInstruction => f.write_str("SuspendInstruction"),
+            SuspendReason::Breakpoint { pc } => write!(f, "Breakpoint {{ pc: {pc} }}"),
+            SuspendReason::Step => f.write_str("Step"),
+            SuspendReason::InstructionLimit => f.write_str("InstructionLimit"),
+            SuspendReason::External => f.write_str("External"),
+        }
+    }
 }
 
 impl From<anyhow::Error> for VmError {
@@ -361,10 +478,80 @@ impl From<anyhow::Error> for VmError {
             };
         }
         VmError::ArithmeticError {
-            message: alloc::format!("{}", err),
+            message: alloc::format!("{}", bounded(format_args!("{err}"))),
             pc: 0,
         }
     }
 }
 
 pub type Result<T> = core::result::Result<T, VmError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Value;
+    use alloc::{format, string::ToString as _, vec};
+
+    #[test]
+    fn error_diagnostics_bound_shared_values_and_strings() {
+        let value = (0..12).fold(Value::Null, |value, _| {
+            Value::from(vec![value.clone(), value])
+        });
+        let message = "\u{20ac}".repeat(10_000);
+        let reason = SuspendReason::HostAwait {
+            dest: 0,
+            argument: value.clone(),
+            identifier: Value::from(message.clone()),
+        };
+        for error in [
+            VmError::InvalidAddition {
+                left: value.into(),
+                right: Value::from(message.clone()).into(),
+                pc: 7,
+            },
+            VmError::UnsupportedSuspendInRunToCompletion {
+                reason: reason.clone(),
+                pc: 7,
+            },
+            VmError::MissingResumeValue {
+                reason: reason.clone(),
+                pc: 7,
+            },
+            VmError::UnexpectedResumeValue { reason, pc: 7 },
+            VmError::EntryPointNotFound {
+                name: message.clone(),
+                available: vec![message.clone(); 100],
+                pc: 7,
+            },
+            VmError::ArithmeticError {
+                message: message.clone(),
+                pc: 7,
+            },
+        ] {
+            for text in [
+                error.to_string(),
+                format!("{error:?}"),
+                format!("{error:#?}"),
+            ] {
+                assert!(text.contains("pc=7"));
+                assert!(text.len() < 1024);
+            }
+        }
+        let converted = VmError::from(anyhow::anyhow!("{message}"));
+        assert!(
+            matches!(converted, VmError::ArithmeticError { message: converted_message, .. } if converted_message.len() <= 259)
+        );
+    }
+
+    #[test]
+    fn error_debug_escapes_embedded_nul() {
+        let error = VmError::ArithmeticError {
+            message: String::from("invalid address: \0"),
+            pc: 7,
+        };
+        for text in [format!("{error:?}"), format!("{error:#?}")] {
+            assert!(!text.contains('\0'));
+            assert!(text.contains("\\0"));
+        }
+    }
+}

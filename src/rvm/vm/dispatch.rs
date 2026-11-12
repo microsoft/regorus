@@ -480,7 +480,7 @@ impl RegoVM {
                     self.set_register(obj, obj_value)?;
                     return Err(VmError::RegisterNotObject {
                         register: obj,
-                        value: offending,
+                        value: offending.into(),
                         pc: self.pc,
                     });
                 }
@@ -564,7 +564,7 @@ impl RegoVM {
                         }
                     } else {
                         return Err(VmError::ObjectCreateInvalidTemplate {
-                            template: obj_value,
+                            template: obj_value.into(),
                             pc: self.pc,
                         });
                     }
@@ -621,7 +621,7 @@ impl RegoVM {
                     self.set_register(arr, arr_value)?;
                     return Err(VmError::RegisterNotArray {
                         register: arr,
-                        value: offending,
+                        value: offending.into(),
                         pc: self.pc,
                     });
                 }
@@ -648,7 +648,7 @@ impl RegoVM {
                     self.set_register(arr, arr_value)?;
                     return Err(VmError::RegisterNotArray {
                         register: arr,
-                        value: offending,
+                        value: offending.into(),
                         pc: self.pc,
                     });
                 }
@@ -709,7 +709,7 @@ impl RegoVM {
                     self.set_register(set, set_value)?;
                     return Err(VmError::RegisterNotSet {
                         register: set,
-                        value: offending,
+                        value: offending.into(),
                         pc: self.pc,
                     });
                 }

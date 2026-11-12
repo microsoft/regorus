@@ -191,7 +191,33 @@ cases:
       - "Load { dest: 1, literal_idx: 0 }"
       - "Add { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_error: "Cannot add Object({}) and Number(1)"
+    want_error: "Cannot add Object(len=0) and 1"
+
+  - note: load_input_long_string_diagnostic
+    description: Arithmetic errors summarize long input strings
+    input: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+    literals: []
+    instructions:
+      - "LoadInput { dest: 0 }"
+      - "LoadTrue { dest: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add String(bytes=66) and true"
+
+  - note: load_input_bigint_diagnostic
+    description: Arithmetic errors summarize computed big integers without decimal expansion
+    input: true
+    literals:
+      - 9223372036854775807
+    instructions:
+      - "Load { dest: 0, literal_idx: 0 }"
+      - "Mul { dest: 0, left: 0, right: 0 }"
+      - "Mul { dest: 0, left: 0, right: 0 }"
+      - "Mul { dest: 0, left: 0, right: 0 }"
+      - "LoadInput { dest: 1 }"
+      - "Add { dest: 2, left: 0, right: 1 }"
+      - "Return { value: 2 }"
+    want_error: "Cannot add Number and true"
 
   - note: load_input_in_comparison
     description: Compare input to literal object

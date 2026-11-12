@@ -232,7 +232,7 @@ impl RegoVM {
             context
         } else {
             return Err(VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension")),
+                value: Value::String(Arc::from("No active comprehension")).into(),
                 pc: self.pc,
             });
         };
@@ -271,7 +271,7 @@ impl RegoVM {
                     self.set_register(result_reg, current_result)?;
                     self.comprehension_stack.push(comprehension_context);
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: Value::String(Arc::from("Object comprehension requires key")).into(),
                         pc: self.pc,
                     });
                 }
@@ -281,7 +281,7 @@ impl RegoVM {
                 self.set_register(result_reg, current_result)?;
                 self.comprehension_stack.push(comprehension_context);
                 return Err(VmError::InvalidIteration {
-                    value: offending,
+                    value: offending.into(),
                     pc: self.pc,
                 });
             }
@@ -326,7 +326,7 @@ impl RegoVM {
                     .is_some_and(|frame| matches!(frame.kind, FrameKind::Comprehension { .. }))
             })
             .ok_or(VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension")),
+                value: Value::String(Arc::from("No active comprehension")).into(),
                 pc: self.pc,
             })?;
 
@@ -335,7 +335,7 @@ impl RegoVM {
                 self.execution_stack
                     .get(comprehension_index)
                     .ok_or(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("No active comprehension")),
+                        value: Value::String(Arc::from("No active comprehension")).into(),
                         pc: self.pc,
                     })?;
 
@@ -361,7 +361,7 @@ impl RegoVM {
                 )
             } else {
                 return Err(VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 });
             }
@@ -390,7 +390,7 @@ impl RegoVM {
                 } else {
                     self.set_register(result_reg_idx, current_result)?;
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("Object comprehension requires key")),
+                        value: Value::String(Arc::from("Object comprehension requires key")).into(),
                         pc: self.pc,
                     });
                 }
@@ -399,7 +399,7 @@ impl RegoVM {
                 let offending = core::mem::replace(other, Value::Undefined);
                 self.set_register(result_reg_idx, current_result)?;
                 return Err(VmError::InvalidIteration {
-                    value: offending,
+                    value: offending.into(),
                     pc: self.pc,
                 });
             }
@@ -410,7 +410,7 @@ impl RegoVM {
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(
                 VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 },
             )?;
@@ -430,7 +430,7 @@ impl RegoVM {
                 )
             } else {
                 return Err(VmError::InvalidIteration {
-                    value: Value::String(Arc::from("No active comprehension")),
+                    value: Value::String(Arc::from("No active comprehension")).into(),
                     pc: self.pc,
                 });
             }
@@ -562,7 +562,7 @@ impl RegoVM {
         self.comprehension_stack
             .pop()
             .ok_or_else(|| VmError::InvalidIteration {
-                value: Value::String(Arc::from("No active comprehension context")),
+                value: Value::String(Arc::from("No active comprehension context")).into(),
                 pc: self.pc,
             })?;
         Ok(())
@@ -580,7 +580,7 @@ impl RegoVM {
                         self.execution_stack.push(restored);
                     }
                     return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from("No active comprehension context")),
+                        value: Value::String(Arc::from("No active comprehension context")).into(),
                         pc: self.pc,
                     });
                 }
@@ -625,9 +625,14 @@ impl RegoVM {
                     ));
                 }
                 other_kind => {
+                    let frame_name = match other_kind {
+                        FrameKind::Main { .. } => "Main",
+                        FrameKind::Rule(_) => "Rule",
+                        FrameKind::Loop { .. } => "Loop",
+                        FrameKind::Comprehension { .. } => "Comprehension",
+                    };
                     let message = format!(
-                        "Mismatched comprehension frame: frame={:?} stack_depth={} unwound_loops={}",
-                        &other_kind,
+                        "Mismatched comprehension frame: frame={frame_name} stack_depth={} unwound_loops={}",
                         self.execution_stack.len(),
                         unwound_frames.len()
                     );
@@ -637,12 +642,79 @@ impl RegoVM {
                     while let Some(restored) = unwound_frames.pop() {
                         self.execution_stack.push(restored);
                     }
-                    return Err(VmError::InvalidIteration {
-                        value: Value::String(Arc::from(message.into_boxed_str())),
+                    return Err(VmError::Internal {
+                        message,
                         pc: self.pc,
                     });
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::{ExecutionFrame, ExecutionMode, FrameKind, RegoVM, Value, VmError};
+    use crate::rvm::instructions::Instruction;
+    use crate::rvm::program::{Program, RuleInfo, RuleType};
+    use alloc::{format, sync::Arc};
+
+    #[test]
+    fn mismatched_comprehension_diagnostics_preserve_explanation() {
+        let mut program = Program::new();
+        program.add_instruction(Instruction::ComprehensionEnd {}, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.load_program(Arc::new(program));
+
+        let error = vm.execute().expect_err("missing comprehension frame");
+        assert_eq!(
+            format!("{error}"),
+            "Internal VM error: Mismatched comprehension frame: frame=Main stack_depth=0 unwound_loops=0 (pc=0)"
+        );
+        assert!(format!("{error:?}").contains("Mismatched comprehension frame"));
+    }
+
+    #[test]
+    fn mismatched_comprehension_diagnostics_do_not_expand_saved_registers() {
+        let value = (0..12).fold(Value::Null, |value, _| {
+            Value::from(alloc::vec![value.clone(), value])
+        });
+        let mut program = Program::new();
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        program.rule_infos.push(RuleInfo::new(
+            "test_rule".into(),
+            RuleType::Complete,
+            crate::Rc::new(alloc::vec![alloc::vec![0]]),
+            0,
+            1,
+        ));
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        vm.set_register(0, value.clone()).expect("caller register");
+        vm.execution_stack.push(ExecutionFrame::main(0, 0));
+        vm.execute_call_rule_suspendable(0, 0, None)
+            .expect("rule frame");
+
+        let error = vm
+            .execute_comprehension_end_suspendable()
+            .expect_err("unexpected rule frame");
+        assert!(matches!(
+            error,
+            VmError::Internal { ref message, pc: 0 }
+                if message.len() <= 256
+                    && message.contains("Mismatched comprehension frame")
+                    && message.contains("frame=Rule")
+                    && message.contains("stack_depth=1")
+                    && message.contains("unwound_loops=0")
+        ));
+        assert_eq!(vm.execution_stack.len(), 2);
+        let frame = vm.execution_stack.last().expect("restored rule frame");
+        assert!(matches!(
+            frame.kind,
+            FrameKind::Rule(ref data) if data.saved_registers.first() == Some(&value)
+        ));
     }
 }

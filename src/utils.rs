@@ -9,6 +9,8 @@
 )] // small arithmetic checks are intentional
 
 pub(crate) mod depth;
+#[cfg(feature = "rvm")]
+pub(crate) mod diagnostic;
 #[cfg(any(feature = "jsonschema", feature = "rvm"))]
 pub(crate) mod json;
 pub mod limits;

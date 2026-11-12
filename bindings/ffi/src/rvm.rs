@@ -1163,6 +1163,7 @@ result := [value, value, value, value, value, value, value, value]
     #[test]
     fn ffi_unbudgeted_child_resume_error_does_not_charge_parent_budget() {
         const CHILD_ARGUMENT_BYTES: usize = 128 * 1024;
+        const CHILD_RESUME_ATTEMPTS: usize = 256;
 
         let program = compiled_suspendable_host_await_program();
         let mut child_vm = suspendable_host_await_vm(&program, None);
@@ -1179,9 +1180,11 @@ result := [value, value, value, value, value, value, value, value]
             .execute()
             .expect("outer VM should suspend at HostAwait within its budget");
 
-        let mut child_error = None;
+        let mut child_errors = Vec::with_capacity(CHILD_RESUME_ATTEMPTS);
         let resumed = outer_vm.resume_to_c_string_for_ffi(|| {
-            child_error = Some(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            for _ in 0..CHILD_RESUME_ATTEMPTS {
+                child_errors.push(regorus_rvm_resume(child_vm, core::ptr::null(), false));
+            }
             Ok(Some(String::from("\"response\"")))
         });
         let parent_resume_succeeded = match resumed {
@@ -1189,27 +1192,26 @@ result := [value, value, value, value, value, value, value, value]
             Err(_) => false,
         };
 
-        let child_error = child_error.expect("child resume error");
-        let child_error_is_reported = matches!(child_error.status, RegorusStatus::Error)
-            && child_error.output.is_null()
-            && !child_error.error_message.is_null();
-        let child_error_length = if child_error.error_message.is_null() {
-            0
-        } else {
-            unsafe { CStr::from_ptr(child_error.error_message) }
+        let mut child_error_bytes = 0usize;
+        for child_error in child_errors {
+            assert!(matches!(child_error.status, RegorusStatus::Error));
+            assert!(child_error.output.is_null());
+            assert!(!child_error.error_message.is_null());
+            let length = unsafe { CStr::from_ptr(child_error.error_message) }
                 .to_bytes()
-                .len()
-        };
+                .len();
+            assert!(length > 0 && length < 512);
+            child_error_bytes = child_error_bytes.saturating_add(length);
+            regorus_result_drop(child_error);
+        }
         assert_execution_state(child_vm, "Suspended {");
 
-        regorus_result_drop(child_error);
         regorus_rvm_drop(child_vm);
         assert!(
             parent_resume_succeeded,
             "unbudgeted child error formatting should not consume the outer budget"
         );
-        assert!(child_error_is_reported);
-        assert!(child_error_length > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
+        assert!(child_error_bytes > NESTED_GETTER_MEMORY_BUDGET_BYTES as usize);
     }
 
     #[test]
@@ -2052,10 +2054,52 @@ pub(crate) fn convert_c_host_await_builtins(
 mod host_await_tests {
     use super::*;
     use crate::common::regorus_result_drop;
+    use regorus::rvm::instructions::{BuiltinCallParams, Instruction};
+    use regorus::rvm::program::BuiltinInfo;
     use std::ffi::{CStr, CString};
 
     fn c(s: &str) -> CString {
         CString::new(s).expect("CString::new failed")
+    }
+
+    #[test]
+    fn execution_state_error_escapes_embedded_nul() {
+        let mut program = Program::new();
+        let builtin_index = program.add_builtin_info(BuiltinInfo {
+            name: "test.nul_error".into(),
+            num_args: 0,
+        });
+        let params_index = program.add_builtin_call_params(BuiltinCallParams {
+            dest: 0,
+            builtin_index,
+            num_args: 0,
+            args: [0; 8],
+        });
+        program.add_instruction(Instruction::BuiltinCall { params_index }, None);
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        program
+            .resolved_builtins
+            .push((|_, _, _, _| Err(anyhow!("invalid input: \0")), 0));
+        let mut vm = RegoVM::new();
+        vm.set_execution_mode(ExecutionMode::Suspendable);
+        vm.set_strict_builtin_errors(true);
+        vm.load_program(Arc::new(program));
+        let error = vm.execute().expect_err("synthetic builtin error");
+        assert!(error.to_string().contains('\0'));
+        let vm = Box::into_raw(Box::new(RegorusRvm::new(vm)));
+
+        let result = regorus_rvm_get_execution_state(vm);
+        assert_eq!(result.status, RegorusStatus::Ok);
+        assert!(!result.output.is_null());
+        let output = unsafe { CStr::from_ptr(result.output) }
+            .to_str()
+            .expect("UTF-8 execution state")
+            .to_owned();
+        regorus_result_drop(result);
+        regorus_rvm_drop(vm);
+
+        assert!(output.starts_with("Error { error: ArithmeticError"));
+        assert!(output.contains("invalid input: \\0"));
     }
 
     #[test]

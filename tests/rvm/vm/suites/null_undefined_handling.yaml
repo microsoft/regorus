@@ -25,7 +25,7 @@ cases:
       - "Load { dest: 1, literal_idx: 0 }"
       - "Add { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_error: "Cannot add Null"
+    want_error: "Cannot add null"
 
   - note: null_in_arithmetic_sub
     description: Subtracting null is a type error
@@ -37,7 +37,7 @@ cases:
       - "LoadNull { dest: 1 }"
       - "Sub { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_error: "Cannot subtract Number(5)"
+    want_error: "Cannot subtract 5"
 
   - note: null_in_arithmetic_mul
     description: Multiplying null is a type error
@@ -49,7 +49,7 @@ cases:
       - "Load { dest: 1, literal_idx: 0 }"
       - "Mul { dest: 2, left: 0, right: 1 }"
       - "Return { value: 2 }"
-    want_error: "Cannot multiply Null"
+    want_error: "Cannot multiply null"
 
   - note: null_in_comparison_eq
     description: null equals null

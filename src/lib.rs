@@ -196,7 +196,7 @@ pub use utils::limits::{
     global_memory_limit, set_global_memory_limit, set_thread_flush_threshold_override,
     thread_memory_flush_threshold, MemoryBudgetConfig,
 };
-pub use value::Value;
+pub use value::{DiagnosticValue, Value};
 
 /// Compiled-pattern caches for the `regex.*` and `glob.*` Rego builtins.
 ///

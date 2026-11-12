@@ -66,7 +66,7 @@ impl RegoVM {
             }
         } else {
             return Err(VmError::InvalidRuleTreeEntry {
-                value: target.clone(),
+                value: target.clone().into(),
                 pc: 0,
             });
         }
@@ -140,7 +140,7 @@ impl RegoVM {
                                 self.registers.push(Value::Undefined);
                                 let rule_index_u16 = u16::try_from(rule_index).map_err(|_| {
                                     VmError::InvalidRuleIndex {
-                                        rule_index: Value::Number(rule_idx.clone()),
+                                        rule_index: Value::Number(rule_idx.clone()).into(),
                                         pc: self.pc,
                                     }
                                 })?;
@@ -176,7 +176,7 @@ impl RegoVM {
                             Self::set_nested_value(result_subobject, &relative_path, rule_result)?;
                         } else {
                             return Err(VmError::InvalidRuleIndex {
-                                rule_index: Value::Number(rule_idx.clone()),
+                                rule_index: Value::Number(rule_idx.clone()).into(),
                                 pc: self.pc,
                             });
                         }
@@ -252,7 +252,7 @@ impl RegoVM {
                 if let Some(rule_index) = rule_index_value.as_u64() {
                     let rule_index =
                         u16::try_from(rule_index).map_err(|_| VmError::InvalidRuleIndex {
-                            rule_index: Value::Number(rule_index_value.clone()),
+                            rule_index: Value::Number(rule_index_value.clone()).into(),
                             pc: self.pc,
                         })?;
 
@@ -272,7 +272,7 @@ impl RegoVM {
                     }
                 } else {
                     return Err(VmError::InvalidRuleIndex {
-                        rule_index: Value::Number(rule_index_value.clone()),
+                        rule_index: Value::Number(rule_index_value.clone()).into(),
                         pc: self.pc,
                     });
                 }
@@ -320,7 +320,7 @@ impl RegoVM {
             }
             _ => {
                 return Err(VmError::InvalidRuleTreeEntry {
-                    value: current_node.clone(),
+                    value: current_node.clone().into(),
                     pc: self.pc,
                 });
             }

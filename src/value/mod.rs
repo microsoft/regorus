@@ -308,6 +308,43 @@ fn compare_frames<E>(
     Ok(Ordering::Equal)
 }
 
+/// An owned policy value with bounded diagnostic Display and Debug formatting.
+///
+/// The original value is retained for explicit inspection. This type does not
+/// guarantee PII redaction.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DiagnosticValue(Value);
+
+impl DiagnosticValue {
+    /// Borrow the original, unsummarized value.
+    pub const fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    /// Recover the original, unsummarized value.
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+}
+
+impl From<Value> for DiagnosticValue {
+    fn from(value: Value) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for DiagnosticValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.diagnostic().fmt(f)
+    }
+}
+
+impl fmt::Debug for DiagnosticValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 pub(crate) struct ValueSummary<'a>(&'a Value);
 pub(crate) struct ValueDiagnostic<'a>(&'a Value);
 
