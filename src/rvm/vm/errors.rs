@@ -389,6 +389,7 @@ impl core::fmt::Debug for VmError {
             Self::HostAwaitResponseMissing { .. } => "HostAwaitResponseMissing",
             Self::AssertionFailed { .. } => "AssertionFailed",
             Self::RuleDataConflict { .. } => "RuleDataConflict",
+            Self::RuleOutputConflict { .. } => "RuleOutputConflict",
             Self::ArithmeticError { .. } => "ArithmeticError",
             Self::NumericOverflow { .. } => "NumericOverflow",
             Self::InvalidEntryPointIndex { .. } => "InvalidEntryPointIndex",
