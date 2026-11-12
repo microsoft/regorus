@@ -216,10 +216,6 @@ cases:
       - note: collection_missing
         input: {}
         want_result: "#undefined"
-        divergence:
-          reason: Membership on an Undefined collection yields false instead of Undefined.
-          engines: [interpreter, rvm]
-          actual_result: false
 
   - note: membership_negated_undefined_collection
     description: Negated membership where the collection may be missing.
@@ -240,7 +236,7 @@ cases:
         input: {}
         want_result: "#undefined"
         divergence:
-          reason: Membership on an Undefined collection yields false instead of Undefined, so its negation succeeds.
+          reason: Regorus negates Undefined to true instead of hoisting membership operands before negation.
           engines: [interpreter, rvm]
           actual_result: true
 

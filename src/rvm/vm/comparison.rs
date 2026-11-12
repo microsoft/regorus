@@ -547,20 +547,35 @@ mod tests {
         let _guard = acquire_limits_test_lock();
         let needle = Value::from(vec![Value::Null]);
         let cases = [
-            (Value::from(vec![needle.clone()]), needle.clone(), true),
+            (
+                Value::from(vec![needle.clone()]),
+                needle.clone(),
+                Value::Bool(true),
+            ),
             (
                 Object::from_iter([(Value::from("key"), needle.clone())]).into(),
                 needle.clone(),
-                true,
+                Value::Bool(true),
             ),
-            (Value::from(vec![Value::Null]), needle.clone(), false),
-            (Value::new_object(), needle, false),
-            (Value::Bool(true), Value::Bool(true), false),
-            (Value::from(vec![Value::Undefined]), Value::Undefined, true),
+            (
+                Value::from(vec![Value::Null]),
+                needle.clone(),
+                Value::Bool(false),
+            ),
+            (Value::new_object(), needle, Value::Bool(false)),
+            (Value::Bool(true), Value::Bool(true), Value::Bool(false)),
+            (
+                Value::from(vec![Value::Undefined]),
+                Value::Undefined,
+                Value::Undefined,
+            ),
+            (Value::Undefined, Value::Null, Value::Undefined),
+            (Value::Null, Value::Undefined, Value::Undefined),
+            (Value::Undefined, Value::Undefined, Value::Undefined),
         ];
         for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
             for config in [None, Some(timer(Duration::from_secs(60)))] {
-                for &(ref input, ref value, expected) in &cases {
+                for (input, value, expected) in cases.clone() {
                     let mut vm = RegoVM::new();
                     vm.load_program(program(Instruction::Contains {
                         dest: 2,
@@ -569,9 +584,9 @@ mod tests {
                     }));
                     vm.set_execution_mode(mode);
                     vm.set_execution_timer_config(config);
-                    vm.set_input(input.clone());
-                    vm.set_data(value.clone())?;
-                    assert_eq!(vm.execute()?, Value::Bool(expected));
+                    vm.set_input(input);
+                    vm.set_data(value)?;
+                    assert_eq!(vm.execute()?, expected);
                 }
             }
         }

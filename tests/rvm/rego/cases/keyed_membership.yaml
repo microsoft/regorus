@@ -81,7 +81,8 @@ cases:
           "number_container": (0, 7 in 7),
           "null_container": (0, null in null),
           "boolean_container": (0, false in false),
-          "undefined_container": (0, null in input.missing),
+          "undefined_key_null_container": (input.missing, 1 in null),
+          "undefined_key_set_container": (input.missing, 1 in {1}),
           "missing_key_equals_false": ("missing", "admin" in {"alice": "admin"}) == false,
           "mismatched_value_equals_false": ("bob", "admin" in {"alice": "admin", "bob": "user"}) == false,
           "keyed_set_equals_false": ("admin", "admin" in {"admin"}) == false,
@@ -109,7 +110,8 @@ cases:
       number_container: false
       null_container: false
       boolean_container: false
-      undefined_container: false
+      undefined_key_null_container: false
+      undefined_key_set_container: false
       missing_key_equals_false: true
       mismatched_value_equals_false: true
       keyed_set_equals_false: true
@@ -179,7 +181,6 @@ cases:
           "string_container": ((input.bad + 1), "admin" in "admin"),
           "number_container": ((input.bad + 1), "admin" in 7),
           "boolean_container": ((input.bad + 1), "admin" in false),
-          "undefined_container": ((input.bad + 1), "admin" in input.missing),
           "input_after_skipped_key": input.marker,
           "data_after_skipped_key": data.marker,
         }
@@ -192,7 +193,6 @@ cases:
       string_container: false
       number_container: false
       boolean_container: false
-      undefined_container: false
       input_after_skipped_key: input_loaded
       data_after_skipped_key: data_loaded
 

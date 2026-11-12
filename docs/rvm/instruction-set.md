@@ -84,7 +84,7 @@ instructions.
 | `Index`                    | `dest, container, key`        | Indexes container with runtime key.                         |
 | `IndexLiteral`             | `dest, container, literal_idx`| Indexes container using literal stored in program.          |
 | `ChainedIndex`             | `params_index=pN`             | Resolves multi-hop path from root register.                 |
-| `Contains`                 | `dest, collection, value`     | Checks membership; returns `Value::Bool`.                   |
+| `Contains`                 | `dest, collection, value`     | Checks membership; returns undefined if either operand is undefined, otherwise `Value::Bool`. |
 | `Count`                    | `dest, collection`            | Returns length or `Value::Undefined` for unsupported types. |
 | `VirtualDataDocumentLookup`| `params_index=pN`             | Evaluates `data` path, invoking rules lazily.               |
 
