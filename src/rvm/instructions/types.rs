@@ -160,6 +160,8 @@ pub enum GuardMode {
     Condition,
     /// Assert not undefined — fail (return undefined) if register is undefined.
     NotUndefined,
+    /// Assert a defined complete-rule output agrees with earlier yields in this body.
+    RuleOutput,
 }
 
 /// Mode discriminant for merged AllOf/AnyOf Start and End instructions.

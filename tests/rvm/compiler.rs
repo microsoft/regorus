@@ -174,6 +174,114 @@ fn constant_array_is_hoisted() {
 }
 
 #[test]
+fn rule_yield_conflicts_roundtrip_and_leave_vm_reusable() -> anyhow::Result<()> {
+    let original = compile_rule(
+        r#"
+        package test
+        f(items) := x if { some x in items }
+        p := f(input)
+        "#,
+    );
+    let bytes = original.serialize_binary().map_err(anyhow::Error::msg)?;
+    let program = match Program::deserialize_binary(&bytes).map_err(anyhow::Error::msg)? {
+        DeserializationResult::Complete(program) => std::sync::Arc::new(program),
+        DeserializationResult::Partial(_) => {
+            anyhow::bail!("yield guard program needs recompilation")
+        }
+    };
+    for (mode, step) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        for strict in [false, true] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_step_mode(step);
+            vm.set_strict_builtin_errors(strict);
+            for right in [2, 1, 2, 1] {
+                vm.set_input(Value::from(vec![Value::from(1), Value::from(right)]));
+                let mut result = vm.execute_entry_point_by_name("data.test.p");
+                while result.is_ok()
+                    && matches!(
+                        vm.execution_state(),
+                        ExecutionState::Suspended {
+                            reason: SuspendReason::Step,
+                            ..
+                        }
+                    )
+                {
+                    result = vm.resume(None);
+                }
+                if right == 1 {
+                    assert_eq!(result?, Value::from(1));
+                } else {
+                    let error = result.unwrap_err();
+                    assert!(
+                        matches!(&error, VmError::RuleOutputConflict { rule, .. } if rule == "data.test.f")
+                    );
+                    assert!(
+                        matches!(vm.execution_state(), ExecutionState::Error { error: stored } if stored == &error)
+                    );
+                    assert!(matches!(
+                        vm.resume(None),
+                        Err(VmError::InvalidResumeState { .. })
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rule_yield_conflicts_observe_execution_timer() -> anyhow::Result<()> {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+    use std::time::Duration;
+
+    for module in [
+        "package test\np := x if { some x in input }",
+        "package test\nf(items) := x if { some x in items }\np := f(input)",
+    ] {
+        let program = compile_rule(module);
+        let dag = || (0..16).fold(Value::Null, |v, _| Value::from(vec![v.clone(), v]));
+        let input = Value::from(vec![dag(), dag()]);
+        for (mode, step) in [
+            (ExecutionMode::RunToCompletion, false),
+            (ExecutionMode::Suspendable, false),
+            (ExecutionMode::Suspendable, true),
+        ] {
+            for strict in [false, true] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_step_mode(step);
+                vm.set_strict_builtin_errors(strict);
+                vm.set_input(input.clone());
+                vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+                    limit: Duration::ZERO,
+                    // Dispatch alone cannot reach this checkpoint.
+                    check_interval: NonZeroU32::new(256).unwrap(),
+                }));
+                let mut result = vm.execute();
+                while result.is_ok()
+                    && matches!(vm.execution_state(), ExecutionState::Suspended { .. })
+                {
+                    result = vm.resume(None);
+                }
+                assert!(
+                    matches!(result, Err(VmError::TimeLimitExceeded { .. })),
+                    "{mode:?}, step={step}, strict={strict}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn constant_set_is_hoisted() {
     let program = compile_rule(
         r#"

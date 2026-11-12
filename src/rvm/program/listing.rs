@@ -673,6 +673,10 @@ fn format_instruction_readable(
                     ),
                     format!("Assert r{} is not undefined (exit if undefined)", register),
                 ),
+                crate::rvm::instructions::GuardMode::RuleOutput => (
+                    format!("{}AssertRuleOutput r{}", indent, register),
+                    "Assert defined output agrees with earlier yields".into(),
+                ),
             };
             align_comment(&keyword, &comment, config.comment_column)
         }
@@ -1045,6 +1049,7 @@ const fn get_instruction_name(instruction: &Instruction) -> &'static str {
             crate::rvm::instructions::GuardMode::Not => "ASSERT_NOT",
             crate::rvm::instructions::GuardMode::Condition => "ASSERT",
             crate::rvm::instructions::GuardMode::NotUndefined => "ASSERT_NOT_UNDEF",
+            crate::rvm::instructions::GuardMode::RuleOutput => "ASSERT_RULE_OUTPUT",
         },
         Instruction::ReturnUndefinedIfNotTrue { .. } => "RET_UNDEF_IF_NOT_TRUE",
         Instruction::CoalesceUndefinedToNull { .. } => "COALESCE_UNDEF_TO_NULL",

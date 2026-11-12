@@ -249,6 +249,7 @@ impl core::fmt::Display for Instruction {
                     GuardMode::Not => "ASSERT_NOT",
                     GuardMode::Condition => "ASSERT_CONDITION",
                     GuardMode::NotUndefined => "ASSERT_NOT_UNDEFINED",
+                    GuardMode::RuleOutput => "ASSERT_RULE_OUTPUT",
                 };
                 format!("{} R({})", name, register)
             }
