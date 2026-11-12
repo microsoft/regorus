@@ -1,0 +1,79 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: first_witness_short_circuits
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &rules
+      - |
+        package witness
+        some_match if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        indexed if { x := input.items[_]; time.parse_rfc3339_ns(x) >= 0 }
+        nested if { some group in input.groups; some x in group; time.parse_rfc3339_ns(x) >= 0 }
+        choose(items) if { some x in items; time.parse_rfc3339_ns(x) >= 0 }
+        function_result := choose(input.items)
+        array_head := [1] if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        false_head := false if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+    input: &items {items: ["1970-01-01T00:00:00Z", yesterday]}
+    query: data.witness.some_match
+    want_result: true
+
+  - note: indexed_first_witness_short_circuits
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *items
+    query: data.witness.indexed
+    want_result: true
+
+  - note: nested_first_witness_short_circuits
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {groups: [[], ["1970-01-01T00:00:00Z"], [yesterday]]}
+    query: data.witness.nested
+    want_result: true
+
+  - note: nested_empty_loops_are_not_witnesses
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {groups: [[], []]}
+    query: data.witness.nested
+    want_result: "#undefined"
+
+  # OPA v1.22.4 short-circuits constant function and array outputs; the interpreter does not.
+  - note: constant_function_first_witness_short_circuits
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *items
+    query: data.witness.function_result
+    want_result: true
+    allow_interpreter_incorrect_behavior: true
+
+  - note: constant_array_first_witness_short_circuits
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *items
+    query: data.witness.array_head
+    want_result: [1]
+    allow_interpreter_incorrect_behavior: true
+
+  - note: false_head_is_a_successful_witness
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *items
+    query: data.witness.false_head
+    want_result: false
+
+  - note: no_matching_witness_is_undefined
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: ["1969-12-31T23:59:59Z"]}
+    query: data.witness.some_match
+    want_result: "#undefined"
