@@ -135,7 +135,11 @@ pub struct CheckEvent<'a> {
     /// [`Success`](Outcome::Success), [`Failure`](Outcome::Failure), or
     /// [`Undefined`](Outcome::Undefined) when the checked value, or an
     /// operand of a comparison or membership, was undefined (except for
-    /// negations, see above).
+    /// negations, see above). With strict builtin errors, comparing values
+    /// of different types with `<`, `<=`, `>` or `>=` raises an error that
+    /// fails the rule body. When the comparison is checked, it is reported
+    /// first: as `Undefined`, or as a failed [`Negation`](ConditionKind::Negation)
+    /// under `not`.
     pub outcome: Outcome,
 }
 

@@ -16,7 +16,7 @@ use crate::explain::{
     HookContext, NotCapturedEvent, Operator, Outcome, UncapturedConstruct,
 };
 use crate::rvm::instructions::{GuardMode, Instruction, LoopMode};
-use crate::rvm::program::Program;
+use crate::rvm::program::{Program, RuleType};
 use crate::value::Value;
 
 use super::errors::{Result, VmError};
@@ -134,6 +134,8 @@ impl RegoVM {
             .unwrap_or(&Value::Undefined)
     }
 
+    /// Called after the execution timer starts, so that the recorder's
+    /// reset counts toward the time limit.
     #[cold]
     #[inline(never)]
     pub(super) fn explain_reset(&mut self) {
@@ -179,7 +181,12 @@ impl RegoVM {
         mode: GuardMode,
         passed: bool,
     ) {
-        if (mode == GuardMode::NotUndefined && passed) || self.explain_in_parameters() {
+        // Azure Policy programs (which set `virtual_element_on_non_collection`)
+        // compile their conditions to guards; those are not reported.
+        if (mode == GuardMode::NotUndefined && passed)
+            || self.virtual_element_on_non_collection
+            || self.explain_in_parameters()
+        {
             return;
         }
         self.explain_deliver(|vm, recorder| {
@@ -361,10 +368,85 @@ impl RegoVM {
         });
     }
 
-    /// `key` is `None` for a set element.
+    /// With strict builtin errors, an ordering comparison of values of
+    /// different types raised an error instead of writing `dest`. Reported
+    /// only when the comparison is checked, as decoded for guards: directly
+    /// (an undefined comparison) or under `not` (a failed negation).
     #[cold]
     #[inline(never)]
-    pub(super) fn explain_emission(&mut self, key: Option<u8>, value: u8) {
+    pub(super) fn explain_comparison_error(
+        &mut self,
+        program: &Program,
+        operator: Operator,
+        dest: u8,
+        left: u8,
+        right: u8,
+    ) {
+        if self.virtual_element_on_non_collection || self.explain_in_parameters() {
+            return;
+        }
+        let next = |offset: usize| {
+            self.pc
+                .checked_add(offset)
+                .and_then(|pc| program.instructions.get(pc))
+        };
+        let negated = match (next(1), next(2)) {
+            (
+                Some(&Instruction::Guard {
+                    register,
+                    mode: GuardMode::Condition,
+                }),
+                _,
+            ) if register == dest => false,
+            (
+                Some(&Instruction::Not {
+                    dest: negated,
+                    operand,
+                }),
+                Some(&Instruction::Guard {
+                    register,
+                    mode: GuardMode::Condition,
+                }),
+            ) if operand == dest && register == negated => true,
+            _ => return,
+        };
+        self.explain_deliver(|vm, recorder| {
+            let event = CheckEvent {
+                kind: if negated {
+                    ConditionKind::Negation
+                } else {
+                    ConditionKind::Comparison
+                },
+                operator: Some(operator),
+                left: vm.explain_register(left),
+                right: Some(vm.explain_register(right)),
+                outcome: if negated {
+                    Outcome::Failure
+                } else {
+                    Outcome::Undefined
+                },
+            };
+            recorder.check(&vm.explain_context(), &event);
+        });
+    }
+
+    /// Called after `target` was written. Only writes to the executing
+    /// partial rule's result are emissions; `key` is `None` for a set
+    /// element.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn explain_emission(&mut self, target: u8, key: Option<u8>, value: u8) {
+        let emits = self.call_rule_stack.last().is_some_and(|ctx| {
+            ctx.result_reg == target
+                && match ctx.rule_type {
+                    RuleType::PartialSet => key.is_none(),
+                    RuleType::PartialObject => key.is_some(),
+                    RuleType::Complete => false,
+                }
+        });
+        if !emits {
+            return;
+        }
         self.explain_deliver(|vm, recorder| {
             let value = vm.explain_register(value);
             let key = key.map(|key| vm.explain_register(key));

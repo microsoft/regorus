@@ -55,6 +55,10 @@ impl RegoVM {
                     let result = (|| {
                         self.reset_run_to_completion_state()?;
                         self.reset_execution_timer_state();
+                        #[cfg(feature = "explanations")]
+                        if self.explain_enabled() {
+                            self.explain_reset();
+                        }
                         self.validate_vm_state()?;
                         let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
                             VmError::EntryPointPcOutOfBounds {
@@ -110,6 +114,10 @@ impl RegoVM {
                     let result = (|| {
                         self.reset_run_to_completion_state()?;
                         self.reset_execution_timer_state();
+                        #[cfg(feature = "explanations")]
+                        if self.explain_enabled() {
+                            self.explain_reset();
+                        }
                         self.validate_vm_state()?;
                         let entry_point_pc_u32 = u32::try_from(entry_point_pc).map_err(|_| {
                             VmError::EntryPointPcOutOfBounds {
@@ -193,6 +201,10 @@ impl RegoVM {
         let result = (|| {
             self.reset_run_to_completion_state()?;
             self.reset_execution_timer_state();
+            #[cfg(feature = "explanations")]
+            if self.explain_enabled() {
+                self.explain_reset();
+            }
             self.execution_state = ExecutionState::Running;
             self.validate_program_tree()?;
             self.check_initial_memory_limit()?;
@@ -237,6 +249,10 @@ impl RegoVM {
             vm.debug_assert_state_is_clean();
             vm.execution_state = ExecutionState::Running;
             vm.reset_execution_timer_state();
+            #[cfg(feature = "explanations")]
+            if vm.explain_enabled() {
+                vm.explain_reset();
+            }
 
             vm.pc = start_pc;
             let result = (|| {

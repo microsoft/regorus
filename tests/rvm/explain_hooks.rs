@@ -1195,31 +1195,39 @@ fn builtin_overflow_is_reported_only_when_it_does_not_end_the_evaluation() {
 
 #[cfg(feature = "azure_policy")]
 #[test]
-fn azure_policy_loops_over_missing_fields_are_not_reported() {
+fn azure_policy_conditions_are_not_reported() {
     use regorus::languages::azure_policy::{compiler as azure, parser};
     let rules = [
         r#"{"if":{"count":{"field":"securityRules[*]"},"greater":0},"then":{"effect":"deny"}}"#,
         r#"{"if":{"count":{"field":"securityRules[*]","where":{"field":"securityRules[*].access","equals":"Allow"}},"equals":0},"then":{"effect":"deny"}}"#,
         r#"{"if":{"value":"[length(field('securityRules[*].name'))]","equals":0},"then":{"effect":"deny"}}"#,
+        r#"{"if":{"field":"securityRules[*].access","equals":"Allow"},"then":{"effect":"deny"}}"#,
+        r#"{"if":{"not":{"field":"securityRules[*].access","notEquals":"Deny"}},"then":{"effect":"deny"}}"#,
+    ];
+    let inputs = [
+        r#"{"resource":{},"parameters":{}}"#,
+        r#"{"resource":{"securityRules":[{"access":"Allow","name":"a"},{"access":"Deny","name":"b"}]},"parameters":{}}"#,
     ];
     for rule in rules {
         let source = regorus::Source::from_contents("rule.json".into(), rule.into()).unwrap();
         let program =
             azure::compile_policy_rule(&parser::parse_policy_rule(&source).unwrap()).unwrap();
-        for mode in MODES {
-            let fixture = Fixture::default();
-            let mut vm = RegoVM::new();
-            vm.load_program(program.clone());
-            vm.set_input(v(r#"{"resource":{},"parameters":{}}"#));
-            vm.set_context(v(r#"{"resourceGroup":{"name":"rg"}}"#));
-            vm.set_execution_mode(mode);
-            vm.set_explanation_recorder(Box::new(fixture.clone()));
-            execute(&mut vm, mode).unwrap();
-            let events: Vec<_> = fixture.take().into_iter().map(|r| r.event).collect();
-            assert!(
-                !events.iter().any(|e| matches!(e, Event::Check { .. })),
-                "{rule} {mode:?}: {events:?}"
-            );
+        for input in inputs {
+            for mode in MODES {
+                let fixture = Fixture::default();
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_input(v(input));
+                vm.set_context(v(r#"{"resourceGroup":{"name":"rg"}}"#));
+                vm.set_execution_mode(mode);
+                vm.set_explanation_recorder(Box::new(fixture.clone()));
+                execute(&mut vm, mode).unwrap();
+                let events: Vec<_> = fixture.take().into_iter().map(|r| r.event).collect();
+                assert!(
+                    !events.iter().any(|e| matches!(e, Event::Check { .. })),
+                    "{rule} {input} {mode:?}: {events:?}"
+                );
+            }
         }
     }
 }
@@ -1260,6 +1268,234 @@ fn undefined_set_elements_and_object_keys_are_not_emitted() {
         "result: {:?}",
         r.result
     );
+}
+
+#[test]
+fn strict_comparisons_of_different_types_are_undefined_checks() {
+    for (op, operator) in [
+        (">", Operator::Gt),
+        (">=", Operator::Ge),
+        ("<", Operator::Lt),
+        ("<=", Operator::Le),
+    ] {
+        let policy = format!("package t\nallow if input.x {op} 0\n");
+        let r = run_with(&policy, "data.t.allow", r#"{"x":"text"}"#, true);
+        assert_eq!(r.result.as_ref().unwrap(), &Value::Undefined, "{op}");
+        assert_eq!(
+            r.events(),
+            [
+                Event::Reset,
+                compare(operator, r#""text""#, "0", Undefined),
+                body_end(Failure, None),
+            ],
+            "{op}"
+        );
+
+        let policy = format!("package t\nallow if not input.x {op} 0\n");
+        let r = run_with(&policy, "data.t.allow", r#"{"x":"text"}"#, true);
+        assert_eq!(r.result.as_ref().unwrap(), &Value::Undefined, "not {op}");
+        assert_eq!(
+            r.events(),
+            [
+                Event::Reset,
+                check(Negation, Some(operator), r#""text""#, Some("0"), Failure),
+                body_end(Failure, None),
+            ],
+            "not {op}"
+        );
+    }
+}
+
+/// A comparison whose value is not checked is not reported, even when it
+/// raises an error.
+#[test]
+fn strict_comparisons_that_are_not_checks_are_not_reported() {
+    for (policy, query) in [
+        ("package t\np := input.x > 0\n", "data.t.p"),
+        (
+            "package t\nallow if { b := input.x > 0; b }\n",
+            "data.t.allow",
+        ),
+        (
+            "package t\nallow if is_boolean(input.x > 0)\n",
+            "data.t.allow",
+        ),
+    ] {
+        let r = run_with(policy, query, r#"{"x":"text"}"#, true);
+        assert!(
+            !r.events().iter().any(|e| matches!(e, Event::Check { .. })),
+            "{policy}: {:?}",
+            r.events()
+        );
+        assert!(
+            r.events().contains(&body_end(Failure, None)),
+            "{policy}: {:?}",
+            r.events()
+        );
+    }
+}
+
+fn has_emission(run: &Run) -> bool {
+    run.events()
+        .iter()
+        .any(|e| matches!(e, Event::Emission { .. }))
+}
+
+/// Retargets the program's `SetAdd` or `ObjectSet` to `target`, which picks
+/// the new register from the program.
+fn retarget(program: &Program, target: impl Fn(&Program, &Instruction) -> Option<u8>) -> Program {
+    let mut altered = program.clone();
+    let writes: Vec<usize> = altered
+        .instructions
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| {
+            matches!(
+                i,
+                Instruction::SetAdd { .. } | Instruction::ObjectSet { .. }
+            )
+        })
+        .map(|(pc, _)| pc)
+        .collect();
+    assert_eq!(writes.len(), 1);
+    let register = target(program, &altered.instructions[writes[0]]).unwrap();
+    match &mut altered.instructions[writes[0]] {
+        Instruction::SetAdd { set, .. } => *set = register,
+        Instruction::ObjectSet { obj, .. } => *obj = register,
+        _ => unreachable!(),
+    }
+    altered
+}
+
+/// A successful write to a collection that is not the executing partial
+/// rule's result is not an emission. The programs are altered so that
+/// `SetAdd` and `ObjectSet` write to the iterated collection instead.
+#[test]
+fn writes_to_other_collections_are_not_emitted() {
+    let cases = [
+        (
+            "package t\np contains x if some x in {\"a\"}\n",
+            "data.t.p",
+            Value::new_set(),
+        ),
+        (
+            "package t\no[k] := v if some k, v in {\"a\": 1}\n",
+            "data.t.o",
+            Value::new_object(),
+        ),
+    ];
+    for (policy, query, empty) in cases {
+        let program = compile(policy, query).unwrap();
+        let altered = Arc::new(retarget(&program, |program, _| {
+            program.instructions.iter().find_map(|i| match *i {
+                Instruction::LoopStart { params_index } => program
+                    .instruction_data
+                    .get_loop_params(params_index)
+                    .map(|params| params.collection),
+                _ => None,
+            })
+        }));
+        for mode in MODES {
+            assert!(has_emission(&run_program(&program, "{}", mode, false)));
+            let r = run_program(&altered, "{}", mode, false);
+            assert_eq!(r.result.as_ref().unwrap(), &empty, "{policy} {mode:?}");
+            assert!(!has_emission(&r), "{policy} {mode:?}: {:?}", r.events());
+        }
+    }
+}
+
+/// A write to the partial rule's result that fails is not an emission. The
+/// programs are altered so that the rule accumulates its result in the
+/// register that holds the produced value, which is not a collection when
+/// the write runs.
+#[test]
+fn failed_writes_to_a_partial_rule_result_are_not_emitted() {
+    let cases = [
+        ("package t\np contains input.x if true\n", "data.t.p"),
+        ("package t\no[input.x] := 1 if true\n", "data.t.o"),
+    ];
+    for (policy, query) in cases {
+        let program = compile(policy, query).unwrap();
+        let mut altered = retarget(&program, |_, write| match *write {
+            Instruction::SetAdd { value, .. } | Instruction::ObjectSet { value, .. } => Some(value),
+            _ => None,
+        });
+        let value = altered
+            .instructions
+            .iter()
+            .find_map(|i| match *i {
+                Instruction::SetAdd { set, .. } => Some(set),
+                Instruction::ObjectSet { obj, .. } => Some(obj),
+                _ => None,
+            })
+            .unwrap();
+        let mut inits = 0;
+        for instruction in &mut altered.instructions {
+            if let Instruction::RuleInit { result_reg, .. } = instruction {
+                *result_reg = value;
+                inits += 1;
+            }
+        }
+        assert_eq!(inits, 1, "{policy}");
+        let altered = Arc::new(altered);
+        for mode in MODES {
+            assert!(has_emission(&run_program(
+                &program,
+                r#"{"x":"a"}"#,
+                mode,
+                false
+            )));
+            let r = run_program(&altered, r#"{"x":"a"}"#, mode, false);
+            assert!(!has_emission(&r), "{policy} {mode:?}: {:?}", r.events());
+            assert!(
+                r.events().contains(&body_end(Failure, None)),
+                "{policy} {mode:?}: {:?}",
+                r.events()
+            );
+        }
+    }
+}
+
+struct SlowReset;
+
+impl ExplanationRecorder for SlowReset {
+    fn reset(&mut self) {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+#[test]
+fn reset_time_counts_toward_the_time_limit() {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+    let program = compile("package t\nallow if input.a\n", "data.t.allow").unwrap();
+    for mode in MODES {
+        for entry_point in [None, Some(Ok(0)), Some(Err("data.t.allow"))] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_input(v(r#"{"a":true}"#));
+            vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+                limit: std::time::Duration::from_millis(20),
+                check_interval: NonZeroU32::MIN,
+            }));
+            vm.set_explanation_recorder(Box::new(SlowReset));
+            let result = match entry_point {
+                None => vm.execute(),
+                Some(Ok(index)) => vm.execute_entry_point_by_index(index),
+                Some(Err(name)) => vm.execute_entry_point_by_name(name),
+            };
+            let error = match (result, vm.execution_state()) {
+                (Err(error), _) => error.to_string(),
+                (Ok(_), ExecutionState::Error { error }) => error.to_string(),
+                (Ok(value), state) => panic!("{mode:?} {entry_point:?}: {value} {state:?}"),
+            };
+            assert!(
+                error.contains("exceeded time limit"),
+                "{mode:?} {entry_point:?}: {error}"
+            );
+        }
+    }
 }
 
 #[cfg(feature = "arc")]

@@ -239,13 +239,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Lt,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_lt();
@@ -262,13 +273,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Le,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_le();
@@ -285,13 +307,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Gt,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_gt();
@@ -308,13 +341,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Ge,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_ge();
@@ -494,10 +538,6 @@ impl RegoVM {
         use Instruction::*;
         match instruction {
             ObjectSet { obj, key, value } => {
-                #[cfg(feature = "explanations")]
-                if self.explain_enabled() {
-                    self.explain_emission(Some(key), value);
-                }
                 let key_value = self.get_register(key)?.clone();
                 let value_value = self.get_register(value)?.clone();
 
@@ -507,6 +547,10 @@ impl RegoVM {
                 if let Ok(obj_mut) = obj_value.as_object_mut() {
                     obj_mut.insert(key_value, value_value);
                     self.set_register(obj, obj_value)?;
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_emission(obj, Some(key), value);
+                    }
                 } else {
                     let offending = obj_value.clone();
                     self.set_register(obj, obj_value)?;
@@ -726,10 +770,6 @@ impl RegoVM {
                 Ok(InstructionOutcome::Continue)
             }
             SetAdd { set, value } => {
-                #[cfg(feature = "explanations")]
-                if self.explain_enabled() {
-                    self.explain_emission(None, value);
-                }
                 let value_to_add = self.get_register(value)?.clone();
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
@@ -740,6 +780,10 @@ impl RegoVM {
                         set_mut.insert(value_to_add);
                     }
                     self.set_register(set, set_value)?;
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_emission(set, None, value);
+                    }
                 } else {
                     let offending = set_value.clone();
                     self.set_register(set, set_value)?;
