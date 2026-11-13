@@ -63,6 +63,7 @@ native `Value`s or using their iterative comparison and output methods.
   | Builtin                                                                                                   | Feature |
   |-----------------------------------------------------------------------------------------------------------|---------|
   | [array.concat](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayconcat)   | _       |
+  | [array.flatten](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayflatten) | _       |
   | [array.reverse](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayreverse) | _       |
   | [array.slice](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-array-arrayslice)     | _       |
 
