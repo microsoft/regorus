@@ -17,6 +17,7 @@
 //! - [`ExplainError`] reports why an explanation could not be produced.
 //! - [`Provenance`] decodes, from a compiled program, the policy text,
 //!   location, kind, operand references and owning rule of each check.
+//! - [`ExplanationRecorder`] receives the RVM's evaluation events.
 //!
 //! The report types are `#[non_exhaustive]` so that fields and variants can
 //! be added without breaking callers. They implement [`serde::Serialize`];
@@ -66,6 +67,7 @@
 
 mod error;
 mod provenance;
+mod recorder;
 mod report;
 mod settings;
 
@@ -77,6 +79,10 @@ mod tests;
 
 pub use error::ExplainError;
 pub use provenance::{CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
+pub use recorder::{
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, EmissionEvent, ExplanationRecorder, HookContext,
+    NotCapturedEvent, UncapturedConstruct,
+};
 pub use report::{
     ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,
     DefinitionExplanation, Derivation, DistinctElements, EmissionExplanation, ExplanationReport,

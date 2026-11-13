@@ -116,8 +116,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.add_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.add_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("plus", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Sub { dest, left, right } => {
@@ -129,8 +133,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.sub_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.sub_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("minus", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mul { dest, left, right } => {
@@ -142,8 +150,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.mul_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.mul_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("mul", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Div { dest, left, right } => {
@@ -155,8 +167,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.div_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.div_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("div", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             Mod { dest, left, right } => {
@@ -168,8 +184,12 @@ impl RegoVM {
                     return Ok(InstructionOutcome::Continue);
                 }
 
-                let result = self.mod_values(a, b)?;
-                self.set_register(dest, result)?;
+                let result = self.mod_values(a, b);
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_arithmetic("rem", &result);
+                }
+                self.set_register(dest, result?)?;
                 Ok(InstructionOutcome::Continue)
             }
             other => self.execute_comparison_instruction(program, other),
@@ -219,13 +239,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Lt,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_lt();
@@ -242,13 +273,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Le,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_le();
@@ -265,13 +307,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Gt,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_gt();
@@ -288,13 +341,24 @@ impl RegoVM {
                 }
 
                 if self.strict_builtin_errors && mem::discriminant(a) != mem::discriminant(b) {
-                    return Err(VmError::ArithmeticError {
+                    let error = VmError::ArithmeticError {
                         message: alloc::format!(
                             "#undefined: cannot compare values of different types (left={}, right={})",
                             a.summary(), b.summary()
                         ),
                         pc: self.pc,
-                    });
+                    };
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_comparison_error(
+                            program,
+                            crate::explain::Operator::Ge,
+                            dest,
+                            left,
+                            right,
+                        );
+                    }
+                    return Err(error);
                 }
 
                 let result = self.compare_registers(left, right, false)?.is_ge();
@@ -365,6 +429,10 @@ impl RegoVM {
                 let passed = a != &Value::Undefined
                     && b != &Value::Undefined
                     && self.compare_registers(left, right, true)?.is_eq();
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_assert_eq(left, right, passed);
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -383,6 +451,10 @@ impl RegoVM {
                     },
                     GuardMode::NotUndefined => !matches!(value, Value::Undefined),
                 };
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_guard(program, register, mode, passed);
+                }
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)
             }
@@ -475,6 +547,10 @@ impl RegoVM {
                 if let Ok(obj_mut) = obj_value.as_object_mut() {
                     obj_mut.insert(key_value, value_value);
                     self.set_register(obj, obj_value)?;
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_emission(obj, Some(key), value);
+                    }
                 } else {
                     let offending = obj_value.clone();
                     self.set_register(obj, obj_value)?;
@@ -704,6 +780,10 @@ impl RegoVM {
                         set_mut.insert(value_to_add);
                     }
                     self.set_register(set, set_value)?;
+                    #[cfg(feature = "explanations")]
+                    if self.explain_enabled() {
+                        self.explain_emission(set, None, value);
+                    }
                 } else {
                     let offending = set_value.clone();
                     self.set_register(set, set_value)?;
@@ -1167,6 +1247,10 @@ impl RegoVM {
                         available: program.instruction_data.comprehension_begin_params.len(),
                     })?
                     .clone();
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    self.explain_comprehension();
+                }
                 self.execute_comprehension_begin(&params)?;
                 Ok(InstructionOutcome::Continue)
             }
