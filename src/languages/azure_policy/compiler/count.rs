@@ -482,10 +482,12 @@ impl Compiler {
             FieldKind::ApiVersion => Ok("apiVersion".to_string()),
             FieldKind::Tags => Ok("tags".to_string()),
             // A tag value is a string, never an array.  `tags.{tag}` would
-            // also turn a tag named `a[*]` into a real wildcard.
+            // also turn a tag named `a[*]` into a real wildcard.  The name is
+            // decoded, so render the canonical single-quoted spelling with
+            // each `'` re-escaped as `''`.
             FieldKind::Tag(tag) => bail!(span.error(&format!(
                 "count over a tag field is not supported (tag values are not arrays): tags['{}']",
-                tag
+                tag.replace('\'', "''")
             ))),
             FieldKind::Alias(path) => self.resolve_alias_path(path, span),
             FieldKind::Expr(_) => {

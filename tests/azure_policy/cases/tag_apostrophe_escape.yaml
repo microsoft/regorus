@@ -1,0 +1,281 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Doubled apostrophes in single-quoted tag names.
+#
+# Azure Policy documents `tags['''<tagName>''']`: inside a single-quoted tag
+# name, `''` stands for one literal `'`, so `tags['''My.Tag''']` names the tag
+# `'My.Tag'`. A lone `'` that is not part of a pair stays a literal character,
+# and double-quoted names are taken verbatim.
+#
+# Every match case has a twin whose resource carries the undecoded spelling
+# of the name and must not match.
+
+cases:
+  # =========================================================================
+  # Condition `field` paths
+  # =========================================================================
+
+  - note: tag_escape_outer_quotes_equals
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "'x'": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_outer_quotes_equals_twin_raw_name
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "''x''": "v"
+    want_undefined: true
+
+  - note: tag_escape_inner_pair_equals
+    policy_rule: |
+      {
+        "if": { "field": "tags['a''b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a'b": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_inner_pair_equals_twin_raw_name
+    policy_rule: |
+      {
+        "if": { "field": "tags['a''b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a''b": "v"
+    want_undefined: true
+
+  # =========================================================================
+  # exists
+  # =========================================================================
+
+  - note: tag_escape_exists_true
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "exists": true },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "'x'": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_exists_true_twin_raw_name
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "exists": true },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "''x''": "v"
+    want_undefined: true
+
+  # =========================================================================
+  # Other field routes
+  # =========================================================================
+
+  # The `if()` literals below decode to the path `tags['''x''']`.
+  - note: tag_escape_if_route
+    policy_rule: |
+      {
+        "if": {
+          "field": "[if(equals(1, 1), 'tags[''''''x'''''']', 'type')]",
+          "equals": "v"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "'x'": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_if_route_twin_raw_name
+    policy_rule: |
+      {
+        "if": {
+          "field": "[if(equals(1, 1), 'tags[''''''x'''''']', 'type')]",
+          "equals": "v"
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "''x''": "v"
+    want_undefined: true
+
+  # The tag name is bound by a count over a value array.
+  - note: tag_escape_count_binding
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('tagNames')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "v"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      tagNames: ["'''x'''"]
+    resource:
+      tags:
+        "'x'": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_count_binding_twin_raw_name
+    policy_rule: |
+      {
+        "if": {
+          "count": {
+            "value": "[parameters('tagNames')]",
+            "name": "tag",
+            "where": {
+              "field": "[concat('tags[', current('tag'), ']')]",
+              "equals": "v"
+            }
+          },
+          "equals": 1
+        },
+        "then": { "effect": "deny" }
+      }
+    parameters:
+      tagNames: ["'''x'''"]
+    resource:
+      tags:
+        "''x''": "v"
+    want_undefined: true
+
+  # =========================================================================
+  # Append: add the tag when it is missing. The field is passed through
+  # verbatim in the effect details.
+  # =========================================================================
+
+  - note: tag_escape_append_when_missing_tag_present
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "exists": false },
+        "then": {
+          "effect": "append",
+          "details": [ { "field": "tags['''x''']", "value": "v" } ]
+        }
+      }
+    resource:
+      tags:
+        "'x'": "v"
+    want_undefined: true
+
+  - note: tag_escape_append_when_missing_twin_raw_name
+    policy_rule: |
+      {
+        "if": { "field": "tags['''x''']", "exists": false },
+        "then": {
+          "effect": "append",
+          "details": [ { "field": "tags['''x''']", "value": "v" } ]
+        }
+      }
+    resource:
+      tags:
+        "''x''": "v"
+    want_effect: "append"
+    want_details:
+      - field: "tags['''x''']"
+        value: "v"
+
+  # =========================================================================
+  # Count over a tag is rejected; the message re-escapes the decoded name.
+  # =========================================================================
+
+  - note: tag_escape_count_error_outer_quotes
+    policy_rule: |
+      { "if": { "count": { "field": "tags['''x''']" }, "equals": 1 }, "then": { "effect": "deny" } }
+    resource: { "tags": { "'x'": "v" } }
+    want_compile_error_contains: "tags['''x''']"
+
+  # =========================================================================
+  # Spellings that are not unescaped
+  # =========================================================================
+
+  # A lone `'` that is not part of a `''` pair stays a literal character.
+  - note: tag_lone_apostrophe_is_literal
+    policy_rule: |
+      {
+        "if": { "field": "tags['a'b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a'b": "v"
+    want_effect: "deny"
+
+  - note: tag_lone_apostrophe_is_literal_twin
+    policy_rule: |
+      {
+        "if": { "field": "tags['a'b']", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a''b": "v"
+    want_undefined: true
+
+  # So `tags['a'b']` and `tags['a''b']` name the same tag.
+  # Its raw-name twin is tag_escape_inner_pair_equals_twin_raw_name.
+  - note: tag_lone_apostrophe_and_pair_same_tag
+    policy_rule: |
+      {
+        "if": {
+          "allOf": [
+            { "field": "tags['a'b']", "equals": "v" },
+            { "field": "tags['a''b']", "equals": "v" }
+          ]
+        },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a'b": "v"
+    want_effect: "deny"
+
+  # Double-quoted names are taken verbatim: `''` is not unescaped.
+  - note: tag_double_quoted_name_not_unescaped
+    policy_rule: |
+      {
+        "if": { "field": "tags[\"a''b\"]", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a''b": "v"
+    want_effect: "deny"
+
+  - note: tag_double_quoted_name_not_unescaped_twin
+    policy_rule: |
+      {
+        "if": { "field": "tags[\"a''b\"]", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a'b": "v"
+    want_undefined: true
