@@ -33,6 +33,8 @@ mod tests {
         default_literal_index: Option<u16>,
         #[serde(default)]
         destructuring_blocks: Option<Vec<Option<u16>>>,
+        #[serde(default)]
+        function_info: Option<crate::rvm::program::FunctionInfo>,
     }
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -424,7 +426,7 @@ mod tests {
                 name: String::from("test_rule"),
                 rule_type,
                 definitions: crate::Rc::new(definitions.clone()),
-                function_info: None,
+                function_info: rule_info_spec.function_info.clone(),
                 default_literal_index: rule_info_spec.default_literal_index,
                 result_reg,
                 num_registers: 50, // Increased to accommodate test cases with higher register indices
