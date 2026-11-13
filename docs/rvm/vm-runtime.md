@@ -317,10 +317,12 @@ flow hinges on the `InstructionOutcome` enum:
   return) to exit to the owning frame without returning a value.
 - `Suspend { reason }`: used exclusively in suspendable mode.
 
-Arithmetic and comparison opcodes live in `arithmetic.rs`, honouring
-`strict_builtin_errors` when operand types differ. Collection, loop, and
-virtual-data operations share helpers that convert `Value` variants with runtime
-type checking. Errors become `VmError` variants to ensure consistent reporting.
+Arithmetic opcodes use `arithmetic.rs`, honouring `strict_builtin_errors`.
+Relational comparisons use Rego value ordering even when operand types differ,
+regardless of strict mode; an Undefined operand still produces Undefined.
+Collection, loop, and virtual-data operations share helpers that convert `Value`
+variants with runtime type checking. Errors become `VmError` variants to ensure
+consistent reporting.
 `Halt` returns the value stored in register 0, allowing bytecode to terminate
 early without suspending.
 
@@ -462,7 +464,7 @@ internal runtime field and is not a public C# getter.
   { .. } }`, read the identifier and argument, and resume with the chosen value.
 - **Builtin strictness**: `set_strict_builtin_errors(true)` reports type
   mismatches as `VmError::ArithmeticError`; leave it `false` to coerce results
-  to `Value::Undefined`.
+  to `Value::Undefined`. Mixed-type relational comparisons are valid in either mode.
 - **State inspection**: use getters (`get_registers`, `get_call_stack`,
   `get_loop_stack`, `get_cache_hits`) to instrument evaluation or build
   debugging UIs. `get_debug_state()` provides a concise snapshot for logs.

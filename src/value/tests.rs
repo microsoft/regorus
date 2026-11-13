@@ -377,7 +377,7 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
                 program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
                 program.add_instruction(Instruction::LoadTrue { dest: 1 }, None);
                 program.add_instruction(
-                    Instruction::Lt {
+                    Instruction::And {
                         dest: 0,
                         left: 0,
                         right: 1,
@@ -388,12 +388,12 @@ fn value_traversal_lifecycle_1500000_byte_stack() {
                 let mut vm = RegoVM::new();
                 vm.load_program(alloc::sync::Arc::new(program));
                 vm.set_input(a.clone());
-                assert_eq!(vm.execute().unwrap(), Value::Bool(false));
+                vm.execute().unwrap_err();
                 vm.set_strict_builtin_errors(true);
                 let error = vm.execute().unwrap_err().to_string();
-                assert!(error.contains(
-                    "cannot compare values of different types (left=Array(len=1), right=Bool)"
-                ));
+                assert!(
+                    error.contains("logical AND expects booleans (left=Array(len=1), right=Bool)")
+                );
                 vm.set_input(Value::Null);
             }
             drop(a);

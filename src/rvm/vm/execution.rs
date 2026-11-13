@@ -924,7 +924,7 @@ mod tests {
         program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
         program.add_instruction(Instruction::LoadNull { dest: 1 }, None);
         program.add_instruction(
-            Instruction::Lt {
+            Instruction::And {
                 dest: 2,
                 left: 0,
                 right: 1,
