@@ -1157,3 +1157,86 @@ fn spaced_calls_beside_operations_and_statements() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn keyed_membership_is_not_reported_as_negation() -> anyhow::Result<()> {
+    let provenance = allow(r#"input.subject, "admin" in data.roles"#)?;
+    let site = provenance
+        .sites()
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("keyed membership check was not decoded"))?;
+    assert_eq!(site.kind, ConditionKind::Membership);
+    assert_eq!(site.operator, Some(Operator::In));
+    assert_eq!(site.left_path.as_deref(), Some("input.subject"));
+    assert_eq!(site.right_path.as_deref(), Some("data.roles"));
+    Ok(())
+}
+
+#[test]
+fn grouped_condition_keeps_its_reference_path() -> anyhow::Result<()> {
+    let provenance = allow("(input.flag)")?;
+    let site = provenance
+        .sites()
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("grouped condition was not decoded"))?;
+    assert_eq!(site.text, "(input.flag)");
+    assert_eq!(site.left_path.as_deref(), Some("input.flag"));
+    Ok(())
+}
+
+#[test]
+fn iteration_text_stops_at_statement_and_grouping_delimiters() -> anyhow::Result<()> {
+    let provenance = allow("some x in input.a | input.b; x == 1\nsome y in (input.a | input.b)\n")?;
+    let loops: Vec<_> = provenance
+        .sites()
+        .iter()
+        .filter(|site| site.kind == ConditionKind::Iteration)
+        .map(|site| (site.text.as_str(), at(site)))
+        .collect();
+    assert_eq!(
+        loops,
+        vec![
+            ("input.a | input.b", Some(("p.rego", 5, 11))),
+            ("(input.a | input.b)", Some(("p.rego", 6, 11))),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_set_iteration_text_excludes_following_statement() -> anyhow::Result<()> {
+    let provenance = allow("some x in set(); true")?;
+    let site = provenance
+        .sites()
+        .iter()
+        .find(|site| site.kind == ConditionKind::Iteration)
+        .ok_or_else(|| anyhow::anyhow!("empty-set iteration was not decoded"))?;
+    assert_eq!(site.text, "set()");
+    Ok(())
+}
+
+#[test]
+fn computed_builtin_results_are_not_reference_paths() -> anyhow::Result<()> {
+    let provenance = allow(
+        "json.verify_schema(input)[0] == true\ninput.values[json.verify_schema(input)[0]] == true",
+    )?;
+    let sites: Vec<_> = provenance
+        .sites()
+        .iter()
+        .filter(|site| site.kind == ConditionKind::Comparison)
+        .collect();
+    let computed = sites
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("first comparison site was not decoded"))?;
+    let indexed_reference = sites
+        .get(1)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("second comparison site was not decoded"))?;
+    assert_eq!(computed.left_path, None);
+    assert_eq!(
+        indexed_reference.left_path.as_deref(),
+        Some("input.values[json.verify_schema(input)[0]]")
+    );
+    Ok(())
+}

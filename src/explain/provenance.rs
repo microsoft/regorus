@@ -144,7 +144,10 @@ impl Provenance {
                 let (text, location) = span
                     .and_then(|span| Some((sources.get(span.source_index)?, span)))
                     .and_then(|(source, span)| {
-                        let (first, last) = source.expression(span)?;
+                        let (mut first, mut last) = source.expression(span)?;
+                        if shape.kind == ConditionKind::Iteration {
+                            (first, last) = source.include_grouping(first, last);
+                        }
                         Some((source.text(first, last)?, Some(source.location(first)?)))
                     })
                     .unwrap_or_default();
@@ -253,7 +256,9 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                     Some(collection),
                 ),
                 Some(Instruction::Not { dest, operand }) if dest == register => {
-                    shape(ConditionKind::Negation, None, Some(operand), None)
+                    keyed_membership(program, pc, register).unwrap_or_else(|| {
+                        shape(ConditionKind::Negation, None, Some(operand), None)
+                    })
                 }
                 _ => shape(ConditionKind::Truthiness, None, Some(register), None),
             })
@@ -276,6 +281,57 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                 Some(params.collection),
                 None,
             ))
+        }
+        _ => None,
+    }
+}
+
+/// Keyed membership is lowered to Index, Eq and two in-place Nots so that a
+/// missing key produces false rather than Undefined.
+fn keyed_membership(program: &Program, pc: usize, register: u8) -> Option<Shape> {
+    let instruction = |offset: usize| {
+        pc.checked_sub(offset)
+            .and_then(|index| program.instructions.get(index))
+            .copied()
+    };
+    match (
+        instruction(1)?,
+        instruction(2)?,
+        instruction(3)?,
+        instruction(4)?,
+    ) {
+        (
+            Instruction::Not {
+                dest: first_dest,
+                operand: first_operand,
+            },
+            Instruction::Not {
+                dest: second_dest,
+                operand: second_operand,
+            },
+            Instruction::Eq {
+                dest: eq_dest,
+                left: indexed,
+                ..
+            },
+            Instruction::Index {
+                dest: index_dest,
+                container,
+                key,
+            },
+        ) if first_dest == register
+            && first_operand == register
+            && second_dest == register
+            && second_operand == register
+            && eq_dest == register
+            && indexed == index_dest =>
+        {
+            Some(Shape {
+                kind: ConditionKind::Membership,
+                operator: Some(Operator::In),
+                left: Some(key),
+                right: Some(container),
+            })
         }
         _ => None,
     }
@@ -348,6 +404,7 @@ fn track(
         | Instruction::CallRule { .. } => span.and_then(|span| {
             let source = sources.get(span.source_index)?;
             let (first, last) = source.expression(span)?;
+            let (first, last) = source.strip_grouping(first, last);
             source.is_reference(first, last).then_some(())?;
             source.text(first, last)
         }),
@@ -570,7 +627,9 @@ impl<'a> SourceIndex<'a> {
             && !self.is_keyword(before);
         let ends_term = previous.kind != TokenClass::Symbol
             || matches!(self.symbol(before), Some(")" | "]" | "}"));
-        call || (ends_term && previous.lexeme().1 == token.start)
+        call || (matches!(self.symbol(index), Some("[" | "("))
+            && ends_term
+            && previous.lexeme().1 == token.start)
     }
 
     /// The first and last token of the expression of `span`.
@@ -692,8 +751,35 @@ impl<'a> SourceIndex<'a> {
         depth == 0
     }
 
-    /// Whether tokens `first..=last` are a reference such as `input.a`,
-    /// `data.roles[input.role]` or `f(x)`.
+    /// Remove parentheses that wrap the entire expression, not parentheses
+    /// belonging to a call or to a subexpression.
+    fn strip_grouping(&self, mut first: usize, mut last: usize) -> (usize, usize) {
+        while self.symbol(first) == Some("(")
+            && self.closing(first, last.saturating_add(1)) == Some(last)
+        {
+            first = first.saturating_add(1);
+            last = last.saturating_sub(1);
+        }
+        (first, last)
+    }
+
+    /// Include matched source parentheses surrounding an expression. The
+    /// parser drops grouping nodes, but provenance text must retain them.
+    fn include_grouping(&self, mut first: usize, mut last: usize) -> (usize, usize) {
+        while let Some(open) = first.checked_sub(1) {
+            if self.symbol(open) != Some("(")
+                || self.closing(open, self.tokens.len()) != last.checked_add(1)
+            {
+                break;
+            }
+            first = open;
+            last = last.saturating_add(1);
+        }
+        (first, last)
+    }
+
+    /// Whether tokens `first..=last` are a reference such as `input.a` or
+    /// `data.roles[input.role]`, rather than a computed value.
     fn is_reference(&self, first: usize, last: usize) -> bool {
         if self.tokens.get(first).map(|t| t.kind) != Some(TokenClass::Name) {
             return false;
@@ -711,10 +797,11 @@ impl<'a> SourceIndex<'a> {
                     }
                     field.saturating_add(1)
                 }
-                Some("[" | "(") => match self.closing(index, last.saturating_add(1)) {
+                Some("[") => match self.closing(index, last.saturating_add(1)) {
                     Some(close) => close.saturating_add(1),
                     None => return false,
                 },
+                Some("(") => return false,
                 _ => return false,
             };
         }
