@@ -213,8 +213,8 @@ fn value_output_and_ordering_compatibility() {
         Value::from(1),
         Value::from("a"),
         Value::new_array(),
-        Value::new_set(),
         Value::new_object(),
+        Value::new_set(),
         Value::Undefined,
     ];
     for pair in values.windows(2) {
