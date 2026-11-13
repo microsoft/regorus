@@ -6,7 +6,7 @@ use crate::value::Value;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use serde::ser::{Error as _, SerializeStruct, Serializer};
+use serde::ser::{Error as _, SerializeMap as _, SerializeStruct, Serializer};
 use serde::Serialize;
 
 /// Serialization helper: an undefined value is omitted from the output.
@@ -1010,24 +1010,61 @@ pub struct SourceLocation {
 ///   - Partial object: the result is the object of the `key` and `value` of
 ///     every alternative whose conditions hold, or an empty object when none
 ///     holds.
+/// - [`ResidualStatus::Partial`]: as for `Exact`, but at least one
+///   alternative is [unresolved](ResidualAlternativeStatus::Unresolved): a
+///   part of the outcome that can't be represented. Its `conditions` are
+///   necessary for it to contribute a value, so when they don't all hold it
+///   contributes none. When they all hold, the outcome is unknown, except
+///   that the members or entries that exact alternatives contribute to a
+///   partial set or object are in it if evaluation succeeds; which other
+///   members or entries it has, whether it is empty, and the whole
+///   collection are unknown. A `Partial` result, of any kind, never
+///   establishes that evaluation succeeds: the unresolved part may make it
+///   fail with an error even when its conditions don't hold, as in
+///   `allow if { x := to_number(input.n); input.flag; x > 0 }` with
+///   `input.flag` false and `input.n` set to `"abc"`. Consumers may
+///   therefore use a `Partial` result only to fail closed (for example, to
+///   deny), never to allow.
 /// - Any other status: the outcome can't be represented, so `result` is
 ///   undefined and `residual_queries` is empty. It is unknown, not
 ///   undefined or empty, and consumers must fail closed: they must not
 ///   derive a decision from this result.
 ///
-/// In an `Exact` result, every alternative has a `value`, and only the
-/// alternatives of a partial object have a `key`; consumers reject a result
-/// that breaks this.
+/// The status is `Partial` if and only if at least one alternative is
+/// unresolved, so an `Exact` result has none. In an `Exact` or `Partial`
+/// result, every exact alternative has a `value`, and only the alternatives
+/// of a partial object have a `key`; an unresolved alternative omits a key
+/// or value it can't represent. Consumers reject a result that breaks this,
+/// and serializing fails for a result whose `status` breaks the first rule,
+/// a result of another status with alternatives, or an alternative whose
+/// `unresolved` doesn't match its `status`.
+///
+/// To keep the conditions of an unresolved alternative necessary, producers
+/// omit only whole top-level conditions they can't represent, never part
+/// of one. If any condition inside `negated`, at any depth, can't be
+/// represented, they omit the whole [`ResidualKind::NegationHolds`]
+/// condition rather than weaken it: dropping a conjunct makes the negated
+/// conjunction weaker and so its negation stronger, which would no longer
+/// be necessary. For example, with `deny if { input.tier == "Free"; not
+/// exempt }` and `exempt if { input.owner == "ops"; glob.match(...) }`, the
+/// alternative keeps `input.tier == "Free"` and drops `not exempt`
+/// entirely; `not input.owner == "ops"` would wrongly rule out a resource
+/// owned by `ops` that is not exempt.
 ///
 /// Only the `else` chain of one definition is ordered. Alternatives from
 /// different definitions, or from different iterations of one body, are not,
 /// and conflicting values are an error in Rego rather than a first match.
 /// Producers therefore return [`ResidualStatus::PossibleConflict`] whenever
-/// they can't rule out a conflict: in an `Exact` result for a complete rule
-/// or function, any two alternatives with different values (by Rego
-/// equality) are in one `else` chain or one is a trailing default, and in a
-/// partial object no two alternatives with the same key and different values
-/// can hold together.
+/// they can't rule out a conflict. In an `Exact` or `Partial` result for a
+/// complete rule or function, any two alternatives with different values
+/// (by Rego equality) are in one `else` chain or one is a trailing default,
+/// and in a partial object no two alternatives with the same key and
+/// different values can hold together. So that conflicts fail closed, an
+/// unresolved key counts as possibly equal to every other key, and an
+/// unresolved value as different from every other value: an alternative
+/// with an unresolved key that can hold together with another alternative
+/// of the same partial object makes the result `PossibleConflict`.
+/// `PossibleConflict` and `Unsupported` take precedence over `Partial`.
 ///
 /// JSON can't distinguish a set from an array, or a non-string object key
 /// from a string, so producers return [`ResidualStatus::Unsupported`] when a
@@ -1042,7 +1079,7 @@ pub struct SourceLocation {
 ///
 /// Values here are policy data needed to apply the residual, so they are
 /// not subject to [`ValueMode`](super::ValueMode).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PartialEvalResult {
     /// Kind of the queried rule, which decides how the alternatives
@@ -1052,50 +1089,200 @@ pub struct PartialEvalResult {
     pub status: ResidualStatus,
     /// The query result when it does not depend on unknown input. Omitted
     /// from JSON when undefined.
-    #[serde(skip_serializing_if = "is_undefined")]
     pub result: Value,
     /// Alternative residual queries.
     pub residual_queries: Vec<ResidualQuery>,
     /// Human-readable messages about the partial evaluation, such as why the
-    /// status is not [`ResidualStatus::Exact`].
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// status is not [`ResidualStatus::Exact`]. Omitted from JSON when
+    /// empty.
     pub warnings: Vec<String>,
+}
+
+impl Serialize for PartialEvalResult {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let unresolved = self
+            .residual_queries
+            .iter()
+            .any(|query| query.status == ResidualAlternativeStatus::Unresolved);
+        if (self.status == ResidualStatus::Partial) != unresolved {
+            return Err(S::Error::custom(
+                "partial evaluation status is partial without an unresolved alternative, \
+                 or another status with one",
+            ));
+        }
+        if !matches!(self.status, ResidualStatus::Exact | ResidualStatus::Partial)
+            && !self.residual_queries.is_empty()
+        {
+            return Err(S::Error::custom(
+                "partial evaluation result has alternatives but is neither exact nor partial",
+            ));
+        }
+        let defined = !is_undefined(&self.result);
+        let warned = !self.warnings.is_empty();
+        let len = field_count(&[true, true, defined, true, warned]);
+        let mut state = serializer.serialize_struct("PartialEvalResult", len)?;
+        state.serialize_field("kind", &self.kind)?;
+        state.serialize_field("status", &self.status)?;
+        if defined {
+            state.serialize_field("result", &self.result)?;
+        } else {
+            state.skip_field("result")?;
+        }
+        state.serialize_field("residual_queries", &self.residual_queries)?;
+        if warned {
+            state.serialize_field("warnings", &self.warnings)?;
+        } else {
+            state.skip_field("warnings")?;
+        }
+        state.end()
+    }
 }
 
 /// Whether a partial evaluation could represent its outcome.
 ///
 /// Consumers must treat every status other than [`ResidualStatus::Exact`],
 /// including one they don't recognize, as an unknown outcome and fail
-/// closed.
+/// closed. Consumers that handle unresolved alternatives may also accept
+/// [`ResidualStatus::Partial`], but only to fail closed; older consumers
+/// reject it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ResidualStatus {
     /// `result` and `residual_queries` describe the outcome for every input.
     Exact,
+    /// As for `Exact`, but at least one alternative is
+    /// [unresolved](ResidualAlternativeStatus::Unresolved). It may be used
+    /// only to fail closed, never to allow; see [`PartialEvalResult`].
+    Partial,
     /// Alternatives with different values that are not ordered, from
     /// different definitions or iterations, might hold together.
     PossibleConflict,
-    /// The residual uses a construct that can't be expressed, such as a
-    /// value computed from unknown input or a set value.
+    /// The outcome can't be expressed, even with unresolved alternatives.
+    /// A construct that affects only one alternative, such as a value
+    /// computed from unknown input, makes that alternative unresolved
+    /// instead, except for these, which make the whole result unsupported:
+    /// a residual key or value, or a condition value, that contains a set
+    /// or an object with non-string keys (see [`PartialEvalResult`]), and a
+    /// [`ResidualCall`] with a known argument that is not a string or with
+    /// a `regex.match` pattern that doesn't compile or exceeds the regorus
+    /// regex size limit.
     Unsupported,
 }
 
 /// One alternative of a partial evaluation: a conjunction of conditions on
 /// unknown input and what the query produces when they all hold.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct ResidualQuery {
     /// Key of the entry, for a partial object only; absent from JSON
     /// otherwise.
-    #[serde(skip_serializing_if = "is_absent")]
     pub key: Option<Value>,
     /// The value the query produces, for example `true`, the set member for
-    /// a partial set, or the entry value for a partial object.
-    #[serde(skip_serializing_if = "is_undefined")]
+    /// a partial set, or the entry value for a partial object. Omitted from
+    /// JSON when undefined.
     pub value: Value,
     /// Conditions that must all hold.
     pub conditions: Vec<ResidualCondition>,
+    /// Whether the alternative is fully represented. Omitted from JSON when
+    /// [`ResidualAlternativeStatus::Exact`], so an absent `status` means
+    /// exact.
+    pub status: ResidualAlternativeStatus,
+    /// Why the alternative is unresolved. Present if and only if `status` is
+    /// [`ResidualAlternativeStatus::Unresolved`]; serialization fails
+    /// otherwise.
+    pub unresolved: Option<ResidualUnresolved>,
+}
+
+impl Serialize for ResidualQuery {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let is_unresolved = self.status == ResidualAlternativeStatus::Unresolved;
+        if self.unresolved.is_some() != is_unresolved {
+            return Err(S::Error::custom(
+                "residual query has `unresolved` without unresolved status, or the reverse",
+            ));
+        }
+        let keyed = !is_absent(&self.key);
+        let valued = !is_undefined(&self.value);
+        let len = field_count(&[keyed, valued, true, is_unresolved, is_unresolved]);
+        let mut state = serializer.serialize_struct("ResidualQuery", len)?;
+        match self.key {
+            Some(ref key) if keyed => state.serialize_field("key", key)?,
+            _ => state.skip_field("key")?,
+        }
+        if valued {
+            state.serialize_field("value", &self.value)?;
+        } else {
+            state.skip_field("value")?;
+        }
+        state.serialize_field("conditions", &self.conditions)?;
+        match self.unresolved {
+            Some(ref unresolved) => {
+                state.serialize_field("status", &self.status)?;
+                state.serialize_field("unresolved", unresolved)?;
+            }
+            None => {
+                state.skip_field("status")?;
+                state.skip_field("unresolved")?;
+            }
+        }
+        state.end()
+    }
+}
+
+/// Whether one alternative of a partial evaluation is fully represented.
+///
+/// Consumers reject a status they don't recognize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ResidualAlternativeStatus {
+    /// The alternative's key, value and conditions are exact.
+    Exact,
+    /// Part of the alternative can't be represented, so whole top-level
+    /// conditions may be missing and its key or value absent. The
+    /// conditions present are still necessary for it to contribute a
+    /// value, but evaluation may fail with an error even when they don't
+    /// hold. See [`PartialEvalResult`].
+    /// Only a [`ResidualStatus::Partial`] result has unresolved alternatives.
+    Unresolved,
+}
+
+/// Why an alternative of a partial evaluation is unresolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ResidualUnresolved {
+    /// The kind of construct that can't be represented.
+    pub reason: ResidualUnresolvedReason,
+    /// Human-readable details, such as the expression involved. It holds
+    /// only policy source text and builtin names, never input, data or
+    /// other runtime values, so it needs no redaction. Omitted from JSON
+    /// when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// The kind of construct that makes an alternative unresolved.
+///
+/// The reason is informational: consumers treat every unresolved
+/// alternative alike, whatever its reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ResidualUnresolvedReason {
+    /// The value depends on unknown input, as in
+    /// `msg := sprintf("%s", [input.name])`.
+    UnknownValue,
+    /// The key of a partial object entry depends on unknown input.
+    TaintedKey,
+    /// A condition calls a builtin outside the [`ResidualCall`] allowlist,
+    /// or calls an allowlisted one in another form it doesn't allow. A call
+    /// that can never return `true`, such as one with a known argument that
+    /// is not a string or a pattern that doesn't compile, makes the whole
+    /// result [`ResidualStatus::Unsupported`] instead.
+    UnsupportedBuiltin,
+    /// A condition uses another construct that can't be expressed.
+    UnsupportedConstruct,
 }
 
 /// One condition on unknown input in a residual query.
@@ -1104,7 +1291,8 @@ pub struct ResidualQuery {
 /// value`: producers put the unknown input on the left and mirror the
 /// operator, so `18 < input.age` becomes `input.age > 18`. A condition that
 /// does not fit this shape, such as `input.a < input.b`, leaves them unset;
-/// `text` is always present.
+/// `text` is always present. A [`ResidualKind::BuiltinCall`] condition is
+/// described by `call` instead.
 ///
 /// Consumers that enforce residual conditions must reject a condition they
 /// can't evaluate: one whose `kind` or `operator` they don't recognize, or
@@ -1120,7 +1308,9 @@ pub struct ResidualCondition {
     /// Operator of a comparison.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator: Option<Operator>,
-    /// The unknown input path, for example `input.role`.
+    /// The unknown path, for example `input.role`. It is root-qualified: it
+    /// starts with `input.`, `data.` or `context.`, and consumers reject a
+    /// path with any other root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_path: Option<String>,
     /// The known value the input is compared with; absent from JSON when
@@ -1132,6 +1322,9 @@ pub struct ResidualCondition {
     /// hold together.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub negated: Vec<ResidualCondition>,
+    /// For [`ResidualKind::BuiltinCall`]: the call that must return `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<ResidualCall>,
     /// Fully qualified name of the rule the condition came from.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
@@ -1155,4 +1348,85 @@ pub enum ResidualKind {
     CollectionExists,
     /// The negated conditions do not all hold.
     NegationHolds,
+    /// The builtin call in `call` returns `true`.
+    BuiltinCall,
+}
+
+/// A builtin call in a [`ResidualKind::BuiltinCall`] condition.
+///
+/// Only these pure predicates are allowed, each with exactly two arguments
+/// in Rego order:
+///
+/// - `startswith(search, base)`, `endswith(search, base)` and
+///   `contains(haystack, needle)`;
+/// - `regex.match(pattern, value)`, only with a constant pattern: `pattern`
+///   is a [`ResidualArgument::Value`].
+///
+/// Every [`ResidualArgument::Value`] argument is a string. A call with a
+/// known argument that is not a string can never return `true`, and may
+/// raise an error, so producers return [`ResidualStatus::Unsupported`] for
+/// the whole result.
+///
+/// The condition holds when the builtin returns `true`. An input path that
+/// is undefined makes the condition not hold, as the call is then
+/// undefined. An input path whose value is defined but not a string makes
+/// the call fail: regorus raises an error with strict builtin errors and
+/// returns undefined without them, and consumers can't tell which applies.
+/// Consumers must therefore treat it as an evaluation error and reject the
+/// whole result, not just the condition or its alternative; this also
+/// applies inside `negated`. Consumers never coerce an argument to a
+/// string.
+///
+/// Strings are compared ordinally, as sequences of Unicode scalar values,
+/// with no normalization or case folding; consumers use ordinal string
+/// APIs, not culture-sensitive ones.
+///
+/// The pattern has regorus `regex.match` semantics: the syntax of the Rust
+/// `regex` crate and an unanchored match. Classes such as `\d`, `\w`, `\s`
+/// and `\b`, and case-insensitive matching with `(?i)`, are Unicode-aware
+/// by default. Consumers reject a pattern their engine can't evaluate with
+/// identical semantics. With a pattern that doesn't compile, or that
+/// exceeds the regorus regex size limit, the call can never return `true`,
+/// and may raise an error, so producers return
+/// [`ResidualStatus::Unsupported`] for the whole result.
+///
+/// Consumers must fail closed: they reject a call to any other builtin, a
+/// call with another number of arguments, a known argument (one with the
+/// key `value`) that is not a string, a `regex.match` whose pattern is not
+/// a known argument, and an argument that is not an object with exactly
+/// one of the keys `input_path` and `value`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct ResidualCall {
+    /// Builtin name as written in Rego, for example `startswith` or
+    /// `regex.match`.
+    pub name: String,
+    /// The arguments, in order.
+    pub arguments: Vec<ResidualArgument>,
+}
+
+/// One argument of a [`ResidualCall`]: a JSON object with the single key
+/// `input_path` or `value`. Consumers reject any other shape.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ResidualArgument {
+    /// An unknown path, root-qualified as for
+    /// [`ResidualCondition::input_path`].
+    InputPath(String),
+    /// A known string. Serializing any other value fails.
+    Value(Value),
+}
+
+impl Serialize for ResidualArgument {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(1))?;
+        match *self {
+            Self::InputPath(ref path) => map.serialize_entry("input_path", path)?,
+            Self::Value(ref value @ Value::String(_)) => map.serialize_entry("value", value)?,
+            Self::Value(_) => {
+                return Err(S::Error::custom("residual call argument is not a string"));
+            }
+        }
+        map.end()
+    }
 }

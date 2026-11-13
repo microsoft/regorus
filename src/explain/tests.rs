@@ -2,16 +2,20 @@
 // Licensed under the MIT License.
 
 use super::fixtures::{
-    attributed_report, complete_rule_report, conflict_report, known, partial_eval_conflict_result,
-    partial_eval_object_result, partial_eval_result, partial_eval_set_result,
-    partial_eval_unsupported_result, partial_object_report, partial_set_report, redacted,
+    attributed_report, complete_rule_report, conflict_report, known,
+    partial_eval_builtin_call_result, partial_eval_conflict_result, partial_eval_object_result,
+    partial_eval_partial_object_result, partial_eval_partial_result, partial_eval_result,
+    partial_eval_set_result, partial_eval_unsupported_result, partial_object_report,
+    partial_set_report, redacted,
 };
 use super::*;
 use crate::rvm::program::RuleType;
 use crate::rvm::vm::VmError;
 use crate::value::Value;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString as _};
+use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::Context as _;
 
@@ -150,20 +154,219 @@ fn partial_eval_unsupported_result_json() -> Result<(), serde_json::Error> {
         serde_json::to_string(&partial_eval_unsupported_result())?,
         concat!(
             r#"{"kind":"complete","status":"unsupported","residual_queries":[],"#,
-            r#""warnings":["data.test.msg: the value depends on unknown input"]}"#,
+            r#""warnings":["data.test.ports: the value is a set, which JSON can't distinguish from an array"]}"#,
         )
     );
     Ok(())
 }
 
-/// A result that is not exact carries nothing a consumer could apply.
+#[test]
+fn partial_eval_builtin_call_result_json() -> Result<(), serde_json::Error> {
+    let expected = concat!(
+        r#"{"kind":"complete","status":"exact","residual_queries":["#,
+        r#"{"value":true,"conditions":[{"text":"startswith(input.name, \"svc-\")","kind":"builtin_call","#,
+        r#""call":{"name":"startswith","arguments":[{"input_path":"input.name"},{"value":"svc-"}]}}]},"#,
+        r#"{"value":true,"conditions":[{"text":"regex.match(\"^prod-\", data.env.name)","kind":"builtin_call","#,
+        r#""call":{"name":"regex.match","arguments":[{"value":"^prod-"},{"input_path":"data.env.name"}]}}]}]}"#,
+    );
+    assert_eq!(
+        serde_json::to_string(&partial_eval_builtin_call_result())?,
+        expected
+    );
+    Ok(())
+}
+
+/// A known call argument is always a string: any other value, including an
+/// undefined one at any depth, fails to serialize.
+#[test]
+fn non_string_residual_call_argument_fails_to_serialize() -> Result<(), serde_json::Error> {
+    let string = Value::from("svc-");
+    for value in [
+        Value::Undefined,
+        Value::Null,
+        Value::from(true),
+        Value::from(1),
+        Value::from(vec![string.clone()]),
+        Value::from(vec![Value::Undefined]),
+        Value::from(BTreeSet::from([string.clone()])),
+        Value::from(BTreeMap::from([(Value::from("a"), string.clone())])),
+    ] {
+        let argument = ResidualArgument::Value(value.clone());
+        assert_eq!(serde_json::to_string(&argument).ok(), None, "{value:?}");
+    }
+    assert_eq!(
+        serde_json::to_string(&ResidualArgument::Value(string))?,
+        r#"{"value":"svc-"}"#
+    );
+    Ok(())
+}
+
+/// An alternative's `unresolved` must be present exactly when its status
+/// is unresolved, or serialization fails.
+#[test]
+fn residual_query_status_mismatch_fails_to_serialize() -> anyhow::Result<()> {
+    let result = partial_eval_partial_result();
+    let exact = result.residual_queries.first().context("exact")?;
+    let unresolved = result.residual_queries.get(1).context("unresolved")?;
+    serde_json::to_string(exact)?;
+    serde_json::to_string(unresolved)?;
+
+    let mut missing_reason = unresolved.clone();
+    missing_reason.unresolved = None;
+    assert_eq!(serde_json::to_string(&missing_reason).ok(), None);
+
+    let mut exact_with_reason = exact.clone();
+    exact_with_reason.unresolved = unresolved.unresolved.clone();
+    assert_eq!(serde_json::to_string(&exact_with_reason).ok(), None);
+    Ok(())
+}
+
+/// A result is `partial` exactly when an alternative is unresolved, or
+/// serialization fails, so an older consumer never sees `exact` with an
+/// unresolved alternative.
+#[test]
+fn partial_eval_status_mismatch_fails_to_serialize() -> Result<(), serde_json::Error> {
+    let mut exact_with_unresolved = partial_eval_partial_result();
+    exact_with_unresolved.status = ResidualStatus::Exact;
+    assert_eq!(serde_json::to_string(&exact_with_unresolved).ok(), None);
+
+    let mut partial_without_unresolved = partial_eval_set_result();
+    partial_without_unresolved.status = ResidualStatus::Partial;
+    assert_eq!(
+        serde_json::to_string(&partial_without_unresolved).ok(),
+        None
+    );
+
+    serde_json::to_string(&partial_eval_partial_result())?;
+    serde_json::to_string(&partial_eval_set_result())?;
+    Ok(())
+}
+
+/// A result that is neither exact nor partial has no alternatives, or
+/// serialization fails.
+#[test]
+fn inexact_partial_eval_result_with_alternatives_fails_to_serialize() -> anyhow::Result<()> {
+    let alternative = partial_eval_set_result()
+        .residual_queries
+        .first()
+        .cloned()
+        .context("alternative")?;
+    for mut result in [
+        partial_eval_conflict_result(),
+        partial_eval_unsupported_result(),
+    ] {
+        serde_json::to_string(&result)?;
+        result.residual_queries.push(alternative.clone());
+        assert_eq!(serde_json::to_string(&result).ok(), None, "{result:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn partial_eval_partial_result_json() -> anyhow::Result<()> {
+    let prefix = concat!(
+        r#"{"kind":"partial_set","status":"partial","residual_queries":["#,
+        r#"{"value":"public access","conditions":[{"text":"input.properties.publicNetworkAccess == \"Enabled\"","#,
+        r#""kind":"condition_holds","operator":"==","input_path":"input.properties.publicNetworkAccess","value":"Enabled"}]},"#,
+        r#"{"conditions":[{"text":"input.sku.tier == \"Free\"","#,
+        r#""kind":"condition_holds","operator":"==","input_path":"input.sku.tier","value":"Free"}],"#,
+        r#""status":"unresolved","unresolved":{"reason":"unknown_value""#,
+    );
+    let mut result = partial_eval_partial_result();
+    assert_eq!(
+        serde_json::to_string(&result)?,
+        [
+            prefix,
+            r#","detail":"sprintf(\"bad sku %s\", [input.sku.name]) depends on unknown input"}}]}"#,
+        ]
+        .concat()
+    );
+    result
+        .residual_queries
+        .get_mut(1)
+        .and_then(|query| query.unresolved.as_mut())
+        .context("unresolved alternative")?
+        .detail = None;
+    assert_eq!(serde_json::to_string(&result)?, [prefix, "}}]}"].concat());
+    Ok(())
+}
+
+/// The unresolved alternatives of a partial object omit an unknown key and
+/// keep a known one.
+#[test]
+fn partial_eval_partial_object_result_json() -> anyhow::Result<()> {
+    let mode = |value: &str| {
+        format!(
+            r#"[{{"text":"input.mode == \"{value}\"","kind":"condition_holds","operator":"==","input_path":"input.mode","value":"{value}"}}]"#
+        )
+    };
+    let expected = [
+        r#"{"kind":"partial_object","status":"partial","residual_queries":["#,
+        r#"{"key":"a","value":1,"conditions":"#,
+        &mode("a"),
+        r#"},{"value":2,"conditions":"#,
+        &mode("b"),
+        r#","status":"unresolved","unresolved":{"reason":"tainted_key","detail":"the key input.name is unknown"}},"#,
+        r#"{"key":"c","value":3,"conditions":"#,
+        &mode("c"),
+        r#","status":"unresolved","unresolved":{"reason":"unsupported_builtin","detail":"glob.match"}},"#,
+        r#"{"key":"d","value":4,"conditions":"#,
+        &mode("d"),
+        r#","status":"unresolved","unresolved":{"reason":"unsupported_construct"}}]}"#,
+    ]
+    .concat();
+    let result = partial_eval_partial_object_result();
+    assert_eq!(serde_json::to_string(&result)?, expected);
+    let json = serde_json::to_value(&result)?;
+    let tainted = json
+        .pointer("/residual_queries/1")
+        .and_then(serde_json::Value::as_object)
+        .context("tainted-key alternative")?;
+    assert!(!tainted.contains_key("key"));
+    Ok(())
+}
+
+/// The result status is `partial` if and only if an alternative is
+/// unresolved, and only unresolved alternatives say why.
+#[test]
+fn partial_eval_fixtures_keep_alternative_status_invariants() {
+    for result in [
+        partial_eval_result(),
+        partial_eval_set_result(),
+        partial_eval_object_result(),
+        partial_eval_builtin_call_result(),
+        partial_eval_partial_result(),
+        partial_eval_partial_object_result(),
+        partial_eval_conflict_result(),
+        partial_eval_unsupported_result(),
+        fixtures::partial_eval_nested_collection_unsupported(),
+    ] {
+        let unresolved = result
+            .residual_queries
+            .iter()
+            .filter(|query| query.status == ResidualAlternativeStatus::Unresolved)
+            .count();
+        assert_eq!(result.status == ResidualStatus::Partial, unresolved > 0);
+        for query in &result.residual_queries {
+            assert_eq!(
+                query.status == ResidualAlternativeStatus::Unresolved,
+                query.unresolved.is_some()
+            );
+        }
+    }
+}
+
+/// A result that is neither exact nor partial carries nothing a consumer
+/// could apply.
 #[test]
 fn inexact_partial_eval_results_have_no_outcome() {
     for result in [
         partial_eval_conflict_result(),
         partial_eval_unsupported_result(),
+        fixtures::partial_eval_nested_collection_unsupported(),
     ] {
         assert_ne!(result.status, ResidualStatus::Exact);
+        assert_ne!(result.status, ResidualStatus::Partial);
         assert_eq!(result.result, Value::Undefined);
         assert!(result.residual_queries.is_empty());
         assert!(!result.warnings.is_empty());
@@ -424,6 +627,7 @@ fn every_enum_variant_serializes_to_its_documented_name() -> Result<(), serde_js
     use Outcome as O;
     use ResidualKind as R;
     use ResidualStatus as S;
+    use ResidualUnresolvedReason as U;
     check(
         &[
             RuleKind::Complete,
@@ -474,6 +678,7 @@ fn every_enum_variant_serializes_to_its_documented_name() -> Result<(), serde_js
             R::ConditionHolds,
             R::CollectionExists,
             R::NegationHolds,
+            R::BuiltinCall,
         ],
         |kind| match kind {
             R::Exists => "exists",
@@ -481,14 +686,40 @@ fn every_enum_variant_serializes_to_its_documented_name() -> Result<(), serde_js
             R::ConditionHolds => "condition_holds",
             R::CollectionExists => "collection_exists",
             R::NegationHolds => "negation_holds",
+            R::BuiltinCall => "builtin_call",
         },
     )?;
     check(
-        &[S::Exact, S::PossibleConflict, S::Unsupported],
+        &[S::Exact, S::Partial, S::PossibleConflict, S::Unsupported],
         |status| match status {
             S::Exact => "exact",
+            S::Partial => "partial",
             S::PossibleConflict => "possible_conflict",
             S::Unsupported => "unsupported",
+        },
+    )?;
+    check(
+        &[
+            ResidualAlternativeStatus::Exact,
+            ResidualAlternativeStatus::Unresolved,
+        ],
+        |status| match status {
+            ResidualAlternativeStatus::Exact => "exact",
+            ResidualAlternativeStatus::Unresolved => "unresolved",
+        },
+    )?;
+    check(
+        &[
+            U::UnknownValue,
+            U::TaintedKey,
+            U::UnsupportedBuiltin,
+            U::UnsupportedConstruct,
+        ],
+        |reason| match reason {
+            U::UnknownValue => "unknown_value",
+            U::TaintedKey => "tainted_key",
+            U::UnsupportedBuiltin => "unsupported_builtin",
+            U::UnsupportedConstruct => "unsupported_construct",
         },
     )?;
     Ok(())
