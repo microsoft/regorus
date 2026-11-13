@@ -463,6 +463,8 @@ internal runtime field and is not a public C# getter.
 - **Builtin strictness**: `set_strict_builtin_errors(true)` reports type
   mismatches as `VmError::ArithmeticError`; leave it `false` to coerce results
   to `Value::Undefined`.
+- **Rule short-circuiting**: constant-output complete rules and functions stop at
+  the first witness; partial rules and comprehensions remain exhaustive.
 - **State inspection**: use getters (`get_registers`, `get_call_stack`,
   `get_loop_stack`, `get_cache_hits`) to instrument evaluation or build
   debugging UIs. `get_debug_state()` provides a concise snapshot for logs.
