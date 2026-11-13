@@ -1,0 +1,79 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+- passes: true
+  case:
+    note: empty binding maps match OPA
+    query: 1 + 1
+    want_result: [{}]
+- passes: true
+  case:
+    note: genuine strict error matches its message
+    query: count(1)
+    strict_error: true
+    want_error: "`count` requires"
+- passes: false
+  case:
+    note: strict mode is not an error expectation
+    query: count(1)
+    strict_error: true
+    want_result: [{}]
+- passes: false
+  case:
+    note: incorrect error message is rejected
+    query: count(1)
+    strict_error: true
+    want_error: definitely-not-the-message
+- passes: false
+  case:
+    note: an error cannot bypass an explicit result assertion
+    query: count(1)
+    strict_error: true
+    want_error: "`count` requires"
+    want_result: [{x: 999}]
+- passes: false
+  case:
+    note: unverified error codes are not counted as passes
+    query: count(1)
+    strict_error: true
+    want_error_code: eval_conflict_error
+- passes: false
+  case:
+    note: empty result cannot satisfy an error-code expectation
+    query: "false"
+    want_error_code: eval_builtin_error
+- passes: false
+  case:
+    note: setup failure cannot satisfy an evaluation-error expectation
+    query: data.test.p = x
+    modules: ["package test\np := "]
+    strict_error: true
+    want_error: error
+- passes: false
+  case:
+    note: json_match_schema rejects extra rows
+    query: x = [true, []]; y = [1, 2][_]
+    want_result: [{x: [true, []]}]
+- passes: false
+  case:
+    note: json_match_schema rejects extra bindings
+    query: x = [true, []]; y = 1
+    want_result: [{x: [true, []]}]
+- passes: true
+  case:
+    note: json_verify_schema tolerates only error diagnostic text
+    query: x = [false, "Regorus diagnostic"]
+    want_result: [{x: [false, "OPA diagnostic"]}]
+- passes: false
+  case:
+    note: "strings/sprintf: float too big"
+    query: x = 42
+    want_result: [{x: hi 2e308}]
+- passes: true
+  rvm: true
+  case:
+    note: strict successful rule is cross-checked in RVM
+    query: data.test.p = x
+    strict_error: true
+    modules: ["package test\np := input.value + 1"]
+    input: {value: 1}
+    want_result: [{x: 2}]

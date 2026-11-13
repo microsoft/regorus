@@ -157,14 +157,19 @@ fn setup_engine_for_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Engin
     })
 }
 
-fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<QueryResults> {
+fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Result<QueryResults>> {
     let EngineSetup { mut engine, .. } = setup_engine_for_case(case, is_rego_v0_test)?;
 
     let mut engine_full = engine.clone();
-    let mut query_results = engine.eval_query(case.query.clone(), true)?;
+    let mut query_results = match engine.eval_query(case.query.clone(), true) {
+        Ok(results) => results,
+        Err(error) => return Ok(Err(error)),
+    };
 
     // Ensure that full evaluation produces the same results.
-    let qr_full = engine_full.eval_query_and_all_rules(case.query.clone(), true)?;
+    let qr_full = engine_full
+        .eval_query_and_all_rules(case.query.clone(), true)
+        .context("full-evaluation cross-check failed after successful query evaluation")?;
     if qr_full != query_results {
         if case.note == "refheads/general, set leaf, deep query" {
             // Get test to pass for now.
@@ -174,7 +179,7 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<QueryResults
         }
     }
 
-    Ok(query_results)
+    Ok(Ok(query_results))
 }
 
 fn normalize_query_results(
@@ -186,13 +191,7 @@ fn normalize_query_results(
     for qr in query_results.result {
         let is_binding = !qr.bindings.as_object()?.is_empty();
         binding_results.push(is_binding);
-        values.push(if is_binding {
-            qr.bindings.clone()
-        } else if let Some(v) = qr.expressions.last() {
-            v.value.clone()
-        } else {
-            Value::Undefined
-        });
+        values.push(qr.bindings);
     }
 
     normalize_test_result(Value::from(values), sort_bindings, &binding_results)
@@ -269,7 +268,11 @@ fn wrap_binding_result(var_name: &str, value: Value) -> Value {
     Value::from(vec![Value::from(binding)])
 }
 
-fn eval_rule_with_rvm(case: &TestCase, is_rego_v0_test: bool, rule_path: &str) -> Result<Value> {
+fn eval_rule_with_rvm(
+    case: &TestCase,
+    is_rego_v0_test: bool,
+    rule_path: &str,
+) -> Result<Result<Value>> {
     let EngineSetup {
         mut engine,
         resolved_input,
@@ -288,15 +291,19 @@ fn eval_rule_with_rvm(case: &TestCase, is_rego_v0_test: bool, rule_path: &str) -
 
     let mut vm = RegoVM::new();
     vm.load_program(program);
+    vm.set_strict_builtin_errors(case.strict_error.unwrap_or_default());
     let data_value = case.data.clone().unwrap_or_else(Value::new_object);
     vm.set_data(data_value)?;
     vm.set_input(resolved_input);
 
-    let result = vm.execute()?;
+    let result = match vm.execute() {
+        Ok(value) => value,
+        Err(error) => return Ok(Err(error.into())),
+    };
     if result == Value::Undefined {
-        Ok(Value::Undefined)
+        Ok(Ok(Value::Undefined))
     } else {
-        Value::from_json_str(&result.to_string())
+        Ok(Ok(Value::from_json_str(&result.to_json_str_compact()?)?))
     }
 }
 
@@ -321,7 +328,11 @@ fn is_partial_object_unsupported_error(err: &anyhow::Error) -> bool {
     })
 }
 
-fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value) -> Result<()> {
+fn maybe_verify_rvm_case(
+    case: &TestCase,
+    is_rego_v0_test: bool,
+    actual: &Result<Value>,
+) -> Result<()> {
     if case.note == "defaultkeyword/function with var arg, ref head query" {
         println!(
             "    skipping RVM check for '{}' (function defaults with refs unsupported)",
@@ -335,8 +346,8 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
         None => return Ok(()),
     };
 
-    let rvm_value = match eval_rule_with_rvm(case, is_rego_v0_test, &rule_path) {
-        Ok(value) => value,
+    let rvm_evaluation = match eval_rule_with_rvm(case, is_rego_v0_test, &rule_path) {
+        Ok(evaluation) => evaluation,
         Err(err) => {
             if is_not_valid_rule_path_error(&err) {
                 println!(
@@ -365,6 +376,18 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
             return Err(err);
         }
     };
+    let rvm_value = match rvm_evaluation {
+        Ok(value) => value,
+        Err(error) => {
+            return match actual {
+                Err(_) => verify_case_outcome(case, &Err(error)),
+                Ok(_) => Err(error),
+            };
+        }
+    };
+    let actual = actual.as_ref().map_err(|error| {
+        anyhow::anyhow!("RVM returned a value while the interpreter errored: {error}")
+    })?;
     let rvm_binding = if rvm_value == Value::Undefined {
         Value::new_array()
     } else {
@@ -414,17 +437,68 @@ fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
     }
 }
 
+fn verify_case_outcome(case: &TestCase, actual: &Result<Value>) -> Result<()> {
+    let expects_error =
+        case.want_error.is_some() || case.want_error_code.is_some() || case.error.is_some();
+    match actual {
+        Ok(_) if expects_error => bail!("expected an evaluation error, got a successful result"),
+        Err(error) if !expects_error => bail!("unexpected evaluation error: {error}"),
+        Err(error) => {
+            if case.want_result.is_some() {
+                bail!("cannot assert result rows after an evaluation error: {error}");
+            }
+            if let Some(code) = &case.want_error_code {
+                bail!(
+                    "cannot validate OPA error code {code:?}: Regorus does not expose \
+                     a structured interpreter error code; actual error: {error}"
+                );
+            }
+            for expected in [case.want_error.as_ref(), case.error.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if !error.to_string().contains(expected) {
+                    bail!("expected error containing {expected:?}, got: {error}");
+                }
+            }
+            Ok(())
+        }
+        Ok(actual) => {
+            let Some(expected) = &case.want_result else {
+                if actual == &Value::new_array() {
+                    return Ok(());
+                }
+                bail!("missing expected result for successful evaluation");
+            };
+            if actual == expected {
+                return Ok(());
+            }
+            if (case.note.starts_with("json_verify_schema")
+                || case.note.starts_with("json_match_schema"))
+                && json_schema_tests_check(actual, expected)
+            {
+                return Ok(());
+            }
+            if case.note == "strings/sprintf: float too big"
+                && expected == &wrap_binding_result("x", Value::from("hi 2e308"))
+                && actual
+                    == &wrap_binding_result("x", Value::from(format!("hi 2{}", "0".repeat(308))))
+            {
+                return Ok(());
+            }
+            bail!("result mismatch");
+        }
+    }
+}
+
 fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
     println!("OPA TESTSUITE: {opa_tests_dir}");
     let tests_path = Path::new(&opa_tests_dir);
     let mut status = BTreeMap::<String, (u32, u32, u32, u32)>::new();
     let mut n = 0;
     let mut missing_functions = BTreeMap::new();
-    for entry in WalkDir::new(&opa_tests_dir)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&opa_tests_dir).sort_by_file_name().into_iter() {
+        let entry = entry.context("traversing OPA test suite")?;
         let path_str = entry.path().to_string_lossy().to_string();
         if path_str == opa_tests_dir {
             continue;
@@ -461,8 +535,6 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
         let test: YamlTest = yaml_serde::from_str(&yaml_str)?;
 
         for mut case in test.cases {
-            let is_json_schema_test = case.note.starts_with("json_verify_schema")
-                || case.note.starts_with("json_match_schema");
             let mut skip_rvm_validation = skip_rvm_for_folder;
 
             if case.note == PARTIAL_OBJECT_OVERRIDE_NOTE {
@@ -533,7 +605,9 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
             entry.2 += 1;
             if NEGATED_UNIFICATION_NOTES.contains(&case.note.as_str()) {
                 match eval_test_case(&case, is_rego_v0_test) {
-                    Err(error) if error.to_string().contains("use == for negated equality") => {
+                    Err(error) | Ok(Err(error))
+                        if error.to_string().contains("use == for negated equality") =>
+                    {
                         entry.3 += 1;
                         println!(
                             "  EXPECTED ADMISSION REJECTION (Regorus compatibility restriction)"
@@ -552,15 +626,15 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                         format!("normalizing expected result for {}", case.note)
                     })?);
             }
-            let actual = match eval_test_case(&case, is_rego_v0_test) {
+            let actual = match eval_test_case(&case, is_rego_v0_test)
+                .with_context(|| format!("preparing/evaluating case {}", case.note))?
+            {
                 Ok(results) => Ok(normalize_query_results(results, case.sort_bindings)
                     .with_context(|| format!("normalizing actual result for {}", case.note))?),
                 Err(error) => Err(error),
             };
-            match (actual, &case.want_result) {
-                (Ok(actual), Some(expected))
-                    if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
-                {
+            match verify_case_outcome(&case, &actual) {
+                Ok(()) => {
                     if skip_rvm_validation {
                         log_rvm_skip(&case.note, folder_name.as_deref());
                         entry.0 += 1;
@@ -577,55 +651,18 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                         entry.0 += 1;
                     }
                 }
-                (Ok(actual), Some(expected)) if &actual == expected => {
-                    if skip_rvm_validation {
-                        log_rvm_skip(&case.note, folder_name.as_deref());
-                        entry.0 += 1;
-                    } else if let Err(rvm_err) =
-                        maybe_verify_rvm_case(&case, is_rego_v0_test, &actual)
-                    {
-                        println!("\n{} failed.", case.note);
-                        println!("{}", yaml_serde::to_string(&case)?);
-                        println!("{rvm_err}");
-                        entry.1 += 1;
-                        n += 1;
-                        continue;
-                    } else {
-                        entry.0 += 1;
-                    }
-                }
-                (Ok(_), Some(_)) if case.note == "strings/sprintf: float too big" => {
-                    // OPA renders large floats in scientific notation while Regorus emits full decimal digits.
-                    // There is no clear benefit in forcing parity for this presentation-only difference.
-                    entry.0 += 1;
-                }
-                (Ok(actual), None)
-                    if actual == Value::new_array()
-                        && case.want_error.is_none()
-                        && case.error.is_none() =>
-                {
-                    entry.0 += 1;
-                }
-                // TODO: Handle tests that specify both want_result and strict_error
-                (Err(_), _)
-                    if case.want_error.is_some()
-                        || case.strict_error == Some(true)
-                        || case.want_error_code.is_some() =>
-                {
-                    // Expected failure.
-                    entry.0 += 1;
-                }
-                (r, _) => {
+                Err(mismatch) => {
                     println!("\n{} failed.", case.note);
                     println!("{}", yaml_serde::to_string(&case)?);
-                    match &r {
+                    println!("ASSERTION: {mismatch}");
+                    match &actual {
                         Ok(actual) => {
                             println!("GOT\n{}", yaml_serde::to_string(&actual)?);
                         }
                         Err(e) => println!("ERROR: {e}"),
                     }
 
-                    if let Err(e) = r {
+                    if let Err(e) = actual {
                         let msg = e.to_string();
                         let pat = "could not find function ";
                         if let Some(pos) = msg.find(pat) {
@@ -646,7 +683,7 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                         std::fs::write(json_path, data.to_json_str()?.as_bytes())?;
                     };
                     if let Some(input) = &case.input {
-                        let input_path = path.join(format!("data{n}.json"));
+                        let input_path = path.join(format!("input{n}.json"));
                         cmd += format!(" -i {}", input_path.display()).as_str();
                         std::fs::write(input_path, input.to_json_str()?.as_bytes())?;
                     };
@@ -749,11 +786,11 @@ struct Cli {
 
 fn test_sort_bindings_preserves_expression_results() -> Result<()> {
     for (query, expected, normalized) in [
-        ("1 + 1", "[2]", "[2]"),
+        ("1 + 1", "[{}]", "[{}]"),
         (
-            r#"{"items": [2, 1]}"#,
-            r#"[{"items": [2, 1]}]"#,
-            r#"[{"items": [2, 1]}]"#,
+            r#"x = {"items": [2, 1]}"#,
+            r#"[{"x": {"items": [2, 1]}}]"#,
+            r#"[{"x": {"items": [2, 1]}}]"#,
         ),
         ("x = [2, 1]", r#"[{"x": [1, 2]}]"#, r#"[{"x": [1, 2]}]"#),
     ] {
@@ -765,18 +802,18 @@ fn test_sort_bindings_preserves_expression_results() -> Result<()> {
             "sort_bindings": true,
             "want_result": expected,
         }))?;
-        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        let actual = normalize_query_results(eval_test_case(&case, false)??, case.sort_bindings)?;
         if actual != normalized || case.want_result.as_ref() != Some(&normalized) {
             bail!("sort_bindings changed expression order or failed to sort bindings: {query}");
         }
     }
     let case: TestCase = serde_json::from_value(serde_json::json!({
         "note": "sort_bindings must not hide expression mismatches",
-        "query": r#"{"items": [2, 1]}"#,
+        "query": r#"x = {"items": [2, 1]}"#,
         "sort_bindings": true,
-        "want_result": [{"items": [1, 2]}],
+        "want_result": [{"x": {"items": [1, 2]}}],
     }))?;
-    let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+    let actual = normalize_query_results(eval_test_case(&case, false)??, case.sort_bindings)?;
     if case.want_result.as_ref() == Some(&actual) {
         bail!("sort_bindings hid an object-expression array ordering mismatch");
     }
@@ -793,7 +830,7 @@ fn test_sort_bindings_preserves_mismatched_expectations() -> Result<()> {
             "strict_error": true,
             "want_result": expected.clone(),
         }))?;
-        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        let actual = normalize_query_results(eval_test_case(&case, false)??, case.sort_bindings)?;
         if case.want_result.as_ref() != Some(&expected) || actual == expected {
             bail!("sort_bindings hid a mismatched expected result: {expected}");
         }
@@ -817,7 +854,7 @@ cases:
 "#,
     )?;
     for case in test.cases {
-        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        let actual = normalize_query_results(eval_test_case(&case, false)??, case.sort_bindings)?;
         let expected = normalize_test_result(
             case.want_result
                 .ok_or_else(|| anyhow::anyhow!("missing expected result"))?,
@@ -859,22 +896,84 @@ want_result:
     "$serde_json::private::Number": not-a-number
 "#,
     )?;
-    let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
-    if actual != Value::from_json_str("[2]")? {
+    let actual = normalize_query_results(eval_test_case(&case, false)??, case.sort_bindings)?;
+    if actual != Value::from_json_str("[{}]")? {
         bail!("successful query did not produce its result");
     }
     let expected = case
         .want_result
         .take()
         .ok_or_else(|| anyhow::anyhow!("missing expected result"))?;
-    case.query = "input".to_string();
+    case.query = "x = input".to_string();
     case.input = Some(expected.clone());
-    let results = eval_test_case(&case, false)?;
+    let results = eval_test_case(&case, false)??;
     if normalize_query_results(results, case.sort_bindings).is_ok() {
         bail!("invalid private-number query result did not fail normalization");
     }
     if normalize_test_result(expected, None, &[]).is_ok() {
         bail!("invalid private-number fixture did not fail normalization");
+    }
+    Ok(())
+}
+
+fn test_harness_outcomes() -> Result<()> {
+    #[derive(Deserialize)]
+    struct Regression {
+        case: TestCase,
+        passes: bool,
+        #[serde(default)]
+        rvm: bool,
+    }
+    let regressions: Vec<Regression> = yaml_serde::from_str(include_str!("opa_harness.yaml"))?;
+    for regression in regressions {
+        let mut case = regression.case;
+        if let Some(expected) = case.want_result.take() {
+            case.want_result = Some(normalize_test_result(expected, None, &[])?);
+        }
+        let outcome = match eval_test_case(&case, false) {
+            Ok(evaluation) => {
+                let actual = match evaluation {
+                    Ok(results) => Ok(normalize_query_results(results, case.sort_bindings)?),
+                    Err(error) => Err(error),
+                };
+                verify_case_outcome(&case, &actual).and_then(|()| {
+                    if regression.rvm {
+                        maybe_verify_rvm_case(&case, false, &actual)
+                    } else {
+                        Ok(())
+                    }
+                })
+            }
+            Err(error) => Err(error),
+        };
+        if outcome.is_ok() != regression.passes {
+            bail!(
+                "harness outcome regression failed for {}: {outcome:?}",
+                case.note
+            );
+        }
+    }
+    let case: TestCase = serde_json::from_value(serde_json::json!({
+        "note": "strings/sprintf: float too big",
+        "query": "x = input",
+        "want_result": [{"x": "hi 2e308"}],
+    }))?;
+    verify_case_outcome(
+        &case,
+        &Ok(wrap_binding_result(
+            "x",
+            Value::from(format!("hi 2{}", "0".repeat(308))),
+        )),
+    )?;
+    let missing = format!("target/opa-harness-missing-{}", std::process::id());
+    if Path::new(&missing).exists() {
+        bail!("missing-suite regression path unexpectedly exists: {missing}");
+    }
+    let error = run_opa_tests(missing, &[])
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("missing fixture directory must fail traversal"))?;
+    if !error.to_string().contains("traversing OPA test suite") {
+        bail!("fixture traversal error was not surfaced: {error}");
     }
     Ok(())
 }
@@ -886,6 +985,7 @@ fn main() -> Result<()> {
     test_result_rows_are_unordered()?;
     test_schema_result_rows_are_complete()?;
     test_normalization_failures_are_not_evaluation_errors()?;
+    test_harness_outcomes()?;
 
     let opa_tests_dir = match cli.test_suite_path {
         Some(p) => p,
