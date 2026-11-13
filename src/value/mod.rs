@@ -391,8 +391,8 @@ const fn value_rank(value: &Value) -> u8 {
         Value::Number(_) => 2,
         Value::String(_) => 3,
         Value::Array(_) => 4,
-        Value::Set(_) => 5,
-        Value::Object(_) => 6,
+        Value::Object(_) => 5,
+        Value::Set(_) => 6,
         Value::Undefined => 7,
     }
 }

@@ -6,12 +6,12 @@ use regorus::rvm::vm::RegoVM;
 use regorus::*;
 
 use regorus::Rc;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -157,7 +157,7 @@ fn setup_engine_for_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Engin
     })
 }
 
-fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
+fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<QueryResults> {
     let EngineSetup { mut engine, .. } = setup_engine_for_case(case, is_rego_v0_test)?;
 
     let mut engine_full = engine.clone();
@@ -174,22 +174,20 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
         }
     }
 
+    Ok(query_results)
+}
+
+fn normalize_query_results(
+    query_results: QueryResults,
+    sort_bindings: Option<bool>,
+) -> Result<Value> {
     let mut values = vec![];
+    let mut binding_results = vec![];
     for qr in query_results.result {
-        values.push(if !qr.bindings.as_object()?.is_empty() {
-            if case.sort_bindings == Some(true) {
-                let mut v = qr.bindings.clone();
-                let bindings = v.as_object_mut()?;
-                for (_, v) in bindings.iter_mut() {
-                    match v {
-                        Value::Array(_) => v.as_array_mut()?.sort(),
-                        _ => (),
-                    }
-                }
-                v
-            } else {
-                qr.bindings.clone()
-            }
+        let is_binding = !qr.bindings.as_object()?.is_empty();
+        binding_results.push(is_binding);
+        values.push(if is_binding {
+            qr.bindings.clone()
         } else if let Some(v) = qr.expressions.last() {
             v.value.clone()
         } else {
@@ -197,9 +195,34 @@ fn eval_test_case(case: &TestCase, is_rego_v0_test: bool) -> Result<Value> {
         });
     }
 
-    let result = Value::from(values);
-    // Make result json compatible. (E.g: avoid sets).
-    Value::from_json_str(&result.to_string())
+    normalize_test_result(Value::from(values), sort_bindings, &binding_results)
+}
+
+fn normalize_test_result(
+    value: Value,
+    sort_bindings: Option<bool>,
+    binding_results: &[bool],
+) -> Result<Value> {
+    // Sets become JSON arrays; normalize before sorting actual bindings.
+    let mut value = Value::from_json_str(&value.to_json_str_compact()?)?;
+    if sort_bindings == Some(true) && matches!(value, Value::Array(_)) {
+        for (result, is_binding) in value.as_array_mut()?.iter_mut().zip(binding_results) {
+            if *is_binding && matches!(result, Value::Object(_)) {
+                for (_, binding) in result.as_object_mut()?.iter_mut() {
+                    if matches!(binding, Value::Array(_)) {
+                        binding.as_array_mut()?.sort();
+                    }
+                }
+            }
+        }
+    }
+    if let Value::Array(rows) = value {
+        let mut rows = Rc::unwrap_or_clone(rows).into_vec();
+        rows.sort();
+        rows.dedup();
+        return Ok(Value::from(rows));
+    }
+    Ok(value)
 }
 
 fn is_simple_identifier(token: &str) -> bool {
@@ -347,6 +370,7 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
     } else {
         wrap_binding_result(&binding_var, rvm_value)
     };
+    let rvm_binding = normalize_test_result(rvm_binding, case.sort_bindings, &[true])?;
 
     if &rvm_binding != actual {
         let interpreter_yaml = yaml_serde::to_string(actual)?;
@@ -363,17 +387,29 @@ fn maybe_verify_rvm_case(case: &TestCase, is_rego_v0_test: bool, actual: &Value)
 }
 
 fn json_schema_tests_check(actual: &Value, expected: &Value) -> bool {
-    // Fetch `x` binding.
-    let actual = &actual[0]["x"];
-    let expected = &expected[0]["x"];
-
-    match (actual, expected) {
-        (Value::Array(actual), Value::Array(expected))
-            if actual.len() == expected.len() && actual.len() == 2 =>
-        {
-            // Only check the result since error messages may be different.
-            actual[0] == expected[0]
+    let rows = |value: &Value| -> Option<BTreeSet<Value>> {
+        let mut rows = BTreeSet::new();
+        for row in value.as_array().ok()?.iter() {
+            let mut row = row.clone();
+            let result = row
+                .as_object_mut()
+                .ok()?
+                .get_mut(&Value::from("x"))?
+                .as_array_mut()
+                .ok()?;
+            if result.len() != 2 {
+                return None;
+            }
+            match result.first()? {
+                Value::Bool(_) => *result.get_mut(1)? = Value::Null,
+                _ => return None,
+            }
+            rows.insert(row);
         }
+        Some(rows)
+    };
+    match (rows(actual), rows(expected)) {
+        (Some(actual), Some(expected)) => actual == expected,
         _ => false,
     }
 }
@@ -493,11 +529,6 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 }
             }
 
-            // Normalize for comparison.
-            if let Some(want_result) = case.want_result {
-                case.want_result = Some(serde_json::from_str(&want_result.to_string())?);
-            }
-
             print!("{:4}: {:90}", entry.2, case.note);
             entry.2 += 1;
             if NEGATED_UNIFICATION_NOTES.contains(&case.note.as_str()) {
@@ -515,7 +546,18 @@ fn run_opa_tests(opa_tests_dir: String, folders: &[String]) -> Result<()> {
                 }
                 continue;
             }
-            match (eval_test_case(&case, is_rego_v0_test), &case.want_result) {
+            if let Some(expected) = case.want_result.take() {
+                case.want_result =
+                    Some(normalize_test_result(expected, None, &[]).with_context(|| {
+                        format!("normalizing expected result for {}", case.note)
+                    })?);
+            }
+            let actual = match eval_test_case(&case, is_rego_v0_test) {
+                Ok(results) => Ok(normalize_query_results(results, case.sort_bindings)
+                    .with_context(|| format!("normalizing actual result for {}", case.note))?),
+                Err(error) => Err(error),
+            };
+            match (actual, &case.want_result) {
                 (Ok(actual), Some(expected))
                     if is_json_schema_test && json_schema_tests_check(&actual, &expected) =>
                 {
@@ -705,8 +747,145 @@ struct Cli {
     folders: Vec<String>,
 }
 
+fn test_sort_bindings_preserves_expression_results() -> Result<()> {
+    for (query, expected, normalized) in [
+        ("1 + 1", "[2]", "[2]"),
+        (
+            r#"{"items": [2, 1]}"#,
+            r#"[{"items": [2, 1]}]"#,
+            r#"[{"items": [2, 1]}]"#,
+        ),
+        ("x = [2, 1]", r#"[{"x": [1, 2]}]"#, r#"[{"x": [1, 2]}]"#),
+    ] {
+        let expected = Value::from_json_str(expected)?;
+        let normalized = Value::from_json_str(normalized)?;
+        let case: TestCase = serde_json::from_value(serde_json::json!({
+            "note": "sort_bindings regression",
+            "query": query,
+            "sort_bindings": true,
+            "want_result": expected,
+        }))?;
+        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        if actual != normalized || case.want_result.as_ref() != Some(&normalized) {
+            bail!("sort_bindings changed expression order or failed to sort bindings: {query}");
+        }
+    }
+    let case: TestCase = serde_json::from_value(serde_json::json!({
+        "note": "sort_bindings must not hide expression mismatches",
+        "query": r#"{"items": [2, 1]}"#,
+        "sort_bindings": true,
+        "want_result": [{"items": [1, 2]}],
+    }))?;
+    let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+    if case.want_result.as_ref() == Some(&actual) {
+        bail!("sort_bindings hid an object-expression array ordering mismatch");
+    }
+    Ok(())
+}
+
+fn test_sort_bindings_preserves_mismatched_expectations() -> Result<()> {
+    for expected in ["[2]", "2", r#"[{"x": [2, 1]}]"#] {
+        let expected = Value::from_json_str(expected)?;
+        let case: TestCase = serde_json::from_value(serde_json::json!({
+            "note": "sort_bindings must not turn mismatches into strict errors",
+            "query": "x = [1, 2]",
+            "sort_bindings": true,
+            "strict_error": true,
+            "want_result": expected.clone(),
+        }))?;
+        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        if case.want_result.as_ref() != Some(&expected) || actual == expected {
+            bail!("sort_bindings hid a mismatched expected result: {expected}");
+        }
+    }
+    Ok(())
+}
+
+fn test_result_rows_are_unordered() -> Result<()> {
+    let test: YamlTest = yaml_serde::from_str(
+        r#"
+cases:
+  - note: reverse object/set rows
+    query: x = {set(), {}}[_]
+    want_result: [{x: []}, {x: {}}]
+  - note: duplicate expected rows
+    query: x = {set(), {}}[_]
+    want_result: [{x: {}}, {x: []}, {x: {}}]
+  - note: row sorting preserves nested arrays
+    query: x = {[2, 1], [3, 1]}[_]
+    want_result: [{x: [3, 1]}, {x: [2, 1]}]
+"#,
+    )?;
+    for case in test.cases {
+        let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+        let expected = normalize_test_result(
+            case.want_result
+                .ok_or_else(|| anyhow::anyhow!("missing expected result"))?,
+            None,
+            &[],
+        )?;
+        if actual != expected {
+            bail!("result-row set comparison failed: {}", case.note);
+        }
+    }
+    Ok(())
+}
+
+fn test_schema_result_rows_are_complete() -> Result<()> {
+    let expected = Value::from_json_str(r#"[{"x":[false,[]]}]"#)?;
+    let extra_row = Value::from_json_str(r#"[{"x":[false,[]]},{"x":[true,[]]}]"#)?;
+    let extra_binding = Value::from_json_str(r#"[{"x":[false,[]],"y":1}]"#)?;
+    for actual in [extra_row, extra_binding] {
+        if json_schema_tests_check(&actual, &expected) {
+            bail!("schema comparison accepted an extra row or binding");
+        }
+    }
+    let expected = Value::from_json_str(r#"[{"x":[false,"OPA"]},{"x":[true,null]}]"#)?;
+    let actual = Value::from_json_str(r#"[{"x":[true,null]},{"x":[false,"Regorus"]}]"#)?;
+    if !json_schema_tests_check(&actual, &expected) {
+        bail!("schema comparison did not preserve row-set and diagnostic tolerance");
+    }
+    Ok(())
+}
+
+fn test_normalization_failures_are_not_evaluation_errors() -> Result<()> {
+    let mut case: TestCase = yaml_serde::from_str(
+        r#"
+note: normalization failure is not a strict evaluation error
+query: 1 + 1
+strict_error: true
+want_result:
+  - z: 0
+    "$serde_json::private::Number": not-a-number
+"#,
+    )?;
+    let actual = normalize_query_results(eval_test_case(&case, false)?, case.sort_bindings)?;
+    if actual != Value::from_json_str("[2]")? {
+        bail!("successful query did not produce its result");
+    }
+    let expected = case
+        .want_result
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("missing expected result"))?;
+    case.query = "input".to_string();
+    case.input = Some(expected.clone());
+    let results = eval_test_case(&case, false)?;
+    if normalize_query_results(results, case.sort_bindings).is_ok() {
+        bail!("invalid private-number query result did not fail normalization");
+    }
+    if normalize_test_result(expected, None, &[]).is_ok() {
+        bail!("invalid private-number fixture did not fail normalization");
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    test_sort_bindings_preserves_expression_results()?;
+    test_sort_bindings_preserves_mismatched_expectations()?;
+    test_result_rows_are_unordered()?;
+    test_schema_result_rows_are_complete()?;
+    test_normalization_failures_are_not_evaluation_errors()?;
 
     let opa_tests_dir = match cli.test_suite_path {
         Some(p) => p,
