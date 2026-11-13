@@ -176,7 +176,14 @@ impl<'a> Compiler<'a> {
                 self.emit_instruction(
                     Instruction::Guard {
                         register: value_register,
-                        mode: GuardMode::NotUndefined,
+                        mode: if matches!(
+                            context.context_type,
+                            ContextType::Rule(RuleType::Complete)
+                        ) {
+                            GuardMode::RuleOutput
+                        } else {
+                            GuardMode::NotUndefined
+                        },
                     },
                     span,
                 );

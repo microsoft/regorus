@@ -382,6 +382,35 @@ impl RegoVM {
                         _ => true,
                     },
                     GuardMode::NotUndefined => !matches!(value, Value::Undefined),
+                    GuardMode::RuleOutput => {
+                        if matches!(value, Value::Undefined) {
+                            false
+                        } else {
+                            let context = self
+                                .call_rule_stack
+                                .last()
+                                .ok_or(VmError::CallRuleStackUnderflow { pc: self.pc })?;
+                            let result_reg = context.result_reg;
+                            let rule_index = context.rule_index;
+                            if self.get_register(result_reg)? != &Value::Undefined
+                                && !self.compare_rule_outputs(result_reg, register)?.is_eq()
+                            {
+                                let rule_info = program
+                                    .rule_infos
+                                    .get(usize::from(rule_index))
+                                    .ok_or(VmError::RuleInfoMissing {
+                                        index: rule_index,
+                                        pc: self.pc,
+                                        available: program.rule_infos.len(),
+                                    })?;
+                                return Err(VmError::RuleOutputConflict {
+                                    rule: rule_info.name.clone(),
+                                    pc: self.pc,
+                                });
+                            }
+                            true
+                        }
+                    }
                 };
                 self.handle_condition(passed)?;
                 Ok(InstructionOutcome::Continue)

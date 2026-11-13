@@ -57,6 +57,7 @@ must have been allocated by the current frame.
 | `Not`    | `dest, operand`         | Logical negation.                                             |
 | `AssertCondition` | `condition`    | Fails current loop/rule when the condition is falsey.         |
 | `AssertNotUndefined` | `register`  | Fails when register holds `Value::Undefined`.                 |
+| `AssertRuleOutput` | `register` | Rejects undefined candidates and errors if a complete-rule yield differs from an earlier yield in the same body. |
 
 `handle_condition` routes through `loops.rs` to propagate failures to loop and
 comprehension contexts. Outside loops it aborts the current rule.
@@ -66,6 +67,13 @@ updating the accumulator. A missing candidate contributes no answer and cannot
 overwrite an earlier result; `false` and `null` remain valid output values.
 These guards do not change the generic `Move`, `ObjectSet`, or `Index`
 instructions.
+
+Complete rules and functions use `GuardMode::RuleOutput` before overwriting
+their result register. Conflicting yields raise `VmError::RuleOutputConflict`
+in both strict modes. Output-comparison traversal checkpoints charge the
+instruction budget, even without an execution timer. New artifacts use format
+version 7; version-6 artifacts remain readable without recompilation. Recompile
+old policies to obtain per-yield checks; existing guard discriminants are unchanged.
 
 ---
 

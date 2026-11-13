@@ -1,0 +1,196 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: distinct_rule_yields_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: &rules
+      - |
+        package yields
+        p := x if { some x in input.items }
+        f(items) := x if { some x in items }
+        function_result := f(input.items)
+        destructured([items]) := x if { some x in items }
+        destructured_result := destructured([input.items])
+        indexed := x if { x := input.items[_] }
+        nested := x if { some row in input.items; some x in row }
+        selected := x if { some x in input.items } else := "empty"
+        defined := item.value if { some item in input.items }
+        wrapped := [p]
+        partial contains x if { some x in input.items }
+        object[k] := x if { some k, x in input.items }
+        array := [x | some x in input.items]
+    input: &distinct {items: [1, 2]}
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: distinct_rule_yields_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: distinct_function_yields_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.yields.function_result
+    want_error: conflicts
+
+  - note: distinct_function_yields_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.yields.function_result
+    want_error: conflicts
+
+  - note: indexed_yields_conflict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.yields.indexed
+    want_error: conflicts
+
+  - note: nested_loop_yields_conflict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [[], [1], [2]]}
+    query: data.yields.nested
+    want_error: conflicts
+
+  - note: destructured_function_yields_conflict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.yields.destructured_result
+    want_error: conflicts
+
+  - note: else_cannot_mask_yield_conflict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.yields.selected
+    want_error: conflicts
+
+  - note: equal_structured_rule_yields
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: &equal {items: [{a: [1, false, null]}, {a: [1.0, false, null]}]}
+    query: data.yields.p
+    want_result: {a: [1, false, null]}
+
+  - note: equal_structured_function_yields
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *equal
+    query: data.yields.function_result
+    want_result: {a: [1, false, null]}
+
+  - note: empty_rule_has_no_output
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: []}
+    query: data.yields.p
+    want_result: "#undefined"
+
+  - note: empty_body_selects_else
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {items: []}
+    query: data.yields.selected
+    want_result: empty
+
+  - note: single_yield_is_not_a_conflict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [7]}
+    query: data.yields.function_result
+    want_result: 7
+
+  - note: false_is_a_defined_yield
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {items: [false, true]}
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: null_is_a_defined_yield
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [null, 1]}
+    query: data.yields.p
+    want_error: conflicts
+
+  - note: equal_false_yields
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [false, false]}
+    query: data.yields.p
+    want_result: false
+
+  - note: equal_null_yields
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {items: [null, null]}
+    query: data.yields.wrapped
+    want_result: [null]
+
+  - note: missing_yields_do_not_overwrite_defined_output
+    execution_mode: all
+    strict_builtin_errors: true
+    # OPA returns 1; the interpreter incorrectly reports "not an object".
+    allow_interpreter_incorrect_behavior: true
+    modules: *rules
+    input: {items: [{}, {value: 1}, {}]}
+    query: data.yields.defined
+    want_result: 1
+
+  - note: missing_yields_do_not_mask_conflict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {items: [{value: 1}, {}, {value: 2}]}
+    query: data.yields.defined
+    want_error: conflicts
+
+  - note: partial_set_remains_exhaustive
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [1, 2, 1]}
+    query: data.yields.partial
+    want_result: {set!: [1, 2]}
+
+  - note: partial_object_remains_exhaustive
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.yields.object
+    want_result: {0: 1, 1: 2}
+
+  - note: comprehension_remains_exhaustive
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.yields.array
+    want_result: [1, 2]

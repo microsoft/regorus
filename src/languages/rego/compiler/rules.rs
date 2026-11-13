@@ -654,6 +654,15 @@ impl<'a> Compiler<'a> {
                                 );
                             }
 
+                            if matches!(rule_type, RuleType::Complete) {
+                                self.emit_instruction(
+                                    Instruction::Guard {
+                                        register: result_register,
+                                        mode: crate::rvm::instructions::GuardMode::NotUndefined,
+                                    },
+                                    &body.span,
+                                );
+                            }
                             self.emit_instruction(Instruction::RuleReturn {}, &body.span);
 
                             if let Some(context) = self.context_stack.last_mut() {

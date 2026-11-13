@@ -107,7 +107,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `6`).
+  `7`).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper
@@ -125,7 +125,8 @@ core are errors, not empty defaults or `DeserializationResult::Partial`.
 The assembled program must also satisfy `Program::validate_limits`; this checks
 supported table bounds, not full bytecode semantic validity.
 
-Legacy versions and unresolved builtins retain the
+Version 6 shares the current layout and remains fully readable. Versions 1-5
+and unresolved builtins retain the
 `DeserializationResult::Partial` recompilation path. Legacy results may not
 contain policy sources, so callers must retain the original sources for
 recompilation. Successful current-version loads initialize resolved builtins.
