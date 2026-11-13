@@ -53,6 +53,9 @@ const MILLISECOND: u64 = 1000 * MICROSECOND;
 const SECOND: u64 = 1000 * MILLISECOND;
 const MINUTE: u64 = 60 * SECOND;
 const HOUR: u64 = 60 * MINUTE;
+const DAY: u64 = 24 * HOUR;
+const WEEK: u64 = 7 * DAY;
+const YEAR: u64 = 365 * DAY;
 
 #[derive(Debug)]
 pub enum ParseDurationError {
@@ -155,7 +158,10 @@ pub fn parse_duration(mut s: &str) -> Result<Duration, ParseDurationError> {
             "s" => SECOND,
             "m" => MINUTE,
             "h" => HOUR,
-            unkonwn => return Err(ParseDurationError::UnknownUnit(unkonwn.to_string())),
+            "d" => DAY,
+            "w" => WEEK,
+            "y" => YEAR,
+            unknown => return Err(ParseDurationError::UnknownUnit(unknown.to_string())),
         };
 
         s = &s[idx + 1..];
