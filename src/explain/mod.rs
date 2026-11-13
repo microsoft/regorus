@@ -24,8 +24,11 @@
 //! [`ExplanationReport`] should accept unknown fields and enum values.
 //! Consumers that enforce a [`PartialEvalResult`] must instead fail closed:
 //! they combine its alternatives as its [`RuleKind`] says, use it only when
-//! its [`ResidualStatus`] is `exact`, and reject an unknown [`RuleKind`],
-//! [`ResidualStatus`] or [`ResidualKind`] (see [`ResidualCondition`]).
+//! its [`ResidualStatus`] is `exact` (or `partial`, if they handle
+//! unresolved alternatives, and then only to fail closed), and reject an
+//! unknown [`RuleKind`], [`ResidualStatus`], [`ResidualAlternativeStatus`]
+//! or [`ResidualKind`] (see [`ResidualCondition`]), and a [`ResidualCall`] or
+//! [`ResidualArgument`] that breaks the rules on [`ResidualCall`].
 //!
 //! Runtime values use the crate's usual [`Value`](crate::Value)
 //! serialization, except that an undefined value is omitted, which keeps it
@@ -81,7 +84,9 @@ pub use report::{
     ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,
     DefinitionExplanation, Derivation, DistinctElements, EmissionExplanation, ExplanationReport,
     IterationBinding, LoopWitness, Operand, Operator, Outcome, PartialEvalResult, PathRoot,
-    PathSegment, QueryTarget, ReportedValue, ResidualCondition, ResidualKind, ResidualQuery,
-    ResidualStatus, ResultExplanation, RuleExplanation, RuleKind, RuleOutcome, SourceLocation,
+    PathSegment, QueryTarget, ReportedValue, ResidualAlternativeStatus, ResidualArgument,
+    ResidualCall, ResidualCondition, ResidualKind, ResidualQuery, ResidualStatus,
+    ResidualUnresolved, ResidualUnresolvedReason, ResultExplanation, RuleExplanation, RuleKind,
+    RuleOutcome, SourceLocation,
 };
 pub use settings::{ConditionMode, ExplanationScope, ExplanationSettings, ValueMode};
