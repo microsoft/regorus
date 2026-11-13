@@ -693,6 +693,25 @@ fn azure_policy_programs_have_no_sites() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sites are decoded only for Rego programs. A program from another
+/// language gets no sites, even when it carries rule information, rather
+/// than being read as Rego.
+#[test]
+fn only_rego_programs_are_decoded() -> anyhow::Result<()> {
+    let rego = "package test\nimport rego.v1\n\nallow if input.x == 1\n";
+    let program = compile(&[("p.rego", rego)], &["data.test.allow"])?;
+    assert_eq!(program.metadata.language, "");
+    assert_eq!(Provenance::new(&program).sites().len(), 1);
+    for (language, sites) in [("rego", 1), ("cedar", 0), ("azure_policy", 0)] {
+        let mut program = (*program).clone();
+        program.metadata.language = language.to_owned();
+        let provenance = Provenance::new(&program);
+        assert_eq!(provenance.sites().len(), sites, "{language}");
+        assert_eq!(provenance.rule(0).is_some(), sites > 0, "{language}");
+    }
+    Ok(())
+}
+
 fn allow(body: &str) -> anyhow::Result<Provenance> {
     provenance(
         &alloc::format!("package test\nimport rego.v1\n\nallow if {{\n{body}}}\n"),

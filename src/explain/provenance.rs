@@ -9,9 +9,12 @@
 //! from, and the rule or function that owns it. Explanation capture records
 //! only program counters; reports resolve them through this table.
 //!
-//! Only programs compiled from Rego are decoded. A program without rule
-//! information, such as one compiled from Azure Policy, has no sites, so
-//! its conditions and its reads of the `context` root are not described.
+//! Only programs compiled from Rego are decoded, as identified by
+//! [`ProgramMetadata::language`](crate::rvm::program::ProgramMetadata::language)
+//! (`"rego"`, or empty for the Rego compiler's programs). Programs from any
+//! other language, such as Azure Policy, have no sites until that language
+//! has its own decoder, so their conditions and their reads of the `context`
+//! root are not described rather than misdescribed.
 
 use super::report::{ConditionKind, Operator, RuleKind, SourceLocation};
 use crate::lexer::{Lexer, Source, Token, TokenKind};
@@ -90,10 +93,16 @@ pub struct Provenance {
     sites: Vec<CheckSite>,
 }
 
+/// Whether `program` came from the Rego compiler, which leaves the language
+/// empty. Other languages need their own decoder.
+fn is_rego(program: &Program) -> bool {
+    matches!(program.metadata.language.as_str(), "" | "rego")
+}
+
 impl Provenance {
     /// Decodes the checks of `program`.
     pub fn new(program: &Program) -> Self {
-        if program.rule_infos.is_empty() {
+        if !is_rego(program) || program.rule_infos.is_empty() {
             return Self::default();
         }
         let sources: Vec<SourceIndex> = program
