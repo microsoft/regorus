@@ -197,10 +197,6 @@ cases:
       - note: different_values_conflict
         input: {a: true, c: true}
         want_error: "conflicts"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
       - note: none
         input: {}
         want_result: "#undefined"
@@ -352,10 +348,6 @@ cases:
       - note: both_definitions
         input: {x: 10}
         want_error: "multiple outputs"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
       - note: no_definition
         input: {x: -1}
         want_result: "#undefined"

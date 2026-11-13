@@ -103,7 +103,7 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
 }
 
 #[test]
-fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn complete_rule_conflict_is_an_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         p := input.left if input.enabled
@@ -111,10 +111,11 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    let error = run_rvm_policy(module, conflict_input).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<VmError>(),
+        Some(VmError::RuleOutputConflict { rule, .. }) if rule == "data.test.p"
+    ));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -132,7 +133,7 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
 }
 
 #[test]
-fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn function_rule_conflict_is_an_error_in_rvm_and_interpreter() {
     let module = r#"
         package test
         f(x) := input.left if input.enabled
@@ -141,10 +142,11 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
-    );
+    let error = run_rvm_policy(module, conflict_input).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<VmError>(),
+        Some(VmError::RuleOutputConflict { rule, .. }) if rule == "data.test.f"
+    ));
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
         .to_string();
@@ -159,6 +161,110 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
         run_interpreter_policy(module, equal_input).unwrap(),
         Value::from(1)
     );
+}
+
+#[test]
+fn rule_definition_conflicts_are_terminal_and_vm_is_reusable() -> anyhow::Result<()> {
+    let program = compile_rule(
+        r#"
+        package test
+        f(x) := x.left
+        f(x) := x.right
+        p := [f(input) | some _ in [0]]
+        "#,
+    );
+    for (mode, step) in [
+        (ExecutionMode::RunToCompletion, false),
+        (ExecutionMode::Suspendable, false),
+        (ExecutionMode::Suspendable, true),
+    ] {
+        for strict in [false, true] {
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_execution_mode(mode);
+            vm.set_step_mode(step);
+            vm.set_strict_builtin_errors(strict);
+            for right in [2, 1, 2, 1] {
+                vm.set_input(Value::from_json_str(&format!(
+                    r#"{{"left":1,"right":{right}}}"#
+                ))?);
+                let mut result = vm.execute_entry_point_by_name("data.test.p");
+                while result.is_ok()
+                    && matches!(
+                        vm.execution_state(),
+                        ExecutionState::Suspended {
+                            reason: SuspendReason::Step,
+                            ..
+                        }
+                    )
+                {
+                    result = vm.resume(None);
+                }
+                if right == 1 {
+                    assert_eq!(result?, Value::from(vec![Value::from(1)]));
+                } else {
+                    let error = result.unwrap_err();
+                    assert!(
+                        matches!(&error, VmError::RuleOutputConflict { rule, .. } if rule == "data.test.f")
+                    );
+                    assert!(
+                        matches!(vm.execution_state(), ExecutionState::Error { error: stored } if stored == &error)
+                    );
+                    assert!(matches!(
+                        vm.resume(None),
+                        Err(VmError::InvalidResumeState { .. })
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rule_definition_output_comparisons_observe_execution_timer() -> anyhow::Result<()> {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+    use std::time::Duration;
+
+    for module in [
+        "package test\np := input[0]\np := input[1]",
+        "package test\nf(x) := x[0]\nf(x) := x[1]\np := f(input)",
+    ] {
+        let program = compile_rule(module);
+        let dag = || (0..16).fold(Value::Null, |v, _| Value::from(vec![v.clone(), v]));
+        let input = Value::from(vec![dag(), dag()]);
+        for (mode, step) in [
+            (ExecutionMode::RunToCompletion, false),
+            (ExecutionMode::Suspendable, false),
+            (ExecutionMode::Suspendable, true),
+        ] {
+            for strict in [false, true] {
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                vm.set_step_mode(step);
+                vm.set_strict_builtin_errors(strict);
+                vm.set_input(input.clone());
+                vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+                    limit: Duration::ZERO,
+                    // Dispatch alone cannot reach this checkpoint.
+                    check_interval: NonZeroU32::new(256).unwrap(),
+                }));
+                let mut result = vm.execute();
+                while result.is_ok()
+                    && matches!(vm.execution_state(), ExecutionState::Suspended { .. })
+                {
+                    result = vm.resume(None);
+                }
+                assert!(
+                    matches!(result, Err(VmError::TimeLimitExceeded { .. })),
+                    "{mode:?}, step={step}, strict={strict}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]
