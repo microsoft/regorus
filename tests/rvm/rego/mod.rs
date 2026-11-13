@@ -1366,6 +1366,33 @@ fn bracketed_entrypoints_match_dotted_paths_at_supported_depths_and_reuse_vm() -
 }
 
 #[test]
+fn literal_keyed_membership_stays_within_default_instruction_limit() -> Result<()> {
+    let entrypoint = "data.membership.result";
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "membership.rego".into(),
+        "package membership\nresult := [x | some x in input.items; 0, 1 in [1]]".into(),
+    )?;
+    let items = Value::from((0..1200).map(Value::from).collect::<Vec<_>>());
+    let mut input = Value::new_object();
+    input
+        .as_object_mut()?
+        .insert(Value::from("items"), items.clone());
+    engine.set_input(input.clone());
+    assert_eq!(engine.eval_rule(entrypoint.to_string())?, items);
+    let policy = engine.compile_with_entrypoint(&Rc::from(entrypoint))?;
+    let program = Compiler::compile_from_policy(&policy, &[entrypoint])?;
+    for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(input.clone());
+        assert_eq!(vm.execute()?, items, "{mode:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn keyed_membership_loaded_artifacts_preserve_pairs() -> Result<()> {
     let entrypoint = "data.membership.result";
     let mut engine = Engine::new();

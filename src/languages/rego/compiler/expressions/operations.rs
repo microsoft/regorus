@@ -2,13 +2,14 @@
 // Licensed under the MIT License.
 #![allow(clippy::pattern_type_mismatch)]
 
-use super::{Compiler, CompilerError, Register, Result};
+use super::{try_eval_const, Compiler, CompilerError, Register, Result};
 use crate::ast::{ArithOp, BinOp, BoolOp, ExprRef};
 use crate::lexer::Span;
 use crate::rvm::instructions::BuiltinCallParams;
 use crate::rvm::Instruction;
 use crate::Value;
 use alloc::string::ToString as _;
+use alloc::vec::Vec;
 
 impl<'a> Compiler<'a> {
     pub(super) fn compile_arith_expr(
@@ -190,6 +191,37 @@ impl<'a> Compiler<'a> {
         if let Some(key) = key {
             let is_array_reg = self.alloc_register()?;
             let is_object_reg = self.alloc_register()?;
+            let mut branch_indices = Vec::new();
+            // Preserve source Undefined without turning a missing lookup into Undefined.
+            for (operand, expr) in [(value_reg, value), (collection_reg, collection)] {
+                if try_eval_const(expr).is_some_and(|constant| constant != Value::Undefined) {
+                    continue;
+                }
+                self.emit_instruction(
+                    Instruction::Eq {
+                        dest,
+                        left: operand,
+                        right: operand,
+                    },
+                    span,
+                );
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: is_array_reg,
+                        operand: dest,
+                    },
+                    span,
+                );
+                branch_indices.push(self.program.instructions.len());
+                self.emit_instruction(
+                    Instruction::AnyOfNext {
+                        check: is_array_reg,
+                        result: is_array_reg,
+                        end_pc: 0,
+                    },
+                    span,
+                );
+            }
             for (name, result) in [("is_array", is_array_reg), ("is_object", is_object_reg)] {
                 let builtin_index = self.get_builtin_index(name)?;
                 let params_index =
@@ -220,7 +252,7 @@ impl<'a> Compiler<'a> {
             );
             self.emit_instruction(Instruction::LoadFalse { dest }, span);
             // Invalid containers return false without evaluating the key.
-            let branch_index = self.program.instructions.len();
+            branch_indices.push(self.program.instructions.len());
             self.emit_instruction(
                 Instruction::AnyOfNext {
                     check: is_array_reg,
@@ -232,6 +264,32 @@ impl<'a> Compiler<'a> {
             let saved_input_register = self.current_input_register;
             let saved_data_register = self.current_data_register;
             let key_reg = self.compile_rego_expr_with_span(key, key.span(), false)?;
+            if try_eval_const(key).is_none_or(|constant| constant == Value::Undefined) {
+                self.emit_instruction(
+                    Instruction::Eq {
+                        dest,
+                        left: key_reg,
+                        right: key_reg,
+                    },
+                    span,
+                );
+                self.emit_instruction(
+                    Instruction::Not {
+                        dest: is_array_reg,
+                        operand: dest,
+                    },
+                    span,
+                );
+                branch_indices.push(self.program.instructions.len());
+                self.emit_instruction(
+                    Instruction::AnyOfNext {
+                        check: is_array_reg,
+                        result: is_array_reg,
+                        end_pc: 0,
+                    },
+                    span,
+                );
+            }
             let indexed_reg = self.alloc_register()?;
             self.emit_instruction(
                 Instruction::Index {
@@ -278,17 +336,19 @@ impl<'a> Compiler<'a> {
                     message: "membership branch target exceeds the RVM instruction limit"
                         .to_string(),
                 })?;
-            let Some(Instruction::AnyOfNext {
-                end_pc: branch_end_pc,
-                ..
-            }) = self.program.instructions.get_mut(branch_index)
-            else {
-                return Err(CompilerError::General {
-                    message: "membership branch instruction is missing or invalid".to_string(),
-                }
-                .into());
-            };
-            *branch_end_pc = end_pc;
+            for branch_index in branch_indices {
+                let Some(Instruction::AnyOfNext {
+                    end_pc: branch_end_pc,
+                    ..
+                }) = self.program.instructions.get_mut(branch_index)
+                else {
+                    return Err(CompilerError::General {
+                        message: "membership branch instruction is missing or invalid".to_string(),
+                    }
+                    .into());
+                };
+                *branch_end_pc = end_pc;
+            }
             return Ok(dest);
         }
         self.emit_instruction(

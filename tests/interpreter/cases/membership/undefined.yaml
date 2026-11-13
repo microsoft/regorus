@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: membership-undefined-operands
+    modules:
+      - |
+        package test
+        import rego.v1
+
+        missing_value := 0, input.missing in []
+        missing_key := input.missing, 1 in [1]
+        missing_collection := 0, 1 in input.missing
+        unkeyed_missing_value := input.missing in []
+        unkeyed_missing_collection := 1 in input.missing
+        absent_array_key := 0, 1 in []
+        absent_object_key := "x", 1 in {}
+    query: data.test
+    want_result:
+      absent_array_key: false
+      absent_object_key: false

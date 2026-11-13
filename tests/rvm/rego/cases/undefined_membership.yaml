@@ -1,0 +1,117 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: undefined_membership_operands_rtc
+    modules: &operands
+      - |
+        package membership
+        result := {
+          "keyed_missing_value_array": [v | v := (0, input.missing in [])],
+          "keyed_missing_value_object": [v | v := ("x", input.missing in {})],
+          "keyed_missing_value_set": [v | v := (0, input.missing in {1})],
+          "keyed_missing_value_invalid": [v | v := (0, input.missing in null)],
+          "keyed_missing_key_array": [v | v := (input.missing, 1 in [1])],
+          "keyed_missing_key_object": [v | v := (input.missing, 1 in {"x": 1})],
+          "keyed_missing_collection": [v | v := (0, 1 in input.missing)],
+          "unkeyed_missing_value_array": [v | v := input.missing in []],
+          "unkeyed_missing_value_object": [v | v := input.missing in {}],
+          "unkeyed_missing_value_set": [v | v := input.missing in set()],
+          "unkeyed_missing_value_invalid": [v | v := input.missing in null],
+          "unkeyed_missing_collection": [v | v := 1 in input.missing],
+          "defined_absent_array_key": (0, 1 in []),
+          "defined_absent_object_key": ("x", 1 in {}),
+          "input_after_skipped_key": input.marker,
+          "data_after_skipped_key": data.marker,
+        }
+    input: &input {marker: input_loaded}
+    data: &data {marker: data_loaded}
+    query: data.membership.result
+    want_result: &operands_result
+      keyed_missing_value_array: []
+      keyed_missing_value_object: []
+      keyed_missing_value_set: []
+      keyed_missing_value_invalid: []
+      keyed_missing_key_array: []
+      keyed_missing_key_object: []
+      keyed_missing_collection: []
+      unkeyed_missing_value_array: []
+      unkeyed_missing_value_object: []
+      unkeyed_missing_value_set: []
+      unkeyed_missing_value_invalid: []
+      unkeyed_missing_collection: []
+      defined_absent_array_key: false
+      defined_absent_object_key: false
+      input_after_skipped_key: input_loaded
+      data_after_skipped_key: data_loaded
+
+  - note: undefined_membership_operands_suspendable
+    execution_mode: suspendable
+    modules: *operands
+    input: *input
+    data: *data
+    query: data.membership.result
+    want_result: *operands_result
+
+  - note: undefined_membership_rule_rtc
+    modules: &undefined_rule
+      - |
+        package membership
+        result := 0, input.missing in []
+    query: data.membership.result
+    want_result: "#undefined"
+
+  - note: undefined_membership_rule_suspendable
+    execution_mode: suspendable
+    modules: *undefined_rule
+    query: data.membership.result
+    want_result: "#undefined"
+
+  - note: undefined_membership_skips_key_rtc
+    modules: &skipped_key
+      - |
+        package membership
+        result if {
+          not (data.bad + 1), input.missing in []
+          data.marker == "data_loaded"
+          not (input.bad + 1), 1 in data.missing
+          input.marker == "input_loaded"
+        }
+    data: &skipped_key_data {bad: invalid, marker: data_loaded}
+    input: &skipped_key_input {bad: invalid, marker: input_loaded}
+    query: data.membership.result
+    want_result: true
+
+  - note: undefined_membership_skips_key_suspendable
+    execution_mode: suspendable
+    modules: *skipped_key
+    data: *skipped_key_data
+    input: *skipped_key_input
+    query: data.membership.result
+    want_result: true
+
+  # Preserve Regorus negation semantics rather than OPA's operand hoisting.
+  - note: undefined_membership_negation_OPA_INCOMPATIBLE_rtc
+    modules: &negation
+      - |
+        package membership
+        result := {
+          "keyed_value": [true | not 0, input.missing in []],
+          "keyed_key": [true | not input.missing, 1 in [1]],
+          "keyed_collection": [true | not 0, 1 in input.missing],
+          "unkeyed_value": [true | not input.missing in []],
+          "unkeyed_collection": [true | not 1 in input.missing],
+        }
+    query: data.membership.result
+    want_result: &negation_result
+      keyed_value: [true]
+      keyed_key: [true]
+      keyed_collection: [true]
+      unkeyed_value: [true]
+      unkeyed_collection: [true]
+
+  - note: undefined_membership_negation_OPA_INCOMPATIBLE_suspendable
+    execution_mode: suspendable
+    modules: *negation
+    query: data.membership.result
+    want_result: *negation_result

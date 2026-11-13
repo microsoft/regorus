@@ -2479,11 +2479,17 @@ impl Interpreter {
         self.check_execution_time()?;
         let value = self.eval_expr(value)?;
         let collection = self.eval_expr(collection)?;
+        if value == Value::Undefined || collection == Value::Undefined {
+            return Ok(Value::Undefined);
+        }
 
         let result = match &collection {
             Value::Array(array) => {
                 if let Some(key) = key {
                     let key = self.eval_expr(key)?;
+                    if key == Value::Undefined {
+                        return Ok(Value::Undefined);
+                    }
                     collection[&key] == value
                 } else {
                     array.contains(&value)
@@ -2492,6 +2498,9 @@ impl Interpreter {
             Value::Object(object) => {
                 if let Some(key) = key {
                     let key = self.eval_expr(key)?;
+                    if key == Value::Undefined {
+                        return Ok(Value::Undefined);
+                    }
                     collection[&key] == value
                 } else {
                     object.values().any(|item| *item == value)
