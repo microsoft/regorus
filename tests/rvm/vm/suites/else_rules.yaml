@@ -136,7 +136,7 @@ cases:
     want_result: { "key": 5 }
 
   - note: else_function_rule
-    description: Function rule respects else chain and caches final value
+    description: Function rule respects else chain
     literals:
       - 0  # function rule index
       - 1  # argument value (unused)

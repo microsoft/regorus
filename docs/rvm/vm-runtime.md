@@ -407,6 +407,9 @@ of the global `data` namespace.
 - `InvalidEntryPointIndex` / `EntryPointNotFound`
 - `ArithmeticError`
 - `RuleDataConflict`
+- `RuleConflict` when definitions of a complete rule, or of a function for the
+  same arguments, succeed with different values. Like resource-limit errors it
+  is never absorbed as a body failure, so it aborts the whole evaluation.
 - `HostAwaitResponseMissing`
 - `Internal(String)` for invariant violations
 

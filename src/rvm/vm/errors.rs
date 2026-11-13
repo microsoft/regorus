@@ -99,6 +99,15 @@ pub enum VmError {
         available: usize,
     },
 
+    /// Two definitions of a complete rule, or of a function for the same
+    /// arguments, succeeded with different values.
+    #[error("rule {} conflicts: {} (pc={pc})", bounded(format_args!("{rule}")), bounded(format_args!("{message}")))]
+    RuleConflict {
+        rule: String,
+        message: String,
+        pc: usize,
+    },
+
     #[error("Invalid object create params index: {index} (pc={pc}, available={available})")]
     InvalidObjectCreateParams {
         index: u16,
@@ -386,6 +395,7 @@ impl core::fmt::Debug for VmError {
             Self::HostAwaitResponseMissing { .. } => "HostAwaitResponseMissing",
             Self::AssertionFailed { .. } => "AssertionFailed",
             Self::RuleDataConflict { .. } => "RuleDataConflict",
+            Self::RuleConflict { .. } => "RuleConflict",
             Self::ArithmeticError { .. } => "ArithmeticError",
             Self::NumericOverflow { .. } => "NumericOverflow",
             Self::InvalidEntryPointIndex { .. } => "InvalidEntryPointIndex",
