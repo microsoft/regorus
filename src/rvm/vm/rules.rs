@@ -540,6 +540,7 @@ impl RegoVM {
 
         let frame = ExecutionFrame::new(initial_pc, FrameKind::Rule(frame_data));
         self.execution_stack.push(frame);
+        self.frame_pc_overridden = true;
 
         Ok(())
     }

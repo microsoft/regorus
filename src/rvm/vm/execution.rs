@@ -439,6 +439,28 @@ impl RegoVM {
             self.assert_vm_invariants();
             self.memory_check()?;
             self.frame_pc_overridden = false;
+            if self
+                .execution_stack
+                .last()
+                .is_some_and(|frame| matches!(frame.kind, FrameKind::VirtualDataLookup(_)))
+            {
+                let frame = self
+                    .execution_stack
+                    .pop()
+                    .ok_or(VmError::MissingExecutionFrame {
+                        context: "resuming virtual lookup",
+                        pc: self.pc,
+                    })?;
+                if let FrameKind::VirtualDataLookup(data) = frame.kind {
+                    if let Err(err) = self.resume_virtual_data_lookup(data) {
+                        if !self.handle_instruction_error(err.clone(), last_result)? {
+                            self.execution_stack.clear();
+                            return Err(err);
+                        }
+                    }
+                }
+                continue;
+            }
             let should_finalize_rule = self.execution_stack.last().is_some_and(|frame| {
                 matches!(
                     frame.kind,
@@ -629,7 +651,7 @@ impl RegoVM {
             FrameKind::Loop { .. } | FrameKind::Comprehension { .. } => {
                 *last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
             }
-            FrameKind::Rule(_) => {
+            FrameKind::Rule(_) | FrameKind::VirtualDataLookup(_) => {
                 *last_result = Value::Undefined;
             }
         }
@@ -685,6 +707,11 @@ impl RegoVM {
                         parent_frame.pc = return_pc;
                     }
                     // Propagate the return value outward until we reach the owning frame
+                }
+                FrameKind::VirtualDataLookup(data) => {
+                    if let Some(parent_frame) = self.execution_stack.last_mut() {
+                        parent_frame.pc = data.return_pc;
+                    }
                 }
             }
         }
@@ -770,7 +797,7 @@ impl RegoVM {
                 }
                 *last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
             }
-            FrameKind::Rule(_) => {}
+            FrameKind::Rule(_) | FrameKind::VirtualDataLookup(_) => {}
         }
     }
 
