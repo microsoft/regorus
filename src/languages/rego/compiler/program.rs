@@ -37,6 +37,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn finish(mut self) -> Result<Program> {
+        self.validate_rule_dependencies()?;
         self.program.main_entry_point = 0;
 
         self.program.max_rule_window_size =
