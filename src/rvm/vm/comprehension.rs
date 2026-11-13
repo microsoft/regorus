@@ -222,6 +222,18 @@ impl RegoVM {
         }
     }
 
+    fn check_object_comprehension_entry(
+        &self,
+        object: &Object,
+        key: &Value,
+        value: &Value,
+    ) -> Result<()> {
+        if object.get(key).is_some_and(|previous| previous != value) {
+            return Err(VmError::ObjectKeyConflict { pc: self.pc });
+        }
+        Ok(())
+    }
+
     #[allow(clippy::if_then_some_else_none)]
     fn execute_comprehension_yield_run_to_completion(
         &mut self,
@@ -265,6 +277,13 @@ impl RegoVM {
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
                     if key != Value::Undefined && value_to_add != Value::Undefined {
+                        if let Err(error) =
+                            self.check_object_comprehension_entry(obj, &key, &value_to_add)
+                        {
+                            self.set_register(result_reg, current_result)?;
+                            self.comprehension_stack.push(comprehension_context);
+                            return Err(error);
+                        }
                         crate::Rc::make_mut(obj).insert(key, value_to_add);
                     }
                 } else {
@@ -385,6 +404,12 @@ impl RegoVM {
             (&ComprehensionMode::Object, &mut Value::Object(ref mut obj)) => {
                 if let Some(key) = key_value {
                     if key != Value::Undefined && value_to_add != Value::Undefined {
+                        if let Err(error) =
+                            self.check_object_comprehension_entry(obj, &key, &value_to_add)
+                        {
+                            self.set_register(result_reg_idx, current_result)?;
+                            return Err(error);
+                        }
                         crate::Rc::make_mut(obj).insert(key, value_to_add);
                     }
                 } else {
