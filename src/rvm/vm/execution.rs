@@ -575,7 +575,12 @@ impl RegoVM {
                     }
                 }
                 Ok(InstructionOutcome::Break) => {
-                    self.handle_instruction_break(last_result)?;
+                    // A rule body that succeeds can raise a rule conflict,
+                    // which aborts the evaluation like a failing instruction.
+                    if let Err(err) = self.handle_instruction_break(last_result) {
+                        self.execution_stack.clear();
+                        return Err(err);
+                    }
                     if self.execution_stack.is_empty() {
                         break;
                     }
@@ -719,8 +724,8 @@ impl RegoVM {
     }
 
     fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
-        // Resource-limit errors must never be absorbed by rule evaluation.
-        // They represent engine-level constraints, not rule-level failures.
+        // Resource-limit errors and rule conflicts must never be absorbed by
+        // rule evaluation. They are not rule-level failures.
         // Returning Ok(false) causes the caller to clear execution_stack and
         // propagate the error, terminating the evaluation entirely.
         if self.is_fatal_vm_error(&err) {

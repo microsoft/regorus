@@ -333,7 +333,7 @@ cases:
     want_result: 9
 
   - note: function_call_inconsistent_definitions
-    description: Test function with multiple definitions that produce different values (should fail)
+    description: Test function with multiple definitions that produce different values (raises a conflict error)
     example_rego: "f(5) where f(x) := x + 1; f(x) := x + 2"
     literals:
       - {}
@@ -348,6 +348,9 @@ cases:
           args: [1]    # Argument registers
     rule_infos:
       - rule_type: Complete
+        function_info:
+          param_names: ["x"]
+          num_params: 1
         definitions:
           - [4]  # First definition: x + 1
           - [8]  # Second definition: x + 2 (should produce different result)
@@ -368,4 +371,4 @@ cases:
       - "Load { dest: 4, literal_idx: 4 }"      # Load constant 2
       - "Add { dest: 0, left: 1, right: 4 }"   # x + 2 = 7 (result in register 0)
       - "RuleReturn {}"                         # Return result
-    want_result: "#undefined"
+    want_error: "functions must not produce multiple outputs for same inputs"
