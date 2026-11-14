@@ -607,16 +607,6 @@ fn loop_values_without_keys() -> anyhow::Result<()> {
                 Some("input.xs[_]"),
                 None
             ),
-            // The result of the `every` must be true.
-            row(
-                "data.test.all",
-                Some(0),
-                every,
-                Truthiness,
-                None,
-                None,
-                None
-            ),
             row(
                 "data.test.any",
                 Some(0),
@@ -1238,5 +1228,73 @@ fn computed_builtin_results_are_not_reference_paths() -> anyhow::Result<()> {
         indexed_reference.left_path.as_deref(),
         Some("input.values[json.verify_schema(input)[0]]")
     );
+    Ok(())
+}
+
+/// Only the guard of the loop's own result register is dropped: a guard on
+/// another register after the same `LoopNext`, or one whose `LoopNext` doesn't
+/// lead back to a `LoopStart`, keeps its Truthiness site.
+#[test]
+fn only_the_loop_result_guard_is_not_a_site() -> anyhow::Result<()> {
+    let program = compile(
+        &[(
+            "p.rego",
+            "package test\nall if {\n  every x in input.xs { x > 0 }\n}\n",
+        )],
+        &["data.test.all"],
+    )?;
+    let guard = program
+        .instructions
+        .windows(2)
+        .zip(1_usize..)
+        .find_map(|(pair, pc)| match *pair {
+            [Instruction::LoopNext {
+                body_start,
+                loop_end,
+            }, Instruction::Guard { register, .. }]
+                if usize::from(loop_end) == pc =>
+            {
+                Some((pc, body_start, register))
+            }
+            _ => None,
+        });
+    let Some((pc, body_start, register)) = guard else {
+        anyhow::bail!("no loop result guard");
+    };
+    assert_eq!(loop_result(&program, body_start), Some(register));
+    assert_eq!(Provenance::new(&program).site_at(pc), None);
+
+    let mut other = (*program).clone();
+    let Some(slot) = other.instructions.get_mut(pc) else {
+        anyhow::bail!("guard pc out of range");
+    };
+    *slot = Instruction::Guard {
+        register: register.wrapping_add(1),
+        mode: GuardMode::Condition,
+    };
+    let other_kind = Provenance::new(&other).site_at(pc).map(|site| site.kind);
+    assert_eq!(other_kind, Some(ConditionKind::Truthiness));
+
+    let loop_next = pc
+        .checked_sub(1)
+        .ok_or_else(|| anyhow::anyhow!("guard at pc 0"))?;
+    for bad_start in [0, u16::MAX] {
+        let mut malformed = (*program).clone();
+        let Some(next) = malformed.instructions.get_mut(loop_next) else {
+            anyhow::bail!("loop next pc out of range");
+        };
+        *next = Instruction::LoopNext {
+            body_start: bad_start,
+            loop_end: u16::try_from(pc)?,
+        };
+        let malformed_kind = Provenance::new(&malformed)
+            .site_at(pc)
+            .map(|site| site.kind);
+        assert_eq!(
+            malformed_kind,
+            Some(ConditionKind::Truthiness),
+            "body_start {bad_start}"
+        );
+    }
     Ok(())
 }

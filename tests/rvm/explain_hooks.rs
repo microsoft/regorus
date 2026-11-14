@@ -8,8 +8,9 @@
 
 use anyhow::{bail, Result};
 use regorus::explain::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ConditionKind, EmissionEvent, ExplanationRecorder,
-    HookContext, NotCapturedEvent, Operator, Outcome, Provenance, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, CheckSite, ConditionKind, EmissionEvent,
+    ExplanationRecorder, HookContext, NotCapturedEvent, Operator, Outcome, Provenance,
+    UncapturedConstruct,
 };
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::Program;
@@ -942,11 +943,12 @@ fn checks_are_reported_at_their_sites() {
             let Event::Check { kind, operator, .. } = recorded.event else {
                 continue;
             };
+            let pc = recorded.context.unwrap().pc;
             if kind == ConditionKind::Existence {
+                assert_eq!(provenance.site_at(pc), None, "{policy} {input}: pc {pc}");
                 continue;
             }
             checks += 1;
-            let pc = recorded.context.unwrap().pc;
             let site = provenance.site_at(pc);
             // A negation's operator is that of the negated expression, which
             // its site doesn't record.
@@ -959,6 +961,64 @@ fn checks_are_reported_at_their_sites() {
             );
         }
         assert!(checks > 0, "{policy} {input}: {:?}", r.events());
+    }
+}
+
+/// When every check of a policy runs, each site receives at least one event,
+/// except the iteration site of a `some` over a defined collection.
+#[test]
+fn every_site_is_reported_when_all_checks_run() {
+    let cases = [
+        (
+            "package t\nallow if { input.x > 0; input.flag }\n",
+            r#"{"x":1,"flag":true}"#,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { x > 0 } }\n",
+            r#"{"xs":[1,2]}"#,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { some y in x; y } }\n",
+            r#"{"xs":[[true]]}"#,
+        ),
+        (
+            "package t\nallow if { some y in input.ys; y < 0 }\n",
+            r#"{"ys":[-1]}"#,
+        ),
+        (
+            "package t\nallow if { not \"a\", 1 in input.m }\n",
+            r#"{"m":{"a":2}}"#,
+        ),
+        (
+            "package t\nallow if { _ = input.p; input.q }\n",
+            r#"{"p":1,"q":true}"#,
+        ),
+    ];
+    for (policy, input) in cases {
+        let r = run(policy, "data.t.allow", input);
+        let reported: Vec<usize> = r
+            .events
+            .iter()
+            .filter(|recorded| matches!(recorded.event, Event::Check { .. }))
+            .map(|recorded| recorded.context.unwrap().pc)
+            .collect();
+        // A `some` iteration is reported only when its collection is undefined.
+        let silent = |site: &&CheckSite| {
+            site.kind == ConditionKind::Iteration && !site.text.starts_with("every ")
+        };
+        for site in Provenance::new(&r.program)
+            .sites()
+            .iter()
+            .filter(|s| !silent(s))
+        {
+            assert!(
+                reported.contains(&site.pc),
+                "{policy} {input}: site {:?} at pc {} has no event: {:?}",
+                site.text,
+                site.pc,
+                r.events()
+            );
+        }
     }
 }
 

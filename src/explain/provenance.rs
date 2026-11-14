@@ -260,6 +260,18 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                         shape(ConditionKind::Negation, None, Some(operand), None)
                     })
                 }
+                // A loop's result guard: an `every` is checked at its
+                // `LoopStart` site. The VM doesn't yet report the guard that
+                // fails an `every` iteration when a `some ... in` or indexed
+                // loop in its body matches nothing, so it has no site either.
+                Some(Instruction::LoopNext {
+                    body_start,
+                    loop_end,
+                }) if usize::from(loop_end) == pc
+                    && loop_result(program, body_start) == Some(register) =>
+                {
+                    return None;
+                }
                 _ => shape(ConditionKind::Truthiness, None, Some(register), None),
             })
         }
@@ -282,6 +294,18 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                 None,
             ))
         }
+        _ => None,
+    }
+}
+
+/// The result register of the loop whose body starts at `body_start`.
+fn loop_result(program: &Program, body_start: u16) -> Option<u8> {
+    let start = usize::from(body_start).checked_sub(1)?;
+    match *program.instructions.get(start)? {
+        Instruction::LoopStart { params_index } => program
+            .instruction_data
+            .get_loop_params(params_index)
+            .map(|params| params.result_reg),
         _ => None,
     }
 }
