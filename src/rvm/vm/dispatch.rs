@@ -540,6 +540,11 @@ impl RegoVM {
             ObjectSet { obj, key, value } => {
                 let key_value = self.get_register(key)?.clone();
                 let value_value = self.get_register(value)?.clone();
+                // The operands may alias `obj`, which the write replaces.
+                #[cfg(feature = "explanations")]
+                let emitted = self
+                    .explain_enabled()
+                    .then(|| (key_value.clone(), value_value.clone()));
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
                 let mut obj_value = self.take_register(obj)?;
@@ -548,8 +553,8 @@ impl RegoVM {
                     obj_mut.insert(key_value, value_value);
                     self.set_register(obj, obj_value)?;
                     #[cfg(feature = "explanations")]
-                    if self.explain_enabled() {
-                        self.explain_emission(obj, Some(key), value);
+                    if let Some((emitted_key, emitted_value)) = emitted {
+                        self.explain_emission(obj, Some(&emitted_key), &emitted_value);
                     }
                 } else {
                     let offending = obj_value.clone();
@@ -771,6 +776,9 @@ impl RegoVM {
             }
             SetAdd { set, value } => {
                 let value_to_add = self.get_register(value)?.clone();
+                // The operand may alias `set`, which the write replaces.
+                #[cfg(feature = "explanations")]
+                let emitted = self.explain_enabled().then(|| value_to_add.clone());
 
                 // Take ownership so Rc refcount stays at 1 and make_mut is a no-op.
                 let mut set_value = self.take_register(set)?;
@@ -781,8 +789,8 @@ impl RegoVM {
                     }
                     self.set_register(set, set_value)?;
                     #[cfg(feature = "explanations")]
-                    if self.explain_enabled() {
-                        self.explain_emission(set, None, value);
+                    if let Some(emitted_value) = emitted {
+                        self.explain_emission(set, None, &emitted_value);
                     }
                 } else {
                     let offending = set_value.clone();
