@@ -172,6 +172,8 @@ fn unwrap(s: &str, prefix_len: usize, suffix_len: usize) -> &str {
 /// [`str::trim`] (characters with the Unicode `White_Space` property).
 /// Whitespace inside quotes is preserved, so `tags[ env ]` and
 /// `tags[ 'env' ]` name `env` while `tags[' env ']` names ` env `.
+/// In a single-quoted name each `''` is decoded to `'` (`tags['''x''']`
+/// names `'x'`); a lone `'` is kept, and double-quoted names are verbatim.
 /// Brackets whose tag name is empty are rejected: empty or whitespace-only
 /// brackets (`tags[]`, `tags[ ]`), quoted empty names (`tags['']`,
 /// `tags[""]`), and a dotted tag path with an empty name (`tags.`).
