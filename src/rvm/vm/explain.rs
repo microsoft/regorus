@@ -51,6 +51,18 @@ struct Checked<'a> {
     right: Option<&'a Value>,
 }
 
+impl<'a> Checked<'a> {
+    const fn event(self, outcome: Outcome) -> CheckEvent<'a> {
+        CheckEvent {
+            kind: self.kind,
+            operator: self.operator,
+            left: self.left,
+            right: self.right,
+            outcome,
+        }
+    }
+}
+
 impl RegoVM {
     /// Installs a recorder that receives this VM's evaluation events,
     /// replacing any previous one. Recording slows evaluation; without a
@@ -72,6 +84,12 @@ impl RegoVM {
     }
 
     fn explain_context(&self) -> HookContext {
+        self.explain_context_at(self.pc)
+    }
+
+    /// Context of an event reported at `pc`, the check site of the event in
+    /// [`Provenance`](crate::explain::Provenance) when it is a check.
+    fn explain_context_at(&self, pc: usize) -> HookContext {
         let call_depth = self.call_rule_stack.len();
         let in_comprehension = match self.execution_mode {
             ExecutionMode::RunToCompletion => {
@@ -90,7 +108,7 @@ impl RegoVM {
         };
         let rule = self.call_rule_stack.last();
         HookContext {
-            pc: self.pc,
+            pc,
             rule_index: rule.map(|ctx| ctx.rule_index),
             definition_index: rule.map_or(0, |ctx| ctx.current_definition_index),
             body_index: rule.map_or(0, |ctx| ctx.current_body_index),
@@ -190,30 +208,36 @@ impl RegoVM {
             return;
         }
         self.explain_deliver(|vm, recorder| {
-            if let Some(event) = vm.explain_guard_event(program, register, mode, passed) {
-                recorder.check(&vm.explain_context(), &event);
+            if let Some((pc, event)) = vm.explain_guard_event(program, register, mode, passed) {
+                recorder.check(&vm.explain_context_at(pc), &event);
             }
         });
     }
 
     /// Returns `None` for guards that are not checks of their own, such as
-    /// the end of a `some` iteration.
+    /// the end of a `some` iteration. Otherwise returns the event and the pc
+    /// of its check site: the guard's own, except for an `every` quantifier,
+    /// whose site is its `LoopStart`.
     fn explain_guard_event(
         &self,
         program: &Program,
         register: u8,
         mode: GuardMode,
         passed: bool,
-    ) -> Option<CheckEvent<'_>> {
+    ) -> Option<(usize, CheckEvent<'_>)> {
+        let mut site = self.pc;
         let value = self.explain_register(register);
         if mode == GuardMode::NotUndefined {
-            return Some(CheckEvent {
-                kind: ConditionKind::Existence,
-                operator: None,
-                left: value,
-                right: None,
-                outcome: Outcome::Undefined,
-            });
+            return Some((
+                site,
+                CheckEvent {
+                    kind: ConditionKind::Existence,
+                    operator: None,
+                    left: value,
+                    right: None,
+                    outcome: Outcome::Undefined,
+                },
+            ));
         }
         let mut outcome = if mode == GuardMode::Condition && *value == Value::Undefined {
             Outcome::Undefined
@@ -235,10 +259,28 @@ impl RegoVM {
         match previous {
             _ if mode != GuardMode::Condition => {}
             Some(&Instruction::Not { dest, operand }) if dest == register => {
+                if let Some((found, undefined)) =
+                    self.explain_keyed_membership(program, self.pc, register)
+                {
+                    if undefined {
+                        outcome = Outcome::Undefined;
+                    }
+                    return Some((site, found.event(outcome)));
+                }
                 checked.kind = ConditionKind::Negation;
                 checked.left = self.explain_register(operand);
                 let inner = self.pc.checked_sub(2);
-                if let Some(&inner) = inner.and_then(|pc| program.instructions.get(pc)) {
+                let negated_membership = self
+                    .pc
+                    .checked_sub(1)
+                    .filter(|_| operand != dest)
+                    .and_then(|end| self.explain_keyed_membership(program, end, operand));
+                if let Some((found, _)) = negated_membership {
+                    checked = Checked {
+                        kind: ConditionKind::Negation,
+                        ..found
+                    };
+                } else if let Some(&inner) = inner.and_then(|pc| program.instructions.get(pc)) {
                     if let Some(found) = self.explain_operation(inner, operand, dest) {
                         checked = Checked {
                             kind: ConditionKind::Negation,
@@ -264,6 +306,7 @@ impl RegoVM {
                     }
                     checked.kind = ConditionKind::Iteration;
                     checked.left = self.explain_register(params.collection);
+                    site = start.unwrap_or(site);
                 }
             }
             Some(&previous) => {
@@ -278,13 +321,94 @@ impl RegoVM {
             }
             None => {}
         }
-        Some(CheckEvent {
-            kind: checked.kind,
-            operator: checked.operator,
-            left: checked.left,
-            right: checked.right,
-            outcome,
-        })
+        Some((site, checked.event(outcome)))
+    }
+
+    /// Keyed membership (`key, value in collection`) is compiled to `Index`,
+    /// `Eq` and two in-place `Not`s on the guarded register, so that a
+    /// missing key gives `false` instead of undefined. Decodes it as the
+    /// membership test it is rather than as a negation, with the key on the
+    /// left and the collection on the right, and whether it is undefined.
+    ///
+    /// `end` is the pc after the second `Not`, which writes `register`.
+    ///
+    /// The key is evaluated only when the value and the collection are
+    /// defined and the collection is an array or an object; otherwise the
+    /// key's register was not written and the key is reported as undefined.
+    fn explain_keyed_membership(
+        &self,
+        program: &Program,
+        end: usize,
+        register: u8,
+    ) -> Option<(Checked<'_>, bool)> {
+        let instruction = |offset: usize| {
+            end.checked_sub(offset)
+                .and_then(|pc| program.instructions.get(pc))
+                .copied()
+        };
+        match (
+            instruction(1)?,
+            instruction(2)?,
+            instruction(3)?,
+            instruction(4)?,
+        ) {
+            (
+                Instruction::Not {
+                    dest: first_dest,
+                    operand: first_operand,
+                },
+                Instruction::Not {
+                    dest: second_dest,
+                    operand: second_operand,
+                },
+                Instruction::Eq {
+                    dest: eq_dest,
+                    left: indexed,
+                    right: value,
+                },
+                Instruction::Index {
+                    dest: index_dest,
+                    container,
+                    key,
+                },
+            ) if first_dest == register
+                && first_operand == register
+                && second_dest == register
+                && second_operand == register
+                && eq_dest == register
+                && indexed == index_dest
+                && index_dest != key
+                && index_dest != container
+                && key != register
+                && container != register
+                && value != register =>
+            {
+                let collection = self.explain_register(container);
+                let evaluated = self.explain_register(value) != &Value::Undefined
+                    && matches!(collection, Value::Array(_) | Value::Object(_));
+                let key = if evaluated {
+                    self.explain_register(key)
+                } else {
+                    &Value::Undefined
+                };
+                let undefined = if evaluated {
+                    key == &Value::Undefined
+                } else {
+                    collection == &Value::Undefined
+                        || self.explain_register(value) == &Value::Undefined
+                };
+                Some((
+                    Checked {
+                        kind: ConditionKind::Membership,
+                        operator: Some(Operator::In),
+                        left: key,
+                        right: Some(collection),
+                    },
+                    undefined,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Decodes a comparison or membership test that wrote `target`, provided
@@ -323,8 +447,8 @@ impl RegoVM {
         })
     }
 
-    /// An iteration's collection is undefined. Such a loop has no check of
-    /// its own: the body continues with no iteration.
+    /// Called at a `LoopStart`, the iteration's check site, whose
+    /// collection is undefined. The body continues with no iteration.
     #[cold]
     #[inline(never)]
     pub(super) fn explain_undefined_collection(&mut self) {
@@ -333,7 +457,7 @@ impl RegoVM {
         }
         self.explain_deliver(|vm, recorder| {
             let event = CheckEvent {
-                kind: ConditionKind::Existence,
+                kind: ConditionKind::Iteration,
                 operator: None,
                 left: &Value::Undefined,
                 right: None,
@@ -390,6 +514,8 @@ impl RegoVM {
                 .checked_add(offset)
                 .and_then(|pc| program.instructions.get(pc))
         };
+        // The check's site is its guard: the next instruction, or the one
+        // after the `Not` of a negated comparison.
         let negated = match (next(1), next(2)) {
             (
                 Some(&Instruction::Guard {
@@ -410,6 +536,7 @@ impl RegoVM {
             ) if operand == dest && register == negated => true,
             _ => return,
         };
+        let site = self.pc.saturating_add(if negated { 2 } else { 1 });
         self.explain_deliver(|vm, recorder| {
             let event = CheckEvent {
                 kind: if negated {
@@ -426,16 +553,16 @@ impl RegoVM {
                     Outcome::Undefined
                 },
             };
-            recorder.check(&vm.explain_context(), &event);
+            recorder.check(&vm.explain_context_at(site), &event);
         });
     }
 
-    /// Called after `target` was written. Only writes to the executing
-    /// partial rule's result are emissions; `key` is `None` for a set
-    /// element.
+    /// Called after `target` was written with `key` and `value`, as read
+    /// before the write. Only writes to the executing partial rule's result
+    /// are emissions; `key` is `None` for a set element.
     #[cold]
     #[inline(never)]
-    pub(super) fn explain_emission(&mut self, target: u8, key: Option<u8>, value: u8) {
+    pub(super) fn explain_emission(&mut self, target: u8, key: Option<&Value>, value: &Value) {
         let emits = self.call_rule_stack.last().is_some_and(|ctx| {
             ctx.result_reg == target
                 && match ctx.rule_type {
@@ -448,8 +575,6 @@ impl RegoVM {
             return;
         }
         self.explain_deliver(|vm, recorder| {
-            let value = vm.explain_register(value);
-            let key = key.map(|key| vm.explain_register(key));
             if value == &Value::Undefined || key.is_some_and(|key| key == &Value::Undefined) {
                 return;
             }

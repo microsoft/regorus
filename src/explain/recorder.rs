@@ -76,9 +76,14 @@ pub trait ExplanationRecorder: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HookContext {
-    /// Program counter of the instruction that produced the event. For
-    /// [`body_end`](ExplanationRecorder::body_end) it is the instruction at
-    /// which the body ended.
+    /// Program counter of the instruction that produced the event, except
+    /// for [`check`](ExplanationRecorder::check), where it is the pc of the
+    /// check's site in a Rego program's
+    /// [`Provenance`](crate::explain::Provenance), found with
+    /// [`site_at`](crate::explain::Provenance::site_at). A check of a value
+    /// that must be defined ([`Existence`](ConditionKind::Existence)) has no
+    /// site. For [`body_end`](ExplanationRecorder::body_end) it is the
+    /// instruction at which the body ended.
     pub pc: usize,
     /// Index of the executing rule in the program's rule table, or `None`
     /// outside any rule.
@@ -106,21 +111,28 @@ pub struct HookContext {
 /// - [`Comparison`](ConditionKind::Comparison) and
 ///   [`Membership`](ConditionKind::Membership): `left` and `right` are the
 ///   compared values (for `x in xs`, `x` and `xs`) and `operator` is set.
+///   For `k, v in xs`, `left` is the key `k` and `right` is `xs`; `v` is not
+///   reported. The key is evaluated only when `v` and `xs` are defined and
+///   `xs` is an array or an object: otherwise `left` is
+///   [`Undefined`](Value::Undefined), and the outcome is
+///   [`Failure`](Outcome::Failure) when `v` and `xs` are defined.
 /// - [`Truthiness`](ConditionKind::Truthiness): `left` is the checked value.
 /// - [`Negation`](ConditionKind::Negation): the operands describe the negated
 ///   expression: a comparison or membership as above, otherwise `left` is its
 ///   value. The outcome is that of the negation, which is never
 ///   [`Undefined`](Outcome::Undefined): `not` of an undefined expression
 ///   succeeds.
-/// - [`Iteration`](ConditionKind::Iteration): the end of an `every`
-///   quantifier; `left` is the iterated collection. The outcome is the
-///   quantifier's; the checks of each iteration are reported separately.
-///   The end of a `some` iteration is not a check.
+/// - [`Iteration`](ConditionKind::Iteration): `left` is the iterated
+///   collection. For an `every` quantifier, reported at its end with the
+///   quantifier's outcome; the checks of each iteration are reported
+///   separately. Any other iteration (`some x in xs`, `xs[_]`) is reported
+///   only when its collection is undefined, with outcome
+///   [`Undefined`](Outcome::Undefined); the end of a `some` iteration is not
+///   a check.
 /// - [`Existence`](ConditionKind::Existence): a value that must be defined
-///   was undefined, for example the right side of `_ = x`, a field matched
-///   by an object pattern or the collection of an iteration (`some x in xs`,
-///   `xs[_]`). Only failures
-///   are reported; `left` is the undefined value.
+///   was undefined, for example the right side of `_ = x` or a field matched
+///   by an object pattern. Only failures are reported; `left` is the
+///   undefined value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct CheckEvent<'a> {

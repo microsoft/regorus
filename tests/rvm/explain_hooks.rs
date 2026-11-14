@@ -8,8 +8,9 @@
 
 use anyhow::{bail, Result};
 use regorus::explain::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ConditionKind, EmissionEvent, ExplanationRecorder,
-    HookContext, NotCapturedEvent, Operator, Outcome, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, CheckSite, ConditionKind, EmissionEvent,
+    ExplanationRecorder, HookContext, NotCapturedEvent, Operator, Outcome, Provenance,
+    UncapturedConstruct,
 };
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::Program;
@@ -781,6 +782,246 @@ fn membership_in_an_undefined_collection_is_undefined() {
     );
 }
 
+/// `key, value in collection` is a membership test, although it is compiled
+/// to an indexing whose result is negated twice.
+#[test]
+fn keyed_membership_is_reported_as_membership() {
+    let policy = "package t\nallow if { \"k\", 1 in input.m }\n";
+    let membership = |container: Value, outcome| Event::Check {
+        kind: Membership,
+        operator: Some(Operator::In),
+        left: v(r#""k""#),
+        right: Some(container),
+        outcome,
+    };
+    for (container, outcome, end) in [
+        (r#"{"k":1}"#, Success, body_end(Success, Some("true"))),
+        (r#"{"k":2}"#, Failure, body_end(Failure, None)),
+        (r#"{"j":1}"#, Failure, body_end(Failure, None)),
+    ] {
+        let input = format!(r#"{{"m":{container}}}"#);
+        let r = run(policy, "data.t.allow", &input);
+        assert_eq!(
+            r.events(),
+            [Event::Reset, membership(v(container), outcome), end],
+            "{input}"
+        );
+    }
+
+    // The key is not evaluated unless the value and the collection are
+    // defined and the collection is an array or an object.
+    let unevaluated = |container: Value, outcome| Event::Check {
+        kind: Membership,
+        operator: Some(Operator::In),
+        left: Value::Undefined,
+        right: Some(container),
+        outcome,
+    };
+    let r = run(policy, "data.t.allow", "{}");
+    assert_eq!(
+        r.events(),
+        [
+            Event::Reset,
+            unevaluated(Value::Undefined, Undefined),
+            body_end(Failure, None),
+        ]
+    );
+    let r = run(policy, "data.t.allow", r#"{"m":"k"}"#);
+    assert_eq!(
+        r.events(),
+        [
+            Event::Reset,
+            unevaluated(v(r#""k""#), Failure),
+            body_end(Failure, None),
+        ]
+    );
+    let r = run(
+        "package t\nallow if { \"k\", input.v in {\"k\": 1} }\n",
+        "data.t.allow",
+        "{}",
+    );
+    assert_eq!(r.events()[1], unevaluated(v(r#"{"k":1}"#), Undefined));
+
+    let r = run(
+        "package t\nallow if { input.k, 1 in {\"k\": 1} }\n",
+        "data.t.allow",
+        "{}",
+    );
+    assert_eq!(
+        r.events()[1],
+        Event::Check {
+            kind: Membership,
+            operator: Some(Operator::In),
+            left: Value::Undefined,
+            right: Some(v(r#"{"k":1}"#)),
+            outcome: Undefined,
+        }
+    );
+
+    // A negated keyed membership is a negation of the membership.
+    let policy = "package t\nallow if { not \"k\", 1 in input.m }\n";
+    for (container, outcome) in [(r#"{"j":1}"#, Success), (r#"{"k":1}"#, Failure)] {
+        let input = format!(r#"{{"m":{container}}}"#);
+        let r = run(policy, "data.t.allow", &input);
+        assert_eq!(
+            r.events()[1],
+            Event::Check {
+                kind: Negation,
+                operator: Some(Operator::In),
+                left: v(r#""k""#),
+                right: Some(v(container)),
+                outcome,
+            },
+            "{input}"
+        );
+    }
+}
+
+/// Every check event but an existence check is reported at its site, a
+/// check of the same kind and operator.
+#[test]
+fn checks_are_reported_at_their_sites() {
+    let cases = [
+        (
+            "package t\nallow if { input.x > 0; input.flag }\n",
+            r#"{"x":1,"flag":true}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { \"x\" in input.tags }\n",
+            r#"{"tags":["y"]}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { not input.x == 1 }\n",
+            r#"{"x":1}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { \"a\", 1 in input.m }\n",
+            r#"{"m":{"a":1}}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { not \"a\", 1 in input.m }\n",
+            r#"{"m":{"a":2}}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { 0, 1 in input.xs }\n",
+            r#"{"xs":[1]}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { x > 0 } }\n",
+            r#"{"xs":[1,-1]}"#,
+            false,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { x > 0 } }\n",
+            "{}",
+            false,
+        ),
+        (
+            "package t\nallow if { some r in input.rs; r }\n",
+            "{}",
+            false,
+        ),
+        ("package t\nallow if { x := input.a[_]; x }\n", "{}", false),
+        ("package t\nallow if input.x > 0\n", r#"{"x":"text"}"#, true),
+        (
+            "package t\nallow if not input.x > 0\n",
+            r#"{"x":"text"}"#,
+            true,
+        ),
+    ];
+    for (policy, input, strict) in cases {
+        let r = run_with(policy, "data.t.allow", input, strict);
+        let provenance = Provenance::new(&r.program);
+        let mut checks = 0;
+        for recorded in &r.events {
+            let Event::Check { kind, operator, .. } = recorded.event else {
+                continue;
+            };
+            let pc = recorded.context.unwrap().pc;
+            if kind == ConditionKind::Existence {
+                assert_eq!(provenance.site_at(pc), None, "{policy} {input}: pc {pc}");
+                continue;
+            }
+            checks += 1;
+            let site = provenance.site_at(pc);
+            // A negation's operator is that of the negated expression, which
+            // its site doesn't record.
+            let operator = operator.filter(|_| kind != ConditionKind::Negation);
+            assert_eq!(
+                site.map(|site| (site.kind, site.operator)),
+                Some((kind, operator)),
+                "{policy} {input}: pc {pc}, {:?}",
+                r.instruction(&recorded.context.unwrap())
+            );
+        }
+        assert!(checks > 0, "{policy} {input}: {:?}", r.events());
+    }
+}
+
+/// When every check of a policy runs, each site receives at least one event,
+/// except the iteration site of a `some` over a defined collection.
+#[test]
+fn every_site_is_reported_when_all_checks_run() {
+    let cases = [
+        (
+            "package t\nallow if { input.x > 0; input.flag }\n",
+            r#"{"x":1,"flag":true}"#,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { x > 0 } }\n",
+            r#"{"xs":[1,2]}"#,
+        ),
+        (
+            "package t\nallow if { every x in input.xs { some y in x; y } }\n",
+            r#"{"xs":[[true]]}"#,
+        ),
+        (
+            "package t\nallow if { some y in input.ys; y < 0 }\n",
+            r#"{"ys":[-1]}"#,
+        ),
+        (
+            "package t\nallow if { not \"a\", 1 in input.m }\n",
+            r#"{"m":{"a":2}}"#,
+        ),
+        (
+            "package t\nallow if { _ = input.p; input.q }\n",
+            r#"{"p":1,"q":true}"#,
+        ),
+    ];
+    for (policy, input) in cases {
+        let r = run(policy, "data.t.allow", input);
+        let reported: Vec<usize> = r
+            .events
+            .iter()
+            .filter(|recorded| matches!(recorded.event, Event::Check { .. }))
+            .map(|recorded| recorded.context.unwrap().pc)
+            .collect();
+        // A `some` iteration is reported only when its collection is undefined.
+        let silent = |site: &&CheckSite| {
+            site.kind == ConditionKind::Iteration && !site.text.starts_with("every ")
+        };
+        for site in Provenance::new(&r.program)
+            .sites()
+            .iter()
+            .filter(|s| !silent(s))
+        {
+            assert!(
+                reported.contains(&site.pc),
+                "{policy} {input}: site {:?} at pc {} has no event: {:?}",
+                site.text,
+                site.pc,
+                r.events()
+            );
+        }
+    }
+}
+
 #[test]
 fn undefined_object_entries_are_not_emitted() {
     let policy = "package t\no[k] := input.m[k] if { some k in input.ks }\n";
@@ -1114,7 +1355,7 @@ fn iterating_an_undefined_collection_is_reported() {
         r.events(),
         [
             Event::Reset,
-            unary(ConditionKind::Existence, Value::Undefined, Undefined),
+            unary(Iteration, Value::Undefined, Undefined),
             matched_nothing.clone(),
         ]
     );
@@ -1136,7 +1377,7 @@ fn iterating_an_undefined_collection_is_reported() {
 
 #[test]
 fn iterations_over_undefined_collections_are_reported() {
-    let existence = unary(ConditionKind::Existence, Value::Undefined, Undefined);
+    let undefined = unary(Iteration, Value::Undefined, Undefined);
     let cases = [
         ("package t\nallow if { x := input.a[_]; x }\n", false),
         ("package t\nallow if { some k, x in input.a; x }\n", false),
@@ -1147,14 +1388,21 @@ fn iterations_over_undefined_collections_are_reported() {
     ];
     for (policy, in_comprehension) in cases {
         let r = run(policy, "data.t.allow", "{}");
-        let existence_checks: Vec<_> = r
+        let undefined_iterations: Vec<_> = r
             .events
             .iter()
-            .filter(|e| e.event == existence)
-            .map(|e| e.context.unwrap().in_comprehension)
+            .filter(|e| e.event == undefined)
+            .map(|e| {
+                let context = e.context.unwrap();
+                assert!(
+                    matches!(r.instruction(&context), Instruction::LoopStart { .. }),
+                    "{policy}"
+                );
+                context.in_comprehension
+            })
             .collect();
         assert_eq!(
-            existence_checks,
+            undefined_iterations,
             [in_comprehension],
             "{policy}: {:?}",
             r.events()
@@ -1365,6 +1613,67 @@ fn retarget(program: &Program, target: impl Fn(&Program, &Instruction) -> Option
         _ => unreachable!(),
     }
     altered
+}
+
+/// An emitted operand that is the partial rule's result itself is reported
+/// as it was before the write. The programs are altered so that `SetAdd`
+/// and `ObjectSet` read an operand from the result register.
+#[test]
+fn emissions_of_the_result_itself_report_its_value_before_the_write() {
+    let set = Value::new_set();
+    let object = Value::new_object();
+    let cases = [
+        (
+            "package t\np contains input.x if true\n",
+            "data.t.p",
+            false,
+            None,
+            set,
+        ),
+        (
+            "package t\no[input.x] := 1 if true\n",
+            "data.t.o",
+            false,
+            Some(v(r#""a""#)),
+            object.clone(),
+        ),
+        (
+            "package t\no[input.x] := 1 if true\n",
+            "data.t.o",
+            true,
+            Some(object),
+            v("1"),
+        ),
+    ];
+    for (policy, query, alias_key, key, value) in cases {
+        let mut altered = compile(policy, query).unwrap().as_ref().clone();
+        for instruction in &mut altered.instructions {
+            match instruction {
+                Instruction::SetAdd { set, value } => *value = *set,
+                Instruction::ObjectSet { obj, key, .. } if alias_key => *key = *obj,
+                Instruction::ObjectSet { obj, value, .. } => *value = *obj,
+                _ => {}
+            }
+        }
+        let altered = Arc::new(altered);
+        let expected = Event::Emission {
+            key: key.clone(),
+            value: value.clone(),
+        };
+        for mode in MODES {
+            let r = run_program(&altered, r#"{"x":"a"}"#, mode, false);
+            let emissions: Vec<_> = r
+                .events()
+                .into_iter()
+                .filter(|e| matches!(e, Event::Emission { .. }))
+                .collect();
+            assert_eq!(
+                emissions,
+                std::slice::from_ref(&expected),
+                "{policy} {mode:?}"
+            );
+        }
+    }
 }
 
 /// A successful write to a collection that is not the executing partial

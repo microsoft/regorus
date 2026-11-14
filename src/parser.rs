@@ -997,8 +997,9 @@ impl<'source> Parser<'source> {
     fn parse_empty_set(&mut self) -> Result<Expr> {
         let mut span = self.tok.1.clone();
         self.expect("set(", "while parsing empty set")?;
+        let close_end = self.tok.1.end;
         self.expect(")", "while parsing empty set")?;
-        span.end = self.tok.1.end;
+        span.end = close_end;
         Ok(Expr::Set {
             span,
             items: vec![],

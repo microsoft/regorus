@@ -607,16 +607,6 @@ fn loop_values_without_keys() -> anyhow::Result<()> {
                 Some("input.xs[_]"),
                 None
             ),
-            // The result of the `every` must be true.
-            row(
-                "data.test.all",
-                Some(0),
-                every,
-                Truthiness,
-                None,
-                None,
-                None
-            ),
             row(
                 "data.test.any",
                 Some(0),
@@ -1155,5 +1145,156 @@ fn spaced_calls_beside_operations_and_statements() -> anyhow::Result<()> {
             ("sort (input.ys)", Some(("p.rego", 6, 13))),
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn keyed_membership_is_not_reported_as_negation() -> anyhow::Result<()> {
+    let provenance = allow(r#"input.subject, "admin" in data.roles"#)?;
+    let site = provenance
+        .sites()
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("keyed membership check was not decoded"))?;
+    assert_eq!(site.kind, ConditionKind::Membership);
+    assert_eq!(site.operator, Some(Operator::In));
+    assert_eq!(site.left_path.as_deref(), Some("input.subject"));
+    assert_eq!(site.right_path.as_deref(), Some("data.roles"));
+    Ok(())
+}
+
+#[test]
+fn grouped_condition_keeps_its_reference_path() -> anyhow::Result<()> {
+    let provenance = allow("(input.flag)")?;
+    let site = provenance
+        .sites()
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("grouped condition was not decoded"))?;
+    assert_eq!(site.text, "(input.flag)");
+    assert_eq!(site.left_path.as_deref(), Some("input.flag"));
+    Ok(())
+}
+
+#[test]
+fn iteration_text_stops_at_statement_and_grouping_delimiters() -> anyhow::Result<()> {
+    let provenance = allow("some x in input.a | input.b; x == 1\nsome y in (input.a | input.b)\n")?;
+    let loops: Vec<_> = provenance
+        .sites()
+        .iter()
+        .filter(|site| site.kind == ConditionKind::Iteration)
+        .map(|site| (site.text.as_str(), at(site)))
+        .collect();
+    assert_eq!(
+        loops,
+        vec![
+            ("input.a | input.b", Some(("p.rego", 5, 11))),
+            ("(input.a | input.b)", Some(("p.rego", 6, 11))),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_set_iteration_text_excludes_following_statement() -> anyhow::Result<()> {
+    let provenance = allow("some x in set(); true")?;
+    let site = provenance
+        .sites()
+        .iter()
+        .find(|site| site.kind == ConditionKind::Iteration)
+        .ok_or_else(|| anyhow::anyhow!("empty-set iteration was not decoded"))?;
+    assert_eq!(site.text, "set()");
+    Ok(())
+}
+
+#[test]
+fn computed_builtin_results_are_not_reference_paths() -> anyhow::Result<()> {
+    let provenance = allow(
+        "json.verify_schema(input)[0] == true\ninput.values[json.verify_schema(input)[0]] == true",
+    )?;
+    let sites: Vec<_> = provenance
+        .sites()
+        .iter()
+        .filter(|site| site.kind == ConditionKind::Comparison)
+        .collect();
+    let computed = sites
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("first comparison site was not decoded"))?;
+    let indexed_reference = sites
+        .get(1)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("second comparison site was not decoded"))?;
+    assert_eq!(computed.left_path, None);
+    assert_eq!(
+        indexed_reference.left_path.as_deref(),
+        Some("input.values[json.verify_schema(input)[0]]")
+    );
+    Ok(())
+}
+
+/// Only the guard of the loop's own result register is dropped: a guard on
+/// another register after the same `LoopNext`, or one whose `LoopNext` doesn't
+/// lead back to a `LoopStart`, keeps its Truthiness site.
+#[test]
+fn only_the_loop_result_guard_is_not_a_site() -> anyhow::Result<()> {
+    let program = compile(
+        &[(
+            "p.rego",
+            "package test\nall if {\n  every x in input.xs { x > 0 }\n}\n",
+        )],
+        &["data.test.all"],
+    )?;
+    let guard = program
+        .instructions
+        .windows(2)
+        .zip(1_usize..)
+        .find_map(|(pair, pc)| match *pair {
+            [Instruction::LoopNext {
+                body_start,
+                loop_end,
+            }, Instruction::Guard { register, .. }]
+                if usize::from(loop_end) == pc =>
+            {
+                Some((pc, body_start, register))
+            }
+            _ => None,
+        });
+    let Some((pc, body_start, register)) = guard else {
+        anyhow::bail!("no loop result guard");
+    };
+    assert_eq!(loop_result(&program, body_start), Some(register));
+    assert_eq!(Provenance::new(&program).site_at(pc), None);
+
+    let mut other = (*program).clone();
+    let Some(slot) = other.instructions.get_mut(pc) else {
+        anyhow::bail!("guard pc out of range");
+    };
+    *slot = Instruction::Guard {
+        register: register.wrapping_add(1),
+        mode: GuardMode::Condition,
+    };
+    let other_kind = Provenance::new(&other).site_at(pc).map(|site| site.kind);
+    assert_eq!(other_kind, Some(ConditionKind::Truthiness));
+
+    let loop_next = pc
+        .checked_sub(1)
+        .ok_or_else(|| anyhow::anyhow!("guard at pc 0"))?;
+    for bad_start in [0, u16::MAX] {
+        let mut malformed = (*program).clone();
+        let Some(next) = malformed.instructions.get_mut(loop_next) else {
+            anyhow::bail!("loop next pc out of range");
+        };
+        *next = Instruction::LoopNext {
+            body_start: bad_start,
+            loop_end: u16::try_from(pc)?,
+        };
+        let malformed_kind = Provenance::new(&malformed)
+            .site_at(pc)
+            .map(|site| site.kind);
+        assert_eq!(
+            malformed_kind,
+            Some(ConditionKind::Truthiness),
+            "body_start {bad_start}"
+        );
+    }
     Ok(())
 }
