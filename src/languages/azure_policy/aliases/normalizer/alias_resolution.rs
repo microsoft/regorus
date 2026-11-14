@@ -45,7 +45,9 @@ pub fn apply_alias_entries(
         let value = navigate_arm_path_segments(raw, segments);
 
         if let Some(value) = value {
-            let value = normalize_value(&value, &entry.short_name, None);
+            // Flatten nested sub-resource arrays too (e.g. `x.y` under plain `x`);
+            // otherwise this overwrites what `merge_properties` flattened.
+            let value = normalize_value(&value, &entry.short_name, Some(sub_resource_set));
 
             if is_root_field_collision(&entry.short_name, &entry.default_path) {
                 let target = collision_safe_key(&entry.short_name);
