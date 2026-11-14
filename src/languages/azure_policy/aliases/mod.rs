@@ -39,6 +39,8 @@ pub mod types;
 
 #[cfg(test)]
 mod bracket_tests;
+#[cfg(test)]
+mod path_round_trip_tests;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString as _};
