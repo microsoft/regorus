@@ -121,3 +121,238 @@ cases:
           - name: r1
             properties:
               protocol: Tcp
+
+  - note: sub-resource array nested under an unwrapped array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.x[*].y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        x:
+          - y:
+              - name: inner
+                properties:
+                  z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - name: inner
+              z: 1
+    round_trip: true
+
+  - note: sub-resource array under a multi-key unwrapped array level
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/a.b[*].c[*].z",
+                  "defaultPath": "properties.a.b[*].c[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        a:
+          b:
+            - c:
+                - name: inner
+                  properties:
+                    z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      a:
+        b:
+          - c:
+              - name: inner
+                z: 1
+    round_trip: true
+
+  - note: sub-resource array reached through an object inside an array element
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x[*].config.y[*].z",
+                  "defaultPath": "properties.x[*].config.y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        x:
+          - config:
+              y:
+                - name: inner
+                  properties:
+                    z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - config:
+            y:
+              - name: inner
+                z: 1
+    round_trip: true
+
+  - note: wrapped sub-resource array with a multi-key name
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/a.b[*].z",
+                  "defaultPath": "properties.a.b[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        a:
+          b:
+            - name: inner
+              properties:
+                z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      a:
+        b:
+          - name: inner
+            z: 1
+    round_trip: true
+
+  - note: top-level array sharing a nested sub-resource array's name is not flattened
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.x[*].y[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/y[*].foo",
+                  "defaultPath": "properties.y[*].foo",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        x:
+          - y:
+              - properties:
+                  z: 1
+        y:
+          - foo: 1
+            properties:
+              keep: true
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - z: 1
+      y:
+        - foo: 1
+          properties:
+            keep: true
+    round_trip: true
+
+  - note: plain alias for the unwrapped outer array keeps the nested flattening
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "properties.x",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.x[*].y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        x:
+          - y:
+              - name: one
+                properties:
+                  z: 1
+              - name: two
+                properties:
+                  z: 2
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - name: one
+              z: 1
+            - name: two
+              z: 2
+    round_trip: true

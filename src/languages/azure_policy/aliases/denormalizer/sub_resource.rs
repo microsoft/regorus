@@ -50,19 +50,14 @@ pub fn rewrap_sub_resource_arrays(
 
     for sub_array_path in sorted {
         let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
-        let parts: Vec<&str> = sub_array_path.split('.').collect();
-
-        if parts.len() == 1 {
-            if let Some(key) = parts.first().and_then(|p| find_key_ci(properties, p)) {
-                if let Some(Value::Array(arr)) = properties.get_mut(key.as_ref()) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for elem in inner.iter_mut() {
-                        *elem = rewrap_element(elem, &envelope_fields);
-                    }
-                }
+        let keys: Vec<&str> = sub_array_path.split('.').collect();
+        let Some((first, rest)) = keys.split_first() else {
+            continue;
+        };
+        if let Some(key) = find_key_ci(properties, first) {
+            if let Some(value) = properties.get_mut(key.as_ref()) {
+                rewrap_at(value, rest, &envelope_fields);
             }
-        } else if let Some((&array_name, parent_parts)) = parts.split_last() {
-            rewrap_nested_array(properties, parent_parts, array_name, &envelope_fields);
         }
     }
 }
@@ -82,13 +77,11 @@ fn classify_envelope_fields(
     let array_keys: Vec<&str> = sub_array_path.split('.').collect();
     for (short, arm_path) in parsed {
         let parts = short.parts();
-        let in_array = array_keys.iter().zip(&parts).all(|(name, part)| {
-            matches!(part.segments, [path::Segment::Key(key)] if key.eq_ignore_ascii_case(name))
-        });
-        let Some(path::Segment::Key(first_segment)) = parts
-            .get(array_keys.len())
-            .filter(|_| in_array)
-            .and_then(|part| part.segments.first())
+        let Some(level) = array_level(&array_keys, &parts) else {
+            continue;
+        };
+        let Some(path::Segment::Key(first_segment)) =
+            parts.get(level).and_then(|part| part.segments.first())
         else {
             continue;
         };
@@ -97,7 +90,7 @@ fn classify_envelope_fields(
         // `['properties']` there is the same wrapper.
         let wrapped = arm_path
             .parts()
-            .get(array_keys.len())
+            .get(level)
             .is_some_and(path::Part::has_flattened_wrapper);
 
         if !wrapped {
@@ -108,96 +101,57 @@ fn classify_envelope_fields(
     envelope
 }
 
-/// Recursively navigate nested arrays and re-wrap elements of the innermost
-/// sub-resource array.
-fn rewrap_nested_array(
-    obj: &mut ObjMap,
-    parent_parts: &[&str],
-    array_name: &str,
-    envelope_fields: &BTreeSet<String>,
-) {
-    if parent_parts.is_empty() {
-        return;
-    }
-
-    let parent_key = match parent_parts.first().and_then(|&p| find_key_ci(obj, p)) {
-        Some(k) => k,
-        None => return,
-    };
-
-    let parent_arr = match obj.get_mut(parent_key.as_ref()) {
-        Some(Value::Array(arr)) => crate::Rc::make_mut(arr),
-        _ => return,
-    };
-
-    for element in parent_arr.iter_mut() {
-        if let Value::Object(obj_rc) = element {
-            let inner_btree = crate::Rc::make_mut(obj_rc);
-
-            if parent_parts.len() > 1 {
-                rewrap_nested_array_in_btree(
-                    inner_btree,
-                    parent_parts.get(1..).unwrap_or_default(),
-                    array_name,
-                    envelope_fields,
-                );
-            } else if let Some(arr_key) = find_key_ci_btree(inner_btree, array_name) {
-                if let Some(Value::Array(arr)) = inner_btree.get_mut(&arr_key) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for inner_elem in inner.iter_mut() {
-                        *inner_elem = rewrap_element(inner_elem, envelope_fields);
-                    }
-                }
+/// Number of leading short-name parts whose keys spell `array_keys`, i.e.
+/// the part index of the array's elements; `None` if the alias is outside
+/// the array. A part may hold several keys (`a.b[*]`).
+fn array_level(array_keys: &[&str], parts: &[path::Part<'_>]) -> Option<usize> {
+    let mut remaining = array_keys;
+    for (level, part) in parts.iter().enumerate() {
+        if remaining.is_empty() {
+            return Some(level);
+        }
+        for segment in part.segments {
+            let path::Segment::Key(key) = segment else {
+                return None;
+            };
+            let (name, rest) = remaining.split_first()?;
+            if !key.eq_ignore_ascii_case(name) {
+                return None;
             }
+            remaining = rest;
         }
     }
+    None
 }
 
-/// BTreeMap-native recursion for nested sub-resource array re-wrapping,
-/// avoiding ObjMap round-trips on each array element.
-fn rewrap_nested_array_in_btree(
-    btree: &mut Object,
-    parent_parts: &[&str],
-    array_name: &str,
-    envelope_fields: &BTreeSet<String>,
-) {
-    if parent_parts.is_empty() {
-        return;
-    }
-
-    let parent_key = match parent_parts
-        .first()
-        .and_then(|&p| find_key_ci_btree(btree, p))
-    {
-        Some(k) => k,
-        None => return,
-    };
-
-    let parent_arr = match btree.get_mut(&parent_key) {
-        Some(Value::Array(arr)) => crate::Rc::make_mut(arr),
-        _ => return,
-    };
-
-    for element in parent_arr.iter_mut() {
-        if let Value::Object(obj_rc) = element {
-            let inner_btree = crate::Rc::make_mut(obj_rc);
-
-            if parent_parts.len() > 1 {
-                rewrap_nested_array_in_btree(
-                    inner_btree,
-                    parent_parts.get(1..).unwrap_or_default(),
-                    array_name,
-                    envelope_fields,
-                );
-            } else if let Some(arr_key) = find_key_ci_btree(inner_btree, array_name) {
-                if let Some(Value::Array(arr)) = inner_btree.get_mut(&arr_key) {
-                    let inner = crate::Rc::make_mut(arr);
-                    for inner_elem in inner.iter_mut() {
-                        *inner_elem = rewrap_element(inner_elem, envelope_fields);
-                    }
+/// Follow `keys` from `value` and re-wrap the elements of the array there.
+/// Like the normalizer's path tracking, arrays along the way are walked
+/// element by element and objects by key, so a name such as `a.b.c` matches
+/// `a.b[*].c[*]` and `a[*].b[*].c[*]` alike.
+fn rewrap_at(value: &mut Value, keys: &[&str], envelope_fields: &BTreeSet<String>) {
+    match value {
+        Value::Array(arr) => {
+            let inner = crate::Rc::make_mut(arr);
+            for elem in inner.iter_mut() {
+                if keys.is_empty() {
+                    *elem = rewrap_element(elem, envelope_fields);
+                } else {
+                    rewrap_at(elem, keys, envelope_fields);
                 }
             }
         }
+        Value::Object(obj) => {
+            let Some((first, rest)) = keys.split_first() else {
+                return;
+            };
+            let obj = crate::Rc::make_mut(obj);
+            if let Some(key) = find_key_ci_btree(obj, first) {
+                if let Some(child) = obj.get_mut(&key) {
+                    rewrap_at(child, rest, envelope_fields);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
