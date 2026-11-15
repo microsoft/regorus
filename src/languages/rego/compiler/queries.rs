@@ -8,7 +8,7 @@
 
 use super::{Compiler, CompilerError, ComprehensionType, ContextType, Result};
 use crate::ast::{self, LiteralStmt, Query};
-use crate::rvm::instructions::GuardMode;
+use crate::rvm::instructions::{GuardMode, LoopMode};
 use crate::rvm::program::RuleType;
 use crate::rvm::Instruction;
 use alloc::format;
@@ -85,11 +85,12 @@ impl<'a> Compiler<'a> {
                     // per-iteration context yields produce the results), the
                     // `every` body has no yield, so the loop result register is
                     // otherwise discarded. Guard on it so a `some` that matches
-                    // nothing fails the enclosing `every` iteration.
+                    // nothing fails the enclosing `every` iteration or witness.
                     if matches!(
                         self.context_stack.last().map(|c| &c.context_type),
                         Some(ContextType::Every)
-                    ) {
+                    ) || matches!(self.rule_loop_mode(), LoopMode::Any)
+                    {
                         self.emit_instruction(
                             Instruction::Guard {
                                 register: some_result_reg,
