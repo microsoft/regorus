@@ -379,6 +379,7 @@ impl RegoVM {
                 && indexed == index_dest
                 && index_dest != key
                 && index_dest != container
+                && value != index_dest
                 && key != register
                 && container != register
                 && value != register =>

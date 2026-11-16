@@ -1162,6 +1162,87 @@ fn keyed_membership_is_not_reported_as_negation() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A keyed membership whose registers alias each other is decoded as the
+/// negation it is lowered to, as in the VM.
+#[test]
+fn keyed_membership_with_aliased_registers_is_not_a_membership() -> anyhow::Result<()> {
+    let program = compile(
+        &[(
+            "p.rego",
+            "package test\nallow if {\n  input.subject, \"admin\" in data.roles\n}\n",
+        )],
+        &["data.test.allow"],
+    )?;
+    let site = Provenance::new(&program)
+        .sites()
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("keyed membership check was not decoded"))?;
+    assert_eq!(site.kind, ConditionKind::Membership);
+    let at = |offset: usize| {
+        site.pc
+            .checked_sub(offset)
+            .ok_or_else(|| anyhow::anyhow!("membership starts before pc 0"))
+    };
+    let (eq_pc, index_pc) = (at(3)?, at(4)?);
+    let (
+        Some(&Instruction::Eq {
+            dest,
+            left,
+            right: value,
+        }),
+        Some(&Instruction::Index { container, key, .. }),
+    ) = (
+        program.instructions.get(eq_pc),
+        program.instructions.get(index_pc),
+    )
+    else {
+        anyhow::bail!("unexpected keyed membership lowering");
+    };
+    let registers = [dest, left, container, key, value];
+    for (i, register) in registers.iter().enumerate() {
+        assert!(
+            !registers.iter().skip(i + 1).any(|other| other == register),
+            "{registers:?}"
+        );
+    }
+    // (Index dest = Eq left, Index container, Index key, Eq right)
+    let aliases = [
+        (key, container, key, value),
+        (container, container, key, value),
+        (left, container, dest, value),
+        (left, dest, key, value),
+        (left, container, key, dest),
+        (left, container, key, left),
+    ];
+    for (indexed, collection, member, compared) in aliases {
+        let mut altered = (*program).clone();
+        if let Some(slot) = altered.instructions.get_mut(index_pc) {
+            *slot = Instruction::Index {
+                dest: indexed,
+                container: collection,
+                key: member,
+            };
+        }
+        if let Some(slot) = altered.instructions.get_mut(eq_pc) {
+            *slot = Instruction::Eq {
+                dest,
+                left: indexed,
+                right: compared,
+            };
+        }
+        let shape = Provenance::new(&altered)
+            .site_at(site.pc)
+            .map(|site| (site.kind, site.operator));
+        assert_eq!(
+            shape,
+            Some((ConditionKind::Negation, None)),
+            "{indexed} {collection} {member} {compared}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn grouped_condition_keeps_its_reference_path() -> anyhow::Result<()> {
     let provenance = allow("(input.flag)")?;
@@ -1208,7 +1289,7 @@ fn empty_set_iteration_text_excludes_following_statement() -> anyhow::Result<()>
 #[test]
 fn computed_builtin_results_are_not_reference_paths() -> anyhow::Result<()> {
     let provenance = allow(
-        "json.verify_schema(input)[0] == true\ninput.values[json.verify_schema(input)[0]] == true",
+        "array.concat(input.a, input.b)[0] == true\ninput.values[array.concat(input.a, input.b)[0]] == true",
     )?;
     let sites: Vec<_> = provenance
         .sites()
@@ -1226,7 +1307,7 @@ fn computed_builtin_results_are_not_reference_paths() -> anyhow::Result<()> {
     assert_eq!(computed.left_path, None);
     assert_eq!(
         indexed_reference.left_path.as_deref(),
-        Some("input.values[json.verify_schema(input)[0]]")
+        Some("input.values[array.concat(input.a, input.b)[0]]")
     );
     Ok(())
 }

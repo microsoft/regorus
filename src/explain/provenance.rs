@@ -311,7 +311,8 @@ fn loop_result(program: &Program, body_start: u16) -> Option<u8> {
 }
 
 /// Keyed membership is lowered to Index, Eq and two in-place Nots so that a
-/// missing key produces false rather than Undefined.
+/// missing key produces false rather than Undefined. The register checks
+/// match the VM's, so both decode the same instructions as a membership.
 fn keyed_membership(program: &Program, pc: usize, register: u8) -> Option<Shape> {
     let instruction = |offset: usize| {
         pc.checked_sub(offset)
@@ -336,7 +337,7 @@ fn keyed_membership(program: &Program, pc: usize, register: u8) -> Option<Shape>
             Instruction::Eq {
                 dest: eq_dest,
                 left: indexed,
-                ..
+                right: value,
             },
             Instruction::Index {
                 dest: index_dest,
@@ -348,7 +349,13 @@ fn keyed_membership(program: &Program, pc: usize, register: u8) -> Option<Shape>
             && second_dest == register
             && second_operand == register
             && eq_dest == register
-            && indexed == index_dest =>
+            && indexed == index_dest
+            && index_dest != key
+            && index_dest != container
+            && value != index_dest
+            && key != register
+            && container != register
+            && value != register =>
         {
             Some(Shape {
                 kind: ConditionKind::Membership,
