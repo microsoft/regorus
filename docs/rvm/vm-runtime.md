@@ -391,6 +391,8 @@ sentinel) to avoid repeated rule evaluations. The compiler may set
 `Program::needs_runtime_recursion_check`; the runtime currently relies on the
 instruction budget and caching to prevent runaway recursion. Paths consist of
 literals and register values supplied via `VirtualDataDocumentLookupParams`.
+Undefined rule results remain cached but are omitted from materialized namespace
+objects; existing parent objects and defined false/null members are preserved.
 
 `ChainedIndex` follows a similar pattern but operates on register roots instead
 of the global `data` namespace.
