@@ -17,14 +17,15 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Returns true if the error must terminate evaluation rather than become
+    /// a rule failure.
     pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
         self.builtin_limit_exceeded
             || matches!(
                 err,
                 VmError::TimeLimitExceeded { .. }
                     | VmError::RuleCallDepthExceeded { .. }
+                    | VmError::ObjectKeyConflict { .. }
                     | VmError::MemoryLimitExceeded { .. }
                     | VmError::MemoryBudgetExceeded { .. }
                     | VmError::RegexSizeLimitExceeded { .. }

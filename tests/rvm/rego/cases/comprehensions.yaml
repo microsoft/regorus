@@ -308,3 +308,96 @@ cases:
     query: data.test.result
     want_result:
       - [1, 2]
+
+  - note: object_comprehension_conflicting_values
+    strict_builtin_errors: false
+    input: &conflicting_values
+      values: [1, 2]
+    modules: &conflicting_object_comprehension
+      - |
+        package test
+        result := {"k": x | some x in input.values}
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_conflicting_values_suspendable
+    execution_mode: suspendable
+    strict_builtin_errors: false
+    input: *conflicting_values
+    modules: *conflicting_object_comprehension
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_nested_conflict
+    input: *conflicting_values
+    modules: &nested_object_comprehension_conflict
+      - |
+        package test
+        result := [{"k": x | some x in input.values} | true]
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_nested_conflict_suspendable
+    execution_mode: suspendable
+    input: *conflicting_values
+    modules: *nested_object_comprehension_conflict
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_negated_conflict
+    input: *conflicting_values
+    modules: &negated_object_comprehension_conflict
+      - |
+        package test
+        default result := false
+        result if { not {"k": x | some x in input.values} }
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_negated_conflict_suspendable
+    execution_mode: suspendable
+    input: *conflicting_values
+    modules: *negated_object_comprehension_conflict
+    query: data.test.result
+    want_error: "object keys must be unique"
+
+  - note: object_comprehension_equal_duplicates_and_undefined
+    input: &equal_and_undefined_entries
+      items:
+        - {key: "null", value: null}
+        - {key: "null", value: null}
+        - {key: "false", value: false}
+        - {key: "false", value: false}
+        - {key: "nested", value: {a: [1, 2]}}
+        - {key: "nested", value: {a: [1, 2]}}
+        - {key: "false"}
+        - {value: true}
+    modules: &object_comprehension_entries
+      - |
+        package test
+        result := {item.key: item.value | some item in input.items}
+    query: data.test.result
+    want_result: &equal_entries
+      "null": null
+      "false": false
+      nested: {a: [1, 2]}
+
+  - note: object_comprehension_equal_duplicates_and_undefined_suspendable
+    execution_mode: suspendable
+    input: *equal_and_undefined_entries
+    modules: *object_comprehension_entries
+    query: data.test.result
+    want_result: *equal_entries
+
+  - note: object_comprehension_empty_entries
+    input: {items: []}
+    modules: *object_comprehension_entries
+    query: data.test.result
+    want_result: {}
+
+  - note: object_comprehension_empty_entries_suspendable
+    execution_mode: suspendable
+    input: {items: []}
+    modules: *object_comprehension_entries
+    query: data.test.result
+    want_result: {}
