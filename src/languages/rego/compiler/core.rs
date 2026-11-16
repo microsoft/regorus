@@ -271,7 +271,19 @@ impl<'a> Compiler<'a> {
         Ok(dest)
     }
 
+    pub(super) fn record_rule_dependency(&mut self, target: u16) {
+        if let Some(&caller) = self.current_call_stack.last() {
+            self.rule_dependencies
+                .entry(caller)
+                .or_default()
+                .insert(target);
+        }
+    }
+
     pub fn emit_instruction(&mut self, instruction: Instruction, span: &Span) {
+        if let &Instruction::CallRule { rule_index, .. } = &instruction {
+            self.record_rule_dependency(rule_index);
+        }
         if matches!(instruction, Instruction::HostAwait { .. }) {
             self.program.has_host_await = true;
         }
