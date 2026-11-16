@@ -25,6 +25,12 @@ impl RegoVM {
         program: &Program,
         instruction: Instruction,
     ) -> Result<InstructionOutcome> {
+        #[cfg(feature = "explanations")]
+        if self.pe.is_some() {
+            if let Some(outcome) = self.pe_execute(program, &instruction)? {
+                return Ok(outcome);
+            }
+        }
         // Native call edges must not retain unrelated opcode-dispatch frames.
         match instruction {
             Instruction::CallRule { dest, rule_index } => {

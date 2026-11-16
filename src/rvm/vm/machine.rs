@@ -214,6 +214,14 @@ pub struct RegoVM {
     /// Explanation recorder and its bookkeeping.
     #[cfg(feature = "explanations")]
     pub(super) explain: super::explain::ExplainHooks,
+
+    /// Unknown paths for partial evaluation.
+    #[cfg(feature = "explanations")]
+    pub(super) pe_settings: crate::explain::PartialEvalSettings,
+
+    /// Partial evaluation state; `Some` only during `partial_eval`.
+    #[cfg(feature = "explanations")]
+    pub(super) pe: Option<alloc::boxed::Box<super::partial_eval::PeState>>,
 }
 
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -306,6 +314,10 @@ impl RegoVM {
             metadata_value: Value::Undefined,
             #[cfg(feature = "explanations")]
             explain: super::explain::ExplainHooks::default(),
+            #[cfg(feature = "explanations")]
+            pe_settings: crate::explain::PartialEvalSettings::default(),
+            #[cfg(feature = "explanations")]
+            pe: None,
         }
     }
 

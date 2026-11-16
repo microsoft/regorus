@@ -2334,3 +2334,41 @@ fn vm_memory_budgets_are_independent_across_threads() {
         }
     });
 }
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_path_rendering_preserves_memory_errors() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, UnknownPath};
+
+    let mut guard = LimitGuard::lock();
+    let mut engine = Engine::new();
+    engine
+        .add_policy("p.rego".into(), "package test\nallow := true".into())
+        .unwrap();
+    let compiled = engine
+        .compile_with_entrypoint(&"data.test.allow".into())
+        .unwrap();
+    let program = Compiler::compile_from_policy(&compiled, &["data.test.allow"]).unwrap();
+    // A value supplied at an unknown path, and overlapping unknowns.
+    for (input, unknowns) in [
+        (r#"{"foo": 1}"#, vec![vec!["foo"]]),
+        ("{}", vec![vec!["foo"], vec!["foo", "bar"]]),
+    ] {
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_input(Value::from_json_str(input).unwrap());
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = unknowns.into_iter().map(UnknownPath::input_keys).collect();
+        vm.set_partial_eval_settings(settings);
+        guard.set_below_current_usage();
+        let result = vm.partial_eval("data.test.allow");
+        guard.disable_limit();
+        assert!(
+            matches!(
+                result,
+                Err(ExplainError::Vm(VmError::MemoryLimitExceeded { .. }))
+            ),
+            "{result:?}"
+        );
+    }
+}
