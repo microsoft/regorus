@@ -279,3 +279,30 @@ cases:
       tags:
         "a'b": "v"
     want_undefined: true
+
+  # =========================================================================
+  # `field()` template function
+  # =========================================================================
+
+  # The literal decodes to the path `tags['a''b']`, which names the tag `a'b`.
+  - note: tag_escape_field_function
+    policy_rule: |
+      {
+        "if": { "value": "[field('tags[''a''''b'']')]", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a'b": "v"
+    want_effect: "deny"
+
+  - note: tag_escape_field_function_twin_raw_name
+    policy_rule: |
+      {
+        "if": { "value": "[field('tags[''a''''b'']')]", "equals": "v" },
+        "then": { "effect": "deny" }
+      }
+    resource:
+      tags:
+        "a''b": "v"
+    want_undefined: true
