@@ -877,6 +877,85 @@ fn keyed_membership_is_reported_as_membership() {
     }
 }
 
+/// A negated keyed membership whose negation overwrites the key, the
+/// collection or the value is reported as a negation of the membership's
+/// result, without operands read after the overwrite.
+#[test]
+fn negated_membership_with_an_aliased_negation_is_not_decoded() {
+    use regorus::rvm::instructions::GuardMode;
+    let program = compile(
+        "package t\nallow if { not \"k\", 1 in input.m }\n",
+        "data.t.allow",
+    )
+    .unwrap();
+    let pcs = 0..program.instructions.len();
+    let guard = pcs
+        .clone()
+        .find(|&pc| {
+            matches!(
+                (pc.checked_sub(1).map(|p| program.instructions[p]), program.instructions[pc]),
+                (
+                    Some(Instruction::Not { dest, operand }),
+                    Instruction::Guard { register, mode: GuardMode::Condition },
+                ) if dest == register && operand != dest
+            )
+        })
+        .expect("negated membership guard");
+    let Instruction::Not { operand, .. } = program.instructions[guard - 1] else {
+        unreachable!()
+    };
+    let index = pcs
+        .take(guard)
+        .rfind(|&pc| matches!(program.instructions[pc], Instruction::Index { .. }))
+        .expect("membership index");
+    let (Instruction::Index { container, key, .. }, Instruction::Eq { right: value, .. }) =
+        (program.instructions[index], program.instructions[index + 1])
+    else {
+        panic!("unexpected keyed membership lowering");
+    };
+    assert!(
+        key != container
+            && key != value
+            && container != value
+            && ![key, container, value].contains(&operand),
+        "{key} {container} {value} {operand}"
+    );
+    let input = r#"{"m":{"k":1}}"#;
+    let r = run_program(&program, input, ExecutionMode::RunToCompletion, false);
+    assert_eq!(
+        r.events()[1].clone(),
+        Event::Check {
+            kind: Negation,
+            operator: Some(Operator::In),
+            left: v(r#""k""#),
+            right: Some(v(r#"{"k":1}"#)),
+            outcome: Failure,
+        }
+    );
+    for clobbered in [key, container, value] {
+        let mut altered = (*program).clone();
+        altered.instructions[guard - 1] = Instruction::Not {
+            dest: clobbered,
+            operand,
+        };
+        altered.instructions[guard] = Instruction::Guard {
+            register: clobbered,
+            mode: GuardMode::Condition,
+        };
+        let r = run_program(
+            &Arc::new(altered),
+            input,
+            ExecutionMode::RunToCompletion,
+            false,
+        );
+        assert_eq!(
+            r.events()[1],
+            unary(Negation, Value::from(true), Failure),
+            "{clobbered}"
+        );
+    }
+}
+
 /// Every check event but an existence check is reported at its site, a
 /// check of the same kind and operator.
 #[test]

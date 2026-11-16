@@ -260,7 +260,7 @@ impl RegoVM {
             _ if mode != GuardMode::Condition => {}
             Some(&Instruction::Not { dest, operand }) if dest == register => {
                 if let Some((found, undefined)) =
-                    self.explain_keyed_membership(program, self.pc, register)
+                    self.explain_keyed_membership(program, self.pc, register, register)
                 {
                     if undefined {
                         outcome = Outcome::Undefined;
@@ -274,7 +274,7 @@ impl RegoVM {
                     .pc
                     .checked_sub(1)
                     .filter(|_| operand != dest)
-                    .and_then(|end| self.explain_keyed_membership(program, end, operand));
+                    .and_then(|end| self.explain_keyed_membership(program, end, operand, dest));
                 if let Some((found, _)) = negated_membership {
                     checked = Checked {
                         kind: ConditionKind::Negation,
@@ -331,6 +331,9 @@ impl RegoVM {
     /// left and the collection on the right, and whether it is undefined.
     ///
     /// `end` is the pc after the second `Not`, which writes `register`.
+    /// `clobbered` is a register a later instruction overwrote, such as the
+    /// destination of a `Not` that negates the membership; the key, the
+    /// collection and the value must not be it.
     ///
     /// The key is evaluated only when the value and the collection are
     /// defined and the collection is an array or an object; otherwise the
@@ -340,6 +343,7 @@ impl RegoVM {
         program: &Program,
         end: usize,
         register: u8,
+        clobbered: u8,
     ) -> Option<(Checked<'_>, bool)> {
         let instruction = |offset: usize| {
             end.checked_sub(offset)
@@ -382,7 +386,10 @@ impl RegoVM {
                 && value != index_dest
                 && key != register
                 && container != register
-                && value != register =>
+                && value != register
+                && key != clobbered
+                && container != clobbered
+                && value != clobbered =>
             {
                 let collection = self.explain_register(container);
                 let evaluated = self.explain_register(value) != &Value::Undefined
