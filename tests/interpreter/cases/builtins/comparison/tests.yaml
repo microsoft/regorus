@@ -251,9 +251,9 @@ cases:
           - key: []
             value: [{"set!":[]}, {}]
           - key: {"set!":[]}
-            value: [{}]
-          - key: {}
             value: []
+          - key: {}
+            value: [{"set!":[]}]
       le:
         object!:
           - key: null
@@ -267,9 +267,9 @@ cases:
           - key: []
             value: [[], {"set!":[]}, {}]
           - key: {"set!":[]}
-            value: [{"set!":[]}, {}]
+            value: [{"set!":[]}]
           - key: {}
-            value: [{}]
+            value: [{"set!":[]}, {}]
       gt:
         object!:
           - key: null
@@ -283,9 +283,9 @@ cases:
           - key: []
             value: [null, false, 0, ""]
           - key: {"set!":[]}
-            value: [null, false, 0, "", []]
+            value: [null, false, 0, "", [], {}]
           - key: {}
-            value: [null, false, 0, "", [], {"set!":[]}]
+            value: [null, false, 0, "", []]
       ge:
         object!:
           - key: null
@@ -299,9 +299,9 @@ cases:
           - key: []
             value: [null, false, 0, "", []]
           - key: {"set!":[]}
-            value: [null, false, 0, "", [], {"set!":[]}]
-          - key: {}
             value: [null, false, 0, "", [], {"set!":[]}, {}]
+          - key: {}
+            value: [null, false, 0, "", [], {}]
 
   - note: arrays
     data: {}

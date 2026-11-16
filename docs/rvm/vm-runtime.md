@@ -77,6 +77,9 @@ fields to responsibilities.
 
 ### Value comparisons and output
 
+Defined values follow Rego's type order:
+`null < boolean < number < string < array < object < set`.
+
 Direct comparison instructions (`Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, and
 `AssertEq`) use iterative Value traversal. With an execution timer enabled,
 the traversal checkpoints each continuation frame and each 256-byte string chunk, including

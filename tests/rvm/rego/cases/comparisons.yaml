@@ -49,6 +49,76 @@ cases:
     query: data.test.main
     want_result: true
 
+  - note: object_set_relational_ordering
+    data: {}
+    input: {object: {}, element: 1}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          object := input.object
+          elements := {input.element}
+          result := [
+            object < elements,
+            object <= elements,
+            object > elements,
+            object >= elements,
+            elements < object,
+            elements <= object,
+            elements > object,
+            elements >= object,
+          ]
+        }
+    query: data.test.main
+    want_result: [true, true, false, false, false, false, true, true]
+
+  - note: nested_object_set_relational_ordering
+    data: {}
+    input: {element: 1}
+    execution_mode: suspendable
+    strict_builtin_errors: true
+    modules:
+      - |
+        package test
+
+        main := result if {
+          object := {"k": input.element}
+          elements := {input.element}
+          result := [
+            [object] < [elements],
+            [elements] > [object],
+            {"k": object} < {"k": elements},
+            {"k": elements} > {"k": object},
+            {object} < {elements},
+            {elements} > {object},
+          ]
+        }
+    query: data.test.main
+    want_result: [true, true, true, true, true, true]
+
+  - note: object_set_sort_min_max
+    data: {}
+    input: {element: 1}
+    modules:
+      - |
+        package test
+
+        main := result if {
+          object := {"k": input.element}
+          elements := {input.element}
+          values := [elements, object, set(), {}, [], null, false, 0, "text"]
+          expected := [null, false, 0, "text", [], {}, object, set(), elements]
+          result := [
+            sort(values) == expected,
+            sort({elements, object, set(), {}, [], null, false, 0, "text"}) == expected,
+            min([object, elements]) == object,
+            max([object, elements]) == elements,
+          ]
+        }
+    query: data.test.main
+    want_result: [true, true, true, true]
+
   - note: equality_literal_failure
     data: {}
     modules:
