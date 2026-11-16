@@ -203,6 +203,27 @@ fn rename_guards() {
         (json!({"b": 2}), "a", "c", json!({"b": 2})),
         (json!({"a": 1}), "a[*]", "c", json!({"a": 1})),
         (json!({"a": {"x": 1}}), "a.x", "b[0]", json!({"b": [1]})),
+        // Pruning `Ab` would make `ab` resolve to `aB`.
+        (
+            json!({"Ab": {"x": 1}, "aB": 0}),
+            "Ab.x",
+            "ab.y",
+            json!({"Ab": {"x": 1}, "aB": 0}),
+        ),
+        (
+            json!({"Ab": {"x": 1}, "aB": {"y": 2}}),
+            "Ab.x",
+            "ab.y",
+            json!({"Ab": {"x": 1}, "aB": {"y": 2}}),
+        ),
+        // After pruning `Ab`, the target resolves to the null `aB`, which
+        // can still take the value.
+        (
+            json!({"Ab": {"x": 1}, "aB": null}),
+            "Ab.x",
+            "ab.y",
+            json!({"aB": {"y": 1}}),
+        ),
     ] {
         let mut map = new_map();
         for (key, value) in input.as_object().unwrap() {

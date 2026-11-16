@@ -398,9 +398,20 @@ pub fn rename(map: &mut ObjMap, source: &str, target: &str, lowercase: bool) {
     if equivalent(&source, &target) || get_map(map, &target).is_some() || !can_set(map, &target) {
         return;
     }
-    if let Some(value) = get_map(map, &source).cloned() {
-        remove(map, &source);
-        set(map, &target, value, lowercase);
+    let Some(value) = get_map(map, &source).cloned() else {
+        return;
+    };
+    // Pruning the source can change which case variant the target resolves
+    // to, so recheck the target on a staged copy and keep it only if the
+    // write lands.
+    let mut staged = map.clone();
+    remove(&mut staged, &source);
+    if get_map(&staged, &target).is_some() || !can_set(&staged, &target) {
+        return;
+    }
+    set(&mut staged, &target, value, lowercase);
+    if get_map(&staged, &target).is_some() {
+        *map = staged;
     }
 }
 
@@ -467,11 +478,14 @@ fn set_value(current: &mut Value, segments: &[Segment], value: Value, lowercase:
                 let Some(len) = index.checked_add(1) else {
                     return;
                 };
-                let mut values = array.to_vec();
+                // Take the backing vector instead of cloning it, so repeated
+                // extensions grow in amortized linear time.
+                let mut values = core::mem::take(array).into_vec();
                 if values
                     .try_reserve(len.saturating_sub(values.len()))
                     .is_err()
                 {
+                    *array = values.into();
                     return;
                 }
                 values.resize(len, Value::Null);
