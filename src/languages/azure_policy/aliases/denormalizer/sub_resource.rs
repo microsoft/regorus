@@ -21,6 +21,7 @@ const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 /// Re-wrap sub-resource array elements by moving non-envelope fields back
 /// under each element's `properties` object.
 pub fn rewrap_sub_resource_arrays(
+    result: &mut ObjMap,
     properties: &mut ObjMap,
     sub_arrays: &BTreeSet<String>,
     entries: &BTreeMap<String, ResolvedEntry>,
@@ -50,16 +51,53 @@ pub fn rewrap_sub_resource_arrays(
 
     for sub_array_path in sorted {
         let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
-        let keys: Vec<&str> = sub_array_path.split('.').collect();
+        let (at_root, keys) = written_keys(sub_array_path, sub_arrays, entries, api_version);
         let Some((first, rest)) = keys.split_first() else {
             continue;
         };
-        if let Some(key) = find_key_ci(properties, first) {
-            if let Some(value) = properties.get_mut(key.as_ref()) {
+        let map = if at_root {
+            &mut *result
+        } else {
+            &mut *properties
+        };
+        if let Some(key) = find_key_ci(map, first) {
+            if let Some(value) = map.get_mut(key.as_ref()) {
                 rewrap_at(value, rest, &envelope_fields);
             }
         }
     }
+}
+
+/// Where a sub-resource array sits in the denormalized output: `true` for
+/// the ARM root rather than `properties`, plus the keys leading to it. Phase
+/// 2b writes a plain alias for the first key at its ARM path (`x` ->
+/// `properties.items` puts `x.y` at `items.y`), split on dots; it reads only
+/// single-key aliases and skips aliases that are themselves sub-resource
+/// arrays, so only those it wrote are followed.
+fn written_keys<'a>(
+    sub_array_path: &'a str,
+    sub_arrays: &BTreeSet<String>,
+    entries: &'a BTreeMap<String, ResolvedEntry>,
+    api_version: Option<&str>,
+) -> (bool, Vec<&'a str>) {
+    let keys: Vec<&str> = sub_array_path.split('.').collect();
+    let Some((first, rest)) = keys.split_first() else {
+        return (false, keys);
+    };
+    let Some(entry) = entries
+        .get(*first)
+        .filter(|entry| !entry.is_wildcard && !sub_arrays.contains(*first))
+    else {
+        return (false, keys);
+    };
+    let arm = entry.select_path(api_version);
+    let (at_root, arm) = arm
+        .strip_prefix("properties.")
+        .map_or((true, arm), |inner| (false, inner));
+    (
+        at_root,
+        arm.split('.').chain(rest.iter().copied()).collect(),
+    )
 }
 
 /// Determine which element-level fields are envelope fields for a given

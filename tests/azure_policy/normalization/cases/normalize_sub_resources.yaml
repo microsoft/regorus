@@ -356,3 +356,183 @@ cases:
             - name: two
               z: 2
     round_trip: true
+
+  - note: renamed outer array with a plain alias keeps the nested wrappers
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "properties.items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.items[*].y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - y:
+              - name: one
+                properties:
+                  z: 1
+    round_trip: true
+
+  - note: plain alias for an object parent keeps the nested flattening
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/config",
+                  "defaultPath": "properties.config",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules[*].z",
+                  "defaultPath": "properties.config.rules[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        config:
+          rules:
+            - name: one
+              properties:
+                z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      config:
+        rules:
+          - name: one
+            z: 1
+    round_trip: true
+
+  - note: plain alias for a renamed sub-resource array leaves it to its parent
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/config",
+                  "defaultPath": "properties.config",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules",
+                  "defaultPath": "properties.config.ruleList",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules[*].z",
+                  "defaultPath": "properties.config.ruleList[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        config:
+          ruleList:
+            - name: one
+              properties:
+                z: 1
+    round_trip: true
+
+  - note: plain alias for a sub-resource array at a nested ARM path
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/rules",
+                  "defaultPath": "properties.net.rules",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].z",
+                  "defaultPath": "properties.net.rules[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        net:
+          rules:
+            - name: one
+              properties:
+                z: 1
+    round_trip: true
+
+  - note: renamed root-level outer array with a plain alias keeps the nested wrappers
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "items[*].y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      items:
+        - y:
+            - name: one
+              properties:
+                z: 1
+    round_trip: true
