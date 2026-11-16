@@ -201,7 +201,9 @@ pub enum FieldKind {
     IdentityField(String),
     /// `"apiVersion"`
     ApiVersion,
-    /// `"tags.tagName"` or `"tags['tagName']"`
+    /// `"tags.tagName"` or `"tags['tagName']"`. Holds the decoded tag name:
+    /// in a single-quoted bracket name each `''` is decoded to `'`, so
+    /// `tags['''x''']` holds `'x'`. Other spellings are kept verbatim.
     Tag(String),
     /// An alias string (e.g., `"Microsoft.Compute/virtualMachines/imagePublisher"`)
     Alias(String),
