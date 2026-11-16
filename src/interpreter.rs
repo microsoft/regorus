@@ -1877,7 +1877,7 @@ impl Interpreter {
                     ctx_mut.output_constness_determined = true;
                 }
 
-                if output == Value::Undefined || !comps_defined {
+                if !comps_defined || (!is_set && output == Value::Undefined) {
                     ctx_mut.rule_value = Value::Undefined;
                     return Ok(false);
                 }

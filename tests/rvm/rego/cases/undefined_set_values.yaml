@@ -72,3 +72,75 @@ cases:
     query: data.test.values
     want_result:
       set!: []
+
+  - note: partial_set_preserves_value_before_undefined
+    modules: &partial_set_fields
+      - |
+        package test
+        values contains item.v if { some item in input.items }
+    input: &value_before_undefined
+      items: [{v: 1}, {}]
+    query: data.test.values
+    want_result: &one_value {set!: [1]}
+
+  - note: partial_set_preserves_value_before_undefined_suspendable
+    execution_mode: suspendable
+    modules: *partial_set_fields
+    input: *value_before_undefined
+    query: data.test.values
+    want_result: *one_value
+
+  - note: partial_set_preserves_value_after_undefined
+    modules: *partial_set_fields
+    input: &value_after_undefined
+      items: [{}, {v: 1}]
+    query: data.test.values
+    want_result: *one_value
+
+  - note: partial_set_preserves_value_after_undefined_suspendable
+    execution_mode: suspendable
+    modules: *partial_set_fields
+    input: *value_after_undefined
+    query: data.test.values
+    want_result: *one_value
+
+  - note: partial_set_all_undefined_fields_is_empty
+    modules: *partial_set_fields
+    input: &all_undefined
+      items: [{}, {}]
+    query: data.test.values
+    want_result: &empty_set {set!: []}
+
+  - note: partial_set_all_undefined_fields_is_empty_suspendable
+    execution_mode: suspendable
+    modules: *partial_set_fields
+    input: *all_undefined
+    query: data.test.values
+    want_result: *empty_set
+
+  - note: partial_set_empty_items_is_empty
+    modules: *partial_set_fields
+    input: &empty_items {items: []}
+    query: data.test.values
+    want_result: *empty_set
+
+  - note: partial_set_empty_items_is_empty_suspendable
+    execution_mode: suspendable
+    modules: *partial_set_fields
+    input: *empty_items
+    query: data.test.values
+    want_result: *empty_set
+
+  - note: partial_set_preserves_false_null_around_undefined
+    modules: *partial_set_fields
+    input: &defined_fields
+      items: [{v: false}, {}, {v: null}, {v: false}]
+    query: data.test.values
+    want_result: &false_null {set!: [false, null]}
+
+  - note: partial_set_preserves_false_null_around_undefined_suspendable
+    execution_mode: suspendable
+    modules: *partial_set_fields
+    input: *defined_fields
+    query: data.test.values
+    want_result: *false_null
