@@ -228,6 +228,18 @@ fn run_ci_suite(config: CiSuiteConfig) -> Result<()> {
             &["--features", "azure_policy"],
             "cargo test --features azure_policy (ci)",
         )?;
+
+        // Explanation hooks, including their Azure Policy case, are tested
+        // only with the default-off `explanations` feature.
+        run_ci_cargo_step(
+            &workspace,
+            "test",
+            config.release,
+            config.frozen,
+            None,
+            &["--features", "explanations,azure_policy"],
+            "cargo test --features explanations,azure_policy (ci)",
+        )?;
     }
 
     if config.include_azure_rbac {
