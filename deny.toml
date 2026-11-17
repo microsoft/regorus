@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "Chrono is used by the optional time and Azure Policy features; no compatible replacement is available yet." },
+    { id = "RUSTSEC-2026-0555", reason = "Chrono-tz is used by the optional time feature; the advisory reports no safe upgrade." },
+]
