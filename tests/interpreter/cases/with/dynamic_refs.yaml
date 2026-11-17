@@ -1,0 +1,107 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: static-with-replacement-evaluates-rule-under-overridden-input
+    modules:
+      - |
+        package example
+        import rego.v1
+        result := input.value
+    data:
+      example:
+        value: true
+    input: {}
+    query: data.example.result with input.value as data.example.value
+    want_result: true
+
+  - note: dynamic-with-replacement-invalidates-rules-evaluated-under-original-input
+    modules:
+      - |
+        package example.a
+        import rego.v1
+        result := input.value
+    data:
+      example:
+        a:
+          value: true
+    input:
+      many!:
+        - key: a
+        - key: a
+          value: false
+        - key: a
+    query: data.example[input.key].result with input.value as data.example[input.key].value
+    want_result:
+      many!: [true, true, true]
+
+  - note: nested-input-with-preserves-enclosing-explicit-data-override
+    modules:
+      - |
+        package test
+        import rego.v1
+        value := input.number
+        inner := v if {
+          v := value with input.number as input.number + 1
+        }
+        result := v if {
+          v := inner with data.test.value as 42
+        }
+    input:
+      many!:
+        - number: 1
+        - number: 3
+    query: data.test.result
+    want_result:
+      many!: [42, 42]
+
+  - note: function-with-values-are-evaluated-before-installing-overrides
+    modules:
+      - |
+        package test
+        import rego.v1
+        f(x) := x
+        number := data.test.f(2)
+        result := v if {
+          v := [input.number, number]
+            with data.test.f as 7
+            with input.number as number
+        }
+    input: {}
+    query: data.test.result
+    want_result: [2, 7]
+
+  - note: nested-with-replacements-discard-materialized-rule-values
+    modules:
+      - |
+        package probe
+        import rego.v1
+        f(x) := x
+        g(x) := 7 if x == 2
+        g(x) := data.probe.number if x != 2
+        number := data.probe.f(2)
+        inner := v if {
+          v := input.value with input.value as data.probe.f(0)
+        }
+        result := v if {
+          v := [number, inner, number] with data.probe.f as data.probe.g
+        }
+    input: {}
+    query: data.probe.result
+    want_result: [7, 2, 7]
+
+  - note: with-value-terms-use-separate-rule-caches
+    modules:
+      - |
+        package probe
+        import rego.v1
+        f(x) := x
+        g(x) := 7 if x == 2
+        g(x) := data.probe.number if x != 2
+        number := data.probe.f(2)
+        result := v if {
+          v := [number, data.probe.f(0), number] with data.probe.f as data.probe.g
+        }
+    input: {}
+    query: data.probe.result
+    want_result: [7, 2, 7]

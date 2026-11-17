@@ -369,6 +369,17 @@ impl Interpreter {
 
     /// Create a new Interpreter from a compiled policy.
     pub fn new_from_compiled_policy(compiled_policy: Rc<CompiledPolicyData>) -> Self {
+        let init_data = compiled_policy
+            .data
+            .clone()
+            .unwrap_or_else(Value::new_object);
+        // Compiled-policy engines are already prepared and skip init_with_document.
+        // Seed WITH's data document here so modified statements retain compiled
+        // base data. set_input fills in the input document separately.
+        let with_document = Value::from(BTreeMap::from([
+            (Value::from("data"), init_data.clone()),
+            (Value::from("input"), Value::Undefined),
+        ]));
         Self {
             data: Value::new_object(),
             module: None,
@@ -380,7 +391,7 @@ impl Interpreter {
             query_loop_hoisting: HoistedLoopsLookup::new(),
             input: Value::Undefined,
 
-            with_document: Value::new_object(),
+            with_document,
             with_functions: BTreeMap::default(),
             scopes: Vec::default(),
             contexts: Vec::default(),
@@ -405,10 +416,7 @@ impl Interpreter {
 
             extensions: compiled_policy.extensions.clone(),
             compiled_policy: compiled_policy.clone(),
-            init_data: compiled_policy
-                .data
-                .clone()
-                .unwrap_or_else(Value::new_object),
+            init_data,
             execution_timer: ExecutionTimer::new(None),
         }
     }
@@ -1174,17 +1182,14 @@ impl Interpreter {
                     _ => self.eval_expr(expr)?,
                 };
 
-                if let Some(ctx) = self.contexts.last_mut() {
-                    if let Some(result) = &mut ctx.result {
-                        if value != Value::Undefined {
-                            result
-                                .expressions
-                                .push(Self::make_expression_result(span, &value));
-                        } else {
-                            result.bindings = Value::new_object();
-                            result.expressions.clear();
-                        }
-                    }
+                if value == Value::Undefined {
+                    self.clear_query_result();
+                } else if let Some(result) =
+                    self.contexts.last_mut().and_then(|ctx| ctx.result.as_mut())
+                {
+                    result
+                        .expressions
+                        .push(Self::make_expression_result(span, &value));
                 }
 
                 if let Value::Bool(bool) = value {
@@ -1344,7 +1349,7 @@ impl Interpreter {
     fn apply_with_modifiers(&mut self, stmt: &LiteralStmt) -> Result<(Option<State>, bool)> {
         if !stmt.with_mods.is_empty() {
             // Save state;
-            let with_document = self.with_document.clone();
+            let mut with_document = self.with_document.clone();
             let input = self.input.clone();
             let data = self.data.clone();
             let processed = self.processed.clone();
@@ -1353,11 +1358,11 @@ impl Interpreter {
 
             let processed_paths =
                 core::mem::replace(&mut self.processed_paths, Value::new_object());
-            let mut inherited_overrides: Vec<Vec<String>> = Vec::new();
+            let mut overridden_paths: Vec<Vec<String>> = Vec::new();
             let inherited_paths = match self.copy_explicit_data_with_override_markers(
                 &processed_paths,
                 &mut Vec::new(),
-                &mut inherited_overrides,
+                &mut overridden_paths,
             ) {
                 Ok(paths) => paths,
                 Err(error) => {
@@ -1365,12 +1370,15 @@ impl Interpreter {
                     return Err(error);
                 }
             };
+            // Replacements inherit explicit data overrides, not materialized
+            // rule values. The caller's cached paths are kept for restoration.
             self.processed.clear();
-            self.processed_paths = inherited_paths;
+            self.processed_paths = inherited_paths.clone();
             self.rule_values.clear();
+            self.data = self.with_document["data"].clone();
 
             let saved_state = Some((
-                with_document,
+                with_document.clone(),
                 input,
                 data,
                 processed,
@@ -1380,10 +1388,12 @@ impl Interpreter {
             ));
             let apply_result = (|| -> Result<bool> {
                 let mut skip_exec = false;
-                for overridden_path in &inherited_overrides {
+                let mut function_overrides = Vec::new();
+                for overridden_path in &overridden_paths {
                     self.suppress_rules_under_data_override(overridden_path)?;
                 }
-                // Apply with modifiers.
+                // Evaluate replacements in the caller's environment. Stage the
+                // overrides so they cannot affect later replacement expressions.
                 for wm in &stmt.with_mods {
                     let mut path = get_rule_path_components(&wm.refr)?;
 
@@ -1432,8 +1442,7 @@ impl Interpreter {
                             Err(error) if is_evaluation_limit_error(&error) => return Err(error),
                             Ok(v) if v != Value::Undefined => {
                                 // Function replaced by value.
-                                self.with_functions
-                                    .insert(target, FunctionModifier::Value(v));
+                                function_overrides.push((target, FunctionModifier::Value(v)));
                             }
                             _ => {
                                 // Function replaced by another function.
@@ -1459,19 +1468,19 @@ impl Interpreter {
                                         }
                                     }
                                 }
-                                self.with_functions
-                                    .insert(target, FunctionModifier::Function(function_path));
+                                function_overrides
+                                    .push((target, FunctionModifier::Function(function_path)));
                             }
                         }
                     } else {
                         let value = self.eval_expr(&wm.r#as)?;
-                        skip_exec = value == Value::Undefined;
+                        skip_exec |= value == Value::Undefined;
                         let Some(first) = path.first() else {
                             bail!(wm.refr.span().error("empty path in with modifier"));
                         };
                         if first.value() == "input" || first.value() == "data" {
                             // Override existing values in case of conflict.
-                            let mut obj = &mut self.with_document;
+                            let mut obj = &mut with_document;
                             for component in &path {
                                 if !matches!(obj, Value::Object(_)) {
                                     *obj = Value::new_object();
@@ -1489,16 +1498,7 @@ impl Interpreter {
                                     .iter()
                                     .map(|component| component.value().to_string())
                                     .collect();
-                                let (_, overridden_subtree) = overridden_path
-                                    .split_first()
-                                    .ok_or_else(|| anyhow!("empty path in with modifier"))?;
-                                self.mark_data_with_override(
-                                    &overridden_subtree
-                                        .iter()
-                                        .map(String::as_str)
-                                        .collect::<Vec<_>>(),
-                                )?;
-                                self.suppress_rules_under_data_override(&overridden_path)?;
+                                overridden_paths.push(overridden_path);
                             }
                         } else {
                             bail!(wm.refr.span().error("not a valid target for with modifier"));
@@ -1506,6 +1506,27 @@ impl Interpreter {
                     }
                 }
 
+                // Loading a replacement can evaluate rules, including through a
+                // dynamically indexed parent document. Those cached results were
+                // computed without these overrides and must not be reused by the
+                // modified statement. Keep only explicit data override markers.
+                self.processed.clear();
+                self.processed_paths = inherited_paths;
+                self.rule_values.clear();
+                for overridden_path in &overridden_paths {
+                    let (_, overridden_subtree) = overridden_path
+                        .split_first()
+                        .ok_or_else(|| anyhow!("empty path in with modifier"))?;
+                    self.mark_data_with_override(
+                        &overridden_subtree
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>(),
+                    )?;
+                    self.suppress_rules_under_data_override(overridden_path)?;
+                }
+                self.with_document = with_document;
+                self.with_functions.extend(function_overrides);
                 self.data = self.with_document["data"].clone();
                 self.input = self.with_document["input"].clone();
                 Ok(skip_exec)
@@ -1537,17 +1558,102 @@ impl Interpreter {
         Ok(())
     }
 
+    fn clear_query_result(&mut self) {
+        if let Some(result) = self.contexts.last_mut().and_then(|ctx| ctx.result.as_mut()) {
+            result.bindings = Value::new_object();
+            result.expressions.clear();
+        }
+    }
+
     fn eval_stmt(&mut self, stmt: &LiteralStmt) -> Result<bool> {
+        let terms = if stmt.with_mods.is_empty() {
+            None
+        } else {
+            self.loop_hoisting_table(self.current_module_index)
+                .get_statement_terms(self.current_module_index, stmt.sidx)
+                .map_err(|err| anyhow!("statement terms out of bounds: {err}"))?
+                .cloned()
+        };
         let (saved_state, skip_exec) = self.apply_with_modifiers(stmt)?;
         let r = if !skip_exec {
-            self.eval_stmt_impl(stmt)
+            match terms {
+                Some(terms) => self.eval_stmt_with_terms(stmt, &terms),
+                None => self.eval_stmt_impl(stmt),
+            }
         } else {
+            self.clear_query_result();
             Ok(false)
         };
 
         self.restore_state(saved_state)?;
 
         r
+    }
+
+    fn eval_stmt_with_terms(&mut self, stmt: &LiteralStmt, terms: &[ExprRef]) -> Result<bool> {
+        // These are the freshly installed overrides, before any virtual rules
+        // have been evaluated. Each hoisted term starts from this same state.
+        let initial_state: State = (
+            self.with_document.clone(),
+            self.input.clone(),
+            self.data.clone(),
+            self.processed.clone(),
+            self.processed_paths.clone(),
+            self.with_functions.clone(),
+            self.rule_values.clone(),
+        );
+        let module_idx = self.current_module_index;
+        let mut cached = Vec::new();
+        let result = (|| {
+            for term in terms {
+                // A surrounding hoisted loop may already supply this value.
+                if self.get_loop_var_value(term)?.is_some() {
+                    continue;
+                }
+                let mut bind_output = false;
+                let value = match term.as_ref() {
+                    Expr::Call {
+                        span, fcn, params, ..
+                    } => {
+                        let extra_arg = get_extra_arg(
+                            term,
+                            Some(self.current_module_path.as_str()),
+                            &self.compiled_policy.functions,
+                        );
+                        let params = if extra_arg.is_some() {
+                            bind_output = true;
+                            params
+                                .split_last()
+                                .ok_or_else(|| anyhow!("missing function output argument"))?
+                                .1
+                        } else {
+                            params.as_slice()
+                        };
+                        self.eval_call_impl(span, term, fcn, params)
+                    }
+                    _ => self.eval_expr(term),
+                };
+                self.restore_state(Some(initial_state.clone()))?;
+                let value = value?;
+                if value == Value::Undefined {
+                    self.clear_query_result();
+                    return Ok(false);
+                }
+                self.set_loop_var_value(term, value)?;
+                cached.push(term.eidx());
+                if bind_output {
+                    // eval_call expects the cached function result, rather than
+                    // the boolean produced by matching its output argument.
+                    self.eval_expr(term)?;
+                }
+                self.memory_check()?;
+            }
+            self.eval_stmt_impl(stmt)
+        })();
+        for expr_idx in cached.into_iter().rev() {
+            self.loop_var_values.clear(module_idx, expr_idx);
+        }
+        result
     }
 
     fn clear_scope(scope: &mut Scope) {

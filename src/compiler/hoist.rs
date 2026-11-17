@@ -7,10 +7,10 @@
     clippy::pattern_type_mismatch
 )]
 
-//! Loop hoisting functionality for compilation.
+//! Expression and loop hoisting functionality for compilation.
 //!
 //! This module contains code adapted from the RVM compiler to support
-//! pre-computing loop hoisting information that can be stored in the
+//! pre-computing hoisting and binding information that can be stored in the
 //! compiled policy and reused by the interpreter.
 
 use super::destructuring_planner::{
@@ -109,6 +109,9 @@ pub struct HoistedLoopsLookup {
     /// Stores pre-computed loops for each statement in rules/queries
     statement_loops: Lookup<Vec<HoistedLoop>>,
 
+    /// Value terms evaluated separately in statements with WITH modifiers.
+    statement_terms: Lookup<crate::Rc<Vec<ExprRef>>>,
+
     /// Maps (module_index, expr_index) -> Vec<HoistedLoop>  
     /// For output expressions in comprehensions and rule values
     expr_loops: Lookup<Vec<HoistedLoop>>,
@@ -131,6 +134,7 @@ impl HoistedLoopsLookup {
     /// Ensure capacity for a given module and statement
     pub fn ensure_statement_capacity(&mut self, module_idx: u32, stmt_idx: u32) {
         self.statement_loops.ensure_capacity(module_idx, stmt_idx);
+        self.statement_terms.ensure_capacity(module_idx, stmt_idx);
         self.expr_loops.ensure_capacity(module_idx, 0);
         self.expr_binding_plans.ensure_capacity(module_idx, 0);
         self.query_contexts.ensure_capacity(module_idx, 0);
@@ -140,6 +144,7 @@ impl HoistedLoopsLookup {
     pub fn ensure_expr_capacity(&mut self, module_idx: u32, expr_idx: u32) {
         self.expr_loops.ensure_capacity(module_idx, expr_idx);
         self.statement_loops.ensure_capacity(module_idx, 0);
+        self.statement_terms.ensure_capacity(module_idx, 0);
         self.expr_binding_plans
             .ensure_capacity(module_idx, expr_idx);
         self.query_contexts.ensure_capacity(module_idx, 0);
@@ -149,6 +154,7 @@ impl HoistedLoopsLookup {
     pub fn ensure_query_capacity(&mut self, module_idx: u32, query_idx: u32) {
         self.query_contexts.ensure_capacity(module_idx, query_idx);
         self.statement_loops.ensure_capacity(module_idx, 0);
+        self.statement_terms.ensure_capacity(module_idx, 0);
         self.expr_loops.ensure_capacity(module_idx, 0);
         self.expr_binding_plans.ensure_capacity(module_idx, 0);
     }
@@ -172,6 +178,15 @@ impl HoistedLoopsLookup {
         stmt_idx: u32,
     ) -> LookupResult<Option<&Vec<HoistedLoop>>> {
         self.statement_loops.get_checked(module_idx, stmt_idx)
+    }
+
+    /// Get value terms hoisted from a statement with WITH modifiers.
+    pub fn get_statement_terms(
+        &self,
+        module_idx: u32,
+        stmt_idx: u32,
+    ) -> LookupResult<Option<&crate::Rc<Vec<ExprRef>>>> {
+        self.statement_terms.get_checked(module_idx, stmt_idx)
     }
 
     /// Store hoisted loops for an expression (output expressions)
@@ -578,10 +593,132 @@ impl LoopHoister {
         }
 
         self.lookup.ensure_statement_capacity(module_idx, stmt_idx);
+        self.lookup.statement_terms.clear(module_idx, stmt_idx);
+        if !stmt.with_mods.is_empty() {
+            if let Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } = &stmt.literal {
+                let mut terms = Vec::new();
+                let loop_values = loops
+                    .iter()
+                    .map(|loop_info| {
+                        loop_info
+                            .loop_expr
+                            .as_ref()
+                            .unwrap_or(&loop_info.value)
+                            .eidx()
+                    })
+                    .collect();
+                Self::collect_with_terms(expr, context, &loop_values, &mut terms);
+                let negated = matches!(&stmt.literal, Literal::NotExpr { .. });
+                // The negated operation stays inside NOT; its embedded terms
+                // are evaluated before negation, as in OPA's lowering.
+                if negated && terms.last().is_some_and(|term| term.eidx() == expr.eidx()) {
+                    let _ = terms.pop();
+                }
+                // A single positive term already has the statement's scope.
+                if terms.len() > 1 || (negated && !terms.is_empty()) {
+                    self.lookup
+                        .statement_terms
+                        .set_checked(module_idx, stmt_idx, crate::Rc::new(terms))
+                        .map_err(|err| anyhow!("statement_terms out of bounds: {err}"))?;
+                }
+            }
+        }
         self.lookup
             .set_statement_loops(module_idx, stmt_idx, loops)?;
 
         Ok(())
+    }
+
+    // OPA lowers embedded calls and references to separate expressions carrying
+    // the original WITH modifiers. Record those terms without adding synthetic
+    // variables or changing the statement's observable query results.
+    fn collect_with_terms(
+        expr: &ExprRef,
+        context: &ScopeContext,
+        loop_values: &BTreeSet<u32>,
+        terms: &mut Vec<ExprRef>,
+    ) {
+        if loop_values.contains(&expr.eidx()) {
+            return;
+        }
+
+        use crate::ast::Expr as E;
+        match expr.as_ref() {
+            E::Var { span, .. } => {
+                let name = span.text();
+                if name == "input"
+                    || name == "data"
+                    || (context
+                        .module_globals
+                        .as_ref()
+                        .is_some_and(|globals| globals.contains(name))
+                        && !context.bound_vars.contains(name)
+                        && !context.local_vars.contains(name))
+                {
+                    terms.push(expr.clone());
+                }
+            }
+            E::Call { fcn, params, .. } => {
+                // print accepts undefined arguments. OPA rewrites it specially
+                // rather than hoisting those arguments as required values.
+                if matches!(fcn.as_ref(), E::Var { span, .. } if span.text() == "print")
+                    && !context
+                        .module_globals
+                        .as_ref()
+                        .is_some_and(|globals| globals.contains("print"))
+                {
+                    return;
+                }
+                for param in params {
+                    Self::collect_with_terms(param, context, loop_values, terms);
+                }
+                terms.push(expr.clone());
+            }
+            E::RefDot { .. } | E::RefBrack { .. } => {
+                let mut prefix = expr;
+                loop {
+                    if loop_values.contains(&prefix.eidx()) {
+                        break;
+                    }
+                    match prefix.as_ref() {
+                        E::RefDot { refr, .. } => prefix = refr,
+                        E::RefBrack { refr, index, .. } => {
+                            Self::collect_with_terms(index, context, loop_values, terms);
+                            prefix = refr;
+                        }
+                        E::Var { .. } => break,
+                        _ => {
+                            Self::collect_with_terms(prefix, context, loop_values, terms);
+                            break;
+                        }
+                    }
+                }
+                terms.push(expr.clone());
+            }
+            E::Array { items, .. } | E::Set { items, .. } => {
+                for item in items {
+                    Self::collect_with_terms(item, context, loop_values, terms);
+                }
+            }
+            E::Object { fields, .. } => {
+                for (_, key, value) in fields {
+                    Self::collect_with_terms(key, context, loop_values, terms);
+                    Self::collect_with_terms(value, context, loop_values, terms);
+                }
+            }
+            E::UnaryExpr { expr, .. } => {
+                Self::collect_with_terms(expr, context, loop_values, terms);
+            }
+            E::BinExpr { lhs, rhs, .. }
+            | E::BoolExpr { lhs, rhs, .. }
+            | E::ArithExpr { lhs, rhs, .. }
+            | E::AssignExpr { lhs, rhs, .. } => {
+                Self::collect_with_terms(lhs, context, loop_values, terms);
+                Self::collect_with_terms(rhs, context, loop_values, terms);
+            }
+            // Comprehension queries have their own statement scopes and loops.
+            _ => {}
+        }
     }
 
     fn analyze_literal(
