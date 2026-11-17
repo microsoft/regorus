@@ -1,0 +1,57 @@
+# Sub-resource arrays in data-plane resources, whose non-aliased fields sit
+# at the resource root rather than under `properties`.
+
+data_manifest_json: |
+  {
+    "dataNamespace": "Test.Data",
+    "aliases": [],
+    "resourceTypeAliases": [
+      {
+        "resourceType": "widgets",
+        "aliases": [
+          {
+            "name": "Test.Data/widgets/v[*].state",
+            "paths": [
+              {
+                "path": "properties.other[*].rawstate",
+                "apiVersions": ["1.0"]
+              }
+            ]
+          },
+          {
+            "name": "Test.Data/widgets/x[*].y[*].z",
+            "paths": [
+              {
+                "path": "x[*].y[*].properties.z",
+                "apiVersions": ["1.0"]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+
+cases:
+  - note: root-level outer array without a plain alias keeps the nested wrappers
+    input:
+      type: "Test.Data/widgets"
+      x:
+        - y:
+            - name: one
+              properties:
+                z: 1
+    expected_normalized:
+      type: "Test.Data/widgets"
+      x:
+        - y:
+            - name: one
+              z: 1
+    round_trip: true
+
+  - note: a reverse remap leaves a root-level array of the same name alone
+    input:
+      type: "Test.Data/widgets"
+      v:
+        - state: s
+    round_trip: true

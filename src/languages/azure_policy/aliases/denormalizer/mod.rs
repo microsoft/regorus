@@ -111,6 +111,10 @@ pub fn denormalize_with_aliases(
         }
     }
 
+    // Plain aliases phase 2b writes; later phases look for them at their
+    // ARM paths.
+    let mut written = BTreeSet::new();
+
     // Phase 2b: Aliased scalar fields → versioned ARM paths.
     if let Some(entries) = entries {
         for (lc_key, entry) in entries {
@@ -152,6 +156,7 @@ pub fn denormalize_with_aliases(
             } else {
                 set_nested_verbatim(&mut result, arm_path, denorm_val);
             }
+            written.insert(lc_key.clone());
         }
 
         // Phase 2c + 2d: Use precomputed renames/remaps.
@@ -190,7 +195,24 @@ pub fn denormalize_with_aliases(
                         restore_casing(&rev.target_field, &casing_map)
                     },
                 };
-                apply_element_remap(&mut properties, &remap, false);
+                // Follow an outer array phase 2b moved to its ARM path.
+                let (at_root, array_chain) = sub_resource::redirect_chain(
+                    &remap.array_chain,
+                    entries,
+                    api_version,
+                    &written,
+                )
+                .unwrap_or_else(|| (false, remap.array_chain.clone()));
+                let map = if at_root {
+                    &mut result
+                } else {
+                    &mut properties
+                };
+                let remap = ElementRemap {
+                    array_chain,
+                    ..remap
+                };
+                apply_element_remap(map, &remap, false);
             }
         }
     }
@@ -204,6 +226,8 @@ pub fn denormalize_with_aliases(
                 &aliases.sub_resource_arrays,
                 &aliases.entries,
                 api_version,
+                &written,
+                is_data_plane,
             );
         }
     }

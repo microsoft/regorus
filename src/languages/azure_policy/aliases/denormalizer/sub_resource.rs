@@ -18,23 +18,23 @@ use super::helpers::find_key_ci;
 /// Sub-resource array element envelope fields that remain at the element root.
 const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 
+/// The keys leading to a sub-resource array and its envelope fields.
+type Target<'a> = (Vec<&'a str>, BTreeSet<String>);
+
 /// Re-wrap sub-resource array elements by moving non-envelope fields back
-/// under each element's `properties` object.
+/// under each element's `properties` object. `written` holds the plain
+/// aliases phase 2b wrote; `is_data_plane` says where phase 2a put
+/// non-aliased keys.
 pub fn rewrap_sub_resource_arrays(
     result: &mut ObjMap,
     properties: &mut ObjMap,
     sub_arrays: &BTreeSet<String>,
     entries: &BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
+    written: &BTreeSet<String>,
+    is_data_plane: bool,
 ) {
-    let mut sorted: Vec<&String> = sub_arrays.iter().collect();
-    sorted.sort_by(|a, b| {
-        let depth_a = a.chars().filter(|&c| c == '.').count();
-        let depth_b = b.chars().filter(|&c| c == '.').count();
-        depth_b.cmp(&depth_a)
-    });
-
-    if sorted.is_empty() {
+    if sub_arrays.is_empty() {
         return;
     }
     // Parse once per call; only wildcard aliases can address array elements.
@@ -49,9 +49,27 @@ pub fn rewrap_sub_resource_arrays(
         })
         .collect();
 
-    for sub_array_path in sorted {
+    // Several short names can resolve to the same array (two plain aliases
+    // with one ARM path). Wrap each array once, keeping a field at the
+    // element root if any of its names leaves it there.
+    let mut targets: BTreeMap<(bool, Vec<String>), Target<'_>> = BTreeMap::new();
+    for sub_array_path in sub_arrays {
         let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
-        let (at_root, keys) = written_keys(sub_array_path, sub_arrays, entries, api_version);
+        let (at_root, keys) =
+            written_keys(sub_array_path, entries, api_version, written, is_data_plane);
+        let id = keys.iter().map(|key| key.to_ascii_lowercase()).collect();
+        targets
+            .entry((at_root, id))
+            .or_insert_with(|| (keys, BTreeSet::new()))
+            .1
+            .extend(envelope_fields);
+    }
+
+    // Deepest first, so an outer array is wrapped after the arrays inside it.
+    let mut sorted: Vec<_> = targets.into_iter().collect();
+    sorted.sort_by_key(|((_, id), _)| core::cmp::Reverse(id.len()));
+
+    for ((at_root, _), (keys, envelope_fields)) in sorted {
         let Some((first, rest)) = keys.split_first() else {
             continue;
         };
@@ -69,35 +87,73 @@ pub fn rewrap_sub_resource_arrays(
 }
 
 /// Where a sub-resource array sits in the denormalized output: `true` for
-/// the ARM root rather than `properties`, plus the keys leading to it. Phase
-/// 2b writes a plain alias for the first key at its ARM path (`x` ->
-/// `properties.items` puts `x.y` at `items.y`), split on dots; it reads only
-/// single-key aliases and skips aliases that are themselves sub-resource
-/// arrays, so only those it wrote are followed.
+/// the ARM root rather than `properties`, plus the keys leading to it. When
+/// phase 2b wrote a plain alias for the first key, the array is under that
+/// alias's ARM path (`x` -> `properties.items` puts `x.y` at `items.y`);
+/// otherwise phase 2a wrote the key as is.
 fn written_keys<'a>(
     sub_array_path: &'a str,
-    sub_arrays: &BTreeSet<String>,
     entries: &'a BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
+    written: &BTreeSet<String>,
+    is_data_plane: bool,
 ) -> (bool, Vec<&'a str>) {
     let keys: Vec<&str> = sub_array_path.split('.').collect();
     let Some((first, rest)) = keys.split_first() else {
-        return (false, keys);
+        return (is_data_plane, keys);
     };
-    let Some(entry) = entries
-        .get(*first)
-        .filter(|entry| !entry.is_wildcard && !sub_arrays.contains(*first))
-    else {
-        return (false, keys);
-    };
-    let arm = entry.select_path(api_version);
+    match alias_location(first, entries, api_version, written) {
+        Some((at_root, mut arm)) => {
+            arm.extend(rest.iter().copied());
+            (at_root, arm)
+        }
+        None => (is_data_plane, keys),
+    }
+}
+
+/// Where phase 2b wrote the plain alias `key`: `true` for the ARM root
+/// rather than `properties`, plus its ARM keys. `None` if it wrote nothing
+/// for `key`.
+fn alias_location<'a>(
+    key: &str,
+    entries: &'a BTreeMap<String, ResolvedEntry>,
+    api_version: Option<&str>,
+    written: &BTreeSet<String>,
+) -> Option<(bool, Vec<&'a str>)> {
+    if !written.contains(key) {
+        return None;
+    }
+    let arm = entries.get(key)?.select_path(api_version);
     let (at_root, arm) = arm
         .strip_prefix("properties.")
         .map_or((true, arm), |inner| (false, inner));
-    (
+    Some((at_root, arm.split('.').collect()))
+}
+
+/// Point an element remap's array chain at where phase 2b wrote its outer
+/// array: `true` for the ARM root rather than `properties`, plus the chain
+/// with its first key replaced by the alias's ARM keys. `None` if phase 2b
+/// did not write the first key.
+pub fn redirect_chain(
+    chain: &[Vec<String>],
+    entries: &BTreeMap<String, ResolvedEntry>,
+    api_version: Option<&str>,
+    written: &BTreeSet<String>,
+) -> Option<(bool, Vec<Vec<String>>)> {
+    let (outer, inner) = chain.split_first()?;
+    let (first, rest) = outer.split_first()?;
+    let (at_root, arm) = alias_location(first, entries, api_version, written)?;
+    let redirected = arm
+        .into_iter()
+        .map(String::from)
+        .chain(rest.iter().cloned())
+        .collect();
+    Some((
         at_root,
-        arm.split('.').chain(rest.iter().copied()).collect(),
-    )
+        core::iter::once(redirected)
+            .chain(inner.iter().cloned())
+            .collect(),
+    ))
 }
 
 /// Determine which element-level fields are envelope fields for a given
@@ -113,6 +169,10 @@ fn classify_envelope_fields(
     }
 
     let array_keys: Vec<&str> = sub_array_path.split('.').collect();
+    // ARM names of the element's root fields, and of the fields under its
+    // `properties` wrapper.
+    let mut unwrapped = BTreeSet::new();
+    let mut wrapped = BTreeSet::new();
     for (short, arm_path) in parsed {
         let parts = short.parts();
         let Some(level) = array_level(&array_keys, &parts) else {
@@ -126,15 +186,24 @@ fn classify_envelope_fields(
         // Classify by the ARM part at this array's element level, not by the
         // deepest part of a nested field. The array is flattened, so a quoted
         // `['properties']` there is the same wrapper.
-        let wrapped = arm_path
-            .parts()
-            .get(level)
-            .is_some_and(path::Part::has_flattened_wrapper);
-
-        if !wrapped {
-            envelope.insert(first_segment.to_ascii_lowercase());
+        let arm_parts = arm_path.parts();
+        let arm_part = arm_parts.get(level);
+        if let Some(part) = arm_part.filter(|part| part.has_flattened_wrapper()) {
+            if let Some(path::Segment::Key(key)) = part.segments.get(1) {
+                wrapped.insert(key.to_ascii_lowercase());
+            }
+            continue;
+        }
+        // Phase 2d gives the field its ARM name when it finds the array, and
+        // leaves the short name when it does not.
+        envelope.insert(first_segment.to_ascii_lowercase());
+        if let Some(path::Segment::Key(key)) = arm_part.and_then(|part| part.segments.first()) {
+            unwrapped.insert(key.to_ascii_lowercase());
         }
     }
+    // A name that is also a wrapped field's ARM name stays wrapped, as it was
+    // before phase 2d gave fields their ARM names.
+    envelope.extend(unwrapped.difference(&wrapped).cloned());
 
     envelope
 }

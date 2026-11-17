@@ -536,3 +536,358 @@ cases:
               properties:
                 z: 1
     round_trip: true
+
+  - note: two plain aliases with the same ARM path wrap the nested elements once
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/a",
+                  "defaultPath": "properties.items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b",
+                  "defaultPath": "properties.items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/a[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - children:
+              - name: one
+                properties:
+                  z: 1
+    round_trip: true
+
+  - note: a plain alias the normalizer did not resolve leaves the raw array wrapped
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/config",
+                  "defaultPath": "properties.settings",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules[*].z",
+                  "defaultPath": "properties.settings.rules[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        Settings:
+          rules:
+            - name: one
+              properties:
+                z: 1
+    round_trip: true
+    expected_round_trip:
+      type: "Test/widgets"
+      properties:
+        settings:
+          rules:
+            - name: one
+              properties:
+                z: 1
+
+  - note: an unwrapped element field keeps its ARM name at the element root
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "properties.x",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].state",
+                  "defaultPath": "properties.x[*].y[*].rawstate",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.x[*].y[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        x:
+          - y:
+              - rawstate: s
+                properties:
+                  z: 1
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - state: s
+              z: 1
+    round_trip: true
+
+  - note: renamed outer array keeps a renamed nested element field
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "properties.items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.items[*].y[*].properties.rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - y:
+              - name: one
+                properties:
+                  rawz: 1
+    round_trip: true
+
+  - note: root-level renamed outer array keeps a renamed nested element field
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "items",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "items[*].y[*].properties.rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      items:
+        - y:
+            - name: one
+              properties:
+                rawz: 1
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - name: one
+              z: 1
+    round_trip: true
+
+  - note: an unwrapped element field under a mixed-case inner array keeps its ARM name
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/vnets[*].subNets[*].z",
+                  "defaultPath": "properties.vnets[*].subNets[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/vnets[*].subNets[*].state",
+                  "defaultPath": "properties.vnets[*].subNets[*].rawState",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        vnets:
+          - subNets:
+              - rawState: s
+                properties:
+                  z: 1
+    round_trip: true
+
+  - note: an object parent with a plain alias keeps a renamed nested element field
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/config",
+                  "defaultPath": "properties.settings",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules[*].z",
+                  "defaultPath": "properties.settings.rules[*].properties.rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        settings:
+          rules:
+            - name: one
+              properties:
+                rawz: 1
+    round_trip: true
+
+  - note: the API version picks where a renamed outer array is looked up
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/x",
+                  "defaultPath": "properties.x",
+                  "paths": [
+                    {
+                      "path": "items",
+                      "apiVersions": ["2024-01-01"]
+                    }
+                  ]
+                },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.x[*].y[*].properties.z",
+                  "paths": [
+                    {
+                      "path": "items[*].y[*].properties.rawz",
+                      "apiVersions": ["2024-01-01"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    api_version: "2024-01-01"
+    input:
+      type: "Test/widgets"
+      items:
+        - y:
+            - name: one
+              properties:
+                rawz: 1
+    expected_normalized:
+      type: "Test/widgets"
+      x:
+        - y:
+            - name: one
+              z: 1
+    round_trip: true
+
+  - note: an ARM name used both inside and outside the element wrapper stays wrapped
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/rules[*].other",
+                  "defaultPath": "properties.rules[*].properties.rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].status",
+                  "defaultPath": "properties.rules[*].rawstatus",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        rules:
+          - name: one
+            properties:
+              rawstatus: 1
+    round_trip: true
