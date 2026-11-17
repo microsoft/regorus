@@ -224,6 +224,25 @@ fn rename_guards() {
             "ab.y",
             json!({"aB": {"y": 1}}),
         ),
+        // The pruned subtree holds an array; rejecting the move puts it back.
+        (
+            json!({"Ab": [{"x": 1}], "aB": 0}),
+            "Ab[0].x",
+            "ab[0].y",
+            json!({"Ab": [{"x": 1}], "aB": 0}),
+        ),
+        (
+            json!({"o": {"Ab": [{"x": 1}], "aB": 0}}),
+            "o.Ab[0].x",
+            "o.ab[0].y",
+            json!({"o": {"Ab": [{"x": 1}], "aB": 0}}),
+        ),
+        (
+            json!({"rows": [{"old": 1}, {"old": 2}]}),
+            "rows[1].old",
+            "other.z",
+            json!({"rows": [{"old": 1}, null], "other": {"z": 2}}),
+        ),
     ] {
         let mut map = new_map();
         for (key, value) in input.as_object().unwrap() {
@@ -235,6 +254,112 @@ fn rename_guards() {
             Value::from(expected),
             "{source} -> {target}"
         );
+    }
+}
+
+/// The previous `rename`: remove and write on a full copy of the map.
+fn staged_rename(map: &ObjMap, source: &str, target: &str) -> ObjMap {
+    let (source, target) = (segments(source), segments(target));
+    if path::equivalent(&source, &target)
+        || path::get_map(map, &target).is_some()
+        || !path::can_set(map, &target)
+    {
+        return map.clone();
+    }
+    let Some(value) = path::get_map(map, &source).cloned() else {
+        return map.clone();
+    };
+    let mut staged = map.clone();
+    path::remove(&mut staged, &source);
+    if path::get_map(&staged, &target).is_some() || !path::can_set(&staged, &target) {
+        return map.clone();
+    }
+    path::set(&mut staged, &target, value, false);
+    staged
+}
+
+#[test]
+fn rename_matches_remove_then_set() {
+    let inputs = [
+        json!({"a": {"b": [null, {"c": 1}], "d": 2}, "A": 0}),
+        json!({"a": [[{"x": 1}], null], "B": {"y": null}}),
+        json!({"Ab": [{"x": 1, "w": 3}], "aB": [null, {"y": 2}], "c": null}),
+        json!({"o": {"Ab": [{"x": [1]}], "aB": {"x": 4}}}),
+    ];
+    let paths = [
+        "a",
+        "A",
+        "a.b",
+        "a.b[1].c",
+        "a.b[0]",
+        "a.d",
+        "a[0][0].x",
+        "a[1]",
+        "B.y",
+        "Ab[0].x",
+        "Ab[0].w",
+        "aB[1].y",
+        "ab[0].y",
+        "ab.y",
+        "c",
+        "c.z",
+        "o.Ab[0].x[0]",
+        "o.ab[0].x",
+        "o.aB.x",
+        "o.ab.z",
+        "n[2].m",
+    ];
+    for input in inputs {
+        let map = map_of(input);
+        for source in paths {
+            for target in paths {
+                let mut renamed = map.clone();
+                path::rename(&mut renamed, source, target, false);
+                assert_eq!(
+                    make_value(renamed),
+                    make_value(staged_rename(&map, source, target)),
+                    "{source} -> {target} in {:?}",
+                    make_value(map.clone())
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rename_moves_in_place() {
+    let mut map = map_of(json!({"rows": [{"old": 1}, {"old": 2}]}));
+    let rows =
+        |current: &ObjMap| core::ptr::from_ref(current.get("rows").unwrap().as_array().unwrap());
+    let before = rows(&map);
+    path::rename(&mut map, "rows[0].old", "rows[0].new", false);
+    assert_eq!(
+        make_value(map.clone()),
+        Value::from(json!({"rows": [{"new": 1}, {"old": 2}]}))
+    );
+    assert_eq!(rows(&map), before, "the rows array was copied");
+}
+
+#[test]
+fn set_reports_whether_the_write_landed() {
+    for (input, target, landed, expected) in [
+        (json!({"a": [1]}), "a[0].k", false, json!({"a": [1]})),
+        (json!({"a": "s"}), "a.b", false, json!({"a": "s"})),
+        (
+            json!({"a": null}),
+            "a[1].k",
+            true,
+            json!({"a": [null, {"k": 9}]}),
+        ),
+        (json!({}), "x.y[0]", true, json!({"x": {"y": [9]}})),
+    ] {
+        let mut map = map_of(input);
+        assert_eq!(
+            path::set(&mut map, &segments(target), Value::from(9), false),
+            landed,
+            "{target}"
+        );
+        assert_eq!(make_value(map), Value::from(expected), "{target}");
     }
 }
 

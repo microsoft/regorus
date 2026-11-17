@@ -23,7 +23,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::{value::Object, Rc, Value};
+use crate::{
+    value::{Array, Object},
+    Rc, Value,
+};
 
 use super::obj_map::{make_array, make_value, new_map, ObjMap};
 
@@ -401,17 +404,130 @@ pub fn rename(map: &mut ObjMap, source: &str, target: &str, lowercase: bool) {
     let Some(value) = get_map(map, &source).cloned() else {
         return;
     };
-    // Pruning the source can change which case variant the target resolves
-    // to, so recheck the target on a staged copy and keep it only if the
-    // write lands.
-    let mut staged = map.clone();
-    remove(&mut staged, &source);
-    if get_map(&staged, &target).is_some() || !can_set(&staged, &target) {
+    // Detach only the subtree that removing the source would drop, so a
+    // rejected move can put it back without copying the map. Pruning can
+    // change which case variant the target resolves to, so the target is
+    // checked again while the subtree is detached.
+    let detached = match removal_root(map, &source) {
+        Some((top, steps)) => match detach(map, &top, &steps) {
+            Some(subtree) => Some((top, steps, subtree)),
+            None => return,
+        },
+        None => None,
+    };
+    if get_map(map, &target).is_none()
+        && can_set(map, &target)
+        && set(map, &target, value, lowercase)
+    {
         return;
     }
-    set(&mut staged, &target, value, lowercase);
-    if get_map(&staged, &target).is_some() {
-        *map = staged;
+    if let Some((top, steps, subtree)) = detached {
+        attach(map, &top, &steps, subtree);
+    }
+}
+
+/// A resolved step below a top-level key: an existing object key or an index.
+enum Step {
+    Key(Value),
+    Index(usize),
+}
+
+/// The slot [`remove`] would clear: the top-level key and the steps below it
+/// to the source leaf, or to the highest container the removal leaves empty.
+/// `None` when the removal would change nothing.
+fn removal_root(map: &ObjMap, segments: &[Segment]) -> Option<(Rc<str>, Vec<Step>)> {
+    let (Segment::Key(key), rest) = segments.split_first()? else {
+        return None;
+    };
+    let top = map_key(map, key)?;
+    if rest.is_empty() {
+        return Some((top, Vec::new()));
+    }
+    let (emptied, steps) = removal_steps(map.get(&top)?, rest)?;
+    Some((top, if emptied { Vec::new() } else { steps }))
+}
+
+/// Mirrors [`remove_value`] without mutating: whether the removal empties
+/// `value`, and the steps to the slot it clears below `value`.
+fn removal_steps(value: &Value, segments: &[Segment]) -> Option<(bool, Vec<Step>)> {
+    let (segment, rest) = segments.split_first()?;
+    let (step, child, others_empty) = match (value, segment) {
+        (Value::Object(object), Segment::Key(key)) => {
+            let actual = object_key(object, key)?;
+            let child = object.get(&actual)?;
+            (Step::Key(actual), child, object.len() == 1)
+        }
+        (Value::Array(array), Segment::Index(index)) => {
+            let child = array.get(*index)?;
+            if rest.is_empty() && matches!(child, Value::Null) {
+                return None;
+            }
+            let others_null = array
+                .iter()
+                .enumerate()
+                .all(|(position, item)| position == *index || matches!(item, Value::Null));
+            (Step::Index(*index), child, others_null)
+        }
+        _ => return None,
+    };
+    let mut steps = alloc::vec![step];
+    if !rest.is_empty() {
+        let (child_emptied, child_steps) = removal_steps(child, rest)?;
+        if !child_emptied {
+            steps.extend(child_steps);
+            return Some((false, steps));
+        }
+    }
+    Some((others_empty, steps))
+}
+
+fn child_mut<'a>(value: &'a mut Value, step: &Step) -> Option<&'a mut Value> {
+    match (value, step) {
+        (Value::Object(object), Step::Key(key)) => Rc::make_mut(object).get_mut(key),
+        (Value::Array(array), Step::Index(index)) => Rc::make_mut(array).get_mut(*index),
+        _ => None,
+    }
+}
+
+/// The container holding the slot at the last of `steps`.
+fn parent_mut<'a>(map: &'a mut ObjMap, top: &Rc<str>, steps: &[Step]) -> Option<&'a mut Value> {
+    let mut current = map.get_mut(top)?;
+    for step in steps {
+        current = child_mut(current, step)?;
+    }
+    Some(current)
+}
+
+/// Clear the slot as [`remove`] would and return what it held.
+fn detach(map: &mut ObjMap, top: &Rc<str>, steps: &[Step]) -> Option<Value> {
+    let Some((last, parents)) = steps.split_last() else {
+        return map.remove(top);
+    };
+    match (parent_mut(map, top, parents)?, last) {
+        (Value::Object(object), Step::Key(key)) => Rc::make_mut(object).remove(key),
+        (Value::Array(array), Step::Index(index)) => Rc::make_mut(array)
+            .get_mut(*index)
+            .map(|slot| core::mem::replace(slot, Value::Null)),
+        _ => None,
+    }
+}
+
+/// Put a detached value back into its slot.
+fn attach(map: &mut ObjMap, top: &Rc<str>, steps: &[Step], value: Value) {
+    let Some((last, parents)) = steps.split_last() else {
+        map.insert(Rc::clone(top), value);
+        return;
+    };
+    match (parent_mut(map, top, parents), last) {
+        (Some(Value::Object(object)), Step::Key(key)) => {
+            Rc::make_mut(object).insert(key.clone(), value);
+        }
+        (Some(Value::Array(array)), Step::Index(index)) => {
+            if let Some(slot) = Rc::make_mut(array).get_mut(*index) {
+                *slot = value;
+            }
+        }
+        _ => {}
     }
 }
 
@@ -440,87 +556,124 @@ fn settable(segments: &[Segment]) -> bool {
     })
 }
 
+/// Write `value` at `segments`, creating missing containers. Returns whether
+/// the value was written; a write that does not land leaves `map` unchanged.
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn set(map: &mut ObjMap, segments: &[Segment], value: Value, lowercase: bool) {
+pub fn set(map: &mut ObjMap, segments: &[Segment], value: Value, lowercase: bool) -> bool {
     if !settable(segments) {
-        return;
+        return false;
     }
     let Some((Segment::Key(key), rest)) = segments.split_first() else {
-        return;
+        return false;
     };
     let key = map_key(map, key).unwrap_or_else(|| key_case(key, lowercase));
-    if let Some(next) = rest.first() {
-        let child = map.entry(key).or_insert_with(|| empty_for(next));
-        set_value(child, rest, value, lowercase);
-    } else {
+    let Some(next) = rest.first() else {
         map.insert(key, value);
+        return true;
+    };
+    let created = !map.contains_key(&key);
+    let child = map
+        .entry(Rc::clone(&key))
+        .or_insert_with(|| empty_for(next));
+    let written = set_value(child, rest, value, lowercase);
+    if !written && created {
+        map.remove(&key);
     }
+    written
 }
 
-fn set_value(current: &mut Value, segments: &[Segment], value: Value, lowercase: bool) {
+fn set_value(current: &mut Value, segments: &[Segment], value: Value, lowercase: bool) -> bool {
     let Some((segment, rest)) = segments.split_first() else {
         *current = value;
-        return;
+        return true;
     };
-    if matches!(current, Value::Null) {
+    let was_null = matches!(current, Value::Null);
+    if was_null {
         *current = empty_for(segment);
     }
-    match (current, segment) {
+    let written = match (&mut *current, segment) {
         (Value::Object(object), Segment::Key(_)) => {
-            set_object(Rc::make_mut(object), segments, value, lowercase);
+            set_object(Rc::make_mut(object), segments, value, lowercase)
         }
         (Value::Array(array), Segment::Index(index)) => {
-            if *index > MAX_INDEX {
-                return;
-            }
-            let array = Rc::make_mut(array);
-            if *index >= array.len() {
-                let Some(len) = index.checked_add(1) else {
-                    return;
-                };
-                // Take the backing vector instead of cloning it, so repeated
-                // extensions grow in amortized linear time.
-                let mut values = core::mem::take(array).into_vec();
-                if values
-                    .try_reserve(len.saturating_sub(values.len()))
-                    .is_err()
-                {
-                    *array = values.into();
-                    return;
-                }
-                values.resize(len, Value::Null);
-                *array = values.into();
-            }
-            if let Some(child) = array.get_mut(*index) {
-                if matches!(child, Value::Null) {
-                    if let Some(next) = rest.first() {
-                        *child = empty_for(next);
-                    }
-                }
-
-                set_value(child, rest, value, lowercase);
-            }
+            set_element(Rc::make_mut(array), *index, rest, value, lowercase)
         }
-
-        _ => {}
+        _ => false,
+    };
+    if !written && was_null {
+        *current = Value::Null;
     }
+    written
 }
 
+/// Write below `array[index]`, padding with `null`. Padding is dropped again
+/// if the write does not land.
+fn set_element(
+    array: &mut Array,
+    index: usize,
+    rest: &[Segment],
+    value: Value,
+    lowercase: bool,
+) -> bool {
+    if index > MAX_INDEX {
+        return false;
+    }
+    let len = array.len();
+    if index >= len {
+        let Some(grown) = index.checked_add(1) else {
+            return false;
+        };
+        if !resize(array, grown) {
+            return false;
+        }
+    }
+    let written = array
+        .get_mut(index)
+        .is_some_and(|child| set_value(child, rest, value, lowercase));
+    if !written && index >= len {
+        resize(array, len);
+    }
+    written
+}
+
+/// Resize through the backing vector instead of a clone, so repeated growth
+/// stays linear. On allocation failure the array is left as it was.
+fn resize(array: &mut Array, len: usize) -> bool {
+    let mut values = core::mem::take(array).into_vec();
+    let reserved = values.try_reserve(len.saturating_sub(values.len())).is_ok();
+    if reserved {
+        values.resize(len, Value::Null);
+    }
+    *array = values.into();
+    reserved
+}
+
+/// [`set`] for a path inside an array element object.
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn set_object(object: &mut Object, segments: &[Segment], value: Value, lowercase: bool) {
+pub fn set_object(
+    object: &mut Object,
+    segments: &[Segment],
+    value: Value,
+    lowercase: bool,
+) -> bool {
     if !settable(segments) {
-        return;
+        return false;
     }
     let Some((Segment::Key(key), rest)) = segments.split_first() else {
-        return;
+        return false;
     };
     let key = object_key(object, key).unwrap_or_else(|| Value::String(key_case(key, lowercase)));
-    if let Some(next) = rest.first() {
-        let child = object.get_or_insert_with(key, || empty_for(next));
-        set_value(child, rest, value, lowercase);
-    } else {
+    let Some(next) = rest.first() else {
         object.insert(key, value);
+        return true;
+    };
+    let created = !object.contains_key(&key);
+    let child = object.get_or_insert_with(key.clone(), || empty_for(next));
+    let written = set_value(child, rest, value, lowercase);
+    if !written && created {
+        object.remove(&key);
     }
+    written
 }
 
 /// How removal treats containers it leaves empty.
