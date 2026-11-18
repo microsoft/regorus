@@ -1483,3 +1483,21 @@ computed := data.base.foo.a + data.base.foo.b
 
     Ok(())
 }
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_rules_below_base_string() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(r#"{ "a" : "str" }"#)?)?;
+    engine.add_policy("c.rego".to_string(), "package a.b.c".to_string())?;
+    engine.add_policy("d.rego".to_string(), "package a.b.d\np := 1".to_string())?;
+    engine.add_policy(
+        "q.rego".to_string(),
+        "package q\nx := data.a.b.c".to_string(),
+    )?;
+
+    // OPA rejects these policies; the package must not read as an empty object.
+    let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
+    assert!(error.to_string().contains("not an object"), "{error}");
+
+    Ok(())
+}
