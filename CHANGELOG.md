@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(parser)* [**breaking**] Reject direct negated assignment (`not x := value`) and negated unification (`not x = value`), including previously accepted OPA-compatible policies. For negated equality, migrate `not input.kind = "Pod"` to `not input.kind == "Pod"`. Positive bindings inside nested comprehensions and `every` bodies remain supported. See the [grammar restriction](docs/grammar.md).
 
+### Fixed
+
+- *(rego)* Fail the rule body when a call nested in a negated expression is undefined, as OPA does: without strict builtin errors, `not count(input.v) == 1` with `{"v": 5}` is now undefined instead of `true`. Applies to the interpreter and the RVM. A failing negated call itself (`not count(input.v)`) still satisfies `not`, and the key of `k, v in c` stays lazy. Ref operands are not lifted yet, so `not input.v < 1` with `{}` is still `true`.
+
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 
 ### Added
