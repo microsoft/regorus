@@ -81,7 +81,7 @@ pub(crate) mod fixtures;
 mod tests;
 
 pub use error::ExplainError;
-pub use provenance::{CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
+pub use provenance::{AzurePolicySite, CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
 pub use recorder::{
     BodyEndEvent, BuiltinErrorEvent, CheckEvent, EmissionEvent, ExplanationRecorder, HookContext,
     NotCapturedEvent, UncapturedConstruct,

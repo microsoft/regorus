@@ -38,6 +38,13 @@ impl Compiler {
     /// parameterised effects (`[parameters('effect')]`), routing to the
     /// appropriate compilation path.
     pub(super) fn compile_effect(&mut self, rule: &PolicyRule) -> Result<u8> {
+        let previous = self.json_span.replace(rule.then_block.effect.span.clone());
+        let result = self.compile_effect_inner(rule);
+        self.json_span = previous;
+        result
+    }
+
+    fn compile_effect_inner(&mut self, rule: &PolicyRule) -> Result<u8> {
         let effect = &rule.then_block.effect;
         let span = &effect.span;
 
