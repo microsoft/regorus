@@ -1633,6 +1633,98 @@ fn strict_comparisons_of_different_types_are_undefined_checks() {
     }
 }
 
+#[test]
+fn strict_comparison_aliases_keep_events_aligned_with_provenance() {
+    use regorus::rvm::instructions::GuardMode;
+
+    let program = compile("package t\nallow if input.a < input.b\n", "data.t.allow").unwrap();
+    let site = Provenance::new(&program)
+        .sites()
+        .iter()
+        .find(|site| site.operator == Some(Operator::Lt))
+        .cloned()
+        .expect("ordering comparison site");
+    let writer = site.pc.checked_sub(1).expect("comparison before guard");
+    let Instruction::Lt { dest, left, right } = program.instructions[writer] else {
+        panic!("unexpected comparison lowering");
+    };
+    assert!(dest != left && dest != right && left != right);
+
+    for target in [dest, left, right] {
+        let mut altered = (*program).clone();
+        altered.instructions[writer] = Instruction::Lt {
+            dest: target,
+            left,
+            right,
+        };
+        altered.instructions[site.pc] = Instruction::Guard {
+            register: target,
+            mode: GuardMode::Condition,
+        };
+        let altered = Arc::new(altered);
+        let provenance = Provenance::new(&altered);
+        let site = provenance.site_at(site.pc).expect("altered check site");
+        for (input, a, b, outcome) in [
+            (r#"{"a":1,"b":2}"#, "1", "2", Success),
+            (r#"{"a":2,"b":1}"#, "2", "1", Failure),
+            (r#"{"a":1,"b":"x"}"#, "1", r#""x""#, Undefined),
+        ] {
+            // Execute both modes before asserting, including the pre-write error path.
+            let runs = MODES.map(|mode| run_program(&altered, input, mode, true));
+            for (mode, run) in MODES.into_iter().zip(runs) {
+                let expected_result = if outcome == Success {
+                    Value::from(true)
+                } else {
+                    Value::Undefined
+                };
+                assert_eq!(
+                    run.result.as_ref().unwrap(),
+                    &expected_result,
+                    "{mode:?} target={target} {input}"
+                );
+                let checks: Vec<_> = run
+                    .events
+                    .iter()
+                    .filter(|recorded| matches!(recorded.event, Event::Check { .. }))
+                    .collect();
+                assert_eq!(checks.len(), 1, "{mode:?} target={target} {input}");
+                let recorded = checks[0];
+                assert_eq!(recorded.context.unwrap().pc, site.pc);
+                let Event::Check {
+                    kind,
+                    operator,
+                    outcome: actual_outcome,
+                    ..
+                } = recorded.event
+                else {
+                    unreachable!()
+                };
+                assert_eq!(actual_outcome, outcome);
+                assert_eq!(
+                    (kind, operator),
+                    (site.kind, site.operator),
+                    "{mode:?} target={target} {input}: {:?}",
+                    recorded.event
+                );
+                if target == dest {
+                    assert_eq!(recorded.event, compare(Operator::Lt, a, b, outcome));
+                } else {
+                    let value = if outcome == Undefined {
+                        Value::Undefined
+                    } else {
+                        Value::from(outcome == Success)
+                    };
+                    assert_eq!(
+                        recorded.event,
+                        unary(Truthiness, value, outcome),
+                        "{mode:?} target={target} {input}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A comparison whose value is not checked is not reported, even when it
 /// raises an error.
 #[test]

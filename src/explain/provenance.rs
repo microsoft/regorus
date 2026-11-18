@@ -219,6 +219,10 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                 .checked_sub(1)
                 .and_then(|previous| program.instructions.get(previous));
             let comparison = |operator, left, right| {
+                if left == register || right == register {
+                    // The VM cannot recover an operand overwritten by the result.
+                    return shape(ConditionKind::Truthiness, None, Some(register), None);
+                }
                 shape(
                     ConditionKind::Comparison,
                     Some(operator),
@@ -249,7 +253,7 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                     dest,
                     collection,
                     value,
-                }) if dest == register => shape(
+                }) if dest == register && collection != register && value != register => shape(
                     ConditionKind::Membership,
                     Some(Operator::In),
                     Some(value),

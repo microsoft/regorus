@@ -546,20 +546,30 @@ impl RegoVM {
         };
         let site = self.pc.saturating_add(if negated { 2 } else { 1 });
         self.explain_deliver(|vm, recorder| {
-            let event = CheckEvent {
-                kind: if negated {
-                    ConditionKind::Negation
-                } else {
-                    ConditionKind::Comparison
-                },
-                operator: Some(operator),
-                left: vm.explain_register(left),
-                right: Some(vm.explain_register(right)),
-                outcome: if negated {
-                    Outcome::Failure
-                } else {
-                    Outcome::Undefined
-                },
+            let event = if !negated && (left == dest || right == dest) {
+                CheckEvent {
+                    kind: ConditionKind::Truthiness,
+                    operator: None,
+                    left: &Value::Undefined,
+                    right: None,
+                    outcome: Outcome::Undefined,
+                }
+            } else {
+                CheckEvent {
+                    kind: if negated {
+                        ConditionKind::Negation
+                    } else {
+                        ConditionKind::Comparison
+                    },
+                    operator: Some(operator),
+                    left: vm.explain_register(left),
+                    right: Some(vm.explain_register(right)),
+                    outcome: if negated {
+                        Outcome::Failure
+                    } else {
+                        Outcome::Undefined
+                    },
+                }
             };
             recorder.check(&vm.explain_context_at(site), &event);
         });

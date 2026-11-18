@@ -1162,6 +1162,133 @@ fn keyed_membership_is_not_reported_as_negation() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn comparisons_with_aliased_results_are_truthiness_checks() -> anyhow::Result<()> {
+    for (symbol, operator) in [
+        ("==", Operator::Eq),
+        ("!=", Operator::Ne),
+        ("<", Operator::Lt),
+        ("<=", Operator::Le),
+        (">", Operator::Gt),
+        (">=", Operator::Ge),
+        ("in", Operator::In),
+    ] {
+        let source =
+            alloc::format!("package test\nallow if {{\n  input.left {symbol} input.right\n}}\n");
+        let program = compile(&[("p.rego", &source)], &["data.test.allow"])?;
+        let site = Provenance::new(&program)
+            .sites()
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("{symbol}: check was not decoded"))?;
+        let kind = if operator == Operator::In {
+            ConditionKind::Membership
+        } else {
+            ConditionKind::Comparison
+        };
+        assert_eq!((site.kind, site.operator), (kind, Some(operator)));
+        assert_eq!(site.left_path.as_deref(), Some("input.left"));
+        assert_eq!(site.right_path.as_deref(), Some("input.right"));
+        let writer_pc = site
+            .pc
+            .checked_sub(1)
+            .ok_or_else(|| anyhow::anyhow!("{symbol}: check starts at pc 0"))?;
+        let (dest, left, right) = match program.instructions.get(writer_pc).copied() {
+            Some(Instruction::Eq { dest, left, right })
+            | Some(Instruction::Ne { dest, left, right })
+            | Some(Instruction::Lt { dest, left, right })
+            | Some(Instruction::Le { dest, left, right })
+            | Some(Instruction::Gt { dest, left, right })
+            | Some(Instruction::Ge { dest, left, right }) => (dest, left, right),
+            Some(Instruction::Contains {
+                dest,
+                collection,
+                value,
+            }) => (dest, value, collection),
+            _ => anyhow::bail!("{symbol}: unexpected comparison lowering"),
+        };
+        assert!(dest != left && dest != right && left != right);
+        // Operand-to-operand aliasing is safe; overwriting either operand is not.
+        for (lhs, rhs, overwritten, left_path, right_path) in [
+            (left, right, false, Some("input.left"), Some("input.right")),
+            (left, left, false, Some("input.left"), Some("input.left")),
+            (
+                right,
+                right,
+                false,
+                Some("input.right"),
+                Some("input.right"),
+            ),
+            (dest, right, true, None, None),
+            (left, dest, true, None, None),
+            (dest, dest, true, None, None),
+        ] {
+            let mut altered = (*program).clone();
+            let slot = altered
+                .instructions
+                .get_mut(writer_pc)
+                .ok_or_else(|| anyhow::anyhow!("{symbol}: comparison instruction missing"))?;
+            *slot = match operator {
+                Operator::Eq => Instruction::Eq {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::Ne => Instruction::Ne {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::Lt => Instruction::Lt {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::Le => Instruction::Le {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::Gt => Instruction::Gt {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::Ge => Instruction::Ge {
+                    dest,
+                    left: lhs,
+                    right: rhs,
+                },
+                Operator::In => Instruction::Contains {
+                    dest,
+                    collection: rhs,
+                    value: lhs,
+                },
+            };
+            let provenance = Provenance::new(&altered);
+            let actual = provenance
+                .site_at(site.pc)
+                .ok_or_else(|| anyhow::anyhow!("{symbol}: altered check was not decoded"))?;
+            let expected = if overwritten {
+                (ConditionKind::Truthiness, None, None, None)
+            } else {
+                (kind, Some(operator), left_path, right_path)
+            };
+            assert_eq!(
+                (
+                    actual.kind,
+                    actual.operator,
+                    actual.left_path.as_deref(),
+                    actual.right_path.as_deref(),
+                ),
+                expected,
+                "{symbol}: dest={dest}, left={lhs}, right={rhs}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A keyed membership whose registers alias each other is decoded as the
 /// negation it is lowered to, as in the VM.
 #[test]
