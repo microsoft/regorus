@@ -86,6 +86,8 @@ impl RegoVM {
         };
 
         let mut comprehension_context = ComprehensionContext {
+            #[cfg(feature = "explanations")]
+            begin_pc: self.pc,
             mode: params.mode.clone(),
             result_reg: params.result_reg,
             key_reg: params.key_reg,
@@ -171,6 +173,8 @@ impl RegoVM {
         };
 
         let mut comprehension_context = ComprehensionContext {
+            #[cfg(feature = "explanations")]
+            begin_pc: self.pc,
             mode: params.mode.clone(),
             result_reg: params.result_reg,
             key_reg: params.key_reg,
@@ -246,6 +250,10 @@ impl RegoVM {
             None
         };
 
+        #[cfg(feature = "explanations")]
+        let emitted = self
+            .explain_enabled()
+            .then(|| (key_value.clone(), value_to_add.clone()));
         let result_reg = comprehension_context.result_reg;
         // Take ownership of the result register so Rc refcount stays at 1,
         // allowing Rc::make_mut to mutate in-place instead of deep-cloning.
@@ -289,6 +297,16 @@ impl RegoVM {
 
         self.set_register(result_reg, current_result)?;
 
+        #[cfg(feature = "explanations")]
+        if let Some((key, value)) = emitted {
+            self.explain_comprehension_emission(
+                comprehension_context.begin_pc,
+                &comprehension_context.mode,
+                key.as_ref(),
+                &value,
+            );
+        }
+
         let mut jumped_to_end = false;
         if let Some(iter_state) = comprehension_context.iteration_state.as_mut() {
             iter_state.advance();
@@ -330,6 +348,8 @@ impl RegoVM {
                 pc: self.pc,
             })?;
 
+        #[cfg(feature = "explanations")]
+        let mut emitted = None;
         let (value_to_add, key_value, mode, result_reg_idx, key_reg_idx, value_reg_idx) = {
             let frame =
                 self.execution_stack
@@ -351,6 +371,10 @@ impl RegoVM {
 
                 let result_reg_idx = context.result_reg;
                 let mode = context.mode.clone();
+                #[cfg(feature = "explanations")]
+                if self.explain_enabled() {
+                    emitted = Some((context.begin_pc, key_value.clone(), value_to_add.clone()));
+                }
                 (
                     value_to_add,
                     key_value,
@@ -406,6 +430,11 @@ impl RegoVM {
         }
 
         self.set_register(result_reg_idx, current_result)?;
+
+        #[cfg(feature = "explanations")]
+        if let Some((begin_pc, key, value)) = emitted {
+            self.explain_comprehension_emission(begin_pc, &mode, key.as_ref(), &value);
+        }
 
         let (iteration_state_snapshot, body_start, comprehension_end) = {
             let frame = self.execution_stack.get_mut(comprehension_index).ok_or(

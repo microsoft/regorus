@@ -6,7 +6,7 @@
 //! An [`ExplanationRecorder`] installed on a
 //! [`RegoVM`](crate::rvm::RegoVM) with
 //! [`set_explanation_recorder`](crate::rvm::RegoVM::set_explanation_recorder)
-//! receives one call per executed check, rule-body end, rule emission,
+//! receives one call per executed check, rule-body end, rule emission, comprehension yield,
 //! builtin error and construct whose contributions are not captured. Events
 //! borrow the VM's values; a recorder copies what it keeps.
 //!
@@ -60,6 +60,18 @@ pub trait ExplanationRecorder: Send + Sync {
 
     /// A partial set or partial object rule produced a value.
     fn emission(&mut self, _context: &HookContext, _event: &EmissionEvent<'_>) {}
+
+    /// A comprehension successfully yielded a defined element or entry.
+    ///
+    /// These are raw yields, not distinct final elements or proofs. Checks
+    /// are not associated with individual yields; the comprehension still
+    /// reports [`UncapturedConstruct::Comprehension`].
+    fn comprehension_emission(
+        &mut self,
+        _context: &HookContext,
+        _event: &ComprehensionEmissionEvent<'_>,
+    ) {
+    }
 
     /// A builtin call or an arithmetic operator returned an error, or a
     /// division or modulo by zero made its result undefined. Some builtins
@@ -179,6 +191,43 @@ pub struct EmissionEvent<'a> {
     pub value: &'a Value,
 }
 
+/// A defined value yielded by a comprehension, after updating its result.
+///
+/// The context identifies the yield instruction. Its `in_comprehension`
+/// flag is set, and its rule/call fields belong to the comprehension's
+/// executing body, not a helper called by that body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ComprehensionEmissionEvent<'a> {
+    /// Program counter of the corresponding `ComprehensionBegin`.
+    ///
+    /// This is a static site, not a dynamic invocation, scope or iteration
+    /// identity. Repeated entries at the same site share this value.
+    pub begin_pc: usize,
+    /// The yielded element, before set deduplication or object overwrites.
+    pub element: ComprehensionElement<'a>,
+}
+
+/// Payload of a successful comprehension yield. Undefined keys and values
+/// are not reported. Each successful yield is reported, including duplicate
+/// set members and repeated object keys; earlier object values may therefore
+/// be absent from the final result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum ComprehensionElement<'a> {
+    /// An array element, in append order.
+    Array(&'a Value),
+    /// A set member, including repeated yields of the same value.
+    Set(&'a Value),
+    /// An object entry.
+    Object {
+        /// The yielded key.
+        key: &'a Value,
+        /// The yielded value.
+        value: &'a Value,
+    },
+}
+
 /// An error returned by a builtin call or an arithmetic operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -213,6 +262,7 @@ pub enum UncapturedConstruct {
     /// An array, set or object comprehension. Its checks, and the checks of
     /// rules and functions evaluated for it, are still delivered with
     /// [`HookContext::in_comprehension`] set, but which of them produced the
-    /// comprehension's elements is not tracked.
+    /// comprehension's elements is not tracked. Raw yielded values are
+    /// delivered separately by [`ExplanationRecorder::comprehension_emission`].
     Comprehension,
 }

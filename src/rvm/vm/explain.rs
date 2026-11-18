@@ -12,10 +12,11 @@ use core::fmt;
 
 use crate::builtins::types::get_type;
 use crate::explain::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ConditionKind, EmissionEvent, ExplanationRecorder,
-    HookContext, NotCapturedEvent, Operator, Outcome, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent,
+    ConditionKind, EmissionEvent, ExplanationRecorder, HookContext, NotCapturedEvent, Operator,
+    Outcome, UncapturedConstruct,
 };
-use crate::rvm::instructions::{GuardMode, Instruction, LoopMode};
+use crate::rvm::instructions::{ComprehensionMode, GuardMode, Instruction, LoopMode};
 use crate::rvm::program::{Program, RuleType};
 use crate::value::Value;
 
@@ -680,6 +681,37 @@ impl RegoVM {
                 construct: UncapturedConstruct::Comprehension,
             };
             recorder.not_captured(&vm.explain_context(), &event);
+        });
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn explain_comprehension_emission(
+        &mut self,
+        begin_pc: usize,
+        mode: &ComprehensionMode,
+        key: Option<&Value>,
+        value: &Value,
+    ) {
+        if matches!(*value, Value::Undefined) {
+            return;
+        }
+        let element = match *mode {
+            ComprehensionMode::Array => ComprehensionElement::Array(value),
+            ComprehensionMode::Set => ComprehensionElement::Set(value),
+            ComprehensionMode::Object => match key {
+                Some(key) if !matches!(*key, Value::Undefined) => {
+                    ComprehensionElement::Object { key, value }
+                }
+                _ => return,
+            },
+        };
+        self.explain_deliver(|vm, recorder| {
+            let event = ComprehensionEmissionEvent { begin_pc, element };
+            let mut context = vm.explain_context();
+            // Run-to-completion has temporarily popped the yielding context.
+            context.in_comprehension = true;
+            recorder.comprehension_emission(&context, &event);
         });
     }
 }
