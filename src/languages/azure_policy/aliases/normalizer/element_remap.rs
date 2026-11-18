@@ -10,8 +10,8 @@ use crate::value::Object;
 use crate::Value;
 
 use super::super::obj_map::{
-    obj_get, obj_get_mut, obj_insert, set_nested, set_nested_lowercased, set_nested_verbatim,
-    ObjMap,
+    obj_get_ci, obj_get_mut_ci, obj_insert, object_get_ci, object_get_mut_ci, remove_dotted_path,
+    remove_dotted_path_obj, set_nested, set_nested_lowercased, set_nested_verbatim, ObjMap,
 };
 use super::super::types::PrecomputedRemap;
 
@@ -26,7 +26,9 @@ pub struct ElementRemap {
 }
 
 /// Apply an element-level field remap to each element of an array (or nested
-/// array chain).
+/// array chain). The value is moved: the source is removed before the target
+/// is written, so a target nested under its own source path (`cfg` to
+/// `cfg.value`) is not deleted with it.
 ///
 /// When `lowercase` is `true` (normalizer), target path segments are
 /// lowercased.  When `false` (denormalizer), they are written verbatim
@@ -77,18 +79,18 @@ fn apply_remap_at_depth(
 
     // Navigate through intermediate segments to reach the array value.
     let arr_val = if nav.len() == 1 {
-        match obj_get_mut(obj, first) {
+        match obj_get_mut_ci(obj, first) {
             Some(v) => v,
             None => return,
         }
     } else {
-        let mut cur: &mut Value = match obj_get_mut(obj, first) {
+        let mut cur: &mut Value = match obj_get_mut_ci(obj, first) {
             Some(v) => v,
             None => return,
         };
         for segment in nav.iter().skip(1) {
             cur = match cur.as_object_mut() {
-                Ok(inner) => match inner.get_mut(&Value::from(segment.as_str())) {
+                Ok(inner) => match object_get_mut_ci(inner, segment) {
                     Some(v) => v,
                     None => return,
                 },
@@ -136,20 +138,19 @@ fn remap_at_depth_in_btree(
         None => return,
     };
 
-    let key_val = Value::from(first);
     let arr_val = if nav.len() == 1 {
-        match btree.get_mut(&key_val) {
+        match object_get_mut_ci(btree, first) {
             Some(v) => v,
             None => return,
         }
     } else {
-        let mut cur: &mut Value = match btree.get_mut(&key_val) {
+        let mut cur: &mut Value = match object_get_mut_ci(btree, first) {
             Some(v) => v,
             None => return,
         };
         for segment in nav.iter().skip(1) {
             cur = match cur.as_object_mut() {
-                Ok(inner) => match inner.get_mut(&Value::from(segment.as_str())) {
+                Ok(inner) => match object_get_mut_ci(inner, segment) {
                     Some(v) => v,
                     None => return,
                 },
@@ -177,12 +178,13 @@ fn remap_at_depth_in_btree(
     }
 }
 
-/// Remap a value between dotted paths directly in a BTreeMap.
+/// Move a value between dotted paths directly in a BTreeMap.
 fn remap_deep_field_in_btree(btree: &mut Object, source: &str, target: &str, lowercase: bool) {
     let val = match read_dotted_path_btree(btree, source) {
         Some(v) => v,
         None => return,
     };
+    remove_dotted_path_obj(btree, source);
 
     let segments: Vec<&str> = target.split('.').collect();
     if segments.is_empty() {
@@ -201,20 +203,21 @@ fn remap_deep_field_in_btree(btree: &mut Object, source: &str, target: &str, low
 fn read_dotted_path_btree(btree: &Object, path: &str) -> Option<Value> {
     let segments: Vec<&str> = path.split('.').collect();
     let first = segments.first()?;
-    let mut cur: &Value = btree.get(&Value::from(*first))?;
+    let mut cur: &Value = object_get_ci(btree, first)?;
     for &seg in segments.iter().skip(1) {
-        cur = cur.as_object().ok()?.get(&Value::from(seg))?;
+        cur = object_get_ci(cur.as_object().ok()?, seg)?;
     }
     Some(cur.clone())
 }
 
-/// Remap a value from one (possibly nested) dot-separated path to another
+/// Move a value from one (possibly nested) dot-separated path to another
 /// in an ObjMap.  Used only at the top level when `depth >= array_chain.len()`.
 fn remap_deep_field(obj: &mut ObjMap, source: &str, target: &str, lowercase: bool) {
     let val = match read_dotted_path(obj, source) {
         Some(v) => v,
         None => return,
     };
+    remove_dotted_path(obj, source);
 
     let segments: Vec<&str> = target.split('.').collect();
     if segments.is_empty() {
@@ -237,9 +240,9 @@ fn remap_deep_field(obj: &mut ObjMap, source: &str, target: &str, lowercase: boo
 fn read_dotted_path(obj: &ObjMap, path: &str) -> Option<Value> {
     let segments: Vec<&str> = path.split('.').collect();
     let first = segments.first()?;
-    let mut cur: &Value = obj_get(obj, first)?;
+    let mut cur: &Value = obj_get_ci(obj, first)?;
     for &seg in segments.iter().skip(1) {
-        cur = cur.as_object().ok()?.get(&Value::from(seg))?;
+        cur = object_get_ci(cur.as_object().ok()?, seg)?;
     }
     Some(cur.clone())
 }

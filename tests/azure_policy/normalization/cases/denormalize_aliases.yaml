@@ -317,3 +317,218 @@ cases:
           - name: w1
             properties:
               RenamedField: 5
+
+  - note: reverse element remap under a mixed-case array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Rules[*].x",
+                  "defaultPath": "properties.Rules[*].y",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"x": 1}, {"x": 2}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Rules": [{"y": 1}, {"y": 2}]}}
+    reverse_round_trip: true
+
+  - note: reverse element remap under a mixed-case array behind an object prefix
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/a.Rules[*].x",
+                  "defaultPath": "properties.a.Rules[*].y",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "a": {"rules": [{"x": 1}]}}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"a": {"Rules": [{"y": 1}]}}}
+    reverse_round_trip: true
+
+  - note: reverse element remap through nested mixed-case arrays
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Outer[*].Inner[*].x",
+                  "defaultPath": "properties.Outer[*].Inner[*].y",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "outer": [{"inner": [{"x": 1}]}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Outer": [{"Inner": [{"y": 1}]}]}}
+    reverse_round_trip: true
+
+  - note: reverse element remap in a flattened mixed-case sub-resource array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/securityRules[*].x",
+                  "defaultPath": "properties.securityRules[*].properties.y",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "securityrules": [{"name": "r", "x": 1}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"securityRules": [{"name": "r", "properties": {"y": 1}}]}}
+    reverse_round_trip: true
+
+  - note: reverse element remap with a mixed-case source leaf
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Rules[*].SrcLeaf",
+                  "defaultPath": "properties.Rules[*].dst",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"srcleaf": 1}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Rules": [{"dst": 1}]}}
+    reverse_round_trip: true
+
+  - note: Front Door routing rule fields move under routeConfiguration
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Network",
+          "resourceTypes": [
+            {
+              "resourceType": "frontDoors",
+              "aliases": [
+                {
+                  "name": "Microsoft.Network/frontDoors/routingRules[*].forwardingProtocol",
+                  "defaultPath": "properties.routingRules[*].properties.routeConfiguration.forwardingProtocol",
+                  "paths": []
+                },
+                {
+                  "name": "Microsoft.Network/frontDoors/routingRules[*].name",
+                  "defaultPath": "properties.routingRules[*].name",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Microsoft.Network/frontDoors", "routingrules": [{"name": "r1", "forwardingprotocol": "HttpsOnly"}]}
+    expected_denormalized: {"type": "Microsoft.Network/frontDoors", "properties": {"routingRules": [{"name": "r1", "properties": {"routeConfiguration": {"forwardingProtocol": "HttpsOnly"}}}]}}
+    reverse_round_trip: true
+    # Normalizing back leaves an empty `routeconfiguration` until element
+    # remaps prune emptied parents.
+    expected_reverse_round_trip: {"type": "Microsoft.Network/frontDoors", "routingrules": [{"name": "r1", "forwardingprotocol": "HttpsOnly", "routeconfiguration": {}}]}
+
+  - note: reverse element remap whose ARM leaf nests under the alias leaf
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Rules[*].Cfg",
+                  "defaultPath": "properties.Rules[*].Cfg.value",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"cfg": 1}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Rules": [{"Cfg": {"value": 1}}]}}
+    reverse_round_trip: true
+
+  - note: reverse element remap with a mixed-case dotted source
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Rules[*].Cfg.Mode",
+                  "defaultPath": "properties.Rules[*].level",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"cfg": {"mode": 1}}]}
+    # The emptied `Cfg` object stays until element remaps prune emptied parents.
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Rules": [{"Cfg": {}, "level": 1}]}}
+
+  - note: reverse element remap through an object prefix inside a mixed-case array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Outer[*].Mid.Inner[*].x",
+                  "defaultPath": "properties.Outer[*].Mid.Inner[*].y",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "outer": [{"mid": {"inner": [{"x": 1}]}}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"Outer": [{"Mid": {"Inner": [{"y": 1}]}}]}}
+    reverse_round_trip: true

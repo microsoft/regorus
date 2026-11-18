@@ -7,7 +7,6 @@
 use crate::Rc;
 use crate::Value;
 
-use super::super::obj_map::remove_element_field;
 use super::super::obj_map::{
     collision_safe_key, is_root_field_collision, obj_contains, obj_insert, obj_insert_rc,
     obj_remove, set_nested_lowercased, ObjMap,
@@ -68,11 +67,9 @@ pub fn apply_alias_entries(
     });
 
     for remap in &agg.element_remaps {
+        // Moves the value, so the stale ARM source key does not survive to
+        // produce a duplicate during casing restoration.
         apply_element_remap_precomputed(result, remap);
-        // Remove the original ARM field so the normalized output only has the
-        // alias short name.  Without this, the stale source key survives and
-        // casing restoration during denormalization can produce a duplicate.
-        remove_element_field(result, &remap.array_chain, &remap.source_field);
     }
 
     for (source_lc, target_lc) in &agg.array_renames_normalize {

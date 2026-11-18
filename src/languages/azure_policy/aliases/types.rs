@@ -401,7 +401,8 @@ pub struct PrecomputedReverseRemap {
     pub source_field: String,
     /// Field to write within each element (was the forward source).
     pub target_field: String,
-    /// The forward target field to remove after remapping.
+    /// The forward target field, which the remap removes from each element as
+    /// it moves the value (the same path as `source_field`).
     pub cleanup_field: String,
 }
 

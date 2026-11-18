@@ -356,6 +356,39 @@ cases:
               config:
                 score: 5
 
+  - note: element remap whose alias leaf nests under the ARM leaf
+    aliases_json: |
+      [
+        {
+          "namespace": "Microsoft.Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Microsoft.Test/widgets/items[*].config.score",
+                  "defaultPath": "properties.items[*].config",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Microsoft.Test/widgets"
+      properties:
+        items:
+          - config: 5
+    # The value is moved, so removing the ARM leaf does not delete the
+    # alias path written under it.
+    expected_normalized:
+      type: "Microsoft.Test/widgets"
+      items:
+        - config:
+            score: 5
+    round_trip: true
+
   # Regression: array base rename must move (not clone) the value so that
   # the stale ARM base key does not survive in the normalized output.
   # Without the removal, denormalization produces a duplicate key.
