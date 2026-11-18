@@ -1204,6 +1204,12 @@ impl Interpreter {
                     self.remove_loop_var_value(call);
                 }
                 let Some(value) = value? else {
+                    if let Some(ctx) = self.contexts.last_mut() {
+                        if let Some(result) = &mut ctx.result {
+                            result.bindings = Value::new_object();
+                            result.expressions.clear();
+                        }
+                    }
                     return Ok(false);
                 };
 

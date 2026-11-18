@@ -493,3 +493,20 @@ fn negated_nested_calls_are_evaluated_once() -> Result<()> {
     }
     Ok(())
 }
+
+/// A query that fails on an Undefined lifted call publishes no result, not
+/// the bindings and expressions of the statements before it. OPA returns no
+/// result for `x := input.v; not count(x) == 1` with {"v": 5}.
+#[test]
+fn negated_nested_call_fails_query() -> Result<()> {
+    let query = "x := input.v; not count(x) == 1";
+    for (input, want) in [(r#"{"v": 5}"#, 0), (r#"{"v": [1, 2]}"#, 1)] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(false);
+        engine.set_input(Value::from_json_str(input)?);
+        let results = engine.eval_query(query.to_string(), false)?;
+        assert_eq!(results.result.len(), want, "input {input}: {results:?}");
+        assert!(!engine.eval_allow_query(query.to_string(), false), "input {input}");
+    }
+    Ok(())
+}
