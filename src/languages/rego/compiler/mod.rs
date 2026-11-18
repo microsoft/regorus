@@ -23,6 +23,7 @@ pub use error::{CompilerError, Result, SpannedCompilerError};
 use crate::ast::ExprRef;
 use crate::lexer::{Source, Span};
 use crate::rvm::program::{Program, RuleType, SpanInfo};
+use crate::utils::{get_rule_path_components, PathComponent};
 use crate::CompiledPolicy;
 use crate::Value;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -120,6 +121,8 @@ pub struct Compiler<'a> {
     current_module_index: u32,
     rule_index_map: BTreeMap<String, u16>,
     rule_worklist: Vec<WorklistEntry>,
+    /// `data`-prefixed path of every package, computed once per compile.
+    package_paths: BTreeSet<Vec<String>>,
     rule_definitions: Vec<Vec<Vec<u32>>>,
     rule_definition_function_params: Vec<Vec<Option<Vec<String>>>>,
     rule_definition_destructuring_patterns: Vec<Vec<Option<u32>>>,
@@ -163,6 +166,18 @@ impl<'a> Compiler<'a> {
             current_module_index: 0,
             rule_index_map: BTreeMap::new(),
             rule_worklist: Vec::new(),
+            package_paths: policy
+                .inner
+                .modules
+                .iter()
+                .filter_map(|module| get_rule_path_components(&module.package.refr).ok())
+                .map(|parts| {
+                    ::core::iter::once("data")
+                        .chain(parts.iter().map(PathComponent::value))
+                        .map(String::from)
+                        .collect()
+                })
+                .collect(),
             rule_definitions: Vec::new(),
             rule_definition_function_params: Vec::new(),
             rule_definition_destructuring_patterns: Vec::new(),

@@ -191,7 +191,7 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        // Check if this path could be a prefix of any rules (for virtual document lookup)
+        // Check if this path could be a prefix of any rules or packages (for virtual document lookup)
         // Convert the full chain to a pattern that includes wildcards for dynamic components
         let path_pattern = self.create_path_pattern(&chain.components);
         let matching_rules: BTreeSet<String> = self
@@ -204,8 +204,29 @@ impl<'a> Compiler<'a> {
             .cloned()
             .collect();
 
-        if !matching_rules.is_empty() {
-            // This path is a prefix of some rules - use DataVirtualDocumentLookup
+        // Packages under the read path are part of its value even without rules.
+        let mut matches_package = false;
+        for package_path in &self.package_paths {
+            if path_pattern.len() <= package_path.len()
+                && path_pattern
+                    .iter()
+                    .zip(package_path)
+                    .all(|(p, n)| p.as_ref().is_none_or(|p| p == n))
+            {
+                matches_package = true;
+                let package_path: Vec<&str> = package_path.iter().map(String::as_str).collect();
+                // Errors are ignored: a rule already defined on this path keeps
+                // its leaf (OPA rejects such policies).
+                if let Ok(node @ &mut Value::Undefined) =
+                    self.program.rule_tree.make_or_get_value_mut(&package_path)
+                {
+                    *node = Value::new_object();
+                }
+            }
+        }
+
+        if !matching_rules.is_empty() || matches_package {
+            // This path is a prefix of some rules or packages - use DataVirtualDocumentLookup
             for rule_path in &matching_rules {
                 if !self
                     .rule_worklist

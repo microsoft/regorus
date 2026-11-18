@@ -60,6 +60,16 @@ impl Program {
         Self::check_conflicts_recursive(actual_rule_tree, data, &mut Vec::new())
     }
 
+    /// Packages without rules leave empty objects in the rule tree; base data
+    /// that is not an object takes precedence over them.
+    fn contains_rule(node: &Value) -> bool {
+        match *node {
+            Value::Number(_) => true,
+            Value::Object(ref obj) => obj.values().any(Self::contains_rule),
+            _ => false,
+        }
+    }
+
     fn check_conflicts_recursive(
         rule_tree: &Value,
         data: &Value,
@@ -92,7 +102,9 @@ impl Program {
                                         data_value,
                                         current_path,
                                     )?;
-                                } else if data_value != &Value::Undefined {
+                                } else if data_value != &Value::Undefined
+                                    && Self::contains_rule(rule_value)
+                                {
                                     return Err(crate::rvm::vm::VmError::RuleDataConflict {
                                         message: format!(
                                             "Conflict: rule defines subpaths under '{}' but data provides a non-object value at this path",
