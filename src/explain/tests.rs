@@ -262,6 +262,56 @@ fn inexact_partial_eval_result_with_alternatives_fails_to_serialize() -> anyhow:
     Ok(())
 }
 
+/// Only an exact result without alternatives has a defined `result`, or
+/// serialization fails.
+#[test]
+fn defined_partial_eval_result_requires_exact_without_alternatives() -> anyhow::Result<()> {
+    let mut known = partial_eval_result();
+    known.residual_queries.clear();
+    known.result = Value::from(true);
+    assert_eq!(
+        serde_json::to_string(&known)?,
+        r#"{"kind":"complete","status":"exact","result":true,"residual_queries":[]}"#
+    );
+
+    for mut result in [
+        partial_eval_result(),
+        partial_eval_partial_result(),
+        partial_eval_conflict_result(),
+        partial_eval_unsupported_result(),
+    ] {
+        serde_json::to_string(&result)?;
+        result.result = Value::from(true);
+        assert_eq!(serde_json::to_string(&result).ok(), None, "{result:?}");
+    }
+    Ok(())
+}
+
+/// An exact alternative always has a value, or serialization fails; an
+/// unresolved one may omit it.
+#[test]
+fn exact_residual_query_without_value_fails_to_serialize() -> anyhow::Result<()> {
+    let result = partial_eval_partial_result();
+    let unresolved = result.residual_queries.get(1).context("unresolved")?;
+    assert_eq!(unresolved.value, Value::Undefined);
+    let json = serde_json::to_value(unresolved)?;
+    assert!(!json.as_object().context("object")?.contains_key("value"));
+
+    let mut exact = result.residual_queries.first().cloned().context("exact")?;
+    serde_json::to_string(&exact)?;
+    exact.value = Value::Undefined;
+    assert_eq!(serde_json::to_string(&exact).ok(), None);
+
+    let mut whole = partial_eval_set_result();
+    whole
+        .residual_queries
+        .first_mut()
+        .context("alternative")?
+        .value = Value::Undefined;
+    assert_eq!(serde_json::to_string(&whole).ok(), None);
+    Ok(())
+}
+
 #[test]
 fn partial_eval_partial_result_json() -> anyhow::Result<()> {
     let prefix = concat!(
@@ -572,11 +622,20 @@ fn undefined_is_distinct_in_every_value_position() -> Result<(), serde_json::Err
             Some(())
         }),
         ("partial eval result", |_, p, v| {
+            p.residual_queries.clear();
             p.result = v;
             Some(())
         }),
         ("residual query value", |_, p, v| {
-            residual(p)?.value = v;
+            // Only an unresolved alternative may omit its value.
+            p.status = ResidualStatus::Partial;
+            let query = residual(p)?;
+            query.status = ResidualAlternativeStatus::Unresolved;
+            query.unresolved = Some(ResidualUnresolved {
+                reason: ResidualUnresolvedReason::UnknownValue,
+                detail: None,
+            });
+            query.value = v;
             Some(())
         }),
         ("residual query key", |_, p, v| {
