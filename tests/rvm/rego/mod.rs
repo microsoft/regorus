@@ -18,6 +18,7 @@ use std::sync::Arc;
 use test_generator::test_resources;
 
 mod comprehension_failure_differential;
+mod default_dynamic_key_differential;
 mod every_binding_differential;
 #[path = "../../native_depth_support/mod.rs"]
 mod native_depth_support;
