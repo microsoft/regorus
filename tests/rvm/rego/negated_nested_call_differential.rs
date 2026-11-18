@@ -475,14 +475,19 @@ fn negated_nested_calls_match_opa() -> Result<()> {
 
 /// The interpreter evaluates each lifted call once, as OPA and the RVM do:
 /// `h` prints once whether it is undefined, defined but the negated
-/// expression is undefined, or the negated expression is defined.
+/// expression is undefined, or the negated expression is defined. A call in
+/// the collection of a loop is evaluated with the collection, not again.
 #[test]
 fn negated_nested_calls_are_evaluated_once() -> Result<()> {
-    let module = "package test\n\nh(x) := 1 if {\n  print(\"h\")\n  x == 1\n}\n\ny if not h(input.v) == input.w\n";
-    for (input, want) in [
-        (r#"{"v": 5}"#, UNDEFINED),
-        (r#"{"v": 1}"#, "true"),
-        (r#"{"v": 1, "w": 1}"#, UNDEFINED),
+    let h = "package test\n\nh(x) := 0 if {\n  print(\"h\")\n  x == 0\n}\n\n";
+    let module = format!("{h}y if not h(input.v) == input.w\n");
+    let indexed = format!("{h}y if not input.g[h(input.v)][_] == 1\n");
+    for (module, input, want) in [
+        (&module, r#"{"v": 5}"#, UNDEFINED),
+        (&module, r#"{"v": 0}"#, "true"),
+        (&module, r#"{"v": 0, "w": 0}"#, UNDEFINED),
+        (&indexed, r#"{"v": 0, "g": [[2]]}"#, "true"),
+        (&indexed, r#"{"v": 0, "g": [[1]]}"#, UNDEFINED),
     ] {
         let mut engine = new_engine(module, false)?;
         engine.set_gather_prints(true);

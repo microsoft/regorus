@@ -103,8 +103,12 @@ pub fn traverse(expr: &ExprRef, f: &mut dyn FnMut(&ExprRef) -> Result<bool>) -> 
 /// Undefined one fails the enclosing body instead of satisfying `not`.
 /// Comprehensions are evaluated as a whole and are not searched, and the key
 /// of `k, v in c` stays lazy: it is evaluated only when the value and the
-/// collection are defined.
-pub fn negation_lifted_calls(expr: &ExprRef) -> Result<Vec<ExprRef>> {
+/// collection are defined. Subexpressions for which `is_bound` holds, such as
+/// loop values, already have a value and are not searched either.
+pub fn negation_lifted_calls(
+    expr: &ExprRef,
+    is_bound: &mut dyn FnMut(&ExprRef) -> Result<bool>,
+) -> Result<Vec<ExprRef>> {
     let lazy_key = match expr.as_ref() {
         Membership { key, .. } => key.as_ref(),
         _ => None,
@@ -114,6 +118,7 @@ pub fn negation_lifted_calls(expr: &ExprRef) -> Result<Vec<ExprRef>> {
         Ok(match e.as_ref() {
             #[cfg(feature = "rego-extensions")]
             OrExpr { .. } => false,
+            _ if is_bound(e)? => false,
             _ if e == expr => true,
             _ if lazy_key == Some(e) => false,
             Call { .. }
