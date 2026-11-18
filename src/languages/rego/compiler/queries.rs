@@ -285,10 +285,11 @@ impl<'a> Compiler<'a> {
                     // Calls nested in the operands are evaluated before the
                     // negation; an Undefined one fails the body.
                     let mut lifted = Vec::new();
-                    for call in negation_lifted_calls(expr).map_err(CompilerError::from)? {
-                        if compiler.loop_expr_register_map.contains_key(&call) {
-                            continue;
-                        }
+                    let calls = negation_lifted_calls(expr, &mut |e| {
+                        Ok(compiler.loop_expr_register_map.contains_key(e))
+                    })
+                    .map_err(CompilerError::from)?;
+                    for call in calls {
                         let reg =
                             compiler.compile_rego_expr_with_span(&call, call.span(), false)?;
                         compiler.emit_instruction(

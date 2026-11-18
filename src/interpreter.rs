@@ -3658,10 +3658,9 @@ impl Interpreter {
         expr: &ExprRef,
         lifted: &mut Vec<ExprRef>,
     ) -> Result<Option<Value>> {
-        for call in negation_lifted_calls(expr)? {
-            if self.get_loop_var_value(&call)?.is_some() {
-                continue;
-            }
+        let calls =
+            negation_lifted_calls(expr, &mut |e| Ok(self.get_loop_var_value(e)?.is_some()))?;
+        for call in calls {
             let value = self.eval_expr(&call)?;
             if value == Value::Undefined {
                 return Ok(None);
