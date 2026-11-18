@@ -21,6 +21,7 @@ mod comprehension_failure_differential;
 mod every_binding_differential;
 #[path = "../../native_depth_support/mod.rs"]
 mod native_depth_support;
+mod negated_nested_call_differential;
 mod package_value_differential;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

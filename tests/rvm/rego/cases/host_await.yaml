@@ -101,3 +101,39 @@ cases:
       - id: "nested-comp"
         value: "second"
     want_result: [["first", "second"]]
+
+  # A call nested under `not` is evaluated once: a second evaluation would
+  # need a second response.
+  - note: host_await_negated_nested_call_runs_once_rtc
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        y if not __builtin_host_await("q", "id-1") == 1
+    query: data.demo.y
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: true
+
+  - note: host_await_negated_nested_call_runs_once_suspendable
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        y if not __builtin_host_await("q", "id-1") == 1
+    query: data.demo.y
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: true
