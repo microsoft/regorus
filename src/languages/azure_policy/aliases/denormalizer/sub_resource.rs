@@ -21,17 +21,74 @@ const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 /// The keys leading to a sub-resource array and its envelope fields.
 type Target<'a> = (Vec<&'a str>, BTreeSet<String>);
 
+/// The writes of phases 2a, 2b and 2c, in order. Each records where it wrote
+/// (`true` for the ARM root rather than `properties`, then lowercase keys)
+/// and the normalized key whose value it wrote.
+#[derive(Debug, Default)]
+pub struct Writes {
+    aliases: BTreeSet<String>,
+    log: Vec<(bool, Vec<String>, String)>,
+}
+
+impl Writes {
+    /// Record writing the value of normalized key `source` at the dotted
+    /// path `keys`.
+    pub fn record(&mut self, at_root: bool, keys: &str, source: &str) {
+        let keys = keys.split('.').map(str::to_ascii_lowercase).collect();
+        self.log.push((at_root, keys, source.to_ascii_lowercase()));
+    }
+
+    /// Record writing the value of normalized key `source` at the single,
+    /// possibly dotted, key `key`.
+    pub fn record_key(&mut self, at_root: bool, key: &str, source: &str) {
+        let keys = alloc::vec![key.to_ascii_lowercase()];
+        self.log.push((at_root, keys, source.to_ascii_lowercase()));
+    }
+
+    /// Record phase 2b writing the plain alias `key` at `keys`.
+    pub fn record_alias(&mut self, at_root: bool, keys: &str, key: &str) {
+        self.aliases.insert(String::from(key));
+        self.record(at_root, keys, key);
+    }
+
+    /// Whether a write of some other normalized name than `name` (dotted
+    /// lowercase keys) left the value now at `keys`.
+    pub fn replaced(&self, at_root: bool, keys: &[String], name: &[String]) -> bool {
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        self.survivor(at_root, &keys)
+            .is_some_and(|survivor| survivor != name.join(".").to_ascii_lowercase())
+    }
+
+    /// The normalized name of the value now at `keys`: the source of the
+    /// last write at or above `keys`, followed by the keys below it. `None`
+    /// if nothing was written there.
+    fn survivor(&self, at_root: bool, keys: &[&str]) -> Option<String> {
+        let (_, written, source) = self.log.iter().rev().find(|(root, written, _)| {
+            *root == at_root
+                && written.len() <= keys.len()
+                && written
+                    .iter()
+                    .zip(keys)
+                    .all(|(dest, key)| key.eq_ignore_ascii_case(dest))
+        })?;
+        let below = keys.get(written.len()..).unwrap_or_default();
+        let name: Vec<&str> = core::iter::once(source.as_str())
+            .chain(below.iter().copied())
+            .collect();
+        Some(name.join(".").to_ascii_lowercase())
+    }
+}
+
 /// Re-wrap sub-resource array elements by moving non-envelope fields back
-/// under each element's `properties` object. `written` holds the plain
-/// aliases phase 2b wrote; `is_data_plane` says where phase 2a put
-/// non-aliased keys.
+/// under each element's `properties` object. `writes` holds what phases 2a
+/// and 2b wrote; `is_data_plane` says where phase 2a put non-aliased keys.
 pub fn rewrap_sub_resource_arrays(
     result: &mut ObjMap,
     properties: &mut ObjMap,
     sub_arrays: &BTreeSet<String>,
     entries: &BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
-    written: &BTreeSet<String>,
+    writes: &Writes,
     is_data_plane: bool,
 ) {
     if sub_arrays.is_empty() {
@@ -56,7 +113,7 @@ pub fn rewrap_sub_resource_arrays(
     for sub_array_path in sub_arrays {
         let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
         let (at_root, keys) =
-            written_keys(sub_array_path, entries, api_version, written, is_data_plane);
+            written_keys(sub_array_path, entries, api_version, writes, is_data_plane);
         let id = keys.iter().map(|key| key.to_ascii_lowercase()).collect();
         targets
             .entry((at_root, id))
@@ -70,6 +127,15 @@ pub fn rewrap_sub_resource_arrays(
     sorted.sort_by_key(|((_, id), _)| core::cmp::Reverse(id.len()));
 
     for ((at_root, _), (keys, envelope_fields)) in sorted {
+        // A later write may have replaced the flattened array with a value
+        // the normalizer left wrapped (another plain alias with the same ARM
+        // path, or one over the array's parent). Wrap only a flattened array.
+        if writes
+            .survivor(at_root, &keys)
+            .is_some_and(|name| !sub_arrays.contains(&name))
+        {
+            continue;
+        }
         let Some((first, rest)) = keys.split_first() else {
             continue;
         };
@@ -95,14 +161,14 @@ fn written_keys<'a>(
     sub_array_path: &'a str,
     entries: &'a BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
-    written: &BTreeSet<String>,
+    writes: &Writes,
     is_data_plane: bool,
 ) -> (bool, Vec<&'a str>) {
     let keys: Vec<&str> = sub_array_path.split('.').collect();
     let Some((first, rest)) = keys.split_first() else {
         return (is_data_plane, keys);
     };
-    match alias_location(first, entries, api_version, written) {
+    match alias_location(first, entries, api_version, writes) {
         Some((at_root, mut arm)) => {
             arm.extend(rest.iter().copied());
             (at_root, arm)
@@ -118,9 +184,9 @@ fn alias_location<'a>(
     key: &str,
     entries: &'a BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
-    written: &BTreeSet<String>,
+    writes: &Writes,
 ) -> Option<(bool, Vec<&'a str>)> {
-    if !written.contains(key) {
+    if !writes.aliases.contains(key) {
         return None;
     }
     let arm = entries.get(key)?.select_path(api_version);
@@ -138,11 +204,11 @@ pub fn redirect_chain(
     chain: &[Vec<String>],
     entries: &BTreeMap<String, ResolvedEntry>,
     api_version: Option<&str>,
-    written: &BTreeSet<String>,
+    writes: &Writes,
 ) -> Option<(bool, Vec<Vec<String>>)> {
     let (outer, inner) = chain.split_first()?;
     let (first, rest) = outer.split_first()?;
-    let (at_root, arm) = alias_location(first, entries, api_version, written)?;
+    let (at_root, arm) = alias_location(first, entries, api_version, writes)?;
     let redirected = arm
         .into_iter()
         .map(String::from)

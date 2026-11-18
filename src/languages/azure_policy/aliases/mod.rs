@@ -565,6 +565,27 @@ fn compute_aggregates_for_version(
                     && path::renders_dotted(arm_leaf)
                     && !path::equivalent(short_leaf, arm_leaf)
                 {
+                    // The forward remap runs before base renames, so it
+                    // reaches root-level ARM arrays only along a chain with
+                    // the same names once sub-resource elements are flattened.
+                    let mut prefix = String::new();
+                    let at_root = short_parts.len() == arm_parts.len()
+                        && short_parts.iter().zip(&arm_parts).zip(&array_chain).all(
+                            |((short, arm), keys)| {
+                                let arm = if prefix.is_empty() {
+                                    (!arm.has_flattened_wrapper()).then_some(arm.segments)
+                                } else if sub_resource_arrays.contains(&prefix) {
+                                    Some(arm.without_flattened_wrapper())
+                                } else {
+                                    Some(arm.segments)
+                                };
+                                if !prefix.is_empty() {
+                                    prefix.push('.');
+                                }
+                                prefix.push_str(&keys.join("."));
+                                arm.is_some_and(|arm| path::equivalent(short, arm))
+                            },
+                        );
                     let arm_leaf = path::render(arm_leaf);
                     let source_lc = arm_leaf.to_ascii_lowercase();
                     let target_lc = path::render(short_leaf).to_ascii_lowercase();
@@ -579,6 +600,7 @@ fn compute_aggregates_for_version(
                         source_field: target_lc.clone(),
                         target_field: arm_leaf,
                         cleanup_field: target_lc,
+                        at_root,
                     });
                 }
             }

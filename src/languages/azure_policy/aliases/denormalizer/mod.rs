@@ -80,6 +80,10 @@ pub fn denormalize_with_aliases(
         }
     }
 
+    // What phases 2a, 2b and 2c write, in order; later phases look for plain
+    // aliases at their ARM paths, and wrap only arrays still flattened.
+    let mut writes = sub_resource::Writes::default();
+
     // Phase 2a: Non-aliased, non-root fields.
     for (key, val) in obj.iter() {
         let key_s = match val_str(key) {
@@ -101,19 +105,18 @@ pub fn denormalize_with_aliases(
 
         if key_s.starts_with("_p_") {
             let restored = restore_casing(lookup_key, &casing_map);
+            writes.record_key(false, &restored, lookup_key);
             obj_insert(&mut properties, &restored, denorm_val);
         } else if is_data_plane {
             let restored = restore_casing(key_s, &casing_map);
+            writes.record_key(true, &restored, key_s);
             obj_insert(&mut result, &restored, denorm_val);
         } else {
             let restored = restore_casing(key_s, &casing_map);
+            writes.record_key(false, &restored, key_s);
             obj_insert(&mut properties, &restored, denorm_val);
         }
     }
-
-    // Plain aliases phase 2b writes; later phases look for them at their
-    // ARM paths.
-    let mut written = BTreeSet::new();
 
     // Phase 2b: Aliased scalar fields → versioned ARM paths.
     if let Some(entries) = entries {
@@ -153,10 +156,11 @@ pub fn denormalize_with_aliases(
 
             if let Some(props_path) = arm_path.strip_prefix("properties.") {
                 set_nested_verbatim(&mut properties, props_path, denorm_val);
+                writes.record_alias(false, props_path, lc_key);
             } else {
                 set_nested_verbatim(&mut result, arm_path, denorm_val);
+                writes.record_alias(true, arm_path, lc_key);
             }
-            written.insert(lc_key.clone());
         }
 
         // Phase 2c + 2d: Use precomputed renames/remaps.
@@ -176,6 +180,8 @@ pub fn denormalize_with_aliases(
                 if let Some(key) = find_key_ci(&properties, alias_base_lc) {
                     if let Some(val) = properties.remove(key.as_ref()) {
                         obj_insert(&mut properties, arm_base, val);
+                        // The normalizer flattened and remapped this value under its ARM name.
+                        writes.record_key(false, arm_base, arm_base);
                     }
                 }
             }
@@ -196,13 +202,22 @@ pub fn denormalize_with_aliases(
                     },
                 };
                 // Follow an outer array phase 2b moved to its ARM path.
-                let (at_root, array_chain) = sub_resource::redirect_chain(
-                    &remap.array_chain,
-                    entries,
-                    api_version,
-                    &written,
-                )
-                .unwrap_or_else(|| (false, remap.array_chain.clone()));
+                // Otherwise phase 2a wrote it: at the root of a data-plane
+                // resource when the alias's arrays are there under the same
+                // names, else in `properties`.
+                let (at_root, array_chain) =
+                    sub_resource::redirect_chain(&remap.array_chain, entries, api_version, &writes)
+                        .unwrap_or_else(|| {
+                            (is_data_plane && rev.at_root, remap.array_chain.clone())
+                        });
+                // Another alias's value replaced this one there; it was not
+                // remapped with this alias's names.
+                if let (Some(outer), Some(name)) = (array_chain.first(), remap.array_chain.first())
+                {
+                    if writes.replaced(at_root, outer, name) {
+                        continue;
+                    }
+                }
                 let map = if at_root {
                     &mut result
                 } else {
@@ -226,7 +241,7 @@ pub fn denormalize_with_aliases(
                 &aliases.sub_resource_arrays,
                 &aliases.entries,
                 api_version,
-                &written,
+                &writes,
                 is_data_plane,
             );
         }

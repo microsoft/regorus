@@ -55,3 +55,139 @@ cases:
       v:
         - state: s
     round_trip: true
+
+  - note: root-level outer array without a plain alias gets its renamed leaf back
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test.Data/widgets/x[*].y[*].z",
+                  "defaultPath": "x[*].y[*].properties.rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test.Data/widgets"
+      x:
+        - y:
+            - name: one
+              properties:
+                rawz: 1
+    round_trip: true
+
+  - note: a quoted properties wrapper keeps a reverse remap out of a root-level array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test.Data/widgets/v[*].state",
+                  "defaultPath": "['properties'].other[*].rawstate",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test.Data/widgets"
+      v:
+        - state: s
+    round_trip: true
+
+  - note: "a root-level reverse remap leaves an unrelated array of the alias's short name alone"
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test.Data/widgets/v[*].state",
+                  "defaultPath": "other[*].rawstate",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: Test.Data/widgets
+      v:
+        - state: s
+      other:
+        - rawstate: t
+    round_trip: true
+
+  - note: "a root-level reverse remap leaves an unrelated inner array of the alias's short name alone"
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test.Data/widgets/x[*].y[*].state",
+                  "defaultPath": "x[*].other[*].rawstate",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: Test.Data/widgets
+      x:
+        - y:
+            - state: s
+          other:
+            - rawstate: t
+    round_trip: true
+
+  - note: "a root-level sub-resource array's inner array gets its renamed leaf back"
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test.Data/widgets/x[*].y[*].z",
+                  "defaultPath": "x[*].properties.y[*].rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: Test.Data/widgets
+      x:
+        - name: one
+          properties:
+            y:
+              - rawz: 1
+    round_trip: true
