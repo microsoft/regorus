@@ -1,0 +1,65 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# A variable declared with `some` shadows a rule of the same name.
+
+cases:
+  - note: some-shadows-partial-set-rule
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - |
+        package test
+        import rego.v1
+        k contains "z"
+        r := {k | some k; data.a.b[k]}
+        s := {x | some x in k}
+    query: data.test
+    want_result:
+      k:
+        set!: ["z"]
+      r:
+        set!: ["c"]
+      s:
+        set!: ["z"]
+
+  - note: some-shadows-partial-object-rule
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - |
+        package test
+        import rego.v1
+        k["q"] := 1
+        r := {k | some k; data.a.b[k]}
+        s := {x | some x, _ in k}
+    query: data.test
+    want_result:
+      k:
+        q: 1
+      r:
+        set!: ["c"]
+      s:
+        set!: ["q"]
+
+  - note: some-shadows-function-rule
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - |
+        package test
+        import rego.v1
+        k(x) := x
+        r := {k | some k; data.a.b[k]}
+        s := k(5)
+    query: data.test
+    want_result:
+      r:
+        set!: ["c"]
+      s: 5

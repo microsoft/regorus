@@ -1,0 +1,242 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# A variable declared with `some` shadows a rule (or import) of the same
+# name. `input` and `data` are not shadowed by `some .. in` patterns.
+
+cases:
+  - note: some_shadows_rule_in_comprehensions
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - &shadow_module |
+        package test
+        k := 1
+
+        set_some := {k | some k; data.a.b[k]}
+        array_some := [k | some k; data.a.b[k]]
+        object_some := {k: v | some k; v := data.a.b[k]}
+        nested := [{k | some k; data.a.b[k]} | true]
+        some_in := {k | some k in ["x", "y"]}
+        some_kv_in := {k | some k, _ in data.a.b}
+        some_in_destructure := {k | some [k, 1] in [["c", 1], ["d", 2]]}
+        some_in_object := {k | some {"n": k} in [{"n": "c"}, {"n": "d"}]}
+        default body_use := false
+        body_use if {
+          {k | some k; data.a.b[k]} == {"c"}
+        }
+
+        # Without a declaration, `k` refers to the rule.
+        rule_ref := {k | data.a.b[k]}
+        rule_ref_in := {x | some x in [1, 2]; x == k}
+
+        result := {
+          "set_some": set_some,
+          "array_some": array_some,
+          "object_some": object_some,
+          "nested": nested,
+          "some_in": some_in,
+          "some_kv_in": some_kv_in,
+          "some_in_destructure": some_in_destructure,
+          "some_in_object": some_in_object,
+          "body_use": body_use,
+          "rule_ref": rule_ref,
+          "rule_ref_in": rule_ref_in,
+        }
+    query: data.test.result
+    want_result: &object_result
+      set_some:
+        set!: ["c"]
+      array_some: ["c"]
+      object_some:
+        c: 1
+      nested:
+        - set!: ["c"]
+      some_in:
+        set!: ["x", "y"]
+      some_kv_in:
+        set!: ["c"]
+      some_in_destructure:
+        set!: ["c"]
+      some_in_object:
+        set!: ["c", "d"]
+      body_use: true
+      rule_ref:
+        set!: []
+      rule_ref_in:
+        set!: [1]
+
+  - note: some_shadows_rule_in_comprehensions_suspendable
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - *shadow_module
+    query: data.test.result
+    execution_mode: suspendable
+    want_result: *object_result
+
+  - note: some_shadows_rule_over_array_data
+    data:
+      a:
+        b: ["x", "y"]
+    modules:
+      - *shadow_module
+    query: data.test.result
+    want_result: &array_result
+      set_some:
+        set!: [0, 1]
+      array_some: [0, 1]
+      object_some:
+        0: "x"
+        1: "y"
+      nested:
+        - set!: [0, 1]
+      some_in:
+        set!: ["x", "y"]
+      some_kv_in:
+        set!: [0, 1]
+      some_in_destructure:
+        set!: ["c"]
+      some_in_object:
+        set!: ["c", "d"]
+      body_use: false
+      rule_ref:
+        set!: [1]
+      rule_ref_in:
+        set!: [1]
+
+  - note: some_shadows_rule_over_array_data_suspendable
+    data:
+      a:
+        b: ["x", "y"]
+    modules:
+      - *shadow_module
+    query: data.test.result
+    execution_mode: suspendable
+    want_result: *array_result
+
+  - note: some_shadows_rule_in_body
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - &body_module |
+        package test
+        k := 1
+
+        body_some contains x if {
+          some k
+          data.a.b[k]
+          x := k
+        }
+
+        body_head contains k if {
+          some k
+          data.a.b[k]
+        }
+
+        body_some_in contains x if {
+          some k in ["x"]
+          x := k
+        }
+
+        # Without a declaration, `k` refers to the rule.
+        body_rule_ref contains x if {
+          data.a.b[k]
+          x := k
+        }
+
+        result := {
+          "body_some": body_some,
+          "body_head": body_head,
+          "body_some_in": body_some_in,
+          "body_rule_ref": body_rule_ref,
+        }
+    query: data.test.result
+    want_result: &body_result
+      body_some:
+        set!: ["c"]
+      body_head:
+        set!: ["c"]
+      body_some_in:
+        set!: ["x"]
+      body_rule_ref:
+        set!: []
+
+  - note: some_shadows_rule_in_body_suspendable
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - *body_module
+    query: data.test.result
+    execution_mode: suspendable
+    want_result: *body_result
+
+  - note: some_shadows_import
+    data:
+      a:
+        b:
+          c: 1
+    modules:
+      - |
+        package lib
+        k := 1
+      - |
+        package test
+        import data.lib.k
+        r := {k | some k; data.a.b[k]}
+        s := {x | data.a.b[x]; x != k}
+        t := {x | x := k}
+        result := {"r": r, "s": s, "t": t}
+    query: data.test.result
+    want_result:
+      r:
+        set!: ["c"]
+      s:
+        set!: ["c"]
+      t:
+        set!: [1]
+
+  # A `some .. in` pattern named `input` compares against the input document.
+  - note: some_in_input_pattern_matches_input
+    input: "w"
+    modules:
+      - &input_module |
+        package test
+        q contains x if {
+          some input in ["w", "v"]
+          x := input
+        }
+        s := [input | some [input, _] in [["u", 1]]]
+        result := {"q": q, "s": s}
+    query: data.test.result
+    want_result: &input_match_result
+      q:
+        set!: ["w"]
+      s: []
+
+  - note: some_in_input_pattern_matches_input_suspendable
+    input: "w"
+    modules:
+      - *input_module
+    query: data.test.result
+    execution_mode: suspendable
+    want_result: *input_match_result
+
+  - note: some_in_input_pattern_does_not_match_input
+    input:
+      z: 9
+    modules:
+      - *input_module
+    query: data.test.result
+    want_result:
+      q:
+        set!: []
+      s: []
