@@ -125,10 +125,11 @@ pub struct HookContext {
 /// - [`Iteration`](ConditionKind::Iteration): `left` is the iterated
 ///   collection. For an `every` quantifier, reported at its end with the
 ///   quantifier's outcome; the checks of each iteration are reported
-///   separately. Any other iteration (`some x in xs`, `xs[_]`) is reported
-///   only when its collection is undefined, with outcome
-///   [`Undefined`](Outcome::Undefined); the end of a `some` iteration is not
-///   a check.
+///   separately. Other iterations (`some x in xs`, `xs[_]`) report their
+///   result when guarded as a condition inside an `every` body. An undefined
+///   collection is reported once with outcome [`Undefined`](Outcome::Undefined),
+///   whether or not the iteration has a result guard. Outside `every`, the
+///   end of a `some` or indexed iteration is not a check.
 /// - [`Existence`](ConditionKind::Existence): a value that must be defined
 ///   was undefined, for example the right side of `_ = x` or a field matched
 ///   by an object pattern. Only failures are reported; `left` is the

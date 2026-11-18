@@ -216,7 +216,7 @@ impl RegoVM {
 
     /// Returns `None` for guards that are not checks of their own, such as
     /// the end of a `some` iteration. Otherwise returns the event and the pc
-    /// of its check site: the guard's own, except for an `every` quantifier,
+    /// of its check site: the guard's own, except for a loop result guard,
     /// whose site is its `LoopStart`.
     fn explain_guard_event(
         &self,
@@ -301,7 +301,10 @@ impl RegoVM {
                     _ => None,
                 };
                 if let Some(params) = params.filter(|params| params.result_reg == register) {
-                    if params.mode != LoopMode::Every {
+                    if params.mode != LoopMode::Every
+                        && *self.explain_register(params.collection) == Value::Undefined
+                    {
+                        // Already reported when the undefined collection was encountered.
                         return None;
                     }
                     checked.kind = ConditionKind::Iteration;

@@ -713,7 +713,7 @@ fn assert_eq_is_reported_as_an_equality() {
 }
 
 #[test]
-fn every_reports_only_its_own_quantifier() {
+fn every_reports_inner_loop_results_then_its_own_quantifier() {
     let policy = "package t\nallow if { every x in input.xs { some y in input.ys; y == x } }\n";
     let r = run(policy, "data.t.allow", r#"{"xs":[1],"ys":[1,2]}"#);
     assert_eq!(
@@ -722,6 +722,7 @@ fn every_reports_only_its_own_quantifier() {
             Event::Reset,
             compare(Operator::Eq, "1", "1", Success),
             compare(Operator::Eq, "2", "1", Failure),
+            unary(Iteration, v("[1,2]"), Success),
             unary(Iteration, v("[1]"), Success),
             body_end(Success, Some("true")),
         ]
@@ -733,10 +734,117 @@ fn every_reports_only_its_own_quantifier() {
         [
             Event::Reset,
             compare(Operator::Eq, "2", "1", Failure),
+            unary(Iteration, v("[2]"), Failure),
             unary(Iteration, v("[1]"), Failure),
             body_end(Failure, None),
         ]
     );
+}
+
+fn check_every_inner_loop(body: &str) {
+    let quantifier = format!("every x in input.xs {{ {body} }}");
+    let policy = format!("package t\nallow if {{ every x in input.xs {{ {body} }} }}\n");
+    for (collection, outcome, expected) in [
+        ("[]", Failure, Value::Undefined),
+        ("{}", Failure, Value::Undefined),
+        ("[false]", Failure, Value::Undefined),
+        ("[true]", Success, Value::Bool(true)),
+    ] {
+        let input = format!(r#"{{"xs":[{collection}]}}"#);
+        let r = run(&policy, "data.t.allow", &input);
+        assert_eq!(r.result.as_ref().unwrap(), &expected, "{body} {input}");
+        let provenance = Provenance::new(&r.program);
+        let iterations: Vec<_> = r
+            .events
+            .iter()
+            .filter_map(|recorded| match &recorded.event {
+                Event::Check {
+                    kind: Iteration,
+                    left,
+                    outcome,
+                    ..
+                } => {
+                    let context = recorded.context.as_ref().unwrap();
+                    assert!(matches!(
+                        r.instruction(context),
+                        Instruction::LoopStart { .. }
+                    ));
+                    let site = provenance.site_at(context.pc).unwrap();
+                    assert_eq!(site.kind, Iteration);
+                    assert_eq!(site.operator, None);
+                    assert!(site.location.is_some());
+                    Some((left.clone(), *outcome, site.text.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            iterations,
+            [
+                (v(collection), outcome, "x"),
+                (v(&format!("[{collection}]")), outcome, quantifier.as_str()),
+            ],
+            "{body} {input}"
+        );
+    }
+}
+
+#[test]
+fn every_inner_some_reports_at_the_collection_site() {
+    check_every_inner_loop("some y in x; y");
+}
+
+#[test]
+fn every_inner_index_reports_at_the_collection_site() {
+    check_every_inner_loop("y := x[_]; y");
+}
+
+#[test]
+fn undefined_inner_collections_are_reported_only_once() {
+    for body in ["some y in x.ys; y", "y := x.ys[_]; y"] {
+        let policy = format!("package t\nallow if {{ every x in input.xs {{ {body} }} }}\n");
+        let r = run(&policy, "data.t.allow", r#"{"xs":[{}]}"#);
+        assert_eq!(r.result.as_ref().unwrap(), &Value::Undefined);
+        assert_eq!(
+            r.events(),
+            [
+                Event::Reset,
+                unary(Iteration, Value::Undefined, Undefined),
+                unary(Iteration, v("[{}]"), Failure),
+                body_end(Failure, None),
+            ],
+            "{body}"
+        );
+        let context = r.events[1].context.as_ref().unwrap();
+        let provenance = Provenance::new(&r.program);
+        let site = provenance.site_at(context.pc).unwrap();
+        assert_eq!((site.kind, site.text.as_str()), (Iteration, "x.ys"));
+    }
+}
+
+#[test]
+fn loops_outside_every_do_not_report_a_result_check() {
+    for body in ["some y in input.xs; y", "y := input.xs[_]; y"] {
+        let policy = format!("package t\nallow if {{ {body} }}\n");
+        for (input, expected) in [
+            (r#"{"xs":[]}"#, Value::Undefined),
+            (r#"{"xs":[true]}"#, Value::Bool(true)),
+        ] {
+            let r = run(&policy, "data.t.allow", input);
+            assert_eq!(r.result.as_ref().unwrap(), &expected);
+            assert!(
+                !r.events().iter().any(|event| matches!(
+                    event,
+                    Event::Check {
+                        kind: Iteration,
+                        ..
+                    }
+                )),
+                "{body} {input}: {:?}",
+                r.events()
+            );
+        }
+    }
 }
 
 #[test]
@@ -1081,7 +1189,7 @@ fn every_site_is_reported_when_all_checks_run() {
             .filter(|recorded| matches!(recorded.event, Event::Check { .. }))
             .map(|recorded| recorded.context.unwrap().pc)
             .collect();
-        // A `some` iteration is reported only when its collection is undefined.
+        // Outside `every`, a `some` iteration is reported only for an undefined collection.
         let silent = |site: &&CheckSite| {
             site.kind == ConditionKind::Iteration && !site.text.starts_with("every ")
         };
