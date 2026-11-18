@@ -2372,3 +2372,207 @@ fn partial_eval_path_rendering_preserves_memory_errors() {
         );
     }
 }
+
+#[cfg(feature = "explanations")]
+fn partial_eval_vm(source: &str, filename: String) -> RegoVM {
+    let mut engine = Engine::new();
+    engine.add_policy(filename, source.into()).unwrap();
+    let compiled = engine
+        .compile_with_entrypoint(&"data.test.allow".into())
+        .unwrap();
+    let mut vm = RegoVM::new();
+    vm.load_program(Compiler::compile_from_policy(&compiled, &["data.test.allow"]).unwrap());
+    vm
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_root_and_numeric_validation_preserves_memory_errors() {
+    use regorus::explain::{
+        ExplainError, PartialEvalSettings, PathSegment, UnknownPath, UnknownRoot,
+    };
+
+    let mut guard = LimitGuard::lock();
+    for root in [UnknownRoot::Input, UnknownRoot::Context] {
+        for (input, segments, duplicate) in [
+            ("true", vec![], false),
+            ("[1]", vec![PathSegment::Index(0)], false),
+            ("null", vec![], true),
+            ("[]", vec![PathSegment::Index(0)], true),
+        ] {
+            let mut vm = partial_eval_vm("package test\nallow := true", "p.rego".into());
+            let input = Value::from_json_str(input).unwrap();
+            vm.set_input(input.clone());
+            vm.set_context(input);
+            let path = UnknownPath::new(root, segments);
+            let mut settings = PartialEvalSettings::default();
+            settings.unknowns = if duplicate {
+                vec![path.clone(), path]
+            } else {
+                vec![path]
+            };
+            vm.set_partial_eval_settings(settings);
+            guard.set_below_current_usage();
+            let result = vm.partial_eval("data.test.allow");
+            guard.disable_limit();
+            assert!(
+                matches!(
+                    result,
+                    Err(ExplainError::Vm(VmError::MemoryLimitExceeded { .. }))
+                ),
+                "{root:?}, duplicate={duplicate}: {result:?}"
+            );
+            let result = vm.partial_eval("data.test.allow");
+            assert!(
+                matches!(
+                    result,
+                    Err(ExplainError::UnknownValueSupplied { .. })
+                        | Err(ExplainError::InvalidUnknownPath { .. })
+                ),
+                "{result:?}"
+            );
+            assert_eq!(
+                vm.execute_entry_point_by_name("data.test.allow").unwrap(),
+                Value::Bool(true)
+            );
+        }
+    }
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_validation_is_in_the_memory_budget() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, UnknownPath};
+
+    let _guard = LimitGuard::lock();
+    let mut vm = partial_eval_vm("package test\nallow := true", "p.rego".into());
+    vm.set_input(Value::new_object());
+    let key = "x".repeat(256 * 1024);
+    let path = UnknownPath::input_keys([key.as_str()]);
+    let mut settings = PartialEvalSettings::default();
+    settings.unknowns = vec![path.clone(), path];
+    vm.set_partial_eval_settings(settings);
+    vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+        limit: NonZeroU64::new(64 * 1024).unwrap(),
+    }));
+    assert!(matches!(
+        vm.partial_eval("data.test.allow"),
+        Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+    ));
+    vm.set_memory_budget_config(None);
+    assert!(matches!(
+        vm.partial_eval("data.test.allow"),
+        Err(ExplainError::InvalidUnknownPath { .. })
+    ));
+    vm.set_partial_eval_settings(PartialEvalSettings::default());
+    assert_eq!(
+        vm.partial_eval("data.test.allow").unwrap().result,
+        Value::Bool(true)
+    );
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_warning_is_in_the_memory_budget() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, ResidualStatus, UnknownPath};
+
+    let _guard = LimitGuard::lock();
+    for filename_len in [8, 256 * 1024] {
+        let source = "package test\nallow if { input.foo }";
+        let mut vm = partial_eval_vm(source, "p".repeat(filename_len));
+        vm.set_input(Value::new_object());
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = vec![UnknownPath::input_keys(["foo"])];
+        vm.set_partial_eval_settings(settings);
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(64 * 1024).unwrap(),
+        }));
+        let result = vm.partial_eval("data.test.allow");
+        if filename_len > 64 * 1024 {
+            assert!(matches!(
+                result,
+                Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+            ));
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Error {
+                    error: VmError::MemoryBudgetExceeded { .. }
+                }
+            ));
+            assert!(vm.get_registers().is_empty());
+        } else {
+            assert_eq!(result.unwrap().status, ResidualStatus::Unsupported);
+        }
+        vm.set_memory_budget_config(None);
+        let report = vm.partial_eval("data.test.allow").unwrap();
+        assert_eq!(report.status, ResidualStatus::Unsupported);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].len() >= filename_len);
+    }
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_warning_after_vm_error_is_budgeted() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, ResidualStatus, UnknownPath};
+    use regorus::rvm::program::SpanInfo;
+
+    let _guard = LimitGuard::lock();
+    for filename_len in [8, 256 * 1024] {
+        let mut program = Program::new();
+        let source = program.add_source("p".repeat(filename_len), "input".into());
+        program.add_instruction(
+            Instruction::LoadInput { dest: 0 },
+            Some(SpanInfo::new(source, 1, 1, 5)),
+        );
+        program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+        program.add_instruction(Instruction::LoadNull { dest: 1 }, None);
+        program.add_instruction(
+            Instruction::Lt {
+                dest: 0,
+                left: 0,
+                right: 1,
+            },
+            None,
+        );
+        program.add_instruction(Instruction::Return { value: 0 }, None);
+        program.add_entry_point("entry".into(), 0);
+        let mut vm = RegoVM::new();
+        vm.load_program(Arc::new(program));
+        vm.set_input(Value::new_object());
+        vm.set_strict_builtin_errors(true);
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = vec![UnknownPath::input_keys(["foo"])];
+        vm.set_partial_eval_settings(settings);
+        vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+            limit: NonZeroU64::new(64 * 1024).unwrap(),
+        }));
+        let result = vm.partial_eval("entry");
+        if filename_len > 64 * 1024 {
+            assert!(matches!(
+                result,
+                Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+            ));
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Error {
+                    error: VmError::MemoryBudgetExceeded { .. }
+                }
+            ));
+        } else {
+            assert_eq!(result.unwrap().status, ResidualStatus::Unsupported);
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Error {
+                    error: VmError::ArithmeticError { pc: 3, .. }
+                }
+            ));
+        }
+        assert!(vm.get_registers().is_empty());
+        vm.set_memory_budget_config(None);
+        assert_eq!(
+            vm.partial_eval("entry").unwrap().status,
+            ResidualStatus::Unsupported
+        );
+    }
+}

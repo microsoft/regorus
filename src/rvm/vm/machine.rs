@@ -39,6 +39,20 @@ pub(super) enum MemoryBudgetLifecycle {
     ImplicitExecution,
     FfiResultSerialization,
     SuspendableExecution,
+    #[cfg(feature = "explanations")]
+    PartialEvaluation,
+}
+
+#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+impl MemoryBudgetLifecycle {
+    pub(super) const fn extends_execution(self) -> bool {
+        match self {
+            Self::FfiResultSerialization => true,
+            #[cfg(feature = "explanations")]
+            Self::PartialEvaluation => true,
+            _ => false,
+        }
+    }
 }
 
 /// The Rego Virtual Machine
@@ -571,10 +585,7 @@ impl RegoVM {
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn reset_memory_budget_state(&mut self) {
-        if matches!(
-            self.memory_budget_lifecycle,
-            MemoryBudgetLifecycle::FfiResultSerialization
-        ) {
+        if self.memory_budget_lifecycle.extends_execution() {
             return;
         }
 
@@ -888,9 +899,11 @@ impl RegoVM {
         };
 
         let budget = config.limit.get();
-        let (usage, exceeds_budget) = match self.memory_budget_lifecycle {
-            MemoryBudgetLifecycle::Inactive => return Ok(()),
-            MemoryBudgetLifecycle::SuspendableExecution => {
+        if self.memory_budget_lifecycle == MemoryBudgetLifecycle::Inactive {
+            return Ok(());
+        }
+        let (usage, exceeds_budget) =
+            if self.memory_budget_lifecycle == MemoryBudgetLifecycle::SuspendableExecution {
                 let usage = limits::current_memory_budget_usage()
                     .or(self.suspendable_memory_budget)
                     .ok_or_else(|| VmError::Internal {
@@ -898,17 +911,14 @@ impl RegoVM {
                         pc: self.pc,
                     })?;
                 (usage.requested_bytes(), usage.exceeds_limit(budget))
-            }
-            MemoryBudgetLifecycle::ImplicitExecution
-            | MemoryBudgetLifecycle::FfiResultSerialization => {
+            } else {
                 let current = limits::current_thread_live_bytes();
                 self.memory_budget_baseline = self.memory_budget_baseline.min(current);
                 let usage = current
                     .saturating_sub(self.memory_budget_baseline)
                     .unsigned_abs();
                 (usage, usage > budget)
-            }
-        };
+            };
         #[cfg(test)]
         {
             self.last_memory_budget_usage_for_test = Some(usage);

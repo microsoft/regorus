@@ -15,17 +15,12 @@
 //! Rule bodies already absorb such errors, so this mainly applies to errors
 //! outside rules.
 //!
-//! Limitation: the compiler evaluates rule defaults once, at compile time,
-//! with `input` undefined, and the compiled program does not record which
-//! roots a default read. A default that reads `input`, such as
-//! `default reasons := [x | x := input.reasons[_]]`, is therefore a constant
-//! here, and the result can be `Exact` although it depends on unknowns.
+//! See [`RegoVM::partial_eval`] for the limitation on input-dependent defaults.
 
 use super::dispatch::InstructionOutcome;
 use super::errors::Result;
 use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
-use super::VmError;
 use crate::explain::{
     ExplainError, PartialEvalResult, PartialEvalSettings, PathSegment, ResidualStatus, RuleKind,
     SourceLocation, UnknownRoot,
@@ -88,20 +83,34 @@ const fn root_name(root: UnknownRoot) -> &'static str {
 fn render_path(
     root: UnknownRoot,
     segments: &[PathSegment],
+    checkpoint: &mut impl FnMut() -> Result<()>,
 ) -> core::result::Result<String, ExplainError> {
+    checkpoint()?;
     let mut text = String::from(root_name(root));
     for segment in segments {
         match *segment {
             PathSegment::Key(ref key) => {
                 let quoted = Value::from(key.as_str())
                     .to_json_str_compact()
-                    .map_err(VmError::from)?;
+                    .map_err(super::VmError::from)?;
+                checkpoint()?;
                 text.push_str(&format!("[{quoted}]"));
             }
             PathSegment::Index(i) => text.push_str(&format!("[{i}]")),
         }
+        checkpoint()?;
     }
     Ok(text)
+}
+
+struct PartialEvaluation<'a>(&'a mut RegoVM);
+
+impl Drop for PartialEvaluation<'_> {
+    fn drop(&mut self) {
+        self.0.pe = None;
+        #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+        self.0.finish_active_memory_budget_execution();
+    }
 }
 
 /// The kind of rule whose result the entry point at `pc` returns, or `None`
@@ -155,6 +164,11 @@ impl RegoVM {
     /// kind of rule whose result the entry point returns can't be told,
     /// which only happens for programs not produced by the built-in
     /// compilers.
+    ///
+    /// Rule defaults are evaluated at compile time with undefined `input`.
+    /// Dependencies read by a default are not recorded, so an input-dependent
+    /// default can produce an `Exact` result even when it depends on an unknown.
+    /// Memory limits cover validation, execution and report construction.
     pub fn partial_eval(
         &mut self,
         entry: &str,
@@ -165,6 +179,28 @@ impl RegoVM {
         if self.explain_enabled() {
             return Err(ExplainError::PartialEvalWithRecorder);
         }
+        crate::utils::limits::without_memory_budget_scope(|| {
+            self.release_previous_execution_state();
+            #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+            {
+                self.reset_memory_budget_state();
+                self.memory_budget_lifecycle =
+                    super::machine::MemoryBudgetLifecycle::PartialEvaluation;
+            }
+            let evaluation = PartialEvaluation(self);
+            evaluation.0.check_initial_memory_limit()?;
+            let result = evaluation.0.partial_eval_inner(entry);
+            if let Err(error) = evaluation.0.check_initial_memory_limit() {
+                return Err(evaluation.0.fail_run_to_completion(error).into());
+            }
+            result
+        })
+    }
+
+    fn partial_eval_inner(
+        &mut self,
+        entry: &str,
+    ) -> core::result::Result<PartialEvalResult, ExplainError> {
         let pe_state = self.validate_unknowns()?;
         let program = self.program.clone();
         let kind = match program.get_entry_point(entry) {
@@ -178,9 +214,7 @@ impl RegoVM {
         };
         self.pe = Some(Box::new(pe_state));
         let run = self.execute_entry_point_by_name(entry);
-        let Some(state) = self.pe.take() else {
-            return Err(ExplainError::NotEnabled);
-        };
+        let state = self.pe.as_deref().ok_or(ExplainError::NotEnabled)?;
         if let Err(ref error) = run {
             if self.is_fatal_vm_error(error) {
                 return Err(error.clone().into());
@@ -205,17 +239,23 @@ impl RegoVM {
         })
     }
 
-    fn validate_unknowns(&self) -> core::result::Result<PeState, ExplainError> {
+    fn validate_unknowns(&mut self) -> core::result::Result<PeState, ExplainError> {
         let mut paths: Vec<Path> = Vec::new();
-        for unknown in &self.pe_settings.unknowns {
+        for i in 0..self.pe_settings.unknowns.len() {
+            #[allow(clippy::indexing_slicing)]
+            let unknown = self.pe_settings.unknowns[i].clone();
+            self.check_initial_memory_limit()?;
             let (root, segments) = (unknown.root, &unknown.segments);
             if let Some(other) = paths
                 .iter()
                 .find(|p| p.0 == root && (p.1.starts_with(segments) || segments.starts_with(&p.1)))
             {
                 return Err(ExplainError::InvalidUnknownPath {
-                    path: render_path(root, segments)?,
-                    reason: format!("overlaps `{}`", render_path(other.0, &other.1)?),
+                    path: render_path(root, segments, &mut || self.check_initial_memory_limit())?,
+                    reason: format!(
+                        "overlaps `{}`",
+                        render_path(other.0, &other.1, &mut || self.check_initial_memory_limit())?
+                    ),
                 });
             }
             let mut value = match root {
@@ -224,6 +264,7 @@ impl RegoVM {
             };
             for segment in segments {
                 value = index(&value, segment);
+                self.check_initial_memory_limit()?;
             }
             // The VM's input is null until it is set; its context is undefined.
             let absent = matches!(value, Value::Undefined)
@@ -232,10 +273,11 @@ impl RegoVM {
                     && matches!(value, Value::Null));
             if !absent {
                 return Err(ExplainError::UnknownValueSupplied {
-                    path: render_path(root, segments)?,
+                    path: render_path(root, segments, &mut || self.check_initial_memory_limit())?,
                 });
             }
-            paths.push((root, segments.clone()));
+            paths.push((root, unknown.segments));
+            self.check_initial_memory_limit()?;
         }
         Ok(PeState {
             input_has_unknowns: paths.iter().any(|p| p.0 == UnknownRoot::Input),
