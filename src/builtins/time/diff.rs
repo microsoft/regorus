@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT and Apache 2.0 License.
 #![allow(clippy::as_conversions, clippy::unused_trait_names)]
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike};
+use anyhow::Result;
+use jiff::ZonedDateTime;
 
 // Adapted from the official Go implementation:
 // https://github.com/open-policy-agent/opa/blob/eb17a716b97720a27c6569395ba7c4b7409aae87/topdown/time.go#L179-L243
 pub fn diff_between_datetimes(
-    datetime1: DateTime<FixedOffset>,
-    datetime2: DateTime<FixedOffset>,
+    datetime1: ZonedDateTime,
+    datetime2: ZonedDateTime,
 ) -> Result<(i32, i32, i32, i32, i32, i32)> {
     // The following implementation of this function is taken
     // from https://github.com/icza/gox licensed under Apache 2.0.
@@ -19,7 +19,7 @@ pub fn diff_between_datetimes(
     // BEGIN REDISTRIBUTION FROM APACHE 2.0 LICENSED PROJECT
 
     // Make sure both datetimes in the same timezone
-    let datetime2 = datetime2.with_timezone(&datetime1.timezone());
+    let datetime2 = datetime2.with_time_zone(datetime1.time_zone().clone());
 
     // Make sure `datetime1` is always the smallest one
     let (datetime1, datetime2) = if datetime1 > datetime2 {
@@ -28,7 +28,7 @@ pub fn diff_between_datetimes(
         (datetime1, datetime2)
     };
 
-    let mut year = datetime2.year() - datetime1.year();
+    let mut year = i32::from(datetime2.year()) - i32::from(datetime1.year());
     let mut month = datetime2.month() as i32 - datetime1.month() as i32;
     let mut day = datetime2.day() as i32 - datetime1.day() as i32;
     let mut hour = datetime2.hour() as i32 - datetime1.hour() as i32;
@@ -49,8 +49,7 @@ pub fn diff_between_datetimes(
         day -= 1;
     }
     if day < 0 {
-        let days_in_month = days_in_month(datetime1.year(), datetime1.month())
-            .ok_or(anyhow!("Could not convert `ns1` to datetime"))?;
+        let days_in_month = datetime1.days_in_month();
         day += days_in_month as i32;
         month -= 1;
     }
@@ -62,22 +61,4 @@ pub fn diff_between_datetimes(
     // END REDISTRIBUTION FROM APACHE 2.0 LICENSED PROJECT
 
     Ok((year, month, day, hour, min, sec))
-}
-
-fn days_in_month(year: i32, month: u32) -> Option<i64> {
-    Some(
-        NaiveDate::from_ymd_opt(
-            match month {
-                12 => year + 1,
-                _ => year,
-            },
-            match month {
-                12 => 1,
-                _ => month + 1,
-            },
-            1,
-        )?
-        .signed_duration_since(NaiveDate::from_ymd_opt(year, month, 1)?)
-        .num_days(),
-    )
 }

@@ -11,15 +11,16 @@ use crate::builtins;
 use crate::lexer::Span;
 use crate::value::Value;
 
-use alloc::string::{String, ToString as _};
+use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::Result;
 
 use core::fmt::Write as _;
 
-use chrono::{DateTime, Duration, FixedOffset, Utc};
+use jiff::{fmt::strtime, tz::TimeZone, SignedDuration, Timestamp, ZonedDateTime};
 
 use super::helpers::as_str;
+use crate::builtins::datetime::{format_rfc3339, parse_rfc3339};
 
 pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("azure.policy.fn.date_time_add", (fn_date_time_add, 3));
@@ -42,81 +43,46 @@ pub(super) fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::Bui
 /// - RFC 3339 with `T` separator (`2024-01-15T12:00:00Z`, `...+05:30`)
 /// - ISO 8601 without timezone (assumed UTC)
 /// - Space-separated variants (`2024-01-15 12:00:00Z`)
-fn parse_datetime(s: &str) -> Option<DateTime<FixedOffset>> {
-    // Check for space separator at position 10 (after "YYYY-MM-DD") so that
-    // space-separated inputs are detected before RFC 3339 (which also allows
-    // a space in place of T).
-    if s.len() > 10 && s.as_bytes().get(10).copied() == Some(b' ') {
-        // Space separator with explicit offset (e.g. "2020-04-07 14:55:59+00:00").
-        if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z") {
-            return Some(dt);
-        }
-        if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z") {
-            return Some(dt);
-        }
-        // Space separator with Z suffix (e.g. "2020-04-07 14:55:59Z").
-        if let Some(stripped) = s.strip_suffix('Z').or_else(|| s.strip_suffix('z')) {
-            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S")
-            {
-                let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-                return Some(utc.fixed_offset());
-            }
-            if let Ok(naive) =
-                chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%d %H:%M:%S%.f")
-            {
-                let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-                return Some(utc.fixed_offset());
-            }
-        }
-        // Space separator, no timezone (assume UTC).
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-            let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-            return Some(utc.fixed_offset());
-        }
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
-            let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-            return Some(utc.fixed_offset());
-        }
-    }
-
-    // Try RFC 3339 first (most common for ARM templates).
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+fn parse_datetime(s: &str) -> Option<ZonedDateTime> {
+    if let Ok(dt) = parse_rfc3339(s) {
         return Some(dt);
     }
-    // Try with T separator, no timezone (assume UTC).
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-        return Some(utc.fixed_offset());
+    let separator = if s.as_bytes().get(10) == Some(&b' ') {
+        " "
+    } else {
+        "T"
+    };
+    let datetime =
+        strtime::BrokenDownTime::parse(alloc::format!("%Y-%m-%d{separator}%H:%M:%S%.f"), s)
+            .ok()?
+            .to_datetime()
+            .ok()?
+            .to_zoned_datetime(TimeZone::UTC)
+            .ok()?;
+    if s.get(17..19) == Some("60") {
+        datetime.checked_add(SignedDuration::from_secs(1)).ok()
+    } else {
+        Some(datetime)
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
-        let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-        return Some(utc.fixed_offset());
-    }
-    None
 }
 
 /// Format a datetime as ISO 8601 string.  UTC datetimes use the `Z` suffix
 /// (matching Azure's documented output), while offset datetimes keep their
 /// explicit offset.  Fractional seconds are included when non-zero.
-fn format_datetime(dt: &DateTime<FixedOffset>) -> String {
-    if dt.offset().local_minus_utc() == 0 {
-        // UTC → use Z suffix.  `%.f` includes subsecond digits only when non-zero.
-        dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string()
-    } else {
-        dt.format("%Y-%m-%dT%H:%M:%S%.f%:z").to_string()
-    }
+fn format_datetime(dt: &ZonedDateTime) -> Result<String> {
+    format_rfc3339(dt, true)
 }
 
 // ── ISO 8601 duration parsing ─────────────────────────────────────────
 
-/// Parse an ISO 8601 duration string into a `chrono::Duration`.
+/// Parse an ISO 8601 duration string into an absolute duration.
 ///
 /// Supports: `P[nY][nM][nD][T[nH][nM][nS]]`
 /// Examples: `P1D`, `PT1H`, `P1Y2M3DT4H5M6S`, `PT30M`, `-P1D`
 ///
 /// Note: months/years are approximated (1 month = 30 days, 1 year = 365 days)
-/// since chrono::Duration is absolute. ARM template behavior matches this.
-fn parse_iso8601_duration(s: &str) -> Option<Duration> {
+/// ARM template behavior matches this.
+fn parse_iso8601_duration(s: &str) -> Option<SignedDuration> {
     let (s, negative) = s.strip_prefix('-').map_or((s, false), |rest| (rest, true));
 
     let s = s.strip_prefix('P')?;
@@ -180,7 +146,7 @@ fn parse_iso8601_duration(s: &str) -> Option<Duration> {
         return None;
     }
 
-    let dur = Duration::seconds(if negative {
+    let dur = SignedDuration::from_secs(if negative {
         total_seconds.checked_neg()?
     } else {
         total_seconds
@@ -218,12 +184,12 @@ fn fn_date_time_add(
     };
 
     let result = base_dt
-        .checked_add_signed(duration)
-        .ok_or_else(|| anyhow::anyhow!("dateTimeAdd: datetime overflow"))?;
+        .checked_add(duration)
+        .map_err(|err| anyhow::anyhow!("dateTimeAdd: datetime overflow: {err}"))?;
 
     let output = match args.get(2).and_then(as_str) {
         Some(fmt) => format_datetime_dotnet(&result, fmt)?,
-        None => format_datetime(&result),
+        None => format_datetime(&result)?,
     };
     Ok(Value::from(output))
 }
@@ -238,11 +204,11 @@ fn fn_date_time_from_epoch(
     let Some(epoch) = args.first().and_then(extract_i64) else {
         return Ok(Value::Undefined);
     };
-    let Some(dt) = DateTime::<Utc>::from_timestamp(epoch, 0) else {
+    let Ok(dt) = Timestamp::from_second(epoch) else {
         return Ok(Value::Undefined);
     };
     // Always UTC, so use Z suffix.
-    Ok(Value::from(dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()))
+    Ok(Value::from(strtime::format("%Y-%m-%dT%H:%M:%SZ", dt)?))
 }
 
 /// `dateTimeToEpoch(dateTime)` → Unix epoch seconds from ISO 8601 string.
@@ -258,7 +224,7 @@ fn fn_date_time_to_epoch(
     let Some(dt) = parse_datetime(s) else {
         return Ok(Value::Undefined);
     };
-    Ok(Value::from(dt.timestamp()))
+    Ok(Value::from(dt.timestamp().as_second()))
 }
 
 /// `addDays(dateTime, numberOfDays)` → ISO 8601 datetime with days added.
@@ -280,11 +246,14 @@ fn fn_add_days(
     let Some(base_dt) = parse_datetime(base_str) else {
         return Ok(Value::Undefined);
     };
-    let duration = Duration::days(days);
+    let duration = SignedDuration::from_secs(
+        days.checked_mul(86400)
+            .ok_or_else(|| anyhow::anyhow!("addDays: datetime overflow"))?,
+    );
     let result = base_dt
-        .checked_add_signed(duration)
-        .ok_or_else(|| anyhow::anyhow!("addDays: datetime overflow"))?;
-    Ok(Value::from(format_datetime(&result)))
+        .checked_add(duration)
+        .map_err(|err| anyhow::anyhow!("addDays: datetime overflow: {err}"))?;
+    Ok(Value::from(format_datetime(&result)?))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -304,8 +273,8 @@ const fn f64_as_i64(x: f64) -> i64 {
 
 /// Segments produced by parsing a .NET custom datetime format string.
 enum FmtSegment {
-    /// A chrono format string.
-    Chrono(String),
+    /// A strftime format string.
+    Strftime(String),
     /// Fractional seconds, truncated to `n` digits (1..=7).
     Frac(usize),
     /// First character of AM/PM (the .NET `t` specifier).
@@ -342,7 +311,7 @@ enum StandardFormat {
 /// ICU/globalisation stack would be disproportionate for this use case.
 /// If a specific .NET format corner is needed later, it can be added
 /// incrementally by extending the segment parser.
-fn format_datetime_dotnet(dt: &DateTime<FixedOffset>, dotnet_fmt: &str) -> Result<String> {
+fn format_datetime_dotnet(dt: &ZonedDateTime, dotnet_fmt: &str) -> Result<String> {
     // Check for standard format specifiers and determine the effective
     // custom format and the datetime to format against.
     let (effective_fmt_owned, format_dt);
@@ -353,48 +322,48 @@ fn format_datetime_dotnet(dt: &DateTime<FixedOffset>, dotnet_fmt: &str) -> Resul
         }
         StandardFormat::UtcNormalized(s) => {
             // Convert to UTC before formatting (e.g. the 'u' specifier).
-            format_dt = dt.with_timezone(&Utc).fixed_offset();
+            format_dt = dt.with_time_zone(TimeZone::UTC);
             effective_fmt_owned = s;
             let is_utc = true;
             let segments = dotnet_to_segments(&effective_fmt_owned, is_utc);
-            return Ok(render_segments(&format_dt, &segments));
+            return render_segments(&format_dt, &segments);
         }
         StandardFormat::NotStandard => dotnet_fmt,
     };
-    let is_utc = dt.offset().local_minus_utc() == 0;
+    let is_utc = dt.offset().seconds() == 0;
     let segments = dotnet_to_segments(effective_fmt, is_utc);
-    Ok(render_segments(dt, &segments))
+    render_segments(dt, &segments)
 }
 
 /// Render pre-parsed format segments against a datetime value.
-fn render_segments(dt: &DateTime<FixedOffset>, segments: &[FmtSegment]) -> String {
+fn render_segments(dt: &ZonedDateTime, segments: &[FmtSegment]) -> Result<String> {
     let mut out = String::new();
     for seg in segments {
         match *seg {
-            FmtSegment::Chrono(ref fmt) => {
-                out.push_str(&dt.format(fmt).to_string());
+            FmtSegment::Strftime(ref fmt) => {
+                out.push_str(&strtime::format(fmt, dt)?);
             }
             FmtSegment::Frac(n) => {
                 // %f gives 9-digit nanoseconds; take the first n digits.
-                let nanos = dt.format("%f").to_string();
+                let nanos = strtime::format("%9f", dt)?;
                 let truncated: String = nanos.chars().take(n).collect();
                 out.push_str(&truncated);
             }
             FmtSegment::AmPmShort => {
-                let full = dt.format("%p").to_string();
+                let full = strtime::format("%p", dt)?;
                 if let Some(c) = full.chars().next() {
                     out.push(c);
                 }
             }
             FmtSegment::TzHoursNoPad => {
-                let hours = dt.offset().local_minus_utc() / 3600;
+                let hours = dt.offset().seconds() / 3600;
                 if hours >= 0 {
                     out.push('+');
                 }
                 let _ = write!(out, "{hours}");
             }
             FmtSegment::TzHoursPad => {
-                let secs = dt.offset().local_minus_utc();
+                let secs = dt.offset().seconds();
                 let hours = secs / 3600;
                 if secs >= 0 {
                     let _ = write!(out, "+{hours:02}");
@@ -404,7 +373,7 @@ fn render_segments(dt: &DateTime<FixedOffset>, segments: &[FmtSegment]) -> Strin
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Resolve a .NET standard date/time format specifier.
@@ -466,19 +435,19 @@ fn resolve_standard_format(fmt: &str) -> Result<StandardFormat> {
 
 /// Parse a .NET custom datetime format string into segments.
 ///
-/// Consecutive chrono-compatible tokens are batched into a single `Chrono`
+/// Consecutive strftime-compatible tokens are batched into a single `Strftime`
 /// segment; tokens that need custom logic produce their own segment.
 fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
     let mut segments: Vec<FmtSegment> = Vec::new();
-    let mut chrono_buf = String::new();
+    let mut strftime_buf = String::new();
     let chars: Vec<char> = fmt.chars().collect();
     let len = chars.len();
     let mut i: usize = 0;
 
     macro_rules! flush {
         () => {
-            if !chrono_buf.is_empty() {
-                segments.push(FmtSegment::Chrono(core::mem::take(&mut chrono_buf)));
+            if !strftime_buf.is_empty() {
+                segments.push(FmtSegment::Strftime(core::mem::take(&mut strftime_buf)));
             }
         };
     }
@@ -492,7 +461,7 @@ fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
             '\\' if remaining > 1 => {
                 i = i.wrapping_add(1);
                 let next = chars.get(i).copied().unwrap_or('\0');
-                chrono_buf.push(next);
+                strftime_buf.push(next);
                 i = i.wrapping_add(1);
             }
             // Quoted literal
@@ -504,87 +473,87 @@ fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
                         i = i.wrapping_add(1);
                         break;
                     }
-                    chrono_buf.push(c);
+                    strftime_buf.push(c);
                     i = i.wrapping_add(1);
                 }
             }
             // Year
             'y' if remaining >= 4 && matches_run(&chars, i, 'y', 4) => {
-                chrono_buf.push_str("%Y");
+                strftime_buf.push_str("%Y");
                 i = i.wrapping_add(4);
             }
             'y' if remaining >= 2 && matches_run(&chars, i, 'y', 2) => {
-                chrono_buf.push_str("%y");
+                strftime_buf.push_str("%y");
                 i = i.wrapping_add(2);
             }
             // Month
             'M' if remaining >= 4 && matches_run(&chars, i, 'M', 4) => {
-                chrono_buf.push_str("%B");
+                strftime_buf.push_str("%B");
                 i = i.wrapping_add(4);
             }
             'M' if remaining >= 3 && matches_run(&chars, i, 'M', 3) => {
-                chrono_buf.push_str("%b");
+                strftime_buf.push_str("%b");
                 i = i.wrapping_add(3);
             }
             'M' if remaining >= 2 && matches_run(&chars, i, 'M', 2) => {
-                chrono_buf.push_str("%m");
+                strftime_buf.push_str("%m");
                 i = i.wrapping_add(2);
             }
             'M' => {
-                chrono_buf.push_str("%-m");
+                strftime_buf.push_str("%-m");
                 i = i.wrapping_add(1);
             }
             // Day
             'd' if remaining >= 4 && matches_run(&chars, i, 'd', 4) => {
-                chrono_buf.push_str("%A");
+                strftime_buf.push_str("%A");
                 i = i.wrapping_add(4);
             }
             'd' if remaining >= 3 && matches_run(&chars, i, 'd', 3) => {
-                chrono_buf.push_str("%a");
+                strftime_buf.push_str("%a");
                 i = i.wrapping_add(3);
             }
             'd' if remaining >= 2 && matches_run(&chars, i, 'd', 2) => {
-                chrono_buf.push_str("%d");
+                strftime_buf.push_str("%d");
                 i = i.wrapping_add(2);
             }
             'd' => {
-                chrono_buf.push_str("%-d");
+                strftime_buf.push_str("%-d");
                 i = i.wrapping_add(1);
             }
             // 24-hour
             'H' if remaining >= 2 && matches_run(&chars, i, 'H', 2) => {
-                chrono_buf.push_str("%H");
+                strftime_buf.push_str("%H");
                 i = i.wrapping_add(2);
             }
             'H' => {
-                chrono_buf.push_str("%-H");
+                strftime_buf.push_str("%-H");
                 i = i.wrapping_add(1);
             }
             // 12-hour
             'h' if remaining >= 2 && matches_run(&chars, i, 'h', 2) => {
-                chrono_buf.push_str("%I");
+                strftime_buf.push_str("%I");
                 i = i.wrapping_add(2);
             }
             'h' => {
-                chrono_buf.push_str("%-I");
+                strftime_buf.push_str("%-I");
                 i = i.wrapping_add(1);
             }
             // Minute
             'm' if remaining >= 2 && matches_run(&chars, i, 'm', 2) => {
-                chrono_buf.push_str("%M");
+                strftime_buf.push_str("%M");
                 i = i.wrapping_add(2);
             }
             'm' => {
-                chrono_buf.push_str("%-M");
+                strftime_buf.push_str("%-M");
                 i = i.wrapping_add(1);
             }
             // Second
             's' if remaining >= 2 && matches_run(&chars, i, 's', 2) => {
-                chrono_buf.push_str("%S");
+                strftime_buf.push_str("%S");
                 i = i.wrapping_add(2);
             }
             's' => {
-                chrono_buf.push_str("%-S");
+                strftime_buf.push_str("%-S");
                 i = i.wrapping_add(1);
             }
             // Fractions of second — consume the full run of 'f' chars
@@ -595,12 +564,12 @@ fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
                     i = i.wrapping_add(1);
                 }
                 flush!();
-                // Clamp to 9 (nanosecond precision from chrono).
+                // Clamp to 9 (nanosecond precision).
                 segments.push(FmtSegment::Frac(count.min(9)));
             }
             // AM/PM
             't' if remaining >= 2 && matches_run(&chars, i, 't', 2) => {
-                chrono_buf.push_str("%p");
+                strftime_buf.push_str("%p");
                 i = i.wrapping_add(2);
             }
             't' => {
@@ -611,15 +580,15 @@ fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
             // Timezone: K in .NET → offset or Z
             'K' => {
                 if is_utc {
-                    chrono_buf.push('Z');
+                    strftime_buf.push('Z');
                 } else {
-                    chrono_buf.push_str("%:z");
+                    strftime_buf.push_str("%:z");
                 }
                 i = i.wrapping_add(1);
             }
             // Timezone offset zzz → full offset +00:00
             'z' if remaining >= 3 && matches_run(&chars, i, 'z', 3) => {
-                chrono_buf.push_str("%:z");
+                strftime_buf.push_str("%:z");
                 i = i.wrapping_add(3);
             }
             // zz → offset hours with leading zero
@@ -636,7 +605,7 @@ fn dotnet_to_segments(fmt: &str, is_utc: bool) -> Vec<FmtSegment> {
             }
             // Literal characters (including T, :, -, etc.)
             _ => {
-                chrono_buf.push(ch);
+                strftime_buf.push(ch);
                 i = i.wrapping_add(1);
             }
         }

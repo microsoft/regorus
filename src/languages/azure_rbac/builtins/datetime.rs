@@ -8,7 +8,7 @@ use super::common;
 use super::evaluator::RbacBuiltinError;
 
 #[cfg(feature = "time")]
-use chrono::DateTime;
+use crate::builtins::datetime::parse_rfc3339;
 
 // Compare RFC3339 timestamps using the requested operator.
 //
@@ -34,11 +34,8 @@ pub(super) fn datetime_compare(
 
     #[cfg(feature = "time")]
     {
-        // Compare instants using chrono's RFC3339 parsing.
-        let left_dt = DateTime::parse_from_rfc3339(&lhs)
-            .map_err(|err| RbacBuiltinError::new(err.to_string()))?;
-        let right_dt = DateTime::parse_from_rfc3339(&rhs)
-            .map_err(|err| RbacBuiltinError::new(err.to_string()))?;
+        let left_dt = parse_rfc3339(&lhs).map_err(|err| RbacBuiltinError::new(err.to_string()))?;
+        let right_dt = parse_rfc3339(&rhs).map_err(|err| RbacBuiltinError::new(err.to_string()))?;
         Ok(match op {
             "==" => left_dt == right_dt,
             "<" => left_dt < right_dt,

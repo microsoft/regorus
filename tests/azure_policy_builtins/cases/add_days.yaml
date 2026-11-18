@@ -44,3 +44,7 @@ cases:
   - note: add_365_days
     args: ["2024-01-01T00:00:00Z", 365]
     want: "2024-12-31T00:00:00Z"
+
+  - note: overflowing_day_count_returns_error
+    args: ["2024-01-01T00:00:00Z", 9223372036854775807]
+    want_error: "addDays: datetime overflow"
