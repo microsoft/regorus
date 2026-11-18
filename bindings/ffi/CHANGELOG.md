@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status 11 remains reserved. Existing C ABI signatures, C# budget APIs, and
   `RegorusMemoryBudgetExceededException` mapping remain unchanged.
 
+### Fixed
+
+- Concurrent FFI calls no longer race on the process-global panic hook. The first guarded call
+  installs one hook that records panic details for guarded calls and forwards all other panics to
+  the hook installed before it, instead of swapping the hook on every call, which could drop panic
+  details or leave a stale hook installed in place of the host's hook.
+
 ## [0.1.0](https://github.com/microsoft/regorus/releases/tag/regorus-ffi-v0.1.0) - 2024-02-08
 
 ### Other
