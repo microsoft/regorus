@@ -732,6 +732,7 @@ impl Interpreter {
                         let index = self.eval_expr(index)?;
 
                         // Handle indexing into data.
+                        let mut data_path = None;
                         if index != Value::Undefined {
                             if let Ok(ref_components) =
                                 Parser::get_static_string_path_components(refr)
@@ -782,6 +783,7 @@ impl Interpreter {
                                                     .map(|component| (*component).to_string()),
                                             );
                                             self.ensure_module_evaluated(&module_path)?;
+                                            data_path = Some(module_path);
                                         }
                                     }
                                 }
@@ -801,7 +803,13 @@ impl Interpreter {
                             let index = index.to_string();
                             v = obj[index].clone();
                         }
-                        return Ok(Self::get_value_chained(v, &path[..]));
+                        let v = Self::get_value_chained(v, &path[..]);
+                        if let (Value::Undefined, Some(data_path)) = (&v, data_path) {
+                            return self.package_value_below_non_object(
+                                data_path.get(1..).unwrap_or_default(),
+                            );
+                        }
+                        return Ok(v);
                     }
                 },
                 _ => {
@@ -3269,9 +3277,12 @@ impl Interpreter {
                     continue;
                 }
 
-                let vref = Self::make_or_get_value_mut(&mut self.data, &module_value_components)?;
-                if *vref == Value::Undefined {
-                    *vref = Value::new_object();
+                if !Self::ensure_package_value(
+                    &mut self.data,
+                    &module_value_components,
+                    !module.policy.is_empty(),
+                )? {
+                    continue;
                 }
 
                 for rule in &module.policy {
@@ -3419,6 +3430,51 @@ impl Interpreter {
         Ok(false)
     }
 
+    fn lookup_data(&self, fields: &[&str]) -> Result<Value> {
+        match Self::get_value_chained(self.data.clone(), fields) {
+            Value::Undefined => self.package_value_below_non_object(fields),
+            value => Ok(value),
+        }
+    }
+
+    /// A package without rules below a non-object value in base data is not stored in `data`,
+    /// but, as in OPA, it reads as an empty object when read below that value.
+    fn package_value_below_non_object<S: AsRef<str>>(&self, fields: &[S]) -> Result<Value> {
+        let mut value = Value::Undefined;
+        if !Self::has_non_object_on_path(&self.init_data, fields) {
+            return Ok(value);
+        }
+        for module in self.compiled_policy.modules.iter() {
+            if !module.policy.is_empty() {
+                continue;
+            }
+            let package = Parser::get_static_string_path_components(&module.package.refr)?;
+            let package: Vec<&str> = package.iter().map(String::as_str).collect();
+            if package.len() >= fields.len()
+                && package.iter().zip(fields).all(|(p, f)| *p == f.as_ref())
+                && !self.has_explicit_data_with_override_ancestor(&package)?
+            {
+                let rest: Vec<&str> = package.iter().skip(fields.len()).copied().collect();
+                Self::ensure_package_value(&mut value, &rest, true)?;
+            }
+        }
+        if value != Value::Undefined {
+            // OPA rejects packages with rules below a non-object value in base data.
+            for module in self.compiled_policy.modules.iter() {
+                let package = Parser::get_static_string_path_components(&module.package.refr)?;
+                if !module.policy.is_empty()
+                    && Self::has_non_object_on_path(&self.init_data, &package)
+                {
+                    bail!(
+                        "package {} is below a value in data that is not an object",
+                        package.join(".")
+                    );
+                }
+            }
+        }
+        Ok(value)
+    }
+
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
 
@@ -3443,7 +3499,7 @@ impl Interpreter {
         // Ensure that rules are evaluated
         if name.text() == "data" {
             if self.is_processed(fields)? {
-                return Ok(Self::get_value_chained(self.data.clone(), fields));
+                return self.lookup_data(fields);
             }
 
             // If "data" is used in a query, without any fields, then evaluate all the modules.
@@ -3479,7 +3535,7 @@ impl Interpreter {
                 }
             }
 
-            Ok(Self::get_value_chained(self.data.clone(), fields))
+            self.lookup_data(fields)
         } else if !self.compiled_policy.modules.is_empty() {
             let module = self.current_module()?;
             let mut module_var_path =
@@ -3853,6 +3909,42 @@ impl Interpreter {
             obj = obj[&Value::String(p.to_string().into())].clone();
         }
         obj
+    }
+
+    /// Returns true if `data` holds a value other than an object at or above `path`.
+    fn has_non_object_on_path<S: AsRef<str>>(data: &Value, path: &[S]) -> bool {
+        let mut value = data;
+        for component in path {
+            match value {
+                Value::Object(fields) => {
+                    match fields.get(&Value::String(component.as_ref().into())) {
+                        Some(v) => value = v,
+                        None => return false,
+                    }
+                }
+                Value::Undefined => return false,
+                _ => return true,
+            }
+        }
+        !matches!(value, Value::Object(_) | Value::Undefined)
+    }
+
+    /// Ensures that `data` has an object at the package `path`. Returns false, leaving `data`
+    /// unchanged, for a package without rules when `data` holds a non-object value at or above
+    /// `path`: as in OPA, such a package does not conflict with that value, which wins.
+    pub(crate) fn ensure_package_value(
+        data: &mut Value,
+        path: &[&str],
+        has_rules: bool,
+    ) -> Result<bool> {
+        if !has_rules && Self::has_non_object_on_path(data, path) {
+            return Ok(false);
+        }
+        let vref = Self::make_or_get_value_mut(data, path)?;
+        if *vref == Value::Undefined {
+            *vref = Value::new_object();
+        }
+        Ok(true)
     }
 
     #[inline]
