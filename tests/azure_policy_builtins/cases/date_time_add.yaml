@@ -167,3 +167,11 @@ cases:
   - note: output_standard_format_R
     args: ["2024-01-15T12:00:00+05:30", "P0D", "R"]
     want: "Mon, 15 Jan 2024 06:30:00 GMT"
+
+  - note: leap_second_normalizes_without_losing_epoch
+    args: ["2016-12-31T23:59:60Z", "P0D"]
+    want: "2017-01-01T00:00:00Z"
+
+  - note: leap_second_without_timezone_normalizes
+    args: ["2016-12-31T23:59:60", "P0D"]
+    want: "2017-01-01T00:00:00Z"

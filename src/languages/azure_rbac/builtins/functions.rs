@@ -12,7 +12,9 @@ use super::common;
 use super::evaluator::{RbacBuiltinContext, RbacBuiltinError};
 
 #[cfg(feature = "time")]
-use chrono::{DateTime, Duration};
+use crate::builtins::datetime::{format_rfc3339, parse_rfc3339};
+#[cfg(feature = "time")]
+use jiff::SignedDuration;
 
 pub(super) fn to_lower(value: &Value) -> Result<Value, RbacBuiltinError> {
     // Normalize to ASCII lowercase for RBAC string semantics.
@@ -82,12 +84,18 @@ pub(super) fn add_days(date_value: &Value, days_value: &Value) -> Result<Value, 
     #[cfg(feature = "time")]
     {
         // Apply a checked day offset to avoid overflow.
-        let dt = DateTime::parse_from_rfc3339(date_str)
-            .map_err(|err| RbacBuiltinError::new(err.to_string()))?;
-        let updated = dt
-            .checked_add_signed(Duration::days(days))
+        let dt = parse_rfc3339(date_str).map_err(|err| RbacBuiltinError::new(err.to_string()))?;
+        let seconds = days
+            .checked_mul(86400)
             .ok_or_else(|| RbacBuiltinError::new("AddDays overflow"))?;
-        Ok(Value::String(updated.to_rfc3339().into()))
+        let updated = dt
+            .checked_add(SignedDuration::from_secs(seconds))
+            .map_err(|err| RbacBuiltinError::new(err.to_string()))?;
+        Ok(Value::String(
+            format_rfc3339(&updated, false)
+                .map_err(|err| RbacBuiltinError::new(err.to_string()))?
+                .into(),
+        ))
     }
 
     #[cfg(not(feature = "time"))]

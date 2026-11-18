@@ -38,14 +38,9 @@
 )] // ported Go time parsing uses intentional arithmetic and explicit suffixes
 
 use crate::*;
+use anyhow::{bail, Result};
 use core::fmt;
-use core::iter;
-
-use chrono::TimeZone;
-use chrono::{
-    format::{self, Fixed, Parsed},
-    DateTime, Duration, FixedOffset, ParseResult,
-};
+use jiff::{fmt::strtime, tz::Offset, SignedDuration as Duration, ZonedDateTime};
 
 const NANOSECOND: u64 = 1;
 const MICROSECOND: u64 = 1000 * NANOSECOND;
@@ -98,7 +93,7 @@ pub fn parse_duration(mut s: &str) -> Result<Duration, ParseDurationError> {
 
     // Special case: if all that is left is "0", this is zero.
     if s == "0" {
-        return Ok(Duration::zero());
+        return Ok(Duration::ZERO);
     }
 
     if s.is_empty() {
@@ -184,16 +179,16 @@ pub fn parse_duration(mut s: &str) -> Result<Duration, ParseDurationError> {
     if neg {
         let dur = dur as i64;
         if dur < 0 {
-            return Ok(Duration::nanoseconds(dur));
+            return Ok(Duration::from_nanos(dur));
         }
-        return Ok(-Duration::nanoseconds(dur));
+        return Ok(-Duration::from_nanos(dur));
     }
 
     if dur > i64::MAX as u64 {
         return Err(ParseDurationError::InvalidDuration(orig.to_string()));
     }
 
-    Ok(Duration::nanoseconds(dur as i64))
+    Ok(Duration::from_nanos(dur as i64))
 }
 
 fn leading_int(s: &str) -> Result<(u64, &str), ParseDurationError> {
@@ -259,333 +254,233 @@ fn leading_fraction(s: &str) -> (u64, f64, &str) {
     (num, scale, &s[last_idx..])
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum GoTimeFormatItemsMode {
-    Parse,
-    Format,
+#[derive(Clone, Copy, Debug)]
+enum GoTimeItem<'a> {
+    Directive(&'static str),
+    Literal(&'a str),
+    Fraction(Option<usize>),
+    ZoneName,
+    ZoneOffset(&'static str, bool),
 }
 
-#[derive(Debug, Clone)]
 struct GoTimeFormatItems<'a> {
-    reminder: &'a str,
-    queue: &'static [format::Item<'static>],
-    mode: GoTimeFormatItemsMode,
+    remainder: &'a str,
+    parsing: bool,
+    pending_fraction: bool,
 }
 
-impl GoTimeFormatItems<'_> {
-    fn parse(reminder: &str) -> GoTimeFormatItems<'_> {
-        GoTimeFormatItems {
-            reminder,
-            queue: &[],
-            mode: GoTimeFormatItemsMode::Parse,
-        }
-    }
-
-    fn format(reminder: &str) -> GoTimeFormatItems<'_> {
-        GoTimeFormatItems {
-            reminder,
-            queue: &[],
-            mode: GoTimeFormatItemsMode::Format,
+impl<'a> GoTimeFormatItems<'a> {
+    const fn new(layout: &'a str, parsing: bool) -> Self {
+        Self {
+            remainder: layout,
+            parsing,
+            pending_fraction: false,
         }
     }
 }
 
 impl<'a> Iterator for GoTimeFormatItems<'a> {
-    type Item = format::Item<'a>;
+    type Item = GoTimeItem<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use format::{Fixed::*, Item::*, Numeric, Pad};
-
-        macro_rules! token {
-            ($prefix:expr, $kind:expr $(, $queue:expr)*) => {
-                if self.reminder.starts_with($prefix) {
-                    self.reminder = &self.reminder[$prefix.len()..];
-                    self.queue = &[$($queue),*];
-                    return Some($kind);
+        use GoTimeItem::*;
+        if core::mem::take(&mut self.pending_fraction) {
+            return Some(Fraction(None));
+        }
+        let first = self.remainder.chars().next()?;
+        if matches!(first, '.' | ',') {
+            let digits = &self.remainder[1..];
+            if let Some(repeating @ ('0' | '9')) = digits.chars().next() {
+                let count = digits.chars().take_while(|&c| c == repeating).count();
+                if !digits[count..].starts_with(|c: char| c.is_ascii_digit()) {
+                    let precision = match (first, repeating, count) {
+                        (_, '0', 3 | 6 | 9) | (',', '9', 3 | 6 | 9) => Some(count),
+                        _ => None,
+                    };
+                    self.remainder = &digits[count..];
+                    return Some(Fraction(precision));
                 }
-            };
-        }
-
-        fn is_fractional_seconds(val: &str) -> bool {
-            // first char is either '.' or ','
-            let mut chars = val.chars().skip(1);
-            let Some(repeating @ ('0' | '9')) = chars.next() else {
-                return false;
-            };
-            let next = chars.find(|c| c != &repeating);
-            !matches!(next, Some('0'..='9'))
-        }
-
-        if let Some((item, reminder)) = self.queue.split_first() {
-            self.queue = reminder;
-            return Some(item.clone());
-        }
-
-        match self.reminder.chars().next() {
-            // January, Jan
-            Some('J') => {
-                token!("January", Fixed(LongMonthName));
-                token!("Jan", Fixed(ShortMonthName));
             }
-
-            // Monday, Mon, MST
-            Some('M') => {
-                token!("Monday", Fixed(LongWeekdayName));
-                token!("Mon", Fixed(ShortWeekdayName));
-                token!("MST", Fixed(TimezoneName));
+        }
+        for &(token, item) in &[
+            ("January", Directive("%B")),
+            ("Jan", Directive("%b")),
+            ("Monday", Directive("%A")),
+            ("Mon", Directive("%a")),
+            ("MST", ZoneName),
+            ("002", Directive("%j")),
+            ("01", Directive("%m")),
+            ("02", Directive("%d")),
+            ("03", Directive("%I")),
+            ("04", Directive("%M")),
+            ("05", Directive("%S")),
+            ("06", Directive("%y")),
+            ("15", Directive("%H")),
+            ("1", Directive("%-m")),
+            ("2006", Directive("%Y")),
+            ("2", Directive("%-d")),
+            ("_2006", Directive("_%-Y")),
+            ("__2", Directive("%_j")),
+            ("_2", Directive("%e")),
+            ("3", Directive("%-I")),
+            ("4", Directive("%-M")),
+            ("5", Directive("%-S")),
+            ("PM", Directive("%p")),
+            ("pm", Directive("%P")),
+            ("-070000", ZoneOffset("%::z", false)),
+            ("-07:00:00", ZoneOffset("%::z", false)),
+            ("-0700", ZoneOffset("%z", false)),
+            ("-07:00", ZoneOffset("%:z", false)),
+            ("-07", ZoneOffset("%:::z", false)),
+            ("Z0700", ZoneOffset("%z", true)),
+            ("Z07:00", ZoneOffset("%:z", true)),
+        ] {
+            if let Some(rest) = self.remainder.strip_prefix(token) {
+                self.remainder = rest;
+                self.pending_fraction =
+                    self.parsing && matches!(token, "05" | "5") && !rest.starts_with('.');
+                return Some(item);
             }
+        }
+        let literal = &self.remainder[..first.len_utf8()];
+        self.remainder = &self.remainder[first.len_utf8()..];
+        Some(Literal(literal))
+    }
+}
 
-            // 01, 02, 03, 04, 05, 06, 002
-            Some('0') => {
-                token!("002", Numeric(Numeric::Ordinal, Pad::Zero));
-                token!("01", Numeric(Numeric::Month, Pad::Zero));
-                token!("02", Numeric(Numeric::Day, Pad::Zero));
-                token!("03", Numeric(Numeric::Hour12, Pad::Zero));
-                token!("04", Numeric(Numeric::Minute, Pad::Zero));
+fn push_literal(format: &mut String, literal: &str) {
+    for ch in literal.chars() {
+        format.push(ch);
+        if ch == '%' {
+            format.push('%');
+        }
+    }
+}
 
-                if self.reminder.starts_with("05") {
-                    self.reminder = &self.reminder[2..];
-                    if !self.reminder.starts_with('.') && self.mode == GoTimeFormatItemsMode::Parse
-                    {
-                        self.queue = &[Fixed(Nanosecond)];
+fn legacy_offset(name: &str) -> Option<Offset> {
+    let hours = match name.to_ascii_lowercase().as_str() {
+        "utc" | "gmt" | "ut" => 0,
+        "edt" => -4,
+        "est" | "cdt" => -5,
+        "cst" | "mdt" => -6,
+        "mst" | "pdt" => -7,
+        "pst" => -8,
+        _ => return None,
+    };
+    Some(jiff::tz::offset(hours))
+}
+
+// Parses Go layouts while retaining their optional fractions and legacy zones.
+pub fn parse(layout: &str, value: &str) -> Result<ZonedDateTime> {
+    let mut format = String::new();
+    let mut offset = None;
+    let mut leap_second = false;
+    for item in GoTimeFormatItems::new(layout, true) {
+        match item {
+            GoTimeItem::Directive(directive) => {
+                if matches!(directive, "%S" | "%-S") {
+                    let (_, consumed) = strtime::BrokenDownTime::parse_prefix(&format, value)?;
+                    leap_second = value[consumed..].starts_with("60");
+                }
+                format.push_str(directive);
+            }
+            GoTimeItem::Literal(literal) => push_literal(&mut format, literal),
+            GoTimeItem::Fraction(_) => format.push_str("%.f"),
+            GoTimeItem::ZoneName | GoTimeItem::ZoneOffset(_, true) => {
+                let (_, consumed) = strtime::BrokenDownTime::parse_prefix(&format, value)?;
+                let remainder = &value[consumed..];
+                if matches!(item, GoTimeItem::ZoneName) {
+                    let len = remainder
+                        .bytes()
+                        .take_while(u8::is_ascii_alphabetic)
+                        .count();
+                    if len == 0 {
+                        bail!("missing timezone name");
                     }
-                    return Some(Numeric(Numeric::Second, Pad::Zero));
+                    let name = &remainder[..len];
+                    if let Some(zone_offset) = legacy_offset(name) {
+                        if offset.is_some_and(|offset| offset != zone_offset) {
+                            bail!("conflicting timezone offsets");
+                        }
+                        offset = Some(zone_offset);
+                    }
+                    push_literal(&mut format, name);
+                } else if remainder.starts_with('Z') {
+                    if offset.is_some_and(|offset| offset != Offset::ZERO) {
+                        bail!("conflicting timezone offsets");
+                    }
+                    format.push('Z');
+                    offset = Some(Offset::ZERO);
+                } else if let GoTimeItem::ZoneOffset(directive, _) = item {
+                    format.push_str(directive);
                 }
-
-                token!("06", Numeric(Numeric::YearMod100, Pad::Zero));
             }
-
-            // 15, 1
-            Some('1') => {
-                use Numeric::*;
-                token!("15", Numeric(Hour, Pad::Zero));
-                token!("1", Numeric(Month, Pad::None));
-            }
-
-            // 2006, 2
-            Some('2') => {
-                use Numeric::*;
-                token!("2006", Numeric(Year, Pad::Zero));
-                token!("2", Numeric(Day, Pad::None));
-            }
-            // _2, _2006, __2
-            Some('_') => {
-                use Numeric::*;
-                token!("_2006", Literal("_"), Numeric(Year, Pad::None));
-                token!("__2", Numeric(Ordinal, Pad::Space));
-                token!("_2", Numeric(Day, Pad::Space));
-            }
-
-            Some('3') => {
-                use Numeric::*;
-                token!("3", Numeric(Hour12, Pad::None));
-            }
-
-            Some('4') => {
-                use Numeric::*;
-                token!("4", Numeric(Minute, Pad::None));
-            }
-
-            Some('5') => {
-                token!("5", Numeric(Numeric::Second, Pad::None), Fixed(Nanosecond));
-            }
-
-            // PM
-            Some('P') => {
-                token!("PM", Fixed(UpperAmPm));
-            }
-
-            // pm
-            Some('p') => {
-                token!("pm", Fixed(LowerAmPm));
-            }
-
-            // -070000, -07:00:00, -0700, -07:00, -07
-            Some('-') => {
-                token!("-070000", Fixed(TimezoneOffsetDoubleColon));
-                token!("-07:00:00", Fixed(TimezoneOffsetDoubleColon));
-
-                token!("-0700", Fixed(TimezoneOffset));
-                token!("-07:00", Fixed(TimezoneOffsetColon));
-
-                token!("-07", Fixed(TimezoneOffsetTripleColon));
-
-                token!("-", Literal("-"));
-            }
-
-            // Z070000, Z07:00:00, Z0700, Z07:00, Z07
-            Some('Z') => {
-                // token!("Z070000", Fixed(TimezoneOffsetDoubleColonZ));
-                // token!("Z07:00:00", Fixed(TimezoneOffsetDoubleColonZ));
-
-                token!("Z0700", Fixed(TimezoneOffsetZ));
-                token!("Z07:00", Fixed(TimezoneOffsetColonZ));
-
-                // token!("Z07", Fixed(TimezoneOffsetTripleColonZ));
-            }
-
-            // ,000, or .000, or ,999, or .999 - repeated digits for fractional seconds.
-            Some('.' | ',') if is_fractional_seconds(self.reminder) => {
-                token!(".000000000", Fixed(Nanosecond9));
-                token!(".00000000", Fixed(Nanosecond));
-                token!(".0000000", Fixed(Nanosecond));
-                token!(".000000", Fixed(Nanosecond6));
-                token!(".00000", Fixed(Nanosecond));
-                token!(".0000", Fixed(Nanosecond));
-                token!(".000", Fixed(Nanosecond3));
-                token!(".00", Fixed(Nanosecond));
-                token!(".0", Fixed(Nanosecond));
-                token!(".999999999", Fixed(Nanosecond));
-                token!(".99999999", Fixed(Nanosecond));
-                token!(".9999999", Fixed(Nanosecond));
-                token!(".999999", Fixed(Nanosecond));
-                token!(".99999", Fixed(Nanosecond));
-                token!(".9999", Fixed(Nanosecond));
-                token!(".999", Fixed(Nanosecond));
-                token!(".99", Fixed(Nanosecond));
-                token!(".9", Fixed(Nanosecond));
-                token!(".", Literal("."));
-
-                token!(",000000000", Fixed(Nanosecond9));
-                token!(",00000000", Fixed(Nanosecond));
-                token!(",0000000", Fixed(Nanosecond));
-                token!(",000000", Fixed(Nanosecond6));
-                token!(",00000", Fixed(Nanosecond));
-                token!(",0000", Fixed(Nanosecond));
-                token!(",000", Fixed(Nanosecond3));
-                token!(",00", Fixed(Nanosecond));
-                token!(",0", Fixed(Nanosecond));
-                token!(",999999999", Fixed(Nanosecond9));
-                token!(",99999999", Fixed(Nanosecond));
-                token!(",9999999", Fixed(Nanosecond));
-                token!(",999999", Fixed(Nanosecond6));
-                token!(",99999", Fixed(Nanosecond));
-                token!(",9999", Fixed(Nanosecond));
-                token!(",999", Fixed(Nanosecond3));
-                token!(",99", Fixed(Nanosecond));
-                token!(",9", Fixed(Nanosecond));
-                token!(",", Literal(","));
-            }
-            Some(c) if c.is_whitespace() => {
-                let next_non_ws = self
-                    .reminder
-                    .find(|c: char| !c.is_whitespace())
-                    .unwrap_or(self.reminder.len());
-
-                let literal = &self.reminder[..next_non_ws];
-                token!(&literal, Space(literal));
-            }
-
-            Some(c) => {
-                let literal = &self.reminder[..c.len_utf8()];
-                token!(&literal, Literal(literal));
-            }
-
-            None => {}
+            GoTimeItem::ZoneOffset(directive, false) => format.push_str(directive),
         }
-
-        None
     }
-}
-
-// Adapted from chrono's `scan::timezone_offset_2822`:
-// https://github.com/chronotope/chrono/blob/baa55d084784e4e88b5332efe8e96af794a52e8a/src/format/scan.rs#L285-L322
-fn parse_legacy_timezone(parsed: &mut Parsed, val: &str) -> ParseResult<()> {
-    let upto = val
-        .as_bytes()
-        .iter()
-        .position(|&c| !c.is_ascii_alphabetic())
-        .unwrap_or(val.len());
-    if upto == 0 {
-        return Ok(());
+    let mut parsed = strtime::BrokenDownTime::parse(&format, value)?;
+    if parsed.year().is_none() {
+        parsed.set_year(Some(0))?;
     }
-
-    let name = &val.as_bytes()[..upto];
-    if name.eq_ignore_ascii_case(b"gmt") || name.eq_ignore_ascii_case(b"ut") {
-        parsed.set_offset(0)
-    } else if name.eq_ignore_ascii_case(b"edt") {
-        parsed.set_offset(-4 * 3600)
-    } else if name.eq_ignore_ascii_case(b"est") || name.eq_ignore_ascii_case(b"cdt") {
-        parsed.set_offset(-5 * 3600)
-    } else if name.eq_ignore_ascii_case(b"cst") || name.eq_ignore_ascii_case(b"mdt") {
-        parsed.set_offset(-6 * 3600)
-    } else if name.eq_ignore_ascii_case(b"mst") || name.eq_ignore_ascii_case(b"pdt") {
-        parsed.set_offset(-7 * 3600)
-    } else if name.eq_ignore_ascii_case(b"pst") {
-        parsed.set_offset(-8 * 3600)
-    } else {
-        Ok(())
+    if parsed.hour().is_none() && parsed.minute().is_none() && parsed.second().is_none() {
+        parsed.set_hour(Some(0))?;
+        parsed.set_minute(Some(0))?;
+        parsed.set_second(Some(0))?;
     }
-}
-
-// Parses a date in Go's time format like 'Mon Jan _2 15:04:05 2006'.
-pub fn parse(layout: &str, value: &str) -> ParseResult<DateTime<FixedOffset>> {
-    let mut items = GoTimeFormatItems::parse(layout);
-    let mut parsed = Parsed::new();
-    let remainder = format::parse_and_remainder(
-        &mut parsed,
-        value,
-        items
-            .by_ref()
-            .take_while(|i| !matches!(i, format::Item::Fixed(Fixed::TimezoneName))),
-    )?;
-
-    // The reason for splitting parsing procedure to two part is handling legacy
-    // time zone names like EDT, EST etc. They are supported by chrono but not
-    // exposed to us. As a workaround, we copied chrono's implementation to
-    // `parse_legacy_timezone` function and whenever we encounter a
-    // `Fixed::TimezoneName` we stop parsing with our regular parser,
-    // parse timezone with `parse_legacy_timezone` and then continue parsing.
-    if !remainder.is_empty() {
-        parse_legacy_timezone(&mut parsed, remainder)?;
-
-        format::parse(
-            &mut parsed,
-            remainder,
-            iter::once(format::Item::Fixed(Fixed::TimezoneName)).chain(items),
-        )?;
+    if let Some(offset) = offset {
+        if parsed.offset().is_some_and(|parsed| parsed != offset) {
+            bail!("conflicting timezone offsets");
+        }
+        parsed.set_offset(Some(offset));
+    } else if parsed.offset().is_none() {
+        parsed.set_offset(Some(Offset::ZERO));
     }
-
-    // Go's `time.Parse` allows missing years but chrono fails to parse them,
-    // we're setting year field to `0` if year field is missing.
-    if parsed.year.is_none()
-        && parsed.year_div_100.is_none()
-        && parsed.year_mod_100.is_none()
-        && parsed.isoyear.is_none()
-        && parsed.isoyear_div_100.is_none()
-        && parsed.isoyear_mod_100.is_none()
-        && parsed.timestamp.is_none()
+    if parsed
+        .offset()
+        .is_some_and(|offset| offset.seconds().unsigned_abs() >= 86400)
     {
-        parsed.set_year(0)?;
+        bail!("timezone offset outside of valid range");
     }
-
-    // Go's `time.Parse` allows missing time (hour, minute, second) but
-    // chrono fails to parse them, we're setting time to `0` if time is missing.
-    if parsed.hour_div_12.is_none()
-        && parsed.hour_mod_12.is_none()
-        && parsed.minute.is_none()
-        && parsed.second.is_none()
-    {
-        parsed.set_hour(0)?;
-        parsed.set_minute(0)?;
-        parsed.set_second(0)?;
-    }
-
-    if parsed.offset.is_some() {
-        parsed.to_datetime()
+    let datetime = parsed.to_zoned_datetime()?;
+    if leap_second {
+        Ok(datetime.checked_add(Duration::from_secs(1))?)
     } else {
-        let naive = parsed.to_naive_datetime_with_offset(0)?;
-        Ok(naive.and_utc().fixed_offset())
+        Ok(datetime)
     }
 }
 
-// Formats a date in Go's time format like 'Mon Jan _2 15:04:05 2006'.
-pub fn format<Tz: TimeZone>(date: DateTime<Tz>, fmt: &str) -> String
-where
-    Tz::Offset: fmt::Display,
-{
-    date.format_with_items(GoTimeFormatItems::format(fmt))
-        .to_string()
+// Formats Go layouts without exposing strftime directives in literal text.
+pub fn format(date: &ZonedDateTime, layout: &str) -> Result<String> {
+    let mut output = String::new();
+    for item in GoTimeFormatItems::new(layout, false) {
+        let directive = match item {
+            GoTimeItem::Literal(literal) => {
+                output.push_str(literal);
+                continue;
+            }
+            GoTimeItem::Directive(directive) => directive,
+            GoTimeItem::ZoneName => {
+                if date.time_zone().to_fixed_offset().is_ok() {
+                    "%:z"
+                } else {
+                    "%Z"
+                }
+            }
+            GoTimeItem::ZoneOffset(_, true) if date.offset() == Offset::ZERO => "Z",
+            GoTimeItem::ZoneOffset(directive, _) => directive,
+            GoTimeItem::Fraction(precision) => {
+                let precision = precision.unwrap_or_else(|| {
+                    super::super::datetime::fractional_precision(date.subsec_nanosecond())
+                });
+                if precision != 0 {
+                    output.push_str(&strtime::format(format!("%.{precision}f"), date)?);
+                }
+                continue;
+            }
+        };
+        output.push_str(&strtime::format(directive, date)?);
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -595,8 +490,7 @@ mod tests {
         clippy::unused_trait_names,
         clippy::as_conversions
     )] // test fixtures build durations with unwrap for brevity
-    use chrono::{Datelike, Month, TimeZone, Timelike, Weekday};
-    use chrono_tz::PST8PDT;
+    use jiff::{civil::Weekday, Timestamp};
 
     use super::*;
 
@@ -607,113 +501,89 @@ mod tests {
 
         for (input, expected_dur) in [
             // simple
-            ("0", Duration::zero()),
-            ("5s", Duration::try_seconds(5).unwrap()),
-            ("30s", Duration::try_seconds(30).unwrap()),
-            ("1478s", Duration::try_seconds(1478).unwrap()),
+            ("0", Duration::ZERO),
+            ("5s", Duration::from_secs(5)),
+            ("30s", Duration::from_secs(30)),
+            ("1478s", Duration::from_secs(1478)),
             // sign
-            ("-5s", -Duration::try_seconds(5).unwrap()),
-            ("+5s", Duration::try_seconds(5).unwrap()),
-            ("-0", Duration::zero()),
-            ("+0", Duration::zero()),
+            ("-5s", -Duration::from_secs(5)),
+            ("+5s", Duration::from_secs(5)),
+            ("-0", Duration::ZERO),
+            ("+0", Duration::ZERO),
             // decimal
-            ("5.0s", Duration::try_seconds(5).unwrap()),
-            (
-                "5.6s",
-                Duration::try_seconds(5).unwrap() + Duration::try_milliseconds(600).unwrap(),
-            ),
-            ("5.s", Duration::try_seconds(5).unwrap()),
-            (".5s", Duration::try_milliseconds(500).unwrap()),
-            ("1.0s", Duration::try_seconds(1).unwrap()),
-            ("1.00s", Duration::try_seconds(1).unwrap()),
-            (
-                "1.004s",
-                Duration::try_seconds(1).unwrap() + Duration::try_milliseconds(4).unwrap(),
-            ),
-            (
-                "1.0040s",
-                Duration::try_seconds(1).unwrap() + Duration::try_milliseconds(4).unwrap(),
-            ),
+            ("5.0s", Duration::from_secs(5)),
+            ("5.6s", Duration::from_secs(5) + Duration::from_millis(600)),
+            ("5.s", Duration::from_secs(5)),
+            (".5s", Duration::from_millis(500)),
+            ("1.0s", Duration::from_secs(1)),
+            ("1.00s", Duration::from_secs(1)),
+            ("1.004s", Duration::from_secs(1) + Duration::from_millis(4)),
+            ("1.0040s", Duration::from_secs(1) + Duration::from_millis(4)),
             (
                 "100.00100s",
-                Duration::try_seconds(100).unwrap() + Duration::try_milliseconds(1).unwrap(),
+                Duration::from_secs(100) + Duration::from_millis(1),
             ),
             // different units
-            ("10ns", Duration::nanoseconds(10)),
-            ("11us", Duration::microseconds(11)),
-            ("12µs", Duration::microseconds(12)), // U+00B5
-            ("12μs", Duration::microseconds(12)), // U+03BC
-            ("13ms", Duration::try_milliseconds(13).unwrap()),
-            ("14s", Duration::try_seconds(14).unwrap()),
-            ("15m", Duration::try_minutes(15).unwrap()),
-            ("16h", Duration::try_hours(16).unwrap()),
+            ("10ns", Duration::from_nanos(10)),
+            ("11us", Duration::from_micros(11)),
+            ("12µs", Duration::from_micros(12)), // U+00B5
+            ("12μs", Duration::from_micros(12)), // U+03BC
+            ("13ms", Duration::from_millis(13)),
+            ("14s", Duration::from_secs(14)),
+            ("15m", Duration::from_mins(15)),
+            ("16h", Duration::from_hours(16)),
             // composite durations
-            (
-                "3h30m",
-                Duration::try_hours(3).unwrap() + Duration::try_minutes(30).unwrap(),
-            ),
+            ("3h30m", Duration::from_hours(3) + Duration::from_mins(30)),
             (
                 "10.5s4m",
-                Duration::try_minutes(4).unwrap()
-                    + Duration::try_seconds(10).unwrap()
-                    + Duration::try_milliseconds(500).unwrap(),
+                Duration::from_mins(4) + Duration::from_secs(10) + Duration::from_millis(500),
             ),
             (
                 "-2m3.4s",
-                -(Duration::try_minutes(2).unwrap()
-                    + Duration::try_seconds(3).unwrap()
-                    + Duration::try_milliseconds(400).unwrap()),
+                -(Duration::from_mins(2) + Duration::from_secs(3) + Duration::from_millis(400)),
             ),
             (
                 "1h2m3s4ms5us6ns",
-                Duration::try_hours(1).unwrap()
-                    + Duration::try_minutes(2).unwrap()
-                    + Duration::try_seconds(3).unwrap()
-                    + Duration::try_milliseconds(4).unwrap()
-                    + Duration::microseconds(5)
-                    + Duration::nanoseconds(6),
+                Duration::from_hours(1)
+                    + Duration::from_mins(2)
+                    + Duration::from_secs(3)
+                    + Duration::from_millis(4)
+                    + Duration::from_micros(5)
+                    + Duration::from_nanos(6),
             ),
             (
                 "39h9m14.425s",
-                Duration::try_hours(39).unwrap()
-                    + Duration::try_minutes(9).unwrap()
-                    + Duration::try_seconds(14).unwrap()
-                    + Duration::try_milliseconds(425).unwrap(),
+                Duration::from_hours(39)
+                    + Duration::from_mins(9)
+                    + Duration::from_secs(14)
+                    + Duration::from_millis(425),
             ),
             // large value
-            ("52763797000ns", Duration::nanoseconds(52763797000)),
+            ("52763797000ns", Duration::from_nanos(52763797000)),
             // more than 9 digits after decimal point, see https://golang.org/issue/6617
-            ("0.3333333333333333333h", Duration::try_minutes(20).unwrap()),
+            ("0.3333333333333333333h", Duration::from_mins(20)),
             // 9007199254740993 = 1<<53+1 cannot be stored precisely in a float64
-            ("9007199254740993ns", Duration::nanoseconds((1 << 53) + 1)),
+            ("9007199254740993ns", Duration::from_nanos((1 << 53) + 1)),
             // largest duration that can be represented by int64 in nanoseconds
-            ("9223372036854775807ns", Duration::nanoseconds(i64::MAX)),
-            ("9223372036854775.807us", Duration::nanoseconds(i64::MAX)),
-            (
-                "9223372036s854ms775us807ns",
-                Duration::nanoseconds(i64::MAX),
-            ),
-            ("-9223372036854775808ns", Duration::nanoseconds(i64::MIN)),
-            ("-9223372036854775.808us", Duration::nanoseconds(i64::MIN)),
+            ("9223372036854775807ns", Duration::from_nanos(i64::MAX)),
+            ("9223372036854775.807us", Duration::from_nanos(i64::MAX)),
+            ("9223372036s854ms775us807ns", Duration::from_nanos(i64::MAX)),
+            ("-9223372036854775808ns", Duration::from_nanos(i64::MIN)),
+            ("-9223372036854775.808us", Duration::from_nanos(i64::MIN)),
             (
                 "-9223372036s854ms775us808ns",
-                Duration::nanoseconds(i64::MIN),
+                Duration::from_nanos(i64::MIN),
             ),
             // largest negative value
-            ("-9223372036854775808ns", Duration::nanoseconds(i64::MIN)),
+            ("-9223372036854775808ns", Duration::from_nanos(i64::MIN)),
             // largest negative round trip value, see https://golang.org/issue/48629
-            ("-2562047h47m16.854775808s", Duration::nanoseconds(i64::MIN)),
+            ("-2562047h47m16.854775808s", Duration::from_nanos(i64::MIN)),
             // huge string; issue 15011.
-            (
-                "0.100000000000000000000h",
-                Duration::try_minutes(6).unwrap(),
-            ),
+            ("0.100000000000000000000h", Duration::from_mins(6)),
             // This value tests the first overflow check in leadingFraction.
             (
                 "0.830103483285477580700h",
-                Duration::try_minutes(49).unwrap()
-                    + Duration::try_seconds(48).unwrap()
-                    + Duration::nanoseconds(372539827),
+                Duration::from_mins(49) + Duration::from_secs(48) + Duration::from_nanos(372539827),
             ),
         ] {
             let dur = parse_duration(input).unwrap();
@@ -756,12 +626,12 @@ mod tests {
             }
         }
 
-        fn check_time(time: DateTime<FixedOffset>, test_case: &ParseTest) {
+        fn check_time(time: ZonedDateTime, test_case: &ParseTest) {
             // The time should be Thu Feb  4 21:00:57 PST 2010
             if test_case.year_sign >= 0 {
-                assert_eq!(test_case.year_sign * time.year(), 2010);
+                assert_eq!(test_case.year_sign * i32::from(time.year()), 2010);
             }
-            assert_eq!(time.month0(), Month::February as u32);
+            assert_eq!(time.month(), 2);
             assert_eq!(time.day(), 4);
             assert_eq!(time.hour(), 21);
             assert_eq!(time.minute(), 0);
@@ -769,14 +639,14 @@ mod tests {
 
             let nanosec = "012345678"[..test_case.frac_digits].to_string()
                 + &"000000000"[..9 - test_case.frac_digits];
-            assert_eq!(time.nanosecond(), nanosec.parse::<u32>().unwrap());
+            assert_eq!(time.subsec_nanosecond(), nanosec.parse::<i32>().unwrap());
 
             if test_case.has_tz {
-                assert_eq!(time.timezone().local_minus_utc(), -28800);
+                assert_eq!(time.offset().seconds(), -28800);
             }
 
             if test_case.has_wd {
-                assert_eq!(time.weekday(), Weekday::Thu);
+                assert_eq!(time.weekday(), Weekday::Thursday);
             }
         }
 
@@ -1319,11 +1189,14 @@ mod tests {
         ];
 
         // The numeric time represents Thu Feb  4 21:00:57.012345600 PST 2009
-        let time = PST8PDT.timestamp_nanos(1233810057012345600);
+        let time = Timestamp::from_nanosecond(1233810057012345600)
+            .unwrap()
+            .in_tz("America/Los_Angeles")
+            .unwrap();
 
         for tc in test_cases {
             std::println!("Test case {}", tc.name);
-            let result = format(time, &tc.format);
+            let result = format(&time, &tc.format).unwrap();
             assert_eq!(result, tc.result);
         }
     }

@@ -14,11 +14,9 @@ use crate::*;
 
 use anyhow::{bail, Result};
 
-use chrono::{
-    DateTime, Datelike, Days, FixedOffset, Local, Months, SecondsFormat, TimeZone, Timelike, Utc,
-    Weekday,
-};
-use chrono_tz::Tz;
+use jiff::{civil::Weekday, tz::TimeZone, Span as TimeSpan, Timestamp, ZonedDateTime};
+
+use super::datetime::{format_rfc3339, parse_rfc3339};
 
 pub(in crate::builtins) mod compat;
 mod diff;
@@ -45,31 +43,27 @@ fn add_date(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
     let months = ensure_i32(name, &params[2], &args[2])?;
     let days = ensure_i32(name, &params[3], &args[3])?;
 
-    let Some(new_year) = datetime.year().checked_add(years) else {
+    let Some(new_year) = i32::from(datetime.year())
+        .checked_add(years)
+        .and_then(|year| i16::try_from(year).ok())
+    else {
         return Ok(Value::Undefined);
     };
 
-    datetime
-        .with_year(new_year)
-        .and_then(|d| {
-            let rhs = Months::new(months.unsigned_abs());
-            if months >= 0 {
-                d.checked_add_months(rhs)
-            } else {
-                d.checked_sub_months(rhs)
-            }
-        })
-        .and_then(|d| {
-            let rhs = Days::new(days.unsigned_abs() as u64);
-            if days >= 0 {
-                d.checked_add_days(rhs)
-            } else {
-                d.checked_sub_days(rhs)
-            }
-        })
-        .map_or(Ok(Value::Undefined), |d| {
-            safe_timestamp_nanos(span, strict, d.timestamp_nanos_opt())
-        })
+    // Replacing a year rejects February 29 in a non-leap year, whereas
+    // adding months constrains the day to the end of the destination month.
+    let result = datetime
+        .with()
+        .year(new_year)
+        .build()
+        .and_then(|dt| dt.checked_add(TimeSpan::new().try_months(months)?))
+        .and_then(|dt| dt.checked_add(TimeSpan::new().try_days(days)?));
+    match result {
+        Ok(dt) => {
+            safe_timestamp_nanos(span, strict, dt.timestamp().as_nanosecond().try_into().ok())
+        }
+        Err(_) => Ok(Value::Undefined),
+    }
 }
 
 fn clock(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -127,8 +121,8 @@ fn format(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> R
     let (datetime, format) = parse_epoch(name, &params[0], &args[0])?;
 
     let result = match format {
-        Some(format) => compat::format(datetime, layout_with_predefined_formats(&format)),
-        None => datetime.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+        Some(format) => compat::format(&datetime, layout_with_predefined_formats(&format))?,
+        None => format_rfc3339(&datetime, true)?,
     };
 
     Ok(Value::String(result.into()))
@@ -138,7 +132,11 @@ fn now_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Re
     let name = "time.now_ns";
     ensure_args_count(span, name, params, args, 0)?;
 
-    safe_timestamp_nanos(span, strict, Utc::now().timestamp_nanos_opt())
+    safe_timestamp_nanos(
+        span,
+        strict,
+        Timestamp::now().as_nanosecond().try_into().ok(),
+    )
 }
 
 fn parse_duration_ns(
@@ -152,7 +150,7 @@ fn parse_duration_ns(
 
     let value = ensure_string(name, &params[0], &args[0])?;
     let dur = compat::parse_duration(value.as_ref()).map_err(anyhow::Error::msg)?;
-    safe_timestamp_nanos(span, strict, dur.num_nanoseconds())
+    safe_timestamp_nanos(span, strict, dur.as_nanos().try_into().ok())
 }
 
 fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> Result<Value> {
@@ -164,7 +162,11 @@ fn parse_ns(span: &Span, params: &[Ref<Expr>], args: &[Value], strict: bool) -> 
 
     let datetime = compat::parse(layout_with_predefined_formats(&layout), &value)
         .map_err(|err| anyhow::anyhow!("Failed to parse datetime: {}", err))?;
-    safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
+    safe_timestamp_nanos(
+        span,
+        strict,
+        datetime.timestamp().as_nanosecond().try_into().ok(),
+    )
 }
 
 fn parse_rfc3339_ns(
@@ -178,9 +180,13 @@ fn parse_rfc3339_ns(
 
     let value = ensure_string(name, &params[0], &args[0])?;
 
-    let datetime = DateTime::parse_from_rfc3339(&value)
+    let datetime = parse_rfc3339(&value)
         .map_err(|err| anyhow::anyhow!("Failed to parse datetime: {}", err))?;
-    safe_timestamp_nanos(span, strict, datetime.timestamp_nanos_opt())
+    safe_timestamp_nanos(
+        span,
+        strict,
+        datetime.timestamp().as_nanosecond().try_into().ok(),
+    )
 }
 
 fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
@@ -190,13 +196,13 @@ fn weekday(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> 
     let (datetime, _) = parse_epoch(name, &params[0], &args[0])?;
 
     let weekday = match datetime.weekday() {
-        Weekday::Mon => "Monday",
-        Weekday::Tue => "Tuesday",
-        Weekday::Wed => "Wednesday",
-        Weekday::Thu => "Thursday",
-        Weekday::Fri => "Friday",
-        Weekday::Sat => "Saturday",
-        Weekday::Sun => "Sunday",
+        Weekday::Monday => "Monday",
+        Weekday::Tuesday => "Tuesday",
+        Weekday::Wednesday => "Wednesday",
+        Weekday::Thursday => "Thursday",
+        Weekday::Friday => "Friday",
+        Weekday::Saturday => "Saturday",
+        Weekday::Sunday => "Sunday",
     };
 
     Ok(Value::String(weekday.into()))
@@ -219,11 +225,7 @@ fn safe_timestamp_nanos(span: &Span, strict: bool, nanos: Option<i64>) -> Result
     }
 }
 
-fn parse_epoch(
-    fcn: &str,
-    arg: &Expr,
-    val: &Value,
-) -> Result<(DateTime<FixedOffset>, Option<String>)> {
+fn parse_epoch(fcn: &str, arg: &Expr, val: &Value) -> Result<(ZonedDateTime, Option<String>)> {
     match val {
         Value::Number(num) => {
             let ns = num.as_i64().ok_or_else(|| {
@@ -231,7 +233,10 @@ fn parse_epoch(
                     .error("could not convert numeric value of `ns` to int64")
             })?;
 
-            return Ok((Utc.timestamp_nanos(ns).fixed_offset(), None));
+            return Ok((
+                Timestamp::from_nanosecond(i128::from(ns))?.to_zoned_datetime(TimeZone::UTC),
+                None,
+            ));
         }
 
         Value::Array(arr) => match arr.as_slice() {
@@ -241,7 +246,10 @@ fn parse_epoch(
                         .error("could not convert numeric value of `ns` to int64")
                 })?;
 
-                return Ok((Utc.timestamp_nanos(ns).fixed_offset(), None));
+                return Ok((
+                    Timestamp::from_nanosecond(i128::from(ns))?.to_zoned_datetime(TimeZone::UTC),
+                    None,
+                ));
             }
             [Value::Number(num), Value::String(tz), rest @ ..] => {
                 let ns = num.as_i64().ok_or_else(|| {
@@ -249,17 +257,15 @@ fn parse_epoch(
                         .error("could not convert numeric value of `ns` to int64")
                 })?;
 
-                let datetime = match tz.as_ref() {
-                    "UTC" | "" => Utc.timestamp_nanos(ns).fixed_offset(),
-                    "Local" => Local.timestamp_nanos(ns).fixed_offset(),
-                    _ => {
-                        let tz: Tz = match tz.parse() {
-                            Ok(tz) => tz,
-                            Err(e) => bail!(e),
-                        };
-                        tz.timestamp_nanos(ns).fixed_offset()
-                    }
+                let zone = match tz.as_ref() {
+                    "UTC" | "" => TimeZone::UTC,
+                    "Local" => TimeZone::try_system()?,
+                    _ => TimeZone::get(tz)?,
                 };
+                let timestamp = Timestamp::from_nanosecond(i128::from(ns))?;
+                let zoned = timestamp.to_zoned_datetime(zone);
+                // Preserve the fixed-offset arithmetic used by these builtins.
+                let datetime = zoned.with_time_zone(TimeZone::fixed(zoned.offset()));
 
                 let format = match rest.first() {
                     Some(Value::String(format)) => Some(format.to_string()),

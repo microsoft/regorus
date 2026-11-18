@@ -83,6 +83,85 @@ cases:
     # The strict interpreter error is covered by numbers_range_extremes_return_errors.
     skip_interpreter: true
 
+  - note: time_nanosecond_boundaries_and_fraction_precision
+    modules:
+      - |
+        package test
+        result := {
+          "minimum": time.parse_rfc3339_ns("1677-09-21T00:12:43.145224192Z"),
+          "maximum": time.parse_rfc3339_ns("2262-04-11T23:47:16.854775807Z"),
+          "negative": time.format(-1),
+          "milliseconds": time.format(100000000),
+          "microseconds": time.format(1234000),
+          "minimum_duration": time.parse_duration_ns("-2562047h47m16.854775808s"),
+          "leap_second": time.parse_rfc3339_ns("2016-12-31T23:59:60Z"),
+          "layout_leap_second": time.parse_ns("2006-01-02T15:04:05Z07:00", "2016-12-31T23:59:60Z"),
+        }
+    query: data.test.result
+    want_result:
+      minimum: -9223372036854775808
+      maximum: 9223372036854775807
+      negative: "1969-12-31T23:59:59.999999999Z"
+      milliseconds: "1970-01-01T00:00:00.100Z"
+      microseconds: "1970-01-01T00:00:00.001234Z"
+      minimum_duration: -9223372036854775808
+      leap_second: 1483228800000000000
+      layout_leap_second: 1483228800000000000
+
+  - note: time_calendar_arithmetic_keeps_fixed_offsets
+    modules:
+      - |
+        package test
+        result := {
+          "month_end": time.format(time.add_date(time.parse_rfc3339_ns("2024-01-31T12:00:00Z"), 0, 1, 0)),
+          "dst": time.format(time.add_date([time.parse_rfc3339_ns("2024-03-09T12:00:00-05:00"), "America/New_York"], 0, 0, 1)),
+          "summer_clock": time.clock([time.parse_rfc3339_ns("2024-07-01T12:00:00Z"), "America/New_York"]),
+        }
+    query: data.test.result
+    want_result:
+      month_end: "2024-02-29T12:00:00Z"
+      dst: "2024-03-10T17:00:00Z"
+      summer_clock: [8, 0, 0]
+
+  - note: time_replacing_leap_year_is_undefined
+    modules:
+      - |
+        package test
+        result := time.add_date(time.parse_rfc3339_ns("2024-02-29T12:00:00Z"), 1, 0, 0)
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: time_go_legacy_zone_and_literal_round_trip
+    modules:
+      - |
+        package test
+        result := {
+          "legacy_zone": time.format(time.parse_ns("Mon Jan _2 15:04:05 MST 2006", "Thu Feb 4 21:00:57 PST 2010")),
+          "literal_percent": time.format([0, "UTC", "%2006-01-02"]),
+          "parsed_percent": time.parse_ns("%2006-01-02", "%1970-01-01"),
+        }
+    query: data.test.result
+    want_result:
+      legacy_zone: "2010-02-05T05:00:57Z"
+      literal_percent: "%1970-01-01"
+      parsed_percent: 0
+
+  - note: time_calendar_span_overflow_is_undefined
+    modules:
+      - |
+        package test
+        result := time.add_date(0, 0, 2147483647, 0)
+    query: data.test.result
+    want_result: "#undefined"
+
+  - note: time_calendar_day_overflow_is_undefined
+    modules:
+      - |
+        package test
+        result := time.add_date(0, 0, 0, -2147483648)
+    query: data.test.result
+    want_result: "#undefined"
+
   - note: numbers_range_extreme_descending_is_undefined
     input:
       start: 0

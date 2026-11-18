@@ -242,6 +242,14 @@ native `Value`s or using their iterative comparison and output methods.
    | [time.parse_rfc3339_ns](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-time-timeparse_rfc3339_ns)   | `time`  |
    | [time.weekday](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-time-timeweekday)                     | `time`  |
 
+  Time builtins use [Jiff](https://docs.rs/jiff/) with bundled IANA timezone
+  data available on every platform, including WebAssembly. Go-style layouts,
+  signed 64-bit nanosecond results, and fixed-offset calendar arithmetic are
+  preserved. Jiff requires Rust 1.85 or newer. Leap-second input retains its
+  epoch value but is normalized to the following second when formatted, since
+  Jiff does not represent leap seconds. Azure Policy datetime operations use
+  Jiff's supported year range, -9999 through 9999.
+
 - [Cryptography](https://www.openpolicyagent.org/docs/latest/policy-reference/#crypto)
    | Builtin                                                                                                             | Feature  |
    |---------------------------------------------------------------------------------------------------------------------|----------|

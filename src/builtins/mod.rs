@@ -21,6 +21,8 @@ pub mod azure_policy;
 mod bitwise;
 pub mod comparison;
 mod conversions;
+#[cfg(any(feature = "time", feature = "azure_policy"))]
+pub mod datetime;
 
 mod encoding;
 #[cfg(feature = "glob")]

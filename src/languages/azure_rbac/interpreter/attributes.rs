@@ -13,7 +13,7 @@ use super::error::ConditionEvalError;
 use super::eval::Evaluator;
 
 #[cfg(feature = "time")]
-use chrono::{DateTime, Timelike as _};
+use crate::builtins::datetime::parse_rfc3339;
 
 impl<'a> Evaluator<'a> {
     pub(super) fn eval_attribute_reference(
@@ -230,8 +230,8 @@ impl<'a> Evaluator<'a> {
     fn time_of_day_from_rfc3339(value: &str) -> Result<String, ConditionEvalError> {
         #[cfg(feature = "time")]
         {
-            let dt = DateTime::parse_from_rfc3339(value)
-                .map_err(|err| ConditionEvalError::new(err.to_string()))?;
+            let dt =
+                parse_rfc3339(value).map_err(|err| ConditionEvalError::new(err.to_string()))?;
             let time = dt.time();
             Ok(format!(
                 "{:02}:{:02}:{:02}",
