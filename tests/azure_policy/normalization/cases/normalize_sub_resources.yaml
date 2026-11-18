@@ -1157,3 +1157,125 @@ cases:
                 z: 1
         "config.items": []
     round_trip: true
+
+  - note: plain aliases with one ARM path rewrap with the surviving alias's field placement
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/a", "defaultPath": "properties.items", "paths": [] },
+                { "name": "Test/widgets/b", "defaultPath": "properties.items", "paths": [] },
+                {
+                  "name": "Test/widgets/a[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/a[*].children[*].state",
+                  "defaultPath": "properties.items[*].children[*].state",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b[*].children[*].state",
+                  "defaultPath": "properties.items[*].children[*].properties.state",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - children:
+              - properties:
+                  state: s
+                  z: 1
+    round_trip: true
+
+  - note: plain aliases with one ARM path keep a field at the element root when the surviving alias puts it there
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/a", "defaultPath": "properties.items", "paths": [] },
+                { "name": "Test/widgets/b", "defaultPath": "properties.items", "paths": [] },
+                {
+                  "name": "Test/widgets/a[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b[*].children[*].z",
+                  "defaultPath": "properties.items[*].children[*].properties.z",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/a[*].children[*].state",
+                  "defaultPath": "properties.items[*].children[*].properties.state",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/b[*].children[*].state",
+                  "defaultPath": "properties.items[*].children[*].state",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - children:
+              - state: s
+                properties:
+                  z: 1
+    round_trip: true
+
+  - note: renamed outer array with a plain alias reverses element remaps under a differently named inner array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/x", "defaultPath": "properties.items", "paths": [] },
+                {
+                  "name": "Test/widgets/x[*].y[*].state",
+                  "defaultPath": "properties.items[*].other[*].rawstate",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        items:
+          - y:
+              - rawstate: r
+            other:
+              - rawstate: t
+    round_trip: true

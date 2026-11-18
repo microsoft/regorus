@@ -18,8 +18,9 @@ use super::helpers::find_key_ci;
 /// Sub-resource array element envelope fields that remain at the element root.
 const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 
-/// The keys leading to a sub-resource array and its envelope fields.
-type Target<'a> = (Vec<&'a str>, BTreeSet<String>);
+/// The keys leading to a sub-resource array, and the envelope fields of each
+/// sub-resource short name that resolves there.
+type Target<'a> = (Vec<&'a str>, BTreeMap<&'a str, BTreeSet<String>>);
 
 /// The writes of phases 2a, 2b and 2c, in order. Each records where it wrote
 /// (`true` for the ARM root rather than `properties`, then lowercase keys)
@@ -107,8 +108,7 @@ pub fn rewrap_sub_resource_arrays(
         .collect();
 
     // Several short names can resolve to the same array (two plain aliases
-    // with one ARM path). Wrap each array once, keeping a field at the
-    // element root if any of its names leaves it there.
+    // with one ARM path). Wrap each array once.
     let mut targets: BTreeMap<(bool, Vec<String>), Target<'_>> = BTreeMap::new();
     for sub_array_path in sub_arrays {
         let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
@@ -117,25 +117,35 @@ pub fn rewrap_sub_resource_arrays(
         let id = keys.iter().map(|key| key.to_ascii_lowercase()).collect();
         targets
             .entry((at_root, id))
-            .or_insert_with(|| (keys, BTreeSet::new()))
+            .or_insert_with(|| (keys, BTreeMap::new()))
             .1
-            .extend(envelope_fields);
+            .insert(sub_array_path.as_str(), envelope_fields);
     }
 
     // Deepest first, so an outer array is wrapped after the arrays inside it.
     let mut sorted: Vec<_> = targets.into_iter().collect();
     sorted.sort_by_key(|((_, id), _)| core::cmp::Reverse(id.len()));
 
-    for ((at_root, _), (keys, envelope_fields)) in sorted {
+    for ((at_root, _), (keys, by_name)) in sorted {
         // A later write may have replaced the flattened array with a value
         // the normalizer left wrapped (another plain alias with the same ARM
         // path, or one over the array's parent). Wrap only a flattened array.
-        if writes
-            .survivor(at_root, &keys)
-            .is_some_and(|name| !sub_arrays.contains(&name))
+        let survivor = writes.survivor(at_root, &keys);
+        if survivor
+            .as_ref()
+            .is_some_and(|name| !sub_arrays.contains(name))
         {
             continue;
         }
+        // Classify by the name whose value is there. Otherwise keep a field
+        // at the element root if any of the names leaves it there.
+        let envelope_fields = survivor
+            .as_deref()
+            .and_then(|name| by_name.get(name))
+            .map_or_else(
+                || by_name.values().flatten().cloned().collect(),
+                Clone::clone,
+            );
         let Some((first, rest)) = keys.split_first() else {
             continue;
         };
