@@ -88,6 +88,8 @@ const NOT_COUNT_IN: &str = "y if not count(input.v) in [1]";
 const NOT_COUNT_ARRAY: &str = "y if not [count(input.v)] == [1]";
 const NOT_COUNT_BARE: &str = "y if not count(input.v)";
 const NOT_DIV: &str = "y if not input.a / input.b == 1";
+const NOT_NESTED_ARITH: &str = "y if not count(input.v) + 1 == 2";
+const NOT_NESTED_ARITH_IN: &str = "y if not 1 + count(input.v) in {2}";
 const NOT_NESTED_ARG: &str = r#"y if not startswith(upper(input.s), "a")"#;
 const NOT_FAILING_CALL: &str = r#"y if not startswith(input.s, "a")"#;
 const NOT_CALL_CHAIN: &str = "y if not abs(to_number(input.v)) == 1";
@@ -203,6 +205,38 @@ fn cases() -> Vec<Case> {
             error("divide by zero", UNDEFINED),
         ),
         same("divide twin", NOT_DIV, r#"{"a": 1, "b": 2}"#, "true"),
+        case(
+            "nested arithmetic",
+            NOT_NESTED_ARITH,
+            r#"{"v": 5}"#,
+            V(UNDEFINED),
+            error(COUNT_ERROR, UNDEFINED),
+        ),
+        same(
+            "nested arithmetic twin",
+            NOT_NESTED_ARITH,
+            r#"{"v": [1, 2]}"#,
+            "true",
+        ),
+        same(
+            "nested arithmetic twin equal",
+            NOT_NESTED_ARITH,
+            r#"{"v": [1]}"#,
+            UNDEFINED,
+        ),
+        case(
+            "nested arithmetic membership",
+            NOT_NESTED_ARITH_IN,
+            r#"{"v": 5}"#,
+            V(UNDEFINED),
+            error(COUNT_ERROR, UNDEFINED),
+        ),
+        same(
+            "nested arithmetic membership twin",
+            NOT_NESTED_ARITH_IN,
+            r#"{"v": [1, 2]}"#,
+            "true",
+        ),
         case(
             "nested call argument",
             NOT_NESTED_ARG,
