@@ -545,7 +545,10 @@ fn negated_nested_call_fails_query() -> Result<()> {
         engine.set_input(Value::from_json_str(input)?);
         let results = engine.eval_query(query.to_string(), false)?;
         assert_eq!(results.result.len(), want, "input {input}: {results:?}");
-        assert!(!engine.eval_allow_query(query.to_string(), false), "input {input}");
+        assert!(
+            !engine.eval_allow_query(query.to_string(), false),
+            "input {input}"
+        );
     }
     Ok(())
 }
