@@ -51,6 +51,9 @@ pub fn complete_rule_report() -> ExplanationReport {
                 definition(1, 1, Outcome::Success, 7, vec![token]),
             ],
             results: None,
+            attempts: None,
+            scopes: None,
+            calls: None,
         }],
         checks: vec![
             ConditionSite {
@@ -101,6 +104,9 @@ pub fn partial_set_report() -> ExplanationReport {
             emissions: vec![emission(None, Value::from("bob"), vec![in_users.clone()])],
             definitions: vec![definition(0, 0, Outcome::Success, 3, vec![in_users])],
             results: None,
+            attempts: None,
+            scopes: None,
+            calls: None,
         }],
         checks: vec![ConditionSite {
             site_id: 0,
@@ -149,6 +155,9 @@ pub fn partial_object_report() -> ExplanationReport {
             )],
             definitions: vec![definition(0, 0, Outcome::Success, 3, vec![in_tags])],
             results: None,
+            attempts: None,
+            scopes: None,
+            calls: None,
         }],
         checks: vec![ConditionSite {
             site_id: 0,
@@ -187,6 +196,8 @@ pub fn attributed_report() -> ExplanationReport {
     let proof = Derivation {
         definition: 0,
         body: 0,
+        attempt: None,
+        conditionality: None,
         conditions: vec![ConditionExplanation {
             site_id: 2,
             owner: owner("data.test.deny", 0),
@@ -196,7 +207,7 @@ pub fn attributed_report() -> ExplanationReport {
             witness: None,
             binding: None,
         }],
-        bindings: vec![
+        bindings: Some(vec![
             IterationBinding {
                 site_id: 0,
                 collection: 0,
@@ -209,11 +220,12 @@ pub fn attributed_report() -> ExplanationReport {
                 key: ReportedValue::Known(Value::from(0_u64)),
                 value: ReportedValue::Known(Value::from("public")),
             },
-        ],
+        ]),
     };
     let result = ResultExplanation {
         key: None,
         value: ReportedValue::Known(Value::from("public")),
+        conditionality: None,
         derivations_total: Count::Exact(2),
         distinct_elements: vec![
             distinct(0, "input.resources[_]", 0, 2),
@@ -241,6 +253,9 @@ pub fn attributed_report() -> ExplanationReport {
             emissions: Vec::new(),
             definitions: Vec::new(),
             results: Some(vec![result]),
+            attempts: None,
+            scopes: None,
+            calls: None,
         }],
         checks: vec![
             iteration(0, "some r in input.resources"),
@@ -272,6 +287,7 @@ pub fn conflict_report() -> ExplanationReport {
             call_instance: 0,
             kind: RuleKind::Complete,
             outcome: RuleOutcome::Conflict {
+                key: None,
                 values: vec![
                     ReportedValue::Known(Value::from(true)),
                     ReportedValue::Known(Value::from(false)),
@@ -281,6 +297,9 @@ pub fn conflict_report() -> ExplanationReport {
             emissions: Vec::new(),
             definitions: Vec::new(),
             results: None,
+            attempts: None,
+            scopes: None,
+            calls: None,
         }],
         checks: Vec::new(),
     }
@@ -549,6 +568,7 @@ pub fn known(value: Value, path: Option<&str>) -> Operand {
         value: ReportedValue::Known(value),
         path: path.map(String::from),
         concrete_path: ConcretePath::NotCaptured,
+        origins: None,
     }
 }
 
@@ -557,6 +577,7 @@ pub fn redacted(path: &str) -> Operand {
         value: ReportedValue::Redacted,
         path: Some(String::from(path)),
         concrete_path: ConcretePath::NotCaptured,
+        origins: None,
     }
 }
 
@@ -574,6 +595,8 @@ pub fn owner(rule: &str, call_instance: u64) -> ConditionOwner {
     ConditionOwner {
         rule: String::from(rule),
         call_instance,
+        attempt: None,
+        scope: None,
     }
 }
 
