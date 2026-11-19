@@ -17,8 +17,7 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Resource limits and conflicting outputs must never be absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
         self.builtin_limit_exceeded
             || matches!(
@@ -31,6 +30,7 @@ impl RegoVM {
                     | VmError::SerializationDepthExceeded { .. }
                     | VmError::InstructionLimitExceeded { .. }
                     | VmError::NumericOverflow { .. }
+                    | VmError::RuleOutputConflict { .. }
             )
     }
 

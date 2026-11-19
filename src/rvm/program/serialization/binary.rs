@@ -168,7 +168,7 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            6 | 7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -271,7 +271,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=7) => Ok(true),
             _ => Ok(false),
         }
     }
@@ -368,6 +368,31 @@ mod tests {
         program.literals = alloc::vec![Value::from(1.5_f64), Value::from("x")];
         program.rule_tree = Value::from(7_i64);
         program
+    }
+
+    #[test]
+    fn version_six_remains_complete_and_future_versions_are_rejected() {
+        let program = sample_program();
+        let mut bytes = program.serialize_binary().expect("serialize program");
+        bytes[4..8].copy_from_slice(&6_u32.to_le_bytes());
+        assert!(Program::can_deserialize(&bytes).expect("inspect version 6"));
+        let restored = match Program::deserialize_binary(&bytes).expect("read version 6") {
+            DeserializationResult::Complete(restored_program) => restored_program,
+            DeserializationResult::Partial(_) => panic!("version 6 must not need recompilation"),
+        };
+        assert!(matches!(
+            restored.instructions.as_slice(),
+            [Instruction::LoadNull { dest: 0 }]
+        ));
+        assert_eq!(restored.literals, program.literals);
+        assert_eq!(restored.rule_tree, program.rule_tree);
+        assert_eq!(restored.entry_points, program.entry_points);
+
+        bytes[4..8].copy_from_slice(&8_u32.to_le_bytes());
+        assert!(!Program::can_deserialize(&bytes).expect("inspect future version"));
+        assert!(Program::deserialize_binary(&bytes)
+            .expect_err("reject future version")
+            .contains("Unsupported version 8"));
     }
 
     /// Byte range of each section within an assembled blob.
