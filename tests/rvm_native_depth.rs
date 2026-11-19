@@ -166,14 +166,12 @@ fn check_configuration(scenarios: &Scenarios) {
         }
         result = configured.resume(None);
     }
-    assert!(matches!(
-        result,
-        Err(VmError::RuleCallDepthExceeded { limit: 0, .. })
-    ));
+    assert_eq!(result.unwrap(), Value::from(42));
     assert!(matches!(
         configured.execution_state(),
-        ExecutionState::Error { .. }
+        ExecutionState::Completed { .. }
     ));
+    assert_eq!(configured.max_native_rule_call_depth(), 0);
     assert!(configured.get_call_stack().is_empty());
 }
 
@@ -763,10 +761,8 @@ fn native_configuration_limits() {
             }
             result = vm.resume(None);
         }
-        assert!(matches!(
-            result,
-            Err(VmError::RuleCallDepthExceeded { limit: 17, .. })
-        ));
+        assert_eq!(result.unwrap(), Value::from(42));
+        assert_eq!(vm.max_native_rule_call_depth(), 18);
         assert!(vm.get_call_stack().is_empty());
         vm.set_max_native_rule_call_depth(17);
         vm.set_step_mode(false);

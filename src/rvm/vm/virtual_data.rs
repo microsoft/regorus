@@ -8,6 +8,9 @@ use alloc::vec::Vec;
 use core::convert::TryFrom as _;
 
 use super::errors::{Result, VmError};
+use super::execution_model::{
+    ExecutionFrame, ExecutionMode, ExecutionState, FrameKind, VirtualDataLookupFrameData,
+};
 use super::machine::RegoVM;
 
 impl RegoVM {
@@ -95,34 +98,8 @@ impl RegoVM {
                         if let Some(rule_index) = rule_idx.as_u64() {
                             // Walk the evaluated cache using root_path then relative_path,
                             // without allocating a combined full_cache_path Vec.
-                            let cached_result = {
-                                let mut cache_lookup = &self.evaluated;
-                                let mut path_exists = true;
-
-                                for path_component in root_path.iter().chain(relative_path.iter()) {
-                                    if let Value::Object(ref map) = *cache_lookup {
-                                        if let Some(next_value) = map.get(path_component) {
-                                            cache_lookup = next_value;
-                                        } else {
-                                            path_exists = false;
-                                            break;
-                                        }
-                                    } else {
-                                        path_exists = false;
-                                        break;
-                                    }
-                                }
-
-                                if path_exists {
-                                    if let Value::Object(ref map) = *cache_lookup {
-                                        map.get(&Value::Undefined).cloned()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            };
+                            let cached_result =
+                                self.cached_virtual_rule_result(root_path, &relative_path);
 
                             let rule_result = if let Some(cached) = cached_result {
                                 self.cache_hits =
@@ -247,6 +224,54 @@ impl RegoVM {
             }
         }
 
+        if matches!(self.execution_mode, ExecutionMode::Suspendable)
+            && (matches!(current_node, Value::Number(_))
+                || (matches!(current_node, Value::Object(_))
+                    && components_consumed == params.path_components.len()))
+        {
+            let mut root_path = Vec::new();
+            for (index, component) in params
+                .path_components
+                .iter()
+                .take(components_consumed)
+                .enumerate()
+            {
+                let key = self.literal_or_register_value(component)?;
+                root_path.push(if string_fallback_indices.contains(&index) {
+                    Value::from(key.to_string())
+                } else {
+                    key
+                });
+            }
+            let remaining_path = params
+                .path_components
+                .iter()
+                .skip(components_consumed)
+                .map(|component| self.literal_or_register_value(component))
+                .collect::<Result<Vec<_>>>()?;
+            let result = if matches!(current_node, Value::Object(_)) {
+                match *data_ref {
+                    Value::Undefined => Value::new_object(),
+                    _ => data_ref.clone(),
+                }
+            } else {
+                Value::Undefined
+            };
+            self.execution_stack.push(ExecutionFrame::new(
+                self.pc,
+                FrameKind::VirtualDataLookup(VirtualDataLookupFrameData {
+                    return_pc: self.pc,
+                    dest_reg: params.dest,
+                    root_path,
+                    remaining_path,
+                    pending: alloc::vec![(current_node.clone(), Vec::new())],
+                    current_path: None,
+                    result,
+                }),
+            ));
+            return Ok(());
+        }
+
         match *current_node {
             Value::Number(ref rule_index_value) => {
                 if let Some(rule_index) = rule_index_value.as_u64() {
@@ -327,6 +352,104 @@ impl RegoVM {
         }
 
         Ok(())
+    }
+
+    fn cached_virtual_rule_result(
+        &self,
+        root_path: &[Value],
+        relative_path: &[Value],
+    ) -> Option<Value> {
+        let mut node = &self.evaluated;
+        for key in root_path.iter().chain(relative_path) {
+            node = match *node {
+                Value::Object(ref map) => map.get(key)?,
+                _ => return None,
+            };
+        }
+        match *node {
+            Value::Object(ref map) => map.get(&Value::Undefined).cloned(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn resume_virtual_data_lookup(
+        &mut self,
+        mut data: VirtualDataLookupFrameData,
+    ) -> Result<()> {
+        self.pc = data.return_pc;
+        if let Some(path) = data.current_path.take() {
+            let result = self.get_register(data.dest_reg)?.clone();
+            Self::set_nested_value(&mut data.result, &path, result.clone())?;
+            let mut cache_path = data.root_path.clone();
+            cache_path.extend_from_slice(&path);
+            cache_path.push(Value::Undefined);
+            Self::set_nested_value_static(&mut self.evaluated, &cache_path, result)?;
+        }
+        while let Some((node, path)) = data.pending.pop() {
+            self.charge_virtual_lookup_work()?;
+            match node {
+                Value::Object(map) => {
+                    let mut children = Vec::new();
+                    for (key, child) in map.iter() {
+                        self.charge_virtual_lookup_work()?;
+                        let mut child_path = path.clone();
+                        child_path.push(key.clone());
+                        children.push((child.clone(), child_path));
+                    }
+                    children.reverse();
+                    data.pending.extend(children);
+                }
+                Value::Number(index) => {
+                    let rule_index = index
+                        .as_u64()
+                        .and_then(|value| u16::try_from(value).ok())
+                        .ok_or_else(|| VmError::InvalidRuleIndex {
+                            rule_index: Value::Number(index).into(),
+                            pc: self.pc,
+                        })?;
+                    if let Some(cached) = self.cached_virtual_rule_result(&data.root_path, &path) {
+                        self.cache_hits =
+                            self.checked_add_one(self.cache_hits, "cache hits counter")?;
+                        Self::set_nested_value(&mut data.result, &path, cached)?;
+                    } else {
+                        let dest = data.dest_reg;
+                        data.current_path = Some(path);
+                        self.execution_stack.push(ExecutionFrame::new(
+                            self.pc,
+                            FrameKind::VirtualDataLookup(data),
+                        ));
+                        return self.execute_call_rule_suspendable(dest, rule_index, None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut leaf = &data.result;
+        for key in &data.remaining_path {
+            leaf = &leaf[key];
+        }
+        self.set_register(data.dest_reg, leaf.clone())?;
+        if let Some(parent) = self.execution_stack.last_mut() {
+            parent.pc = data.return_pc.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn charge_virtual_lookup_work(&mut self) -> Result<()> {
+        if self.executed_instructions >= self.max_instructions {
+            let error = VmError::InstructionLimitExceeded {
+                limit: self.max_instructions,
+                executed: self.executed_instructions,
+                pc: self.pc,
+            };
+            self.execution_state = ExecutionState::Error {
+                error: error.clone(),
+            };
+            return Err(error);
+        }
+        self.executed_instructions = self.executed_instructions.saturating_add(1);
+        self.execution_timer_tick(1)?;
+        self.memory_check()
     }
 
     fn literal_or_register_value(&self, source: &LiteralOrRegister) -> Result<Value> {
