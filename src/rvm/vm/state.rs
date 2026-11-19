@@ -78,16 +78,18 @@ impl RegoVM {
 
     /// Release state after a failed budgeted suspendable execution.
     ///
-    /// Resource failures also release state; other unbudgeted errors preserve legacy state.
+    /// Strict and resource failures also release state; other unbudgeted errors preserve legacy state.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(
-            error,
-            VmError::RuleCallDepthExceeded { .. }
-                | VmError::SerializationDepthExceeded { .. }
-                | VmError::TimeLimitExceeded { .. }
-                | VmError::MemoryLimitExceeded { .. }
-        ) {
+        if (self.strict_builtin_errors && self.is_fatal_vm_error(&error))
+            || matches!(
+                error,
+                VmError::RuleCallDepthExceeded { .. }
+                    | VmError::SerializationDepthExceeded { .. }
+                    | VmError::TimeLimitExceeded { .. }
+                    | VmError::MemoryLimitExceeded { .. }
+            )
+        {
             return self.fail_run_to_completion(error);
         }
         if self.active_memory_budget_config.is_none() {
@@ -104,12 +106,14 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
-        if matches!(
-            error,
-            VmError::RuleCallDepthExceeded { .. }
-                | VmError::SerializationDepthExceeded { .. }
-                | VmError::TimeLimitExceeded { .. }
-        ) {
+        if (self.strict_builtin_errors && self.is_fatal_vm_error(&error))
+            || matches!(
+                error,
+                VmError::RuleCallDepthExceeded { .. }
+                    | VmError::SerializationDepthExceeded { .. }
+                    | VmError::TimeLimitExceeded { .. }
+            )
+        {
             return self.fail_run_to_completion(error);
         }
         error
