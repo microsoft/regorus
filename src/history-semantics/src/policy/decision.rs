@@ -1,9 +1,12 @@
 //! The verdict a policy's entry point returns.
 
 use alloc::{string::String, vec::Vec};
+use vstd::prelude::*;
 
 /// The verdict a policy returns for one candidate event: grant, or a single collapsed soft-error
 /// carrying the precondition it failed and the fixes that would unblock it.
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyDecision {
     /// Request is legal under the policy.

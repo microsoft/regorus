@@ -8,8 +8,9 @@ extern crate alloc;
 #[cfg(any(feature = "std", test, feature = "test-util"))]
 extern crate std;
 
+pub mod bits;
 pub mod compile;
-pub mod error;
+pub mod errors;
 pub mod event;
 pub mod flat;
 pub mod flatten;
@@ -22,9 +23,11 @@ pub mod scope;
 pub mod kernel;
 
 #[cfg(verus_keep_ghost)]
+pub mod spec;
+#[cfg(verus_keep_ghost)]
 pub mod verify;
 
 pub use compile::{FlatEncoder, lower_flat};
-pub use error::{CompileError, HistoryError};
+pub use errors::{CompileError, HistoryError};
 pub use event::{Grant, Request};
-pub use flatten::{ComponentValue, flatten_rule};
+pub use flatten::flatten_rule;

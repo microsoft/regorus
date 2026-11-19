@@ -6,7 +6,7 @@ use junco_core::observation::ObservationWorld;
 
 fn pair<C>() -> FlatPair<C> {
     FlatPair {
-        head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+        head: vec![FlatHead::Any, FlatHead::Any, FlatHead::Any],
         tests: Vec::new(),
         regexes: vec![FlatRegex::Epsilon],
         root: 0,
@@ -33,15 +33,15 @@ fn rejects_forward_cycles_and_missing_tests() {
 fn rejects_cross_domain_and_unbound_variables() {
     let mut source = pair::<String>();
     source.tests.push(FlatTest::Atom {
-        field: Component::Action,
-        term: FlatTerm::Variable(Component::Principal),
+        field: Component(1),
+        term: FlatTerm::Variable(Component(0)),
         positive: true,
     });
     assert!(source.validate().is_err());
     source.tests.clear();
     source.tests.push(FlatTest::Atom {
-        field: Component::Principal,
-        term: FlatTerm::Variable(Component::Principal),
+        field: Component(0),
+        term: FlatTerm::Variable(Component(0)),
         positive: false,
     });
     assert!(source.validate().is_err());
@@ -60,8 +60,8 @@ fn validation_preserves_exact_errors_and_precedence() {
         "history test reference must point to an earlier node"
     );
     source.tests = vec![FlatTest::Atom {
-        field: Component::Resource,
-        term: FlatTerm::Variable(Component::Resource),
+        field: Component(2),
+        term: FlatTerm::Variable(Component(2)),
         positive: true,
     }];
     assert_eq!(
@@ -109,10 +109,10 @@ fn checks_every_reference_variant() {
             "history regex reference must point to an earlier node"
         );
     }
-    for field in [Component::Principal, Component::Action, Component::Resource] {
-        for variable in [Component::Principal, Component::Action, Component::Resource] {
+    for field in [Component(0), Component(1), Component(2)] {
+        for variable in [Component(0), Component(1), Component(2)] {
             let mut source = pair::<()>();
-            source.head = [FlatHead::Bind, FlatHead::Bind, FlatHead::Bind];
+            source.head = vec![FlatHead::Bind, FlatHead::Bind, FlatHead::Bind];
             source.tests = vec![FlatTest::Atom {
                 field,
                 term: FlatTerm::Variable(variable),
@@ -126,7 +126,7 @@ fn checks_every_reference_variant() {
 #[test]
 fn accepts_repeated_edges_unused_nodes_and_non_last_root() {
     let source = FlatPair::<()> {
-        head: [FlatHead::Any, FlatHead::Bind, FlatHead::Any],
+        head: vec![FlatHead::Any, FlatHead::Bind, FlatHead::Any],
         tests: vec![
             FlatTest::Bool(true),
             FlatTest::And(vec![0, 0]),
@@ -152,12 +152,12 @@ fn accepts_repeated_edges_unused_nodes_and_non_last_root() {
 fn empty_operators_and_generic_constants_need_no_runtime_or_equality() {
     struct Opaque;
     let source = FlatPair {
-        head: [FlatHead::Constant(Opaque), FlatHead::Any, FlatHead::Bind],
+        head: vec![FlatHead::Constant(Opaque), FlatHead::Any, FlatHead::Bind],
         tests: vec![
             FlatTest::And(vec![]),
             FlatTest::Or(vec![]),
             FlatTest::Atom {
-                field: Component::Action,
+                field: Component(1),
                 term: FlatTerm::Constant(Opaque),
                 positive: false,
             },
@@ -218,7 +218,7 @@ impl Limits for ProbeLimits {
 
 #[test]
 fn builder_preserves_supplied_topology_and_allows_any_valid_root() {
-    let mut builder = FlatBuilder::<()>::new([FlatHead::Any, FlatHead::Any, FlatHead::Any]);
+    let mut builder = FlatBuilder::<()>::new(vec![FlatHead::Any, FlatHead::Any, FlatHead::Any]);
     let mut limits = ProbeLimits::default();
     let mut world = ObservationWorld;
     assert_eq!(
@@ -259,7 +259,7 @@ fn builder_preserves_supplied_topology_and_allows_any_valid_root() {
 
 #[test]
 fn builder_rejects_bad_nodes_without_mutating_prefixes() {
-    let mut builder = FlatBuilder::<()>::new([FlatHead::Any, FlatHead::Bind, FlatHead::Any]);
+    let mut builder = FlatBuilder::<()>::new(vec![FlatHead::Any, FlatHead::Bind, FlatHead::Any]);
     let mut limits = Unmetered;
     let mut world = ObservationWorld;
     let invalid = HistoryError::InvalidPolicy {
@@ -270,13 +270,13 @@ fn builder_rejects_bad_nodes_without_mutating_prefixes() {
         FlatTest::And(vec![0]),
         FlatTest::Or(vec![u32::MAX]),
         FlatTest::Atom {
-            field: Component::Action,
-            term: FlatTerm::Variable(Component::Principal),
+            field: Component(1),
+            term: FlatTerm::Variable(Component(0)),
             positive: true,
         },
         FlatTest::Atom {
-            field: Component::Resource,
-            term: FlatTerm::Variable(Component::Resource),
+            field: Component(2),
+            term: FlatTerm::Variable(Component(2)),
             positive: false,
         },
     ] {
@@ -309,8 +309,8 @@ fn builder_rejects_bad_nodes_without_mutating_prefixes() {
     assert_eq!(
         builder.test(
             FlatTest::Atom {
-                field: Component::Action,
-                term: FlatTerm::Variable(Component::Action),
+                field: Component(1),
+                term: FlatTerm::Variable(Component(1)),
                 positive: true,
             },
             &mut limits,
@@ -327,7 +327,7 @@ fn builder_rejects_bad_nodes_without_mutating_prefixes() {
 
 #[test]
 fn builder_limit_failures_preserve_all_existing_nodes() {
-    let mut builder = FlatBuilder::<()>::new([FlatHead::Any, FlatHead::Any, FlatHead::Any]);
+    let mut builder = FlatBuilder::<()>::new(vec![FlatHead::Any, FlatHead::Any, FlatHead::Any]);
     let mut limits = ProbeLimits::default();
     let mut world = ObservationWorld;
     builder
@@ -365,7 +365,7 @@ fn builder_limit_failures_preserve_all_existing_nodes() {
 
 #[test]
 fn deep_shared_dag_stays_flat() {
-    let mut builder = FlatBuilder::<()>::new([FlatHead::Any, FlatHead::Any, FlatHead::Any]);
+    let mut builder = FlatBuilder::<()>::new(vec![FlatHead::Any, FlatHead::Any, FlatHead::Any]);
     let mut limits = Unmetered;
     let mut world = ObservationWorld;
     builder
@@ -399,9 +399,9 @@ fn deep_shared_dag_stays_flat() {
 
 #[cfg(feature = "serde")]
 #[test]
-fn serde_keeps_version_eight_names_variant_order_and_field_order() {
+fn serde_keeps_version_nine_names_variant_order_and_field_order() {
     let source = FlatPair {
-        head: [
+        head: vec![
             FlatHead::Any,
             FlatHead::Constant(String::from("x")),
             FlatHead::Bind,
@@ -409,7 +409,7 @@ fn serde_keeps_version_eight_names_variant_order_and_field_order() {
         tests: vec![
             FlatTest::Bool(true),
             FlatTest::Atom {
-                field: Component::Action,
+                field: Component(1),
                 term: FlatTerm::Constant(String::from("a")),
                 positive: false,
             },
@@ -430,27 +430,23 @@ fn serde_keeps_version_eight_names_variant_order_and_field_order() {
         root: 3,
     };
     assert_eq!(source.validate(), Ok(()));
-    let json = r#"{"head":["Any",{"Constant":"x"},"Bind"],"tests":[{"Bool":true},{"Atom":{"field":"Action","term":{"Constant":"a"},"positive":false}},{"And":[0,1]},{"Or":[]}],"regexes":["Empty","All","Epsilon",{"Test":1},{"Concat":[2,3]},{"Union":[]},{"Intersect":[]},{"Star":4},{"Complement":7}],"root":3}"#;
+    let json = r#"{"head":["Any",{"Constant":"x"},"Bind"],"tests":[{"Bool":true},{"Atom":{"field":1,"term":{"Constant":"a"},"positive":false}},{"And":[0,1]},{"Or":[]}],"regexes":["Empty","All","Epsilon",{"Test":1},{"Concat":[2,3]},{"Union":[]},{"Intersect":[]},{"Star":4},{"Complement":7}],"root":3}"#;
     assert_eq!(serde_json::to_string(&source).unwrap(), json);
     assert_eq!(
         serde_json::from_str::<FlatPair<String>>(json).unwrap(),
         source
     );
-    // Literal old-layout bytes, not an expectation generated by the serializer under test.
+    // Literal version-9 bytes, including the head length and numeric coordinate.
     let bytes = [
-        0, 1, 1, b'x', 2, 4, 0, 1, 1, 1, 0, 1, b'a', 0, 2, 2, 0, 1, 3, 0, 9, 0, 1, 2, 3, 1, 4, 2,
-        2, 3, 5, 0, 6, 0, 7, 4, 8, 7, 3,
+        3, 0, 1, 1, b'x', 2, 4, 0, 1, 1, 1, 0, 1, b'a', 0, 2, 2, 0, 1, 3, 0, 9, 0, 1, 2, 3, 1, 4,
+        2, 2, 3, 5, 0, 6, 0, 7, 4, 8, 7, 3,
     ];
     assert_eq!(postcard::to_allocvec(&source).unwrap(), bytes);
     assert_eq!(
         postcard::from_bytes::<FlatPair<String>>(&bytes).unwrap(),
         source
     );
-    for (field, ordinal) in [
-        (Component::Principal, 0),
-        (Component::Action, 1),
-        (Component::Resource, 2),
-    ] {
+    for (field, ordinal) in [(Component(0), 0), (Component(1), 1), (Component(2), 2)] {
         assert_eq!(
             postcard::to_allocvec(&FlatTerm::<String>::Variable(field)).unwrap(),
             vec![1, ordinal]

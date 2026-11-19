@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use history_syntax::{Component, Event};
+use history_syntax::{Component, Component3, Event, N3};
 use junco_core::HistoryError;
 use junco_core::compile::{FlatEncoder, lower_flat, validate_component};
 use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
-use junco_core::flatten::ComponentValue;
 use junco_core::limits::{LimitError, Limits, Unmetered};
 use junco_core::observation::ObservationWorld;
 
@@ -63,39 +62,58 @@ impl FlatEncoder<Value> for Encoder {
     }
 }
 
+#[test]
+fn custom_encoder_may_report_structural_errors() {
+    struct CustomEncoder;
+    impl FlatEncoder<Value> for CustomEncoder {
+        fn encode(&mut self, _: Component, _: &Value) -> Result<u64, HistoryError> {
+            Err(HistoryError::invariant("custom encoder failure"))
+        }
+    }
+    assert_eq!(
+        lower_flat(
+            &source(),
+            &mut CustomEncoder,
+            &mut Unmetered,
+            &mut ObservationWorld
+        ),
+        Err(HistoryError::invariant("custom encoder failure")),
+    );
+}
+
 fn source() -> FlatPair<Value> {
     FlatPair {
-        head: [
+        head: vec![
             FlatHead::Constant(value(7, 1)),
             FlatHead::Constant(value(7, 11)),
             FlatHead::Bind,
         ],
         tests: vec![
             FlatTest::Atom {
-                field: Component::Principal,
+                field: Component(0),
                 term: FlatTerm::Constant(value(7, 2)),
                 positive: true,
             },
             FlatTest::Atom {
-                field: Component::Principal,
+                field: Component(0),
                 term: FlatTerm::Constant(value(8, 3)),
                 positive: false,
             },
             FlatTest::Atom {
-                field: Component::Action,
+                field: Component(1),
                 term: FlatTerm::Constant(value(7, 12)),
                 positive: true,
             },
             FlatTest::Atom {
-                field: Component::Resource,
-                term: FlatTerm::Variable(Component::Resource),
+                field: Component(2),
+                term: FlatTerm::Variable(Component(2)),
                 positive: false,
             },
             FlatTest::And(vec![0, 0, 1]),
             FlatTest::Or(vec![]),
             // Unreachable stored constants still pass through the single encoding pass.
             FlatTest::Atom {
-                field: Component::Resource,
+                field: Component(2),
                 term: FlatTerm::Constant(value(7, 21)),
                 positive: true,
             },
@@ -120,7 +138,7 @@ fn one_pass_preserves_equality_domains_and_exact_topology() {
     let numeric = lower_flat(&source, &mut encoder, &mut Unmetered, &mut ObservationWorld).unwrap();
     assert_eq!(
         numeric.head,
-        [
+        vec![
             FlatHead::Constant(101),
             FlatHead::Constant(201),
             FlatHead::Bind
@@ -130,29 +148,29 @@ fn one_pass_preserves_equality_domains_and_exact_topology() {
         numeric.tests,
         vec![
             FlatTest::Atom {
-                field: Component::Principal,
+                field: Component(0),
                 term: FlatTerm::Constant(101),
                 positive: true
             },
             FlatTest::Atom {
-                field: Component::Principal,
+                field: Component(0),
                 term: FlatTerm::Constant(102),
                 positive: false
             },
             FlatTest::Atom {
-                field: Component::Action,
+                field: Component(1),
                 term: FlatTerm::Constant(201),
                 positive: true
             },
             FlatTest::Atom {
-                field: Component::Resource,
-                term: FlatTerm::Variable(Component::Resource),
+                field: Component(2),
+                term: FlatTerm::Variable(Component(2)),
                 positive: false
             },
             FlatTest::And(vec![0, 0, 1]),
             FlatTest::Or(vec![]),
             FlatTest::Atom {
-                field: Component::Resource,
+                field: Component(2),
                 term: FlatTerm::Constant(301),
                 positive: true
             },
@@ -163,12 +181,12 @@ fn one_pass_preserves_equality_domains_and_exact_topology() {
     assert_eq!(
         encoder.calls,
         vec![
-            (Component::Principal, 7, 1),
-            (Component::Action, 7, 11),
-            (Component::Principal, 7, 2),
-            (Component::Principal, 8, 3),
-            (Component::Action, 7, 12),
-            (Component::Resource, 7, 21),
+            (Component(0), 7, 1),
+            (Component(1), 7, 11),
+            (Component(0), 7, 2),
+            (Component(0), 8, 3),
+            (Component(1), 7, 12),
+            (Component(2), 7, 21),
         ]
     );
     assert_eq!(encoder.maps[0].len(), 2);
@@ -191,15 +209,15 @@ fn every_structural_failure_precedes_interning() {
             3 => source.root = 99,
             4 => {
                 source.tests[0] = FlatTest::Atom {
-                    field: Component::Principal,
-                    term: FlatTerm::Variable(Component::Resource),
+                    field: Component(0),
+                    term: FlatTerm::Variable(Component(2)),
                     positive: true,
                 }
             }
             _ => {
                 source.tests[0] = FlatTest::Atom {
-                    field: Component::Principal,
-                    term: FlatTerm::Variable(Component::Principal),
+                    field: Component(0),
+                    term: FlatTerm::Variable(Component(0)),
                     positive: true,
                 }
             }
@@ -220,7 +238,7 @@ fn every_structural_failure_precedes_interning() {
 #[test]
 fn failure_keeps_old_associations_and_later_values_do_not_renumber_constants() {
     let mut encoder = Encoder::default();
-    assert_eq!(encoder.encode(Component::Principal, &value(42, 0)), Ok(101));
+    assert_eq!(encoder.encode(Component(0), &value(42, 0)), Ok(101));
     encoder.fail_at = Some(3);
     assert_eq!(
         lower_flat(
@@ -242,11 +260,8 @@ fn failure_keeps_old_associations_and_later_values_do_not_renumber_constants() {
     )
     .unwrap();
     let compiled = numeric.head[0].clone();
-    assert_eq!(encoder.encode(Component::Principal, &value(99, 0)), Ok(104));
-    assert_eq!(
-        encoder.encode(Component::Principal, &value(7, 255)),
-        Ok(102)
-    );
+    assert_eq!(encoder.encode(Component(0), &value(99, 0)), Ok(104));
+    assert_eq!(encoder.encode(Component(0), &value(7, 255)), Ok(102));
     assert_eq!(numeric.head[0], compiled);
 }
 
@@ -266,6 +281,7 @@ impl Limits for RejectMemory {
 #[test]
 fn builder_limit_errors_remain_errors_and_keep_existing_encodings() {
     let mut encoder = Encoder::default();
+    assert_eq!(encoder.encode(Component(0), &value(7, 0)), Ok(101));
     let error = lower_flat(
         &source(),
         &mut encoder,
@@ -283,37 +299,41 @@ fn builder_limit_errors_remain_errors_and_keep_existing_encodings() {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct Product;
 impl Event for Product {
-    type Principal = u8;
-    type Action = u8;
-    type Resource = u8;
-    fn principal(self) -> u8 {
-        1
+    type Component = Component3<u8, u8, u8>;
+    type Arity = N3;
+    fn component(self, index: usize) -> Self::Component {
+        match index {
+            0 => Component3::C0(1),
+            1 => Component3::C1(2),
+            _ => Component3::C2(3),
+        }
     }
-    fn action(self) -> u8 {
-        2
-    }
-    fn resource(self) -> u8 {
-        3
+    fn coordinate(component: Self::Component) -> usize {
+        match component {
+            Component3::C0(_) => 0,
+            Component3::C1(_) => 1,
+            Component3::C2(_) => 2,
+        }
     }
 }
 
 #[test]
 fn typed_constants_reject_every_mismatched_coordinate() {
     let values = [
-        ComponentValue::<Product>::Principal(7),
-        ComponentValue::Action(7),
-        ComponentValue::Resource(7),
+        Component3::<u8, u8, u8>::C0(7),
+        Component3::C1(7),
+        Component3::C2(7),
     ];
-    for (field_index, field) in [Component::Principal, Component::Action, Component::Resource]
+    for (field_index, field) in [Component(0), Component(1), Component(2)]
         .into_iter()
         .enumerate()
     {
         for (value_index, value) in values.iter().enumerate() {
             if field_index == value_index {
-                assert_eq!(validate_component(field, value), Ok(()));
+                assert_eq!(validate_component::<Product>(field, value), Ok(()));
             } else {
                 assert_eq!(
-                    validate_component(field, value),
+                    validate_component::<Product>(field, value),
                     Err(HistoryError::InvalidPolicy {
                         path: "$".into(),
                         message: "constant belongs to another component",

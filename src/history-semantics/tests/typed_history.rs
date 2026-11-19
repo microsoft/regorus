@@ -5,8 +5,8 @@ use core::hash::{Hash, Hasher};
 use history_semantics::CompiledRule;
 use history_store::{History, Store};
 use history_syntax::{
-    AtomPattern, Comparison, ComponentPattern as P, Coprod, Coproduct, Event, Head, RegexExpr as R,
-    Rule, RuleMode, TestExpr as T,
+    AtomPattern, Comparison, Component, ComponentPattern as P, Coprod, Coproduct, Event, Head, N3,
+    RegexExpr as R, Rule, RuleMode, TestExpr as T,
 };
 use junco_core::HistoryError;
 use std::sync::Arc;
@@ -71,38 +71,54 @@ impl Hash for Record {
         self.raw_key().hash(state);
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum RecordComponent {
+    Principal(Part),
+    Action(Part),
+    Resource(Part),
+}
+
+// Unverified glue: `hash_respects_eq` is a hypothesis for this type (as `event_laws` already is).
+impl history_syntax::KeyHash for RecordComponent {
+    fn key_hash(&self) -> u64 {
+        history_syntax::key_hash::hash_via_std(self)
+    }
+}
+
 impl Event for Record {
-    type Principal = Part;
-    type Action = Part;
-    type Resource = Part;
-    fn principal(self) -> Part {
+    type Component = RecordComponent;
+    type Arity = N3;
+
+    fn component(self, index: usize) -> RecordComponent {
         self.observe_history_projection();
-        self.principal
+        match index {
+            0 => RecordComponent::Principal(self.principal),
+            1 => RecordComponent::Action(self.action),
+            _ => RecordComponent::Resource(self.resource),
+        }
     }
-    fn action(self) -> Part {
-        self.observe_history_projection();
-        self.action
-    }
-    fn resource(self) -> Part {
-        self.observe_history_projection();
-        self.resource
+
+    fn coordinate(component: RecordComponent) -> usize {
+        match component {
+            RecordComponent::Principal(_) => 0,
+            RecordComponent::Action(_) => 1,
+            RecordComponent::Resource(_) => 2,
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Approval(Record);
 impl Event for Approval {
-    type Principal = Part;
-    type Action = Part;
-    type Resource = Part;
-    fn principal(self) -> Part {
-        self.0.principal()
+    type Component = RecordComponent;
+    type Arity = N3;
+
+    fn component(self, index: usize) -> RecordComponent {
+        self.0.component(index)
     }
-    fn action(self) -> Part {
-        self.0.action()
-    }
-    fn resource(self) -> Part {
-        self.0.resource()
+
+    fn coordinate(component: RecordComponent) -> usize {
+        Record::coordinate(component)
     }
 }
 
@@ -126,35 +142,41 @@ fn record(actor: u8, action: u8, resource: u8, representation: u8, payload: u16)
     }
 }
 
-fn head<E: Event<Principal = Part, Action = Part, Resource = Part>>() -> Head<E> {
-    Head::new(
+fn head<E: Event<Component = RecordComponent, Arity = N3>>() -> Head<E> {
+    Head::new([
         P::variable("actor"),
-        P::constant(Part {
+        P::constant(RecordComponent::Action(Part {
             identity: 2,
             payload: 99,
-        }),
+        })),
         P::variable("resource"),
-    )
+    ])
 }
 
-fn prior_edit<E: Event<Principal = Part, Action = Part, Resource = Part>>() -> Rule<E> {
+fn prior_edit<E: Event<Component = RecordComponent, Arity = N3>>() -> Rule<E> {
     Rule::new(
         RuleMode::Require,
         head(),
         R::concat([
             R::all(),
             R::test(T::and([
-                T::atom(Comparison::Eq, AtomPattern::Principal(P::variable("actor"))),
                 T::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(P::constant(Part {
-                        identity: 1,
-                        payload: 99,
-                    })),
+                    AtomPattern::new(Component(0), P::variable("actor")),
                 ),
                 T::atom(
                     Comparison::Eq,
-                    AtomPattern::Resource(P::variable("resource")),
+                    AtomPattern::new(
+                        Component(1),
+                        P::constant(RecordComponent::Action(Part {
+                            identity: 1,
+                            payload: 99,
+                        })),
+                    ),
+                ),
+                T::atom(
+                    Comparison::Eq,
+                    AtomPattern::new(Component(2), P::variable("resource")),
                 ),
             ])),
             R::all(),
@@ -168,10 +190,13 @@ fn reads_only() -> Rule<Record> {
         head(),
         R::star(R::test(T::atom(
             Comparison::Eq,
-            AtomPattern::Action(P::constant(Part {
-                identity: 0,
-                payload: 99,
-            })),
+            AtomPattern::new(
+                Component(1),
+                P::constant(RecordComponent::Action(Part {
+                    identity: 0,
+                    payload: 99,
+                })),
+            ),
         ))),
     )
 }

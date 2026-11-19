@@ -37,7 +37,8 @@ pub(super) enum MemoryBudgetLifecycle {
 }
 
 /// The Rego Virtual Machine
-#[derive(Debug)]
+// History handles and records implement Debug only outside Verus builds.
+#[cfg_attr(not(verus_keep_ghost), derive(Debug))]
 pub struct RegoVM {
     /// Registers for storing values during execution
     pub(super) registers: Vec<Value>,

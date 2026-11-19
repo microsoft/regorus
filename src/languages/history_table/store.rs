@@ -13,7 +13,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use history_semantics::runtime::RuleRuntime;
-pub use history_store::store::{Action, Event, HistoryHandle, Principal, Resource};
+pub use history_store::store::{Event, HistoryHandle};
 use history_store::store::{HistoryRecord, HistoryStore as CoreHistoryStore};
 use history_syntax::{Component, RuleMode};
 use junco_core::compile::{lower_flat, FlatEncoder};
@@ -27,10 +27,12 @@ use spin::Mutex;
 use vstd::prelude::*;
 
 const HISTORY_CACHE_CAPACITY: usize = 16;
+/// Coordinates per event: principal, action, resource.
+const ARITY: usize = 3;
 
-/// A Program-keyed table cache over the process-wide history store. Identities and
+/// A Program-keyed table cache over the process-wide arity-3 history store. Identities and
 /// histories are shared by every wrapper; wrapper construction is not an isolation boundary.
-#[derive(Debug)]
+#[cfg_attr(not(verus_keep_ghost), derive(Debug))]
 pub struct HistoryStore {
     core: Arc<CoreHistoryStore>,
     tables: Mutex<Vec<TableCacheEntry>>,
@@ -39,7 +41,7 @@ pub struct HistoryStore {
 impl Default for HistoryStore {
     fn default() -> Self {
         Self {
-            core: CoreHistoryStore::global(),
+            core: CoreHistoryStore::new(ARITY),
             tables: Mutex::new(Vec::new()),
         }
     }
@@ -100,19 +102,16 @@ impl FlatEncoder<String> for ByteEncoder<'_> {
     }
     // Native byte-store locking/encoding is not a blanket proof opt-in.
     open spec fn obeys_encoding_spec(&self) -> bool { false }
+    open spec fn encoding_calls(&self) -> nat { 0 }
     #[verifier::prophetic]
     open spec fn restoration(&self) -> (junco_core::verify::encoding::Codebook<String>, bool) {
         (Seq::empty(), false)
     }
 
-    // The UTF-8/BTreeMap interner stays in core; this native adapter chooses its domain.
+    // The byte interner stays in core; this native adapter routes each coordinate to its domain.
     #[verifier::external_body]
     fn encode(&mut self, field: Component, value: &String) -> Result<u64, HistoryError> {
-        match field {
-            Component::Principal => self.store.intern_principal(value).map(Principal::get),
-            Component::Action => self.store.intern_action(value).map(Action::get),
-            Component::Resource => self.store.intern_resource(value).map(Resource::get),
-        }
+        self.store.intern(field, value)
     }
 }
 }
@@ -123,10 +122,11 @@ impl HistoryStore {
         Self::default()
     }
 
-    /// Intern the complete UTF-8 bytes without normalization or prefix matching.
-    pub fn intern_principal(&self, path: &str) -> Result<Principal, HistoryError> {
-        self.core.intern_principal(
-            path,
+    /// Intern the complete UTF-8 bytes of one coordinate without normalization or prefix matching.
+    pub fn intern(&self, component: Component, path: &str) -> Result<u64, HistoryError> {
+        self.core.intern(
+            component,
+            path.as_bytes(),
             &mut RegorusLimits {
                 timer: &mut ExecutionTimer::new(None),
             },
@@ -134,26 +134,9 @@ impl HistoryStore {
         )
     }
 
-    /// Intern the complete UTF-8 bytes in the action domain.
-    pub fn intern_action(&self, path: &str) -> Result<Action, HistoryError> {
-        self.core.intern_action(
-            path,
-            &mut RegorusLimits {
-                timer: &mut ExecutionTimer::new(None),
-            },
-            &mut ObservationWorld,
-        )
-    }
-
-    /// Intern the complete UTF-8 bytes in the resource domain.
-    pub fn intern_resource(&self, path: &str) -> Result<Resource, HistoryError> {
-        self.core.intern_resource(
-            path,
-            &mut RegorusLimits {
-                timer: &mut ExecutionTimer::new(None),
-            },
-            &mut ObservationWorld,
-        )
+    /// Build a validated event from one interned ID per coordinate (`[principal, action, resource]`).
+    pub fn event(&self, slots: &[u64]) -> Result<Event, HistoryError> {
+        self.core.event(slots)
     }
 
     pub(crate) fn table_runtime(
@@ -187,6 +170,13 @@ impl HistoryStore {
         let mut limits = RegorusLimits { timer: &mut timer };
         let mut world = ObservationWorld;
         for rule in &source.rules {
+            // Deserialized programs may carry any validated arity; bindings would silently skip it.
+            if rule.source.head.len() != self.core.arity() {
+                return Err(HistoryError::invalid_policy(
+                    "head",
+                    "history head arity does not match the store",
+                ));
+            }
             let template = lower_flat(
                 &rule.source,
                 &mut ByteEncoder { store: self },
@@ -285,15 +275,18 @@ mod tests {
         clippy::arithmetic_side_effects
     )]
 
+    use super::super::{ACTION, PRINCIPAL, RESOURCE};
     use super::*;
     use alloc::collections::BTreeSet;
 
     fn event(store: &HistoryStore) -> Event {
-        Event {
-            principal: store.intern_principal("alice").unwrap(),
-            action: store.intern_action("edit").unwrap(),
-            resource: store.intern_resource("doc").unwrap(),
-        }
+        store
+            .event(&[
+                store.intern(PRINCIPAL, "alice").unwrap(),
+                store.intern(ACTION, "edit").unwrap(),
+                store.intern(RESOURCE, "doc").unwrap(),
+            ])
+            .unwrap()
     }
 
     #[test]
@@ -302,28 +295,28 @@ mod tests {
         let paths = ["a", "A", "/a", "a/", "a\0", "é", "e\u{301}"];
         let mut ids = BTreeSet::new();
         for path in paths {
-            let id = store.intern_principal(path).unwrap();
-            assert_eq!(id, store.intern_principal(path).unwrap());
+            let id = store.intern(PRINCIPAL, path).unwrap();
+            assert_eq!(id, store.intern(PRINCIPAL, path).unwrap());
             assert!(ids.insert(id));
         }
-        let first = store.intern_resource("common/prefix/0").unwrap();
+        let first = store.intern(RESOURCE, "common/prefix/0").unwrap();
         let mut resources = BTreeSet::from([first]);
         for index in 1..5000 {
             assert!(resources.insert(
                 store
-                    .intern_resource(&alloc::format!("common/prefix/{index}"))
+                    .intern(RESOURCE, &alloc::format!("common/prefix/{index}"))
                     .unwrap()
             ));
         }
-        assert_eq!(first, store.intern_resource("common/prefix/0").unwrap());
+        assert_eq!(first, store.intern(RESOURCE, "common/prefix/0").unwrap());
         assert_eq!(resources.len(), 5000);
-        let action = store.intern_action("a").unwrap();
-        store.intern_principal("new").unwrap();
-        assert_eq!(action, store.intern_action("a").unwrap());
+        let action = store.intern(ACTION, "a").unwrap();
+        store.intern(PRINCIPAL, "new").unwrap();
+        assert_eq!(action, store.intern(ACTION, "a").unwrap());
         let long = "x".repeat(4096);
         assert_ne!(
-            store.intern_resource(&long).unwrap(),
-            store.intern_resource(&(long + "/")).unwrap()
+            store.intern(RESOURCE, &long).unwrap(),
+            store.intern(RESOURCE, &(long + "/")).unwrap()
         );
     }
 
@@ -331,12 +324,22 @@ mod tests {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         struct Typed;
         impl history_syntax::Event for Typed {
-            type Principal = ();
-            type Action = ();
-            type Resource = ();
-            fn principal(self) {}
-            fn action(self) {}
-            fn resource(self) {}
+            type Component = history_syntax::Component3<(), (), ()>;
+            type Arity = history_syntax::N3;
+            fn component(self, index: usize) -> Self::Component {
+                match index {
+                    0 => history_syntax::Component3::C0(()),
+                    1 => history_syntax::Component3::C1(()),
+                    _ => history_syntax::Component3::C2(()),
+                }
+            }
+            fn coordinate(component: Self::Component) -> usize {
+                match component {
+                    history_syntax::Component3::C0(()) => 0,
+                    history_syntax::Component3::C1(()) => 1,
+                    history_syntax::Component3::C2(()) => 2,
+                }
+            }
         }
         let store = Arc::new(history_store::Store::<Typed>::new().unwrap());
         let history = history_store::History::from_events(store, [Typed]).unwrap();
@@ -354,39 +357,39 @@ mod tests {
         peer.append(&history, &[]).unwrap();
         assert_eq!(peer.len(&history).unwrap(), 0);
         let typed = typed_only_event();
-        for (invalid, domain) in [
-            (
-                Event {
-                    principal: typed.principal,
-                    ..valid
-                },
-                "principal",
-            ),
-            (
-                Event {
-                    action: typed.action,
-                    ..valid
-                },
-                "action",
-            ),
-            (
-                Event {
-                    resource: typed.resource,
-                    ..valid
-                },
-                "resource",
-            ),
-        ] {
+        // Event fields are private: each typed-only coordinate is rejected while building.
+        for index in 0..3 {
+            let mut slots = [valid.component(0), valid.component(1), valid.component(2)];
+            slots[index] = typed.component(index);
             assert!(matches!(
-                store.append(&history, &[valid, invalid]),
-                Err(HistoryError::UnknownId { domain: actual, .. }) if actual == domain
+                store.event(&slots),
+                Err(HistoryError::UnknownId { domain: "component", id }) if id == typed.component(index)
             ));
-            assert!(matches!(
-                peer.validate_event(&invalid),
-                Err(HistoryError::UnknownId { domain: actual, .. }) if actual == domain
-            ));
-            assert_eq!(store.len(&history).unwrap(), 0);
         }
+        assert!(matches!(
+            store.append(&history, &[valid, typed]),
+            Err(HistoryError::UnknownId {
+                domain: "component",
+                ..
+            })
+        ));
+        assert!(matches!(
+            peer.validate_event(&typed),
+            Err(HistoryError::UnknownId {
+                domain: "component",
+                ..
+            })
+        ));
+        assert_eq!(store.len(&history).unwrap(), 0);
+        // Generic interning stays within the arity-3 store.
+        assert!(matches!(
+            store.intern(Component(3), "x"),
+            Err(HistoryError::InvalidPolicy { .. })
+        ));
+        assert!(matches!(
+            store.event(&[valid.component(0), valid.component(1)]),
+            Err(HistoryError::InvalidPolicy { .. })
+        ));
         store.append(&history, &[valid, valid]).unwrap();
         assert_eq!(store.len(&history.clone()).unwrap(), 2);
         let record = store.history_record(&history).unwrap();

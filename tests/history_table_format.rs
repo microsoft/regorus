@@ -7,7 +7,7 @@ use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
 use regorus::rvm::program::{DeserializationResult, Program};
 use serde_json::{json, Value as Json};
 
-// Captured before the shared-core cutover, not produced by these tests.
+// Produced by `history_table::compile` from `prior_edit_rule("release", "edit")` with batch size 1.
 const BINARY: &[u8] = include_bytes!("fixtures/history_table_v8.bin");
 const JSON: &str = include_str!("fixtures/history_table_v8.json");
 
@@ -23,31 +23,31 @@ fn fixture() -> Program {
 }
 
 #[test]
-fn pre_cutover_v8_fixtures_preserve_bytes_schema_and_topology() {
+fn v8_fixtures_preserve_bytes_schema_and_topology() {
     assert_eq!(Program::SERIALIZATION_VERSION, 8);
-    assert_eq!(BINARY.len(), 163);
-    assert_eq!(JSON.len(), 2800);
+    assert_eq!(BINARY.len(), 164);
+    assert_eq!(JSON.len(), 2755);
     assert_eq!(&BINARY[4..8], &8u32.to_le_bytes());
     let expected = FlatPair {
-        head: [
+        head: vec![
             FlatHead::Bind,
             FlatHead::Constant("release".to_owned()),
             FlatHead::Bind,
         ],
         tests: vec![
             FlatTest::Atom {
-                field: Component::Principal,
-                term: FlatTerm::Variable(Component::Principal),
+                field: Component(0),
+                term: FlatTerm::Variable(Component(0)),
                 positive: true,
             },
             FlatTest::Atom {
-                field: Component::Action,
+                field: Component(1),
                 term: FlatTerm::Constant("edit".to_owned()),
                 positive: true,
             },
             FlatTest::Atom {
-                field: Component::Resource,
-                term: FlatTerm::Variable(Component::Resource),
+                field: Component(2),
+                term: FlatTerm::Variable(Component(2)),
                 positive: true,
             },
             FlatTest::And(vec![0, 1, 2]),
@@ -76,9 +76,9 @@ fn pre_cutover_v8_fixtures_preserve_bytes_schema_and_topology() {
             json!({"mode": "Require", "source": {
                 "head": ["Bind", {"Constant": "release"}, "Bind"],
                 "tests": [
-                    {"Atom": {"field": "Principal", "term": {"Variable": "Principal"}, "positive": true}},
-                    {"Atom": {"field": "Action", "term": {"Constant": "edit"}, "positive": true}},
-                    {"Atom": {"field": "Resource", "term": {"Variable": "Resource"}, "positive": true}},
+                    {"Atom": {"field": 0, "term": {"Variable": 0}, "positive": true}},
+                    {"Atom": {"field": 1, "term": {"Constant": "edit"}, "positive": true}},
+                    {"Atom": {"field": 2, "term": {"Variable": 2}, "positive": true}},
                     {"And": [0, 1, 2]}
                 ],
                 "regexes": ["All", {"Test": 3}, "All", {"Concat": [0, 1, 2]}],
@@ -110,7 +110,7 @@ fn unchecked_json(program: &Program) -> String {
 
 fn pair(tests: Vec<FlatTest<String>>, regexes: Vec<FlatRegex>, root: u32) -> FlatPair<String> {
     FlatPair {
-        head: [FlatHead::Bind, FlatHead::Any, FlatHead::Bind],
+        head: vec![FlatHead::Bind, FlatHead::Any, FlatHead::Bind],
         tests,
         regexes,
         root,
@@ -180,8 +180,8 @@ fn untrusted_artifacts_reject_invalid_sources_without_history_runtime() {
             "wrong coordinate",
             pair(
                 vec![FlatTest::Atom {
-                    field: Component::Principal,
-                    term: FlatTerm::Variable(Component::Resource),
+                    field: Component(0),
+                    term: FlatTerm::Variable(Component(2)),
                     positive: true,
                 }],
                 vec![FlatRegex::Test(0)],
@@ -192,8 +192,8 @@ fn untrusted_artifacts_reject_invalid_sources_without_history_runtime() {
             "unbound wildcard head",
             pair(
                 vec![FlatTest::Atom {
-                    field: Component::Action,
-                    term: FlatTerm::Variable(Component::Action),
+                    field: Component(1),
+                    term: FlatTerm::Variable(Component(1)),
                     positive: false,
                 }],
                 vec![FlatRegex::Test(0)],
@@ -208,12 +208,21 @@ fn untrusted_artifacts_reject_invalid_sources_without_history_runtime() {
             "invalid unused test",
             pair(vec![FlatTest::And(vec![0])], vec![FlatRegex::Epsilon], 0),
         ),
+        (
+            "head arity zero",
+            FlatPair {
+                head: vec![],
+                tests: vec![],
+                regexes: vec![FlatRegex::All],
+                root: 0,
+            },
+        ),
     ];
     let mut invalid = cases.to_vec();
     let mut constant_head = pair(
         vec![FlatTest::Atom {
-            field: Component::Principal,
-            term: FlatTerm::Variable(Component::Principal),
+            field: Component(0),
+            term: FlatTerm::Variable(Component(0)),
             positive: true,
         }],
         vec![FlatRegex::Test(0)],
@@ -301,19 +310,16 @@ fn canonical_enum_discriminants_and_atom_fields_keep_v8_order() {
             u8::try_from(index).unwrap()
         );
     }
-    for (index, term) in [
-        FlatTerm::Constant("x"),
-        FlatTerm::Variable(Component::Principal),
-    ]
-    .iter()
-    .enumerate()
+    for (index, term) in [FlatTerm::Constant("x"), FlatTerm::Variable(Component(0))]
+        .iter()
+        .enumerate()
     {
         assert_eq!(
             postcard::to_allocvec(term).unwrap()[0],
             u8::try_from(index).unwrap()
         );
     }
-    for (index, component) in [Component::Principal, Component::Action, Component::Resource]
+    for (index, component) in [Component(0), Component(1), Component(2)]
         .iter()
         .enumerate()
     {
@@ -325,8 +331,8 @@ fn canonical_enum_discriminants_and_atom_fields_keep_v8_order() {
     assert_eq!(postcard::to_allocvec(&RuleMode::Require).unwrap(), [0]);
     assert_eq!(postcard::to_allocvec(&RuleMode::Forbid).unwrap(), [1]);
     let atom = FlatTest::Atom {
-        field: Component::Resource,
-        term: FlatTerm::<String>::Variable(Component::Resource),
+        field: Component(2),
+        term: FlatTerm::<String>::Variable(Component(2)),
         positive: true,
     };
     // Atom discriminant, field, term discriminant, variable coordinate, polarity.

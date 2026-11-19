@@ -1,4 +1,4 @@
-use junco_core::error::{CompileError, HistoryError};
+use junco_core::errors::{CompileError, HistoryError};
 use vstd::prelude::*;
 
 /// Compilation or execution failure from a one-shot policy decision.

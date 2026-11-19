@@ -3,13 +3,33 @@
 
 use crate::WorkVec;
 #[cfg(verus_keep_ghost)]
+use crate::symbolic::verify as vocab;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_branch as fbr;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_collect as fcol;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_compile as fcmp;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_impl as fimpl;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_link as flink;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_machine as fmach;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_steps as fsteps;
+#[cfg(verus_keep_ghost)]
+use crate::verify::finite_trans as ftr;
+#[cfg(verus_keep_ghost)]
 use alloc::boxed::Box;
-use junco_core::error::HistoryError;
+use junco_core::errors::HistoryError;
 #[cfg(verus_keep_ghost)]
 use junco_core::kernel::verify as model;
 use junco_core::kernel::*;
 #[cfg(verus_keep_ghost)]
 use junco_core::observation::SmallVecSpecFns;
+#[cfg(verus_keep_ghost)]
+use junco_core::spec::semantics::resource_error;
 #[cfg(verus_keep_ghost)]
 use junco_core::verify::history_assumptions::{KernelStoreSpec, dedup_spec};
 #[cfg(verus_keep_ghost)]
@@ -28,67 +48,6 @@ broadcast use junco_core::kernel::verify::group_kernel_views;
 use vstd::std_specs::cmp::{OrdSpec, PartialEqSpec};
 
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), b@ < old(store).graph().tests.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result { Ok(found) => found ==> test_opposite(final(store).graph(), a, b), Err(_) => true },
-)]
-fn complementary<G: KernelStore>(store: &mut G, a: TestId, b: TestId) -> KernelResult<bool> {
-    let left = a.head(store)?;
-    let right = b.head(store)?;
-    match (left, right) {
-        (TestHead::Atom(p, x), TestHead::Atom(q, y)) => {
-            proof! {
-                assert forall|theta: Subst, event: EventView| p@ == q@ && x != y
-                    implies test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
-                    test_lemma_truth(store.graph(), theta, a@, event);
-                    test_lemma_truth(store.graph(), theta, b@, event);
-                }
-            }
-            Ok(p == q && x != y)
-        }
-        (TestHead::And(_), TestHead::Or(_)) | (TestHead::Or(_), TestHead::And(_)) => {
-            Ok(TestId::not(a, store)? == b)
-        }
-        (TestHead::True, TestHead::False) | (TestHead::False, TestHead::True) => {
-            proof! {
-                assert forall|theta: Subst, event: EventView|
-                    test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
-                    test_lemma_truth(store.graph(), theta, a@, event);
-                    test_lemma_truth(store.graph(), theta, b@, event);
-                }
-            }
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
-}
-#[verus_verify]
-#[verus_spec(result => ensures result == test_distinct_heads(left@, right@))]
-fn distinct(left: TestHead, right: TestHead) -> bool {
-    matches!((left,right),(TestHead::Atom(Primitive::Eq{field:p,term:Term::Constant(c)},_),TestHead::Atom(Primitive::Eq{field:q,term:Term::Constant(d)},_)) if p==q&&c!=d)
-}
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "Preserve the existing Verus-verified function shape."
-)]
-#[verus_verify]
-#[verus_spec(result => ensures result == match head@ {
-    model::TestHeadNode::Or(n) => if and { Some(n as usize) } else { None },
-    model::TestHeadNode::And(n) => if !and { Some(n as usize) } else { None },
-    _ => None,
-})]
-fn dual_test_count(head: TestHead, and: bool) -> Option<usize> {
-    match head {
-        TestHead::Or(n) if and => Some(n),
-        TestHead::And(n) if !and => Some(n),
-        _ => None,
-    }
-}
-#[verus_verify]
 #[verus_spec(result => requires low < high,
     ensures match result { Ok(mid) => low <= mid < high, Err(_) => false },
 )]
@@ -99,138 +58,12 @@ const fn midpoint(low: usize, high: usize) -> KernelResult<usize> {
     }
 }
 #[allow(
-    clippy::semicolon_if_nothing_returned,
-    reason = "Preserve the existing Verus-verified mutation branches."
-)]
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), test_child_count(store.graph(), parent, count as nat),
-    ensures match result {
-        Ok(found) => found == test_children(store.graph(), parent).contains(id@),
-        Err(_) => true,
-    },
-)]
-fn test_contains<G: KernelStore>(
-    store: &G,
-    parent: TestId,
-    count: usize,
-    id: TestId,
-) -> KernelResult<bool> {
-    proof! { test_lemma_children(store.graph(), parent, count as nat); }
-    let mut low = 0;
-    let mut high = count;
-    let mut failure = None;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            model::graph_wf(store.graph()),
-            test_child_count(store.graph(), parent, count as nat),
-            model::nondecreasing(test_children(store.graph(), parent)),
-            low <= high <= count,
-            forall|i: int| 0 <= i < low ==> #[trigger] test_children(store.graph(), parent)[i] < id@,
-            forall|i: int| high <= i < count ==> #[trigger] test_children(store.graph(), parent)[i] >= id@,
-        ensures failure.is_none() ==> low == high,
-        decreases high - low,
-    ))]
-    while low < high {
-        let mid = loop_try!(midpoint(low, high), failure);
-        let child = loop_try!(parent.child(store, mid), failure);
-        if child < id {
-            proof! {
-                assert forall|i: int| 0 <= i <= mid
-                    implies #[trigger] test_children(store.graph(), parent)[i] < id@ by {
-                    assert(test_children(store.graph(), parent)[i] <= child@);
-                }
-            }
-            low = mid.saturating_add(1)
-        } else {
-            proof! {
-                assert forall|i: int| mid <= i < count
-                    implies #[trigger] test_children(store.graph(), parent)[i] >= id@ by {
-                    assert(test_children(store.graph(), parent)[i] >= child@);
-                }
-            }
-            high = mid
-        }
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    if low < count {
-        Ok(parent.child(store, low)? == id)
-    } else {
-        Ok(false)
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()),
-        test_child_count(store.graph(), a, a_count as nat),
-        test_child_count(store.graph(), b, b_count as nat),
-    ensures match result {
-        Ok(included) => included == (forall|i: int| 0 <= i < a_count
-            ==> test_children(store.graph(), b).contains(test_children(store.graph(), a)[i]))
-            && included == (forall|child: nat| test_children(store.graph(), a).contains(child)
-                ==> test_children(store.graph(), b).contains(child)),
-        Err(_) => true,
-    },
-)]
-fn test_subset<G: KernelStore>(
-    store: &G,
-    a: TestId,
-    a_count: usize,
-    b: TestId,
-    b_count: usize,
-) -> KernelResult<bool> {
-    proof! {
-        test_lemma_children(store.graph(), a, a_count as nat);
-        test_lemma_children(store.graph(), b, b_count as nat);
-    }
-    let mut included = true;
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            model::graph_wf(store.graph()),
-            test_child_count(store.graph(), a, a_count as nat),
-            test_child_count(store.graph(), b, b_count as nat),
-            i <= a_count,
-            included == (forall|j: int| 0 <= j < i
-                ==> test_children(store.graph(), b).contains(test_children(store.graph(), a)[j])),
-        ensures failure.is_none() ==> i == a_count,
-        decreases a_count - i,
-    ))]
-    while i < a_count {
-        let id = loop_try!(a.child(store, i), failure);
-        proof! { assert(id@ == test_children(store.graph(), a)[i as int]); }
-        included &= loop_try!(test_contains(store, b, b_count, id), failure);
-        i = i.saturating_add(1);
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    proof! {
-        assert(included == (forall|child: nat| test_children(store.graph(), a).contains(child)
-            ==> test_children(store.graph(), b).contains(child))) by {
-            if included {
-                assert forall|child: nat| test_children(store.graph(), a).contains(child)
-                    implies test_children(store.graph(), b).contains(child) by {
-                    let j = choose|j: int| 0 <= j < a_count && test_children(store.graph(), a)[j] == child;
-                }
-            } else {
-                let j = choose|j: int| 0 <= j < a_count
-                    && !test_children(store.graph(), b).contains(test_children(store.graph(), a)[j]);
-                assert(test_children(store.graph(), a).contains(test_children(store.graph(), a)[j]));
-            }
-        }
-    }
-    Ok(included)
-}
-#[allow(
     clippy::option_if_let_else,
     reason = "Explicit matches preserve the Verus proof structure."
 )]
 #[verus_verify]
-#[verus_spec(result => ensures match result {
+#[verus_spec(result => ensures result != Err(HistoryError::WrongHistoryOwner),
+    index < ids@.len() ==> language::no_invariant_failure(result), match result {
     Ok(id) => index < ids@.len() && id == ids@[index as int],
     Err(_) => index >= ids@.len(),
 })]
@@ -238,376 +71,6 @@ fn id_at<T: Copy>(ids: &[T], index: usize) -> KernelResult<T> {
     match ids.get(index) {
         Some(id) => Ok(*id),
         None => Err(HistoryError::normalization_invariant()),
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@), index < siblings@.len(),
-        collapse ==> test_absorbs(old(store).graph(), seq![a] + siblings@, and),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => (collapse ==> out) && (out ==> test_absorbs(final(store).graph(), seq![a] + siblings@, and)), Err(_) => true },
-)]
-fn test_pair_step<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    index: usize,
-    and: bool,
-    mut collapse: bool,
-) -> KernelResult<bool> {
-    proof_decl! { let ghost before = store.graph(); let ghost prior = collapse; }
-    let b = id_at(siblings, index)?;
-    store.checkpoint()?;
-    if a != b {
-        let av = a.head(store)?;
-        let bv = b.head(store)?;
-        collapse |= matches!((av,bv),(TestHead::Atom(_,x),TestHead::Atom(_,y)) if x==and&&y==and)
-            && distinct(av, bv);
-        collapse |= complementary(store, a, b)?;
-    }
-    proof! {
-        if collapse {
-            if prior { test_lemma_absorbs_extends(before, store.graph(), seq![a] + siblings@, and); }
-            else {
-                test_lemma_pair_absorbs(store.graph(), a, b, and);
-                assert(siblings@.contains(b));
-                assert forall|id: TestId| seq![a, b].contains(id) implies (seq![a] + siblings@).contains(id) by {
-                    if id == a { assert((seq![a] + siblings@)[0] == id); }
-                    else { assert(id == b); assert((seq![a] + siblings@)[index as int + 1] == id); }
-                }
-                test_lemma_absorbs_superset(store.graph(), seq![a, b], seq![a] + siblings@, and);
-            }
-        }
-    }
-    Ok(collapse)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out ==> test_absorbs(final(store).graph(), seq![a] + siblings@, and), Err(_) => true },
-)]
-fn test_pair_collapse<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    and: bool,
-) -> KernelResult<bool> {
-    let mut state = Ok(false);
-    scan!(state,index,siblings.len(),state.is_ok(),prior=>test_pair_step(store,a,siblings,index,and,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= siblings.len(),
-            match state { Ok(out) => out ==> test_absorbs(store.graph(), seq![a] + siblings@, and), Err(_) => true },
-        decreases siblings.len() - index,
-    );
-    state
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        id@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@), index < siblings@.len(),
-        found ==> test_has_opposite(old(store).graph(), id, siblings@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => (found ==> out) && (out ==> test_has_opposite(final(store).graph(), id, siblings@)), Err(_) => true },
-)]
-fn test_complement_step<G: KernelStore>(
-    store: &mut G,
-    id: TestId,
-    siblings: &[TestId],
-    index: usize,
-    found: bool,
-) -> KernelResult<bool> {
-    proof_decl! { let ghost before = store.graph(); }
-    let sibling = id_at(siblings, index)?;
-    let matched = complementary(store, id, sibling)?;
-    proof! {
-        if found { test_lemma_has_opposite_extends(before, store.graph(), id, siblings@); }
-        if matched { assert(test_opposite(store.graph(), id, siblings@[index as int])); }
-    }
-    Ok(found || matched)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        id@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out ==> test_has_opposite(final(store).graph(), id, siblings@), Err(_) => true },
-)]
-fn test_has_complement<G: KernelStore>(
-    store: &mut G,
-    id: TestId,
-    siblings: &[TestId],
-) -> KernelResult<bool> {
-    let mut state = Ok(false);
-    scan!(state,index,siblings.len(),state.is_ok(),prior=>test_complement_step(store,id,siblings,index,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            id@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= siblings.len(),
-            match state { Ok(out) => out ==> test_has_opposite(store.graph(), id, siblings@), Err(_) => true },
-        decreases siblings.len() - index,
-    );
-    state
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_child_count(old(store).graph(), a, test_children(old(store).graph(), a).len()),
-        test_ids_valid(old(store).graph(), siblings@), index < test_children(old(store).graph(), a).len(),
-        all ==> test_complement_covered(old(store).graph(), test_children(old(store).graph(), a).take(index as int), siblings@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out ==> test_complement_covered(final(store).graph(), test_children(final(store).graph(), a).take(index as int + 1), siblings@), Err(_) => true },
-)]
-fn test_compound_step<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    index: usize,
-    all: bool,
-) -> KernelResult<bool> {
-    proof_decl! { let ghost before = store.graph(); }
-    proof! { test_lemma_children(store.graph(), a, test_children(store.graph(), a).len()); }
-    let id = a.child(store, index)?;
-    let matched = test_has_complement(store, id, siblings)?;
-    proof! {
-        if all { test_lemma_covered_extends(before, store.graph(), test_children(before, a).take(index as int), siblings@); }
-        if matched { assert(test_has_opposite(store.graph(), id, siblings@)); }
-        if all && matched {
-            assert(id@ == test_children(store.graph(), a)[index as int]);
-            assert forall|child: nat| #[trigger] test_children(store.graph(), a).take(index as int + 1).contains(child)
-                implies exists|j: int| 0 <= j < siblings.len() && test_opposite_nat(store.graph(), child, siblings@[j]@) by {
-                let k = choose|k: int| 0 <= k < index as int + 1 && test_children(store.graph(), a)[k] == child;
-                if k < index {
-                    assert(test_children(store.graph(), a).take(index as int)[k] == child);
-                    assert(test_children(store.graph(), a).take(index as int).contains(child));
-                }
-                else { assert(child == id@); }
-            }
-        }
-    }
-    Ok(all && matched)
-}
-#[allow(
-    clippy::option_if_let_else,
-    reason = "Explicit matches preserve the Verus proof structure."
-)]
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out ==> test_absorbs(final(store).graph(), seq![a] + siblings@, and), Err(_) => true },
-)]
-fn test_compound_collapse<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    and: bool,
-) -> KernelResult<bool> {
-    #[allow(clippy::manual_unwrap_or, clippy::manual_unwrap_or_default)] // Verus-verified match.
-    let count = match dual_test_count(a.head(store)?, and) {
-        Some(n) => n,
-        None => 0,
-    };
-    proof! { if count != 0 {
-        test_lemma_children(store.graph(), a, count as nat);
-        assert(test_children(store.graph(), a).take(count as int) =~= test_children(store.graph(), a));
-    } }
-    let mut state = Ok(count != 0);
-    scan!(state,index,count,state.is_ok(),prior=>test_compound_step(store,a,siblings,index,prior);
-        invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= count,
-            count != 0 ==> test_dual(store.graph(), a, and) && test_child_count(store.graph(), a, count as nat),
-            count != 0 ==> test_children(store.graph(), a).take(count as int) == test_children(store.graph(), a),
-            match state { Ok(out) => out ==> count != 0 && test_complement_covered(store.graph(), test_children(store.graph(), a).take(index as int), siblings@), Err(_) => true },
-        ensures state is Ok ==> index == count,
-            match state { Ok(out) => out ==> test_dual(store.graph(), a, and)
-            && test_complement_covered(store.graph(), test_children(store.graph(), a), siblings@), Err(_) => true },
-        decreases count - index,
-    );
-    proof! {
-        if state is Ok && state->Ok_0 {
-            test_lemma_compound_absorbs(store.graph(), a, siblings@, and);
-        }
-    }
-    state
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@), index < siblings@.len(),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out == (redundant || test_redundancy(final(store).graph(), a, siblings@[index as int], and)), Err(_) => true },
-)]
-fn test_redundant_step<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    index: usize,
-    and: bool,
-    mut redundant: bool,
-) -> KernelResult<bool> {
-    let b = id_at(siblings, index)?;
-    store.checkpoint()?;
-    if a != b {
-        let av = a.head(store)?;
-        let bv = b.head(store)?;
-        if let Some(n) = dual_test_count(av, and) {
-            redundant |= match dual_test_count(bv, and) {
-                Some(m) => test_subset(store, b, m, a, n)?,
-                None => test_contains(store, a, n, b)?,
-            };
-        }
-        redundant |= distinct(av, bv)
-            && matches!((av,bv),(TestHead::Atom(_,x),TestHead::Atom(_,y)) if x!=and&&y==and);
-    }
-    Ok(redundant)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => out == test_redundant_in(final(store).graph(), a, siblings@, and), Err(_) => true },
-)]
-fn test_redundant<G: KernelStore>(
-    store: &mut G,
-    a: TestId,
-    siblings: &[TestId],
-    and: bool,
-) -> KernelResult<bool> {
-    proof! { assert(siblings@.take(siblings@.len() as int) =~= siblings@); }
-    let mut state = Ok(false);
-    scan!(state,index,siblings.len(),state.is_ok(),prior=>{
-        proof! {
-            test_lemma_redundant_push(store.graph(), a, siblings@.take(index as int), siblings@[index as int], and);
-            assert(siblings@.take(index as int).push(siblings@[index as int]) =~= siblings@.take(index as int + 1));
-        }
-        test_redundant_step(store,a,siblings,index,and,prior)
-    };
-        invariant store.graph() == old(store).graph(), store.valid_store(),
-            store.restoration() == old(store).restoration(),
-            model::graph_wf(store.graph()), a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@),
-            index <= siblings.len(),
-            siblings@.take(siblings@.len() as int) == siblings@,
-            match state { Ok(out) => out == test_redundant_in(store.graph(), a, siblings@.take(index as int), and), Err(_) => true },
-        ensures state is Ok ==> index == siblings.len(),
-            match state { Ok(out) => out == test_redundant_in(store.graph(), a, siblings@, and), Err(_) => true },
-        decreases siblings.len() - index,
-    );
-    state
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
-    ensures old(flat).view().is_prefix_of(final(flat).view()),
-        final(flat).view().len() <= old(flat).view().len() + count,
-        forall|j: int| old(flat).view().len() <= j < final(flat).view().len()
-            ==> #[trigger] final(flat).view()[j]@ < store.graph().tests.len(),
-        forall|j: int| old(flat).view().len() <= j < final(flat).view().len()
-            ==> #[trigger] final(flat).view()[j]@ == test_children(store.graph(), id)[j - old(flat).view().len()],
-        match result { Ok(()) => final(flat).view().len() == old(flat).view().len() + count, Err(_) => true },
-)]
-fn collect_test_children<G: KernelStore>(
-    store: &G,
-    id: TestId,
-    count: usize,
-    flat: &mut WorkVec<TestId>,
-) -> KernelResult<()> {
-    proof! { test_lemma_children(store.graph(), id, count as nat); }
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
-            i <= count,
-            model::bounded(test_children(store.graph(), id), id@), test_children(store.graph(), id).len() == count,
-            flat.view().len() == old(flat).view().len() + i,
-            old(flat).view().is_prefix_of(flat.view()),
-            forall|j: int| old(flat).view().len() <= j < flat.view().len()
-                ==> #[trigger] flat.view()[j]@ == test_children(store.graph(), id)[j - old(flat).view().len()],
-            forall|j: int| old(flat).view().len() <= j < flat.view().len() ==> #[trigger] flat.view()[j]@ < store.graph().tests.len(),
-        ensures failure.is_none() ==> i == count,
-        decreases count - i,
-    ))]
-    while i < count {
-        let child = loop_try!(id.child(store, i), failure);
-        proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
-        flat.push(child);
-        i = i.saturating_add(1);
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    Ok(())
-}
-#[allow(
-    clippy::option_if_let_else,
-    reason = "Explicit matches preserve the Verus proof structure."
-)]
-#[verus_verify]
-#[verus_spec(result =>
-    requires structural_eq::<T>(), read < old(values).view().len(), state.1 <= read,
-        read < usize::MAX,
-    ensures match result {
-        Ok(next) => {
-            let source = old(values).view();
-            let duplicate = state.0 == Some(source[read as int]);
-            &&& next == if duplicate { state } else { (Some(source[read as int]), (state.1 + 1) as usize) }
-            &&& final(values).view() == if duplicate || state.1 == read {
-                source
-            } else { source.update(state.1 as int, source[read as int]) }
-            &&& final(values).view().subrange(0, next.1 as int)
-                == if duplicate { source.subrange(0, state.1 as int) }
-                    else { source.subrange(0, state.1 as int).push(source[read as int]) }
-            &&& final(values).view().subrange(read as int + 1, source.len() as int)
-                == source.subrange(read as int + 1, source.len() as int)
-        },
-        Err(_) => false,
-    },
-)]
-fn dedup_step<T: Copy + Eq>(
-    values: &mut WorkVec<T>,
-    read: usize,
-    state: (Option<T>, usize),
-) -> KernelResult<(Option<T>, usize)> {
-    proof_decl! { let ghost source = values.view(); }
-    let value = match values.get(read) {
-        Some(v) => *v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    let (previous, write) = state;
-    let duplicate = match previous {
-        Some(v) => v == value,
-        None => false,
-    };
-    if duplicate {
-        Ok((previous, write))
-    } else {
-        if write != read {
-            match values.as_mut_slice().get_mut(write) {
-                Some(slot) => *slot = value,
-                None => return Err(HistoryError::normalization_invariant()),
-            }
-        }
-        proof! {
-            assert(values.view().subrange(0, write as int + 1)
-                =~= source.subrange(0, write as int).push(value));
-            assert(values.view().subrange(read as int + 1, source.len() as int)
-                =~= source.subrange(read as int + 1, source.len() as int));
-        }
-        Ok((Some(value), write.saturating_add(1)))
     }
 }
 #[verus_verify]
@@ -632,7 +95,43 @@ fn dedup_ids<T: Copy + Eq>(values: &mut WorkVec<T>) -> KernelResult<()> {
             assert(old(values).view().subrange(0, index as int + 1)
                 =~= old(values).view().subrange(0, index as int).push(old(values).view()[index as int]));
         }
-        dedup_step(values,index,prior)
+        {
+        proof_decl! { let ghost source = values.view(); }
+        match id_at(values, index) {
+            Ok(value) => {
+                let (previous, write) = prior;
+                let duplicate = match previous { Some(v) => v == value, None => false };
+                if duplicate { Ok((previous, write)) } else {
+                    if write != index {
+                        match match values.as_mut_slice().get_mut(write) {
+                            Some(slot) => { *slot = value; Ok(()) },
+                            None => Err(HistoryError::normalization_invariant()),
+                        } {
+                            Ok(()) => {
+                                proof! {
+                                        assert(values.view().subrange(0, write as int + 1)
+                                            =~= source.subrange(0, write as int).push(value));
+                                        assert(values.view().subrange(index as int + 1, source.len() as int)
+                                            =~= source.subrange(index as int + 1, source.len() as int));
+                                    }
+                                Ok((Some(value), write.saturating_add(1)))
+                            }
+                            Err(error) => Err(error),
+                        }
+                    } else {
+                        proof! {
+                                assert(values.view().subrange(0, write as int + 1)
+                                    =~= source.subrange(0, write as int).push(value));
+                                assert(values.view().subrange(index as int + 1, source.len() as int)
+                                    =~= source.subrange(index as int + 1, source.len() as int));
+                            }
+                        Ok((Some(value), write.saturating_add(1)))
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
     };
         invariant
             structural_eq::<T>(),
@@ -663,220 +162,989 @@ struct TestMode {
     identity: TestId,
     absorber: TestId,
 }
+
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        test_ids_valid(old(store).graph(), children@), test_ids_valid(old(store).graph(), old(flat).view()), index < children@.len(),
-        mode.identity@ == if mode.and { old(store).graph().constants.test_true } else { old(store).graph().constants.test_false },
-        mode.absorber@ == if mode.and { old(store).graph().constants.test_false } else { old(store).graph().constants.test_true },
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(true) => children@[index as int] == mode.absorber && final(flat).view() == old(flat).view()
-                && test_absorbs(final(store).graph(), children@, mode.and),
-            Ok(false) => test_ids_valid(final(store).graph(), final(flat).view())
-                && (forall|theta: Subst, event: EventView|
-                    test_combo(final(store).graph(), theta, final(flat).view(), event, mode.and)
-                        == test_combo(final(store).graph(), theta, old(flat).view().push(children@[index as int]), event, mode.and)),
+impl TestMode {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            a@ < old(store).graph().tests.len(), b@ < old(store).graph().tests.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(found) => found ==> test_opposite(final(store).graph(), a, b), Err(_) => true },
+    )]
+    fn opposite<G: KernelStore>(store: &mut G, a: TestId, b: TestId) -> KernelResult<bool> {
+        let left = a.head(store)?;
+        let right = b.head(store)?;
+        match (left, right) {
+            (TestHead::Atom(p, x), TestHead::Atom(q, y)) => {
+                proof! {
+                    assert forall|theta: Subst, event: EventView| p@ == q@ && x != y
+                        implies test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
+                        test_lemma_truth(store.graph(), theta, a@, event);
+                        test_lemma_truth(store.graph(), theta, b@, event);
+                    }
+                }
+                Ok(p == q && x != y)
+            }
+            (TestHead::And(_), TestHead::Or(_)) | (TestHead::Or(_), TestHead::And(_)) => {
+                Ok(TestId::not(a, store)? == b)
+            }
+            (TestHead::True, TestHead::False) | (TestHead::False, TestHead::True) => {
+                proof! {
+                    assert forall|theta: Subst, event: EventView|
+                        test_truth(store.graph(), theta, a@, event) != test_truth(store.graph(), theta, b@, event) by {
+                        test_lemma_truth(store.graph(), theta, a@, event);
+                        test_lemma_truth(store.graph(), theta, b@, event);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    #[verus_verify]
+    #[verus_spec(result => ensures result == test_distinct_heads(left@, right@))]
+    fn distinct(left: TestHead, right: TestHead) -> bool {
+        matches!((left,right),(TestHead::Atom(Primitive::Eq{field:p,term:Term::Constant(c)},_),TestHead::Atom(Primitive::Eq{field:q,term:Term::Constant(d)},_)) if p==q&&c!=d)
+    }
+
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "Preserve the existing Verus-verified function shape."
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures result == match head@ {
+        model::TestHeadNode::Or(n) => if self.and { Some(n as usize) } else { None },
+        model::TestHeadNode::And(n) => if !self.and { Some(n as usize) } else { None },
+        _ => None,
+    })]
+    fn dual_count(self, head: TestHead) -> Option<usize> {
+        match head {
+            TestHead::Or(n) if self.and => Some(n),
+            TestHead::And(n) if !self.and => Some(n),
+            _ => None,
+        }
+    }
+
+    #[allow(
+        clippy::semicolon_if_nothing_returned,
+        reason = "Preserve the existing Verus-verified mutation branches."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), test_child_count(store.graph(), parent, count as nat),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+            Ok(found) => found == test_children(store.graph(), parent).contains(id@),
             Err(_) => true,
         },
-)]
-fn collect_test_step<G: KernelStore>(
-    store: &mut G,
-    children: &[TestId],
-    index: usize,
-    mode: TestMode,
-    flat: &mut WorkVec<TestId>,
-) -> KernelResult<bool> {
-    proof_decl! { let ghost prior = flat.view(); }
-    proof! { model::lemma_graph_wf_elim(store.graph()); }
-    let id = id_at(children, index)?;
-    store.checkpoint()?;
-    if id == mode.absorber {
-        proof! {
-            test_lemma_constants_semantics(store.graph());
-            assert forall|theta: Subst, event: EventView| language::event_wf(theta)
-                implies test_combo(store.graph(), theta, seq![id], event, mode.and) == !mode.and by {
-                test_lemma_combo_push(store.graph(), theta, event, Seq::empty(), id, mode.and);
+    )]
+    fn contains<G: KernelStore>(
+        store: &G,
+        parent: TestId,
+        count: usize,
+        id: TestId,
+    ) -> KernelResult<bool> {
+        proof! { test_lemma_children(store.graph(), parent, count as nat); }
+        let mut low = 0;
+        let mut high = count;
+        let mut failure = None;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                model::graph_wf(store.graph()),
+                test_child_count(store.graph(), parent, count as nat),
+                model::nondecreasing(test_children(store.graph(), parent)),
+                low <= high <= count,
+                forall|i: int| 0 <= i < low ==> #[trigger] test_children(store.graph(), parent)[i] < id@,
+                forall|i: int| high <= i < count ==> #[trigger] test_children(store.graph(), parent)[i] >= id@,
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> low == high,
+            decreases high - low,
+        ))]
+        while low < high {
+            let mid = loop_try!(midpoint(low, high), failure);
+            let child = loop_try!(parent.child(store, mid), failure);
+            if child < id {
+                proof! {
+                    assert forall|i: int| 0 <= i <= mid
+                        implies #[trigger] test_children(store.graph(), parent)[i] < id@ by {
+                        assert(test_children(store.graph(), parent)[i] <= child@);
+                    }
+                }
+                low = mid.saturating_add(1)
+            } else {
+                proof! {
+                    assert forall|i: int| mid <= i < count
+                        implies #[trigger] test_children(store.graph(), parent)[i] >= id@ by {
+                        assert(test_children(store.graph(), parent)[i] >= child@);
+                    }
+                }
+                high = mid
             }
-            test_lemma_absorbs_superset(store.graph(), seq![id], children@, mode.and);
         }
-        return Ok(true);
-    }
-    if id != mode.identity {
-        match id.head(store)? {
-            TestHead::And(n) if mode.and => collect_test_children(store, id, n, flat)?,
-            TestHead::Or(n) if !mode.and => collect_test_children(store, id, n, flat)?,
-            _ => flat.push(id),
+        if let Some(error) = failure {
+            return Err(error);
         }
-    }
-    proof! {
-        if id != mode.identity {
-            match store.graph().tests[id@ as int] {
-                model::TestNode::And(_) => { if mode.and { test_lemma_flatten(store.graph(), prior, flat.view(), id, mode.and); } },
-                model::TestNode::Or(_) => { if !mode.and { test_lemma_flatten(store.graph(), prior, flat.view(), id, mode.and); } },
-                _ => {},
-            }
+        if low < count {
+            Ok(parent.child(store, low)? == id)
         } else {
-            assert forall|theta: Subst, event: EventView|
-                test_combo(store.graph(), theta, flat.view(), event, mode.and)
-                    == test_combo(store.graph(), theta, prior.push(id), event, mode.and) by {
-                test_lemma_truth(store.graph(), theta, id@, event);
-                test_lemma_combo_push(store.graph(), theta, event, prior, id, mode.and);
-            }
+            Ok(false)
         }
-        assert forall|i: int| 0 <= i < flat.view().len() implies flat.view()[i]@ < store.graph().tests.len() by {
-            if i < prior.len() { assert(flat.view()[i] == prior[i]); }
-            else {
-                match store.graph().tests[id@ as int] {
-                    model::TestNode::And(_) => {
-                        if !mode.and { assert(flat.view()[i] == id); }
-                        else { assert(flat.view()[i]@ < store.graph().tests.len()); }
-                    },
-                    model::TestNode::Or(_) => {
-                        if mode.and { assert(flat.view()[i] == id); }
-                        else { assert(flat.view()[i]@ < store.graph().tests.len()); }
-                    },
-                    _ => { assert(flat.view()[i] == id); },
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()),
+            test_child_count(store.graph(), a, a_count as nat),
+            test_child_count(store.graph(), b, b_count as nat),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+            Ok(included) => included == (forall|i: int| 0 <= i < a_count
+                ==> test_children(store.graph(), b).contains(test_children(store.graph(), a)[i]))
+                && included == (forall|child: nat| test_children(store.graph(), a).contains(child)
+                    ==> test_children(store.graph(), b).contains(child)),
+            Err(_) => true,
+        },
+    )]
+    fn subset<G: KernelStore>(
+        store: &G,
+        a: TestId,
+        a_count: usize,
+        b: TestId,
+        b_count: usize,
+    ) -> KernelResult<bool> {
+        proof! {
+            test_lemma_children(store.graph(), a, a_count as nat);
+            test_lemma_children(store.graph(), b, b_count as nat);
+        }
+        let mut included = true;
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                model::graph_wf(store.graph()),
+                test_child_count(store.graph(), a, a_count as nat),
+                test_child_count(store.graph(), b, b_count as nat),
+                i <= a_count,
+                included == (forall|j: int| 0 <= j < i
+                    ==> test_children(store.graph(), b).contains(test_children(store.graph(), a)[j])),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == a_count,
+            decreases a_count - i,
+        ))]
+        while i < a_count {
+            let id = loop_try!(a.child(store, i), failure);
+            proof! { assert(id@ == test_children(store.graph(), a)[i as int]); }
+            included &= loop_try!(TestMode::contains(store, b, b_count, id), failure);
+            i = i.saturating_add(1);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        proof! {
+            assert(included == (forall|child: nat| test_children(store.graph(), a).contains(child)
+                ==> test_children(store.graph(), b).contains(child))) by {
+                if included {
+                    assert forall|child: nat| test_children(store.graph(), a).contains(child)
+                        implies test_children(store.graph(), b).contains(child) by {
+                        let j = choose|j: int| 0 <= j < a_count && test_children(store.graph(), a)[j] == child;
+                    }
+                } else {
+                    let j = choose|j: int| 0 <= j < a_count
+                        && !test_children(store.graph(), b).contains(test_children(store.graph(), a)[j]);
+                    assert(test_children(store.graph(), a).contains(test_children(store.graph(), a)[j]));
                 }
             }
         }
+        Ok(included)
     }
-    Ok(false)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), flat@), index < flat@.len(),
-        prior ==> test_absorbs(old(store).graph(), flat@, and),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(out) => (prior ==> out) && (out ==> test_absorbs(final(store).graph(), flat@, and))
-            && (forall|theta: Subst, event: EventView|
-                test_combo(old(store).graph(), theta, flat@, event, and)
-                    == test_combo(final(store).graph(), theta, flat@, event, and)), Err(_) => true },
-)]
-fn collapse_test_step<G: KernelStore>(
-    store: &mut G,
-    flat: &[TestId],
-    index: usize,
-    and: bool,
-    prior: bool,
-) -> KernelResult<bool> {
-    proof_decl! { let ghost before = store.graph(); }
-    let id = id_at(flat, index)?;
-    let pair = test_pair_collapse(store, id, flat, and)?;
-    proof_decl! { let ghost after_pair = store.graph(); }
-    let compound = test_compound_collapse(store, id, flat, and)?;
-    proof! {
-        if prior { test_lemma_absorbs_extends(before, store.graph(), flat@, and); }
-        if pair {
-            test_lemma_absorbs_extends(after_pair, store.graph(), seq![id] + flat@, and);
-            test_lemma_absorbs_superset(store.graph(), seq![id] + flat@, flat@, and);
-        }
-        if compound { test_lemma_absorbs_superset(store.graph(), seq![id] + flat@, flat@, and); }
-        test_lemma_combo_extends(before, store.graph(), flat@);
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(out) => out ==> test_absorbs(final(store).graph(), seq![a] + siblings@, self.and), Err(_) => true },
+    )]
+    fn pair_collapses<G: KernelStore>(
+        self,
+        store: &mut G,
+        a: TestId,
+        siblings: &[TestId],
+    ) -> KernelResult<bool> {
+        let mut state = Ok(false);
+        scan!(state,index,siblings.len(),state.is_ok(),prior=>{
+            let mut collapse = prior;
+            proof_decl! { let ghost before = store.graph(); let ghost was_collapsed = collapse; }
+            match id_at(siblings, index) {
+                Ok(b) => {
+                    match store.checkpoint() {
+                        Ok(()) => {
+                            match if a != b {
+                                match a.head(store) {
+                                    Ok(av) => {
+                                        match b.head(store) {
+                                            Ok(bv) => {
+                                                collapse |= matches!((av,bv),(TestHead::Atom(_,x),TestHead::Atom(_,y)) if x==self.and&&y==self.and)
+                                                    && TestMode::distinct(av, bv);
+                                                match TestMode::opposite(store, a, b) {
+                                                    Ok(matched) => {
+                                                        Ok(collapse | matched)
+                                                    }
+                                                    Err(error) => Err(error),
+                                                }
+                                            }
+                                            Err(error) => Err(error),
+                                        }
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            } else { Ok(collapse) } {
+                                Ok(collapse) => {
+                                    proof! {
+                                        if collapse {
+                                            if was_collapsed { test_lemma_absorbs_extends(before, store.graph(), seq![a] + siblings@, self.and); }
+                                            else {
+                                                test_lemma_pair_absorbs(store.graph(), a, b, self.and);
+                                                assert(siblings@.contains(b));
+                                                assert forall|id: TestId| seq![a, b].contains(id) implies (seq![a] + siblings@).contains(id) by {
+                                                    if id == a { assert((seq![a] + siblings@)[0] == id); }
+                                                    else { assert(id == b); assert((seq![a] + siblings@)[index as int + 1] == id); }
+                                                }
+                                                test_lemma_absorbs_superset(store.graph(), seq![a, b], seq![a] + siblings@, self.and);
+                                            }
+                                        }
+                                    }
+                                    Ok(collapse)
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
+            invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= siblings.len(),
+                match state { Ok(out) => out ==> test_absorbs(store.graph(), seq![a] + siblings@, self.and), Err(_) => true },
+            decreases siblings.len() - index,
+        );
+        state
     }
-    Ok(prior || pair || compound)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), flat@), index < flat@.len(),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(()) => final(kept).view() == if test_redundant_in(final(store).graph(), flat@[index as int], flat@, and) {
-            old(kept).view()
-        } else { old(kept).view().push(flat@[index as int]) }, Err(_) => true },
-)]
-fn retain_test_step<G: KernelStore>(
-    store: &mut G,
-    flat: &[TestId],
-    index: usize,
-    and: bool,
-    kept: &mut WorkVec<TestId>,
-) -> KernelResult<()> {
-    let id = id_at(flat, index)?;
-    if !test_redundant(store, id, flat, and)? {
-        kept.push(id);
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            id@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(out) => out ==> test_has_opposite(final(store).graph(), id, siblings@), Err(_) => true },
+    )]
+    fn has_complement<G: KernelStore>(
+        store: &mut G,
+        id: TestId,
+        siblings: &[TestId],
+    ) -> KernelResult<bool> {
+        let mut state = Ok(false);
+        scan!(state,index,siblings.len(),state.is_ok(),prior=>{
+            let found = prior;
+            proof_decl! { let ghost before = store.graph(); }
+            match id_at(siblings, index) {
+                Ok(sibling) => {
+                    match TestMode::opposite(store, id, sibling) {
+                        Ok(matched) => {
+                            proof! {
+                                if found { test_lemma_has_opposite_extends(before, store.graph(), id, siblings@); }
+                                if matched { assert(test_opposite(store.graph(), id, siblings@[index as int])); }
+                            }
+                            Ok(found || matched)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
+            invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                id@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= siblings.len(),
+                match state { Ok(out) => out ==> test_has_opposite(store.graph(), id, siblings@), Err(_) => true },
+            decreases siblings.len() - index,
+        );
+        state
     }
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
-        model::strictly_increasing(model::test_ids(children@)),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(id) => id@ < final(store).graph().tests.len()
-            && (forall|i: nat| i < old(store).graph().tests.len()
-                ==> model::lift_test(old(store).graph(), i) == model::lift_test(final(store).graph(), i))
-            && (forall|ids: Seq<TestId>, theta: Subst, event: EventView, mode: bool|
-                test_ids_valid(old(store).graph(), ids) ==> test_combo(old(store).graph(), theta, ids, event, mode)
-                    == test_combo(final(store).graph(), theta, ids, event, mode))
-            && (forall|theta: Subst, event: EventView|
-                test_truth(final(store).graph(), theta, id@, event)
-                    == test_combo(final(store).graph(), theta, children@, event, and)), Err(_) => true },
-)]
-fn test_intern_step<G: KernelStore>(
-    store: &mut G,
-    children: &[TestId],
-    and: bool,
-) -> KernelResult<TestId> {
-    proof_decl! { let ghost before = store.graph(); }
-    let id = store.intern_test(if and {
-        TestView::And(children)
-    } else {
-        TestView::Or(children)
-    })?;
-    proof! {
-        assert forall|ids: Seq<TestId>, theta: Subst, event: EventView, mode: bool|
-            test_ids_valid(before, ids) implies test_combo(before, theta, ids, event, mode)
-                == test_combo(store.graph(), theta, ids, event, mode) by {
-            test_lemma_combo_extends(before, store.graph(), ids);
+
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(out) => out ==> test_absorbs(final(store).graph(), seq![a] + siblings@, self.and), Err(_) => true },
+    )]
+    fn compound_collapses<G: KernelStore>(
+        self,
+        store: &mut G,
+        a: TestId,
+        siblings: &[TestId],
+    ) -> KernelResult<bool> {
+        #[allow(clippy::manual_unwrap_or, clippy::manual_unwrap_or_default)]
+        // Verus-verified match.
+        let count = match self.dual_count(a.head(store)?) {
+            Some(n) => n,
+            None => 0,
+        };
+        proof! { if count != 0 {
+            test_lemma_children(store.graph(), a, count as nat);
+            assert(test_children(store.graph(), a).take(count as int) =~= test_children(store.graph(), a));
+        } }
+        let mut state = Ok(count != 0);
+        scan!(state,index,count,state.is_ok(),prior=>{
+            let all = prior;
+            proof_decl! { let ghost before = store.graph(); }
+            proof! { test_lemma_children(store.graph(), a, test_children(store.graph(), a).len()); }
+            match a.child(store, index) {
+                Ok(id) => {
+                    match TestMode::has_complement(store, id, siblings) {
+                        Ok(matched) => {
+                            proof! {
+                                if all { test_lemma_covered_extends(before, store.graph(), test_children(before, a).take(index as int), siblings@); }
+                                if matched { assert(test_has_opposite(store.graph(), id, siblings@)); }
+                                if all && matched {
+                                    assert(id@ == test_children(store.graph(), a)[index as int]);
+                                    assert forall|child: nat| #[trigger] test_children(store.graph(), a).take(index as int + 1).contains(child)
+                                        implies exists|j: int| 0 <= j < siblings.len() && test_opposite_nat(store.graph(), child, siblings@[j]@) by {
+                                        let k = choose|k: int| 0 <= k < index as int + 1 && test_children(store.graph(), a)[k] == child;
+                                        if k < index {
+                                            assert(test_children(store.graph(), a).take(index as int)[k] == child);
+                                            assert(test_children(store.graph(), a).take(index as int).contains(child));
+                                        }
+                                        else { assert(child == id@); }
+                                    }
+                                }
+                            }
+                            Ok(all && matched)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
+            invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@), index <= count,
+                count != 0 ==> test_dual(store.graph(), a, self.and) && test_child_count(store.graph(), a, count as nat),
+                count != 0 ==> test_children(store.graph(), a).take(count as int) == test_children(store.graph(), a),
+                match state { Ok(out) => out ==> count != 0 && test_complement_covered(store.graph(), test_children(store.graph(), a).take(index as int), siblings@), Err(_) => true },
+            ensures state is Ok ==> index == count,
+                match state { Ok(out) => out ==> test_dual(store.graph(), a, self.and)
+                && test_complement_covered(store.graph(), test_children(store.graph(), a), siblings@), Err(_) => true },
+            decreases count - index,
+        );
+        proof! {
+            if state is Ok && state->Ok_0 {
+                test_lemma_compound_absorbs(store.graph(), a, siblings@, self.and);
+            }
         }
-        assert forall|i: nat| i < before.tests.len()
-            implies model::lift_test(before, i) == model::lift_test(store.graph(), i) by {
-            model::lemma_lift_test_stable(before, store.graph(), i);
-        }
-        assert forall|theta: Subst, event: EventView|
-            test_truth(store.graph(), theta, id@, event)
-                == test_combo(store.graph(), theta, children@, event, and) by {
-            test_lemma_compound_semantics(store.graph(), theta, event, id, children@, and);
-        }
+        state
     }
-    Ok(id)
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            a@ < old(store).graph().tests.len(), test_ids_valid(old(store).graph(), siblings@),
+        ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(out) => out == test_redundant_in(final(store).graph(), a, siblings@, self.and), Err(_) => true },
+    )]
+    fn redundant<G: KernelStore>(
+        self,
+        store: &mut G,
+        a: TestId,
+        siblings: &[TestId],
+    ) -> KernelResult<bool> {
+        proof! { assert(siblings@.take(siblings@.len() as int) =~= siblings@); }
+        let mut state = Ok(false);
+        scan!(state,index,siblings.len(),state.is_ok(),prior=>{
+            proof! {
+                test_lemma_redundant_push(store.graph(), a, siblings@.take(index as int), siblings@[index as int], self.and);
+                assert(siblings@.take(index as int).push(siblings@[index as int]) =~= siblings@.take(index as int + 1));
+            }
+            {
+            let mut redundant = prior;
+            match id_at(siblings, index) {
+                Ok(b) => {
+                    match store.checkpoint() {
+                        Ok(()) => {
+                            if a != b {
+                                match a.head(store) {
+                                    Ok(av) => {
+                                        match b.head(store) {
+                                            Ok(bv) => {
+                                                match if let Some(n) = self.dual_count(av) {
+                                                    match self.dual_count(bv) {
+                                                        Some(m) => TestMode::subset(store, b, m, a, n),
+                                                        None => TestMode::contains(store, a, n, b),
+                                                    }
+                                                } else { Ok(false) } {
+                                                    Ok(included) => {
+                                                        redundant |= included;
+                                                        redundant |= TestMode::distinct(av, bv)
+                                                            && matches!((av,bv),(TestHead::Atom(_,x),TestHead::Atom(_,y)) if x!=self.and&&y==self.and);
+                                                        Ok(redundant)
+                                                    }
+                                                    Err(error) => Err(error),
+                                                }
+                                            }
+                                            Err(error) => Err(error),
+                                        }
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            } else { Ok(redundant) }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
+        };
+            invariant store.graph() == old(store).graph(), store.valid_store(),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                model::graph_wf(store.graph()), a@ < store.graph().tests.len(), test_ids_valid(store.graph(), siblings@),
+                index <= siblings.len(),
+                siblings@.take(siblings@.len() as int) == siblings@,
+                match state { Ok(out) => out == test_redundant_in(store.graph(), a, siblings@.take(index as int), self.and), Err(_) => true },
+            ensures state is Ok ==> index == siblings.len(),
+                match state { Ok(out) => out == test_redundant_in(store.graph(), a, siblings@, self.and), Err(_) => true },
+            decreases siblings.len() - index,
+        );
+        state
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            old(flat).view().is_prefix_of(final(flat).view()),
+            final(flat).view().len() <= old(flat).view().len() + count,
+            forall|j: int| old(flat).view().len() <= j < final(flat).view().len()
+                ==> #[trigger] final(flat).view()[j]@ < store.graph().tests.len(),
+            forall|j: int| old(flat).view().len() <= j < final(flat).view().len()
+                ==> #[trigger] final(flat).view()[j]@ == test_children(store.graph(), id)[j - old(flat).view().len()],
+            match result { Ok(()) => final(flat).view().len() == old(flat).view().len() + count, Err(_) => true },
+    )]
+    fn append_children<G: KernelStore>(
+        store: &G,
+        id: TestId,
+        count: usize,
+        flat: &mut WorkVec<TestId>,
+    ) -> KernelResult<()> {
+        proof! { test_lemma_children(store.graph(), id, count as nat); }
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
+                i <= count,
+                model::bounded(test_children(store.graph(), id), id@), test_children(store.graph(), id).len() == count,
+                flat.view().len() == old(flat).view().len() + i,
+                old(flat).view().is_prefix_of(flat.view()),
+                forall|j: int| old(flat).view().len() <= j < flat.view().len()
+                    ==> #[trigger] flat.view()[j]@ == test_children(store.graph(), id)[j - old(flat).view().len()],
+                forall|j: int| old(flat).view().len() <= j < flat.view().len() ==> #[trigger] flat.view()[j]@ < store.graph().tests.len(),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == count,
+            decreases count - i,
+        ))]
+        while i < count {
+            let child = loop_try!(id.child(store, i), failure);
+            proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
+            flat.push(child);
+            i = i.saturating_add(1);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
-#[verus_verify]
+verus! {
 pub(crate) trait TestNormalize: Sized {
-    #[verus_spec(result =>
+    fn not<G: KernelStore>(this: TestId, store: &mut G) -> (result: KernelResult<TestId>)
         requires model::graph_wf(old(store).graph()), old(store).valid_store(), this@ < old(store).graph().tests.len(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().tests.len()
+                    && vocab::test_primitives(model::lift_test(final(store).graph(), id@))
+                        == vocab::test_primitives(model::lift_test(final(store).graph(), this@))
                     && (forall|theta: Subst, event: EventView|
                         test_truth(final(store).graph(), theta, id@, event)
                             != test_truth(final(store).graph(), theta, this@, event)),
                 Err(_) => true,
             },
-    )]
-    fn not<G: KernelStore>(this: TestId, store: &mut G) -> KernelResult<TestId>;
+    ;
 
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
-        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-            final(store).restoration() == old(store).restoration(),
-            match result { Ok(id) => id@ < final(store).graph().tests.len()
-                && (forall|theta: Subst, event: EventView| language::event_wf(theta)
-                    ==> test_truth(final(store).graph(), theta, id@, event)
-                        == test_combo(final(store).graph(), theta, children@, event, and)), Err(_) => true },
-    )]
     fn connective<G: KernelStore>(
         store: &mut G,
         children: &[TestId],
         and: bool,
-    ) -> KernelResult<TestId>;
+    ) -> (result: KernelResult<TestId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(id) => id@ < final(store).graph().tests.len()
+                && test_connective_result(old(store).graph(), final(store).graph(), children@, and, id@)
+                && (forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
+                    ==> test_truth(final(store).graph(), theta, id@, event)
+                        == test_combo(final(store).graph(), theta, children@, event, and)), Err(_) => true },
+    ;
+
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "Explicit matches preserve the Verus proof structure."
+    )]
+    fn schedule_children<G: KernelStore>(
+        store: &G,
+        id: TestId,
+        count: usize,
+        tasks: &mut WorkVec<(TestId, bool)>,
+    ) -> (result: KernelResult<()>)
+        requires model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            old(tasks).view().is_prefix_of(final(tasks).view()),
+            forall|j: int| old(tasks).view().len() <= j < final(tasks).view().len()
+                ==> #[trigger] final(tasks).view()[j].0@ < store.graph().tests.len()
+                    && !final(tasks).view()[j].1,
+            match result {
+                Ok(()) => test_schedule_extension(store.graph(), id, old(tasks).view(), final(tasks).view())
+                    && final(tasks).view().len() == old(tasks).view().len() + count
+                    && (forall|j: int| 0 <= j < count
+                        ==> #[trigger] final(tasks).view()[old(tasks).view().len() + j].0@
+                            == test_children(store.graph(), id)[count as int - 1 - j]),
+                Err(_) => true,
+            },
+    {
+        proof! { test_lemma_children(store.graph(), id, count as nat); }
+        let mut failure = None;
+        let mut remaining = count;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant
+                model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
+                model::bounded(test_children(store.graph(), id), id@), test_children(store.graph(), id).len() == count,
+                remaining <= count,
+                old(tasks).view().is_prefix_of(tasks.view()),
+                forall|j: int| old(tasks).view().len() <= j < tasks.view().len()
+                    ==> #[trigger] tasks.view()[j].0@ < store.graph().tests.len() && !tasks.view()[j].1,
+                forall|j: int| #![trigger tasks.view()[j]] old(tasks).view().len() <= j < tasks.view().len()
+                    ==> !tasks.view()[j].1,
+                failure is None ==> tasks.view().len() == old(tasks).view().len() + count - remaining
+                    && (forall|j: int| 0 <= j < count - remaining
+                        ==> #[trigger] tasks.view()[old(tasks).view().len() + j].0@
+                            == test_children(store.graph(), id)[count as int - 1 - j]),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> remaining == 0,
+            decreases remaining,
+        ))]
+        while remaining != 0 {
+            let i = loop_try!(
+                match remaining.checked_sub(1) {
+                    Some(value) => Ok(value),
+                    None => Err(HistoryError::normalization_invariant()),
+                },
+                failure
+            );
+            remaining = i;
+            let child = loop_try!(id.child(store, i), failure);
+            proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
+            tasks.push((child, false));
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        proof! {
+            assert forall|j: int| #![trigger tasks.view()[j]] old(tasks).view().len() <= j < tasks.view().len()
+                implies !tasks.view()[j].1 by {
+                assert(tasks.view()[j].0@ < store.graph().tests.len());
+            }
+            test_lemma_schedule_extension_intro(store.graph(), id, count as nat, old(tasks).view(), tasks.view());
+        }
+        Ok(())
+    }
+
+    fn finish_not<G: KernelStore>(
+        store: &mut G,
+        count: usize,
+        and: bool,
+        values: &mut WorkVec<TestId>,
+    ) -> (result: KernelResult<()>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            count <= old(values).view().len(), test_ids_valid(old(store).graph(), old(values).view()),
+            old(values).view().subrange(old(values).view().len() as int - count, old(values).view().len() as int).no_duplicates(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(()) => {
+                    let source = old(values).view().subrange(old(values).view().len() as int - count,
+                        old(values).view().len() as int);
+                    &&& final(values).view().len() == old(values).view().len() - count + 1
+                    &&& final(values).view().drop_last() == old(values).view().subrange(0,
+                        old(values).view().len() as int - count)
+                    &&& test_ids_valid(final(store).graph(), final(values).view())
+                    &&& exists|sorted: Seq<TestId>| sorted.to_multiset() == source.to_multiset()
+                        && final(store).graph().tests[final(values).view().last()@ as int]
+                            == if and { model::TestNode::And(model::test_ids(sorted)) }
+                                else { model::TestNode::Or(model::test_ids(sorted)) }
+                    &&& forall|theta: Subst, event: EventView|
+                        test_truth(final(store).graph(), theta, final(values).view().last()@, event)
+                        == test_combo(final(store).graph(), theta, source, event, and)
+                },
+                Err(_) => true,
+            },
+    {
+        proof_decl! { let ghost original = values.view(); }
+        let start = match values.len().checked_sub(count) {
+            Some(v) => v,
+            None => return Err(HistoryError::normalization_invariant()),
+        };
+        let children = match values.as_mut_slice().get_mut(start..) {
+            Some(v) => v,
+            None => return Err(HistoryError::normalization_invariant()),
+        };
+        // De Morgan preserves every normalized reduction; only canonical ID ordering changes.
+        proof! { junco_core::kernel::TestId::lemma_obeys_cmp(); }
+        children.sort_unstable();
+        proof_decl! { let ghost sorted = children@; }
+        proof! {
+            let source = original.subrange(start as int, original.len() as int);
+            lemma_multiset_members(source, sorted);
+            source.lemma_multiset_has_no_duplicates();
+            assert(sorted.no_duplicates()) by {
+                sorted.lemma_multiset_has_no_duplicates_conv();
+            }
+            assert forall|i: int| 0 <= i < sorted.len() implies sorted[i]@ < store.graph().tests.len() by {
+                assert(sorted.contains(sorted[i]));
+                assert(source.contains(sorted[i]));
+                let j = choose|j: int| 0 <= j < source.len() && source[j] == sorted[i];
+                assert(original[start as int + j] == source[j]);
+            }
+            assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ < sorted[j]@ by {
+                assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
+                assert(sorted[i] != sorted[j]);
+            }
+            assert(test_ids_valid(store.graph(), sorted));
+            assert(model::strictly_increasing(model::test_ids(sorted)));
+            assert(model::test_node_wf(store.graph(), if and {
+                model::TestNode::And(model::test_ids(sorted))
+            } else { model::TestNode::Or(model::test_ids(sorted)) }));
+        }
+        let out = store.intern_test(if and {
+            TestView::And(children)
+        } else {
+            TestView::Or(children)
+        })?;
+        proof! {
+            assert forall|theta: Subst, event: EventView|
+                test_truth(store.graph(), theta, out@, event)
+                    == test_combo(store.graph(), theta,
+                        original.subrange(start as int, original.len() as int), event, and) by {
+                test_lemma_compound_semantics(store.graph(), theta, event, out, sorted, and);
+                test_lemma_combo_permutation(store.graph(), theta, event,
+                    sorted, original.subrange(start as int, original.len() as int), and);
+            }
+        }
+        values.truncate(start);
+        values.push(out);
+        Ok(())
+    }
+
+    fn not_step<G: KernelStore>(
+        store: &mut G,
+        id: TestId,
+        finish: bool,
+        tasks: &mut WorkVec<(TestId, bool)>,
+        values: &mut WorkVec<TestId>,
+    ) -> (result: KernelResult<()>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            test_not_ready(old(store).graph(), id, finish, old(values).view()),
+            forall|i: int| 0 <= i < old(tasks).view().len() ==> #[trigger] old(tasks).view()[i].0@ < old(store).graph().tests.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(()) => test_ids_valid(final(store).graph(), final(values).view())
+                    && test_not_effect(final(store).graph(), id, finish,
+                        old(tasks).view(), old(values).view(), final(tasks).view(), final(values).view())
+                    && test_not_work(final(store).graph(), final(tasks).view())
+                        < test_not_work(old(store).graph(), old(tasks).view().push((id, finish)))
+                    && (forall|root: TestId| test_not_state(old(store).graph(), old(tasks).view().push((id, finish)), old(values).view(), root)
+                        ==> test_not_state(final(store).graph(), final(tasks).view(), final(values).view(), root)),
+                Err(_) => true,
+            },
+    {
+        proof_decl! {
+            let ghost before = store.graph();
+            let ghost pending = tasks.view();
+            let ghost prior_values = values.view();
+        }
+        proof! { model::lemma_graph_wf_elim(store.graph()); }
+        store.checkpoint()?;
+        match id.head(store)? {
+            TestHead::True => {
+                values.push(store.constants().test_false);
+                proof! {
+                    assert(values.view().drop_last() =~= prior_values);
+                    test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
+                }
+            }
+            TestHead::False => {
+                values.push(store.constants().test_true);
+                proof! {
+                    assert(values.view().drop_last() =~= prior_values);
+                    test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
+                }
+            }
+            TestHead::Atom(primitive, positive) => {
+                values.push(store.intern_test(TestView::Atom {
+                    primitive,
+                    positive: !positive,
+                })?);
+                proof! {
+                    assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
+                    assert(values.view().drop_last() =~= prior_values);
+                    test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
+                }
+            }
+            TestHead::And(n) => {
+                if finish {
+                    Self::finish_not(store, n, false, values)?;
+                    proof! {
+                        assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
+                        test_lemma_not_finish_effect(store.graph(), id, pending, prior_values, values.view(), n as nat, false);
+                    }
+                } else {
+                    tasks.push((id, true));
+                    proof_decl! { let ghost scheduled_base = tasks.view(); }
+                    Self::schedule_children(store, id, n, tasks)?;
+                    proof! {
+                        test_lemma_not_scheduled_extension(store.graph(), id, pending, scheduled_base, tasks.view(), prior_values);
+                    }
+                }
+            }
+            TestHead::Or(n) => {
+                if finish {
+                    Self::finish_not(store, n, true, values)?;
+                    proof! {
+                        assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
+                        test_lemma_not_finish_effect(store.graph(), id, pending, prior_values, values.view(), n as nat, true);
+                    }
+                } else {
+                    tasks.push((id, true));
+                    proof_decl! { let ghost scheduled_base = tasks.view(); }
+                    Self::schedule_children(store, id, n, tasks)?;
+                    proof! {
+                        test_lemma_not_scheduled_extension(store.graph(), id, pending, scheduled_base, tasks.view(), prior_values);
+                    }
+                }
+            }
+        }
+        proof! {
+            test_lemma_not_step_post(before, store.graph(), id, finish, pending, prior_values, tasks.view(), values.view());
+        }
+        Ok(())
+    }
+
+    fn not_next<G: KernelStore>(
+        store: &mut G,
+        tasks: &mut WorkVec<(TestId, bool)>,
+        values: &mut WorkVec<TestId>,
+    ) -> (result: KernelResult<()>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), old(tasks).view().len() > 0,
+            exists|root: TestId| test_not_state(old(store).graph(), old(tasks).view(), old(values).view(), root),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result {
+                Ok(()) => test_not_work(final(store).graph(), final(tasks).view())
+                    < test_not_work(old(store).graph(), old(tasks).view())
+                    && (forall|root: TestId| test_not_state(old(store).graph(), old(tasks).view(), old(values).view(), root)
+                        ==> test_not_state(final(store).graph(), final(tasks).view(), final(values).view(), root)),
+                Err(_) => true,
+            },
+    {
+        proof_decl! { let ghost pending = tasks.view(); }
+        let (id, finish) = match tasks.pop() {
+            Some(v) => v,
+            None => return Err(HistoryError::normalization_invariant()),
+        };
+        proof! {
+            assert(tasks.view().push((id, finish)) =~= pending);
+            let root = choose|root: TestId| test_not_state(store.graph(), pending, values.view(), root);
+            test_lemma_not_state_ready(store.graph(), tasks.view(), id, finish, values.view(), root);
+            assert forall|i: int| 0 <= i < tasks.view().len() implies tasks.view()[i].0@ < store.graph().tests.len() by {
+                assert(tasks.view()[i] == pending[i]);
+            }
+        }
+        Self::not_step(store, id, finish, tasks, values)
+    }
+}
 }
 
 #[verus_verify]
@@ -896,15 +1164,27 @@ impl TestNormalize for TestId {
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
                 model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
                 state is Ok ==> test_not_state(store.graph(), tasks.view(), values.view(), this),
             decreases if state is Ok { test_not_work(store.graph(), tasks.view()) + 1 } else { 0 },
         ))]
         while !tasks.is_empty() && state.is_ok() {
-            state = test_not_next(store, &mut tasks, &mut values);
+            state = Self::not_next(store, &mut tasks, &mut values);
         }
         state?;
-        proof! { test_lemma_not_done(store.graph(), values.view(), this); }
+        proof! {
+            test_lemma_not_done(store.graph(), values.view(), this);
+            vocab::lemma_test_not_done_primitives(store.graph(), values.view(), this);
+        }
         match values.pop() {
             Some(v) => Ok(v),
             None => Err(HistoryError::normalization_invariant()),
@@ -941,10 +1221,114 @@ impl TestNormalize for TestId {
                     test_lemma_combo_push(store.graph(), theta, event, children@.take(index as int), children@[index as int], and);
                 }
             }
-            collect_test_step(store,children,index,mode,&mut flat)
+            {
+            proof_decl! { let ghost prior = flat.view(); }
+            proof! { model::lemma_graph_wf_elim(store.graph()); }
+            match id_at(children, index) {
+                Ok(id) => {
+                    match store.checkpoint() {
+                        Ok(()) => {
+                            if id == mode.absorber {
+                                proof! {
+                                    test_lemma_constants_semantics(store.graph());
+                                    assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
+                                        implies test_combo(store.graph(), theta, seq![id], event, mode.and) == !mode.and by {
+                                        test_lemma_combo_push(store.graph(), theta, event, Seq::empty(), id, mode.and);
+                                    }
+                                    test_lemma_absorbs_superset(store.graph(), seq![id], children@, mode.and);
+                                }
+                                Ok(true)
+                            } else {
+                                match if id != mode.identity {
+                                    match id.head(store) {
+                                        Ok(head) => {
+                                            match head {
+                                                TestHead::And(n) if mode.and => TestMode::append_children(store, id, n, &mut flat),
+                                                TestHead::Or(n) if !mode.and => TestMode::append_children(store, id, n, &mut flat),
+                                                _ => { flat.push(id); Ok(()) },
+                                            }
+                                        }
+                                        Err(error) => Err(error),
+                                    }
+                                } else { Ok(()) } {
+                                    Ok(()) => {
+                                        proof! {
+                                            if id != mode.identity {
+                                                match store.graph().tests[id@ as int] {
+                                                    model::TestNode::And(_) => { if mode.and { test_lemma_flatten(store.graph(), prior, flat.view(), id, mode.and); } },
+                                                    model::TestNode::Or(_) => { if !mode.and { test_lemma_flatten(store.graph(), prior, flat.view(), id, mode.and); } },
+                                                    _ => {},
+                                                }
+                                            } else {
+                                                assert forall|theta: Subst, event: EventView|
+                                                    test_combo(store.graph(), theta, flat.view(), event, mode.and)
+                                                        == test_combo(store.graph(), theta, prior.push(id), event, mode.and) by {
+                                                    test_lemma_truth(store.graph(), theta, id@, event);
+                                                    test_lemma_combo_push(store.graph(), theta, event, prior, id, mode.and);
+                                                }
+                                            }
+                                            assert forall|i: int| 0 <= i < flat.view().len() implies flat.view()[i]@ < store.graph().tests.len() by {
+                                                if i < prior.len() { assert(flat.view()[i] == prior[i]); }
+                                                else {
+                                                    match store.graph().tests[id@ as int] {
+                                                        model::TestNode::And(_) => {
+                                                            if !mode.and { assert(flat.view()[i] == id); }
+                                                            else { assert(flat.view()[i]@ < store.graph().tests.len()); }
+                                                        },
+                                                        model::TestNode::Or(_) => {
+                                                            if mode.and { assert(flat.view()[i] == id); }
+                                                            else { assert(flat.view()[i]@ < store.graph().tests.len()); }
+                                                        },
+                                                        _ => { assert(flat.view()[i] == id); },
+                                                    }
+                                                }
+                                            }
+                                            assert forall|i: int| 0 <= i < flat.view().len()
+                                                implies test_member(store.graph(), children@, and, #[trigger] flat.view()[i]@) by {
+                                                if i < prior.len() {
+                                                    assert(flat.view()[i] == prior[i]);
+                                                } else {
+                                                    let j = i - prior.len();
+                                                    assert(children@[index as int] == id);
+                                                    match store.graph().tests[id@ as int] {
+                                                        model::TestNode::And(cs) => {
+                                                            if mode.and { assert(flat.view()[i]@ == cs[j]); assert(cs.contains(cs[j])); }
+                                                            else { assert(flat.view()[i] == id); }
+                                                        },
+                                                        model::TestNode::Or(cs) => {
+                                                            if !mode.and { assert(flat.view()[i]@ == cs[j]); assert(cs.contains(cs[j])); }
+                                                            else { assert(flat.view()[i] == id); }
+                                                        },
+                                                        _ => { assert(flat.view()[i] == id); },
+                                                    }
+                                                    assert(test_piece_contains(store.graph(), children@[index as int]@, and, flat.view()[i]@));
+                                                }
+                                            }
+                                        }
+                                        Ok(false)
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
         };
             invariant store.graph() == old(store).graph(), model::graph_wf(store.graph()), store.valid_store(),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> collecting != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(collecting),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(collecting matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (collecting matches Err(e) ==> resource_error(e)),
                 c@ == store.graph().constants, mode.and == and, mode.identity == identity, mode.absorber == absorber,
                 identity@ == if and { c.test_true@ } else { c.test_false@ }, absorber@ == if and { c.test_false@ } else { c.test_true@ },
                 test_ids_valid(store.graph(), children@), index <= children.len(),
@@ -952,6 +1336,8 @@ impl TestNormalize for TestId {
                 match collecting {
                     Ok(true) => test_absorbs(store.graph(), children@, and),
                     Ok(false) => test_ids_valid(store.graph(), flat.view())
+                        && (forall|k: int| 0 <= k < flat.view().len()
+                            ==> test_member(store.graph(), children@, and, #[trigger] flat.view()[k]@))
                         && (forall|theta: Subst, event: EventView|
                             test_combo(store.graph(), theta, flat.view(), event, and)
                                 == test_combo(store.graph(), theta, children@.take(index as int), event, and)),
@@ -959,6 +1345,8 @@ impl TestNormalize for TestId {
                 },
             ensures matches!(collecting, Ok(false)) ==> index == children.len(),
                 match collecting { Ok(false) => test_ids_valid(store.graph(), flat.view())
+                && (forall|k: int| 0 <= k < flat.view().len()
+                    ==> test_member(store.graph(), children@, and, #[trigger] flat.view()[k]@))
                 && (forall|theta: Subst, event: EventView|
                     test_combo(store.graph(), theta, flat.view(), event, and) == test_combo(store.graph(), theta, children@, event, and)), _ => true },
             decreases children.len() - index,
@@ -967,6 +1355,7 @@ impl TestNormalize for TestId {
             return Ok(absorber);
         }
         proof_decl! { let ghost collected = flat.view(); }
+        proof! { junco_core::kernel::TestId::lemma_obeys_cmp(); }
         flat.as_mut_slice().sort_unstable();
         proof_decl! { let ghost sorted = flat.view(); }
         dedup_ids(&mut flat)?;
@@ -1001,13 +1390,60 @@ impl TestNormalize for TestId {
                     == test_combo(store.graph(), theta, children@, event, and) by {
                 test_lemma_combo_membership(store.graph(), theta, event, flat.view(), collected, and);
             }
+            assert forall|i: int| 0 <= i < flat.view().len()
+                implies test_member(old(store).graph(), children@, and, #[trigger] flat.view()[i]@) by {
+                assert(collected.contains(flat.view()[i]));
+                let j = choose|j: int| 0 <= j < collected.len() && collected[j] == flat.view()[i];
+            }
         }
         let mut collapse = Ok(false);
-        scan!(collapse,index,flat.len(),collapse.is_ok(),prior=>collapse_test_step(store,&flat,index,and,prior);
+        scan!(collapse,index,flat.len(),collapse.is_ok(),prior=>{
+            proof_decl! { let ghost before = store.graph(); }
+            match id_at(&flat, index) {
+                Ok(id) => {
+                    match mode.pair_collapses(store, id, &flat) {
+                        Ok(pair) => {
+                            proof_decl! { let ghost after_pair = store.graph(); }
+                            proof! { assert(pair ==> test_absorbs(after_pair, seq![id] + flat.view(), and)); }
+                            match mode.compound_collapses(store, id, &flat) {
+                                Ok(compound) => {
+                                    proof! {
+                                        assert(compound ==> test_absorbs(store.graph(), seq![id] + flat.view(), and));
+                                        if prior { test_lemma_absorbs_extends(before, store.graph(), flat.view(), and); }
+                                        if pair {
+                                            test_lemma_absorbs_extends(after_pair, store.graph(), seq![id] + flat.view(), and);
+                                            test_lemma_absorbs_superset(store.graph(), seq![id] + flat.view(), flat.view(), and);
+                                        }
+                                        if compound { test_lemma_absorbs_superset(store.graph(), seq![id] + flat.view(), flat.view(), and); }
+                                        test_lemma_combo_extends(before, store.graph(), flat.view());
+                                    }
+                                    Ok(prior || pair || compound)
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> collapse != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(collapse),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(collapse matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (collapse matches Err(e) ==> resource_error(e)),
+                mode.and == and,
                 test_ids_valid(store.graph(), flat.view()), test_ids_valid(store.graph(), children@), index <= flat.len(),
                 model::strictly_increasing(model::test_ids(flat.view())),
+                forall|k: int| 0 <= k < flat.view().len()
+                    ==> test_member(old(store).graph(), children@, and, #[trigger] flat.view()[k]@),
                 collapse is Ok ==> (forall|theta: Subst, event: EventView|
                     test_combo(store.graph(), theta, flat.view(), event, and)
                         == test_combo(old(store).graph(), theta, children@, event, and)),
@@ -1030,12 +1466,44 @@ impl TestNormalize for TestId {
                     |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and));
                 assert(flat.view().take(index as int).push(flat.view()[index as int]) =~= flat.view().take(index as int + 1));
             }
-            retain_test_step(store,&flat,index,and,&mut kept)
+            {
+            proof_decl! { let ghost prior_kept = kept.view(); }
+            match id_at(&flat, index) {
+                Ok(id) => {
+                    match mode.redundant(store, id, &flat) {
+                        Ok(redundant) => {
+                            proof! { assert(redundant == test_redundant_in(store.graph(), id, flat.view(), and)); }
+                            if !redundant { kept.push(id); }
+                            proof! {
+                                assert(kept.view() == if test_redundant_in(store.graph(), flat.view()[index as int], flat.view(), and) {
+                                    prior_kept
+                                } else { prior_kept.push(flat.view()[index as int]) });
+                            }
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
         };
             invariant model::graph_extends(old(store).graph(), store.graph()), model::graph_wf(store.graph()), store.valid_store(),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> retaining != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(retaining),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(retaining matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (retaining matches Err(e) ==> resource_error(e)),
+                mode.and == and, test_ids_valid(store.graph(), children@),
                 test_ids_valid(store.graph(), flat.view()), index <= flat.len(),
                 model::strictly_increasing(model::test_ids(flat.view())),
+                forall|k: int| 0 <= k < flat.view().len()
+                    ==> test_member(old(store).graph(), children@, and, #[trigger] flat.view()[k]@),
                 flat.view().take(flat.view().len() as int) == flat.view(),
                 retaining is Ok ==> kept.view() == flat.view().take(index as int).filter(
                     |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and)),
@@ -1053,6 +1521,12 @@ impl TestNormalize for TestId {
             test_lemma_filter_ordered(flat.view(), |id: TestId| !test_redundant_in(store.graph(), id, flat.view(), and), |id: TestId| id@);
             assert(kept.view() == test_retained(store.graph(), flat.view(), and));
             assert forall|i: int| 0 <= i < kept.view().len() implies kept.view()[i]@ < store.graph().tests.len() by {
+                assert(kept.view().contains(kept.view()[i]));
+                assert(flat.view().contains(kept.view()[i]));
+                let j = choose|j: int| 0 <= j < flat.view().len() && flat.view()[j] == kept.view()[i];
+            }
+            assert forall|i: int| 0 <= i < kept.view().len()
+                implies test_member(old(store).graph(), children@, and, #[trigger] kept.view()[i]@) by {
                 assert(kept.view().contains(kept.view()[i]));
                 assert(flat.view().contains(kept.view()[i]));
                 let j = choose|j: int| 0 <= j < flat.view().len() && flat.view()[j] == kept.view()[i];
@@ -1075,625 +1549,69 @@ impl TestNormalize for TestId {
             assert(model::strictly_increasing(model::test_ids(kept.view())));
             test_lemma_constants_semantics(store.graph());
             assert(identity@ == if and { store.graph().constants.test_true } else { store.graph().constants.test_false });
-            assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+            assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                 implies test_combo(store.graph(), theta, kept.view(), event, and)
                     == test_combo(store.graph(), theta, children@, event, and) by {}
         }
         if kept.is_empty() {
             proof! {
-                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                     implies test_truth(store.graph(), theta, identity@, event)
                         == test_combo(store.graph(), theta, children@, event, and) by {}
             }
             Ok(identity)
         } else if kept.len() == 1 {
             proof! {
-                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                     implies test_truth(store.graph(), theta, kept.view()[0]@, event)
                         == test_combo(store.graph(), theta, children@, event, and) by {}
             }
             id_at(&kept, 0)
         } else {
-            test_intern_step(store, &kept, and)
-        }
-    }
-}
-#[allow(
-    clippy::option_if_let_else,
-    reason = "Explicit matches preserve the Verus proof structure."
-)]
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
-    ensures old(tasks).view().is_prefix_of(final(tasks).view()),
-        forall|j: int| old(tasks).view().len() <= j < final(tasks).view().len()
-            ==> #[trigger] final(tasks).view()[j].0@ < store.graph().tests.len()
-                && !final(tasks).view()[j].1,
-        match result {
-            Ok(()) => test_schedule_extension(store.graph(), id, old(tasks).view(), final(tasks).view())
-                && final(tasks).view().len() == old(tasks).view().len() + count
-                && (forall|j: int| 0 <= j < count
-                    ==> #[trigger] final(tasks).view()[old(tasks).view().len() + j].0@
-                        == test_children(store.graph(), id)[count as int - 1 - j]),
-            Err(_) => true,
-        },
-)]
-fn schedule_test_children<G: KernelStore>(
-    store: &G,
-    id: TestId,
-    count: usize,
-    tasks: &mut WorkVec<(TestId, bool)>,
-) -> KernelResult<()> {
-    proof! { test_lemma_children(store.graph(), id, count as nat); }
-    let mut failure = None;
-    let mut remaining = count;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant
-            model::graph_wf(store.graph()), test_child_count(store.graph(), id, count as nat),
-            model::bounded(test_children(store.graph(), id), id@), test_children(store.graph(), id).len() == count,
-            remaining <= count,
-            old(tasks).view().is_prefix_of(tasks.view()),
-            forall|j: int| old(tasks).view().len() <= j < tasks.view().len()
-                ==> #[trigger] tasks.view()[j].0@ < store.graph().tests.len() && !tasks.view()[j].1,
-            forall|j: int| #![trigger tasks.view()[j]] old(tasks).view().len() <= j < tasks.view().len()
-                ==> !tasks.view()[j].1,
-            failure is None ==> tasks.view().len() == old(tasks).view().len() + count - remaining
-                && (forall|j: int| 0 <= j < count - remaining
-                    ==> #[trigger] tasks.view()[old(tasks).view().len() + j].0@
-                        == test_children(store.graph(), id)[count as int - 1 - j]),
-        ensures failure.is_none() ==> remaining == 0,
-        decreases remaining,
-    ))]
-    while remaining != 0 {
-        let i = loop_try!(
-            match remaining.checked_sub(1) {
-                Some(value) => Ok(value),
-                None => Err(HistoryError::normalization_invariant()),
-            },
-            failure
-        );
-        remaining = i;
-        let child = loop_try!(id.child(store, i), failure);
-        proof! { assert(child@ == test_children(store.graph(), id)[i as int]); }
-        tasks.push((child, false));
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    proof! {
-        assert forall|j: int| #![trigger tasks.view()[j]] old(tasks).view().len() <= j < tasks.view().len()
-            implies !tasks.view()[j].1 by {
-            assert(tasks.view()[j].0@ < store.graph().tests.len());
-        }
-        test_lemma_schedule_extension_intro(store.graph(), id, count as nat, old(tasks).view(), tasks.view());
-    }
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        count <= old(values).view().len(), test_ids_valid(old(store).graph(), old(values).view()),
-        old(values).view().subrange(old(values).view().len() as int - count, old(values).view().len() as int).no_duplicates(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(()) => {
-                let source = old(values).view().subrange(old(values).view().len() as int - count,
-                    old(values).view().len() as int);
-                &&& final(values).view().len() == old(values).view().len() - count + 1
-                &&& final(values).view().drop_last() == old(values).view().subrange(0,
-                    old(values).view().len() as int - count)
-                &&& test_ids_valid(final(store).graph(), final(values).view())
-                &&& exists|sorted: Seq<TestId>| sorted.to_multiset() == source.to_multiset()
-                    && final(store).graph().tests[final(values).view().last()@ as int]
-                        == if and { model::TestNode::And(model::test_ids(sorted)) }
-                            else { model::TestNode::Or(model::test_ids(sorted)) }
-                &&& forall|theta: Subst, event: EventView|
-                    test_truth(final(store).graph(), theta, final(values).view().last()@, event)
-                    == test_combo(final(store).graph(), theta, source, event, and)
-            },
-            Err(_) => true,
-        },
-)]
-fn finish_test_not<G: KernelStore>(
-    store: &mut G,
-    count: usize,
-    and: bool,
-    values: &mut WorkVec<TestId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost original = values.view(); }
-    let start = match values.len().checked_sub(count) {
-        Some(v) => v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    let children = match values.as_mut_slice().get_mut(start..) {
-        Some(v) => v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    // De Morgan preserves every normalized reduction; only canonical ID ordering changes.
-    children.sort_unstable();
-    proof_decl! { let ghost sorted = children@; }
-    proof! {
-        let source = original.subrange(start as int, original.len() as int);
-        lemma_multiset_members(source, sorted);
-        source.lemma_multiset_has_no_duplicates();
-        assert(sorted.no_duplicates()) by {
-            sorted.lemma_multiset_has_no_duplicates_conv();
-        }
-        assert forall|i: int| 0 <= i < sorted.len() implies sorted[i]@ < store.graph().tests.len() by {
-            assert(sorted.contains(sorted[i]));
-            assert(source.contains(sorted[i]));
-            let j = choose|j: int| 0 <= j < source.len() && source[j] == sorted[i];
-            assert(original[start as int + j] == source[j]);
-        }
-        assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ < sorted[j]@ by {
-            assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
-            assert(sorted[i] != sorted[j]);
-        }
-        assert(test_ids_valid(store.graph(), sorted));
-        assert(model::strictly_increasing(model::test_ids(sorted)));
-        assert(model::test_node_wf(store.graph(), if and {
-            model::TestNode::And(model::test_ids(sorted))
-        } else { model::TestNode::Or(model::test_ids(sorted)) }));
-    }
-    let out = store.intern_test(if and {
-        TestView::And(children)
-    } else {
-        TestView::Or(children)
-    })?;
-    proof! {
-        assert forall|theta: Subst, event: EventView|
-            test_truth(store.graph(), theta, out@, event)
-                == test_combo(store.graph(), theta,
-                    original.subrange(start as int, original.len() as int), event, and) by {
-            test_lemma_compound_semantics(store.graph(), theta, event, out, sorted, and);
-            test_lemma_combo_permutation(store.graph(), theta, event,
-                sorted, original.subrange(start as int, original.len() as int), and);
-        }
-    }
-    values.truncate(start);
-    values.push(out);
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        test_not_ready(old(store).graph(), id, finish, old(values).view()),
-        forall|i: int| 0 <= i < old(tasks).view().len() ==> #[trigger] old(tasks).view()[i].0@ < old(store).graph().tests.len(),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(()) => test_ids_valid(final(store).graph(), final(values).view())
-                && test_not_effect(final(store).graph(), id, finish,
-                    old(tasks).view(), old(values).view(), final(tasks).view(), final(values).view())
-                && test_not_work(final(store).graph(), final(tasks).view())
-                    < test_not_work(old(store).graph(), old(tasks).view().push((id, finish)))
-                && (forall|root: TestId| test_not_state(old(store).graph(), old(tasks).view().push((id, finish)), old(values).view(), root)
-                    ==> test_not_state(final(store).graph(), final(tasks).view(), final(values).view(), root)),
-            Err(_) => true,
-        },
-)]
-fn test_not_step<G: KernelStore>(
-    store: &mut G,
-    id: TestId,
-    finish: bool,
-    tasks: &mut WorkVec<(TestId, bool)>,
-    values: &mut WorkVec<TestId>,
-) -> KernelResult<()> {
-    proof_decl! {
-        let ghost before = store.graph();
-        let ghost pending = tasks.view();
-        let ghost prior_values = values.view();
-    }
-    proof! { model::lemma_graph_wf_elim(store.graph()); }
-    store.checkpoint()?;
-    match id.head(store)? {
-        TestHead::True => {
-            values.push(store.constants().test_false);
-            proof! {
-                assert(values.view().drop_last() =~= prior_values);
-                test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
-            }
-        }
-        TestHead::False => {
-            values.push(store.constants().test_true);
-            proof! {
-                assert(values.view().drop_last() =~= prior_values);
-                test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
-            }
-        }
-        TestHead::Atom(primitive, positive) => {
-            values.push(store.intern_test(TestView::Atom {
-                primitive,
-                positive: !positive,
-            })?);
-            proof! {
-                assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
-                assert(values.view().drop_last() =~= prior_values);
-                test_lemma_not_leaf_effect(store.graph(), id, pending, prior_values, values.view(), finish);
-            }
-        }
-        TestHead::And(n) => {
-            if finish {
-                finish_test_not(store, n, false, values)?;
-                proof! {
-                    assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
-                    test_lemma_not_finish_effect(store.graph(), id, pending, prior_values, values.view(), n as nat, false);
-                }
-            } else {
-                tasks.push((id, true));
-                proof_decl! { let ghost scheduled_base = tasks.view(); }
-                schedule_test_children(store, id, n, tasks)?;
-                proof! {
-                    test_lemma_not_scheduled_extension(store.graph(), id, pending, scheduled_base, tasks.view(), prior_values);
-                }
-            }
-        }
-        TestHead::Or(n) => {
-            if finish {
-                finish_test_not(store, n, true, values)?;
-                proof! {
-                    assert(before.tests[id@ as int] == store.graph().tests[id@ as int]);
-                    test_lemma_not_finish_effect(store.graph(), id, pending, prior_values, values.view(), n as nat, true);
-                }
-            } else {
-                tasks.push((id, true));
-                proof_decl! { let ghost scheduled_base = tasks.view(); }
-                schedule_test_children(store, id, n, tasks)?;
-                proof! {
-                    test_lemma_not_scheduled_extension(store.graph(), id, pending, scheduled_base, tasks.view(), prior_values);
+            {
+                proof_decl! { let ghost before = store.graph(); }
+                match store.intern_test(if and {
+                    TestView::And(&kept)
+                } else {
+                    TestView::Or(&kept)
+                }) {
+                    Ok(id) => {
+                        proof! {
+                            test_lemma_combo_extends(before, store.graph(), children@);
+                            assert forall|ids: Seq<TestId>, theta: Subst, event: EventView, mode: bool|
+                                test_ids_valid(before, ids) implies test_combo(before, theta, ids, event, mode)
+                                    == test_combo(store.graph(), theta, ids, event, mode) by {
+                                test_lemma_combo_extends(before, store.graph(), ids);
+                            }
+                            assert forall|i: nat| i < before.tests.len()
+                                implies model::lift_test(before, i) == model::lift_test(store.graph(), i) by {
+                                model::lemma_lift_test_stable(before, store.graph(), i);
+                            }
+                            assert forall|theta: Subst, event: EventView|
+                                test_truth(store.graph(), theta, id@, event)
+                                    == test_combo(store.graph(), theta, kept.view(), event, and) by {
+                                test_lemma_compound_semantics(store.graph(), theta, event, id, kept.view(), and);
+                            }
+                            assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
+                                implies test_truth(store.graph(), theta, id@, event)
+                                    == test_combo(store.graph(), theta, children@, event, and) by {
+                                assert(test_combo(before, theta, kept.view(), event, and)
+                                    == test_combo(before, theta, children@, event, and));
+                                assert(test_combo(before, theta, kept.view(), event, and)
+                                    == test_combo(store.graph(), theta, kept.view(), event, and));
+                            }
+                            assert forall|k: int| 0 <= k < model::test_ids(kept.view()).len()
+                                implies test_member(old(store).graph(), children@, and, #[trigger] model::test_ids(kept.view())[k]) by {
+                                assert(model::test_ids(kept.view())[k] == kept.view()[k]@);
+                            }
+                        }
+                        Ok(id)
+                    }
+                    Err(error) => Err(error),
                 }
             }
         }
     }
-    proof! {
-        test_lemma_not_step_post(before, store.graph(), id, finish, pending, prior_values, tasks.view(), values.view());
-    }
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), old(tasks).view().len() > 0,
-        exists|root: TestId| test_not_state(old(store).graph(), old(tasks).view(), old(values).view(), root),
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        match result {
-            Ok(()) => test_not_work(final(store).graph(), final(tasks).view())
-                < test_not_work(old(store).graph(), old(tasks).view())
-                && (forall|root: TestId| test_not_state(old(store).graph(), old(tasks).view(), old(values).view(), root)
-                    ==> test_not_state(final(store).graph(), final(tasks).view(), final(values).view(), root)),
-            Err(_) => true,
-        },
-)]
-fn test_not_next<G: KernelStore>(
-    store: &mut G,
-    tasks: &mut WorkVec<(TestId, bool)>,
-    values: &mut WorkVec<TestId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost pending = tasks.view(); }
-    let (id, finish) = match tasks.pop() {
-        Some(v) => v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    proof! {
-        assert(tasks.view().push((id, finish)) =~= pending);
-        let root = choose|root: TestId| test_not_state(store.graph(), pending, values.view(), root);
-        test_lemma_not_state_ready(store.graph(), tasks.view(), id, finish, values.view(), root);
-        assert forall|i: int| 0 <= i < tasks.view().len() implies tasks.view()[i].0@ < store.graph().tests.len() by {
-            assert(tasks.view()[i] == pending[i]);
-        }
-    }
-    test_not_step(store, id, finish, tasks, values)
-}
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "Preserve the existing Verus-verified function shape."
-)]
-#[verus_verify]
-#[verus_spec(result => ensures result == match head {
-    RegexHead::Union(n) => if intersect { Some(n) } else { None },
-    RegexHead::Intersect(n) => if !intersect { Some(n) } else { None },
-    _ => None,
-})]
-fn dual_regex_count(head: RegexHead, intersect: bool) -> Option<usize> {
-    match head {
-        RegexHead::Union(n) if intersect => Some(n),
-        RegexHead::Intersect(n) if !intersect => Some(n),
-        _ => None,
-    }
-}
-#[allow(
-    clippy::semicolon_if_nothing_returned,
-    reason = "Preserve the existing Verus-verified mutation branches."
-)]
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), parent@ < store.graph().regexes.len(),
-        count == regex_children(store.graph(), parent@).len(),
-        model::strictly_increasing(regex_children(store.graph(), parent@)),
-    ensures match result {
-        Ok(found) => found == regex_children(store.graph(), parent@).contains(id@),
-        Err(_) => true,
-    },
-)]
-fn regex_contains<G: KernelStore>(
-    store: &G,
-    parent: RegexId,
-    count: usize,
-    id: RegexId,
-) -> KernelResult<bool> {
-    let mut low = 0;
-    let mut high = count;
-    let mut failure = None;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant low <= high <= count,
-            model::graph_wf(store.graph()), parent@ < store.graph().regexes.len(),
-            count == regex_children(store.graph(), parent@).len(), model::strictly_increasing(regex_children(store.graph(), parent@)),
-            forall|i: int| 0 <= i < low ==> regex_children(store.graph(), parent@)[i] < id@,
-            forall|i: int| high <= i < count ==> regex_children(store.graph(), parent@)[i] >= id@,
-        ensures failure.is_none() ==> low == high,
-        decreases high - low,
-    ))]
-    while low < high {
-        let mid = loop_try!(midpoint(low, high), failure);
-        let child = loop_try!(parent.child(store, mid), failure);
-        proof! { regex_child_exact(store.graph(), parent@, mid as nat, child@); }
-        if child < id {
-            low = mid.saturating_add(1)
-        } else {
-            high = mid
-        }
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    if low < count {
-        let child = parent.child(store, low)?;
-        proof! { regex_child_exact(store.graph(), parent@, low as nat, child@); }
-        Ok(child == id)
-    } else {
-        Ok(false)
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), a@ < store.graph().regexes.len(), b@ < store.graph().regexes.len(),
-        a_count == regex_children(store.graph(), a@).len(), b_count == regex_children(store.graph(), b@).len(),
-        model::strictly_increasing(regex_children(store.graph(), b@)),
-    ensures match result {
-        Ok(included) => included == (forall|i: int| 0 <= i < a_count
-            ==> regex_children(store.graph(), b@).contains(regex_children(store.graph(), a@)[i])),
-        Err(_) => true,
-    },
-)]
-fn regex_subset<G: KernelStore>(
-    store: &G,
-    a: RegexId,
-    a_count: usize,
-    b: RegexId,
-    b_count: usize,
-) -> KernelResult<bool> {
-    let mut included = true;
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant i <= a_count,
-            model::graph_wf(store.graph()), a@ < store.graph().regexes.len(), b@ < store.graph().regexes.len(),
-            a_count == regex_children(store.graph(), a@).len(), b_count == regex_children(store.graph(), b@).len(),
-            model::strictly_increasing(regex_children(store.graph(), b@)),
-            included == (forall|j: int| 0 <= j < i
-                ==> regex_children(store.graph(), b@).contains(regex_children(store.graph(), a@)[j])),
-        ensures failure.is_none() ==> i == a_count,
-        decreases a_count - i,
-    ))]
-    while i < a_count {
-        let id = loop_try!(a.child(store, i), failure);
-        proof! { regex_child_exact(store.graph(), a@, i as nat, id@); }
-        included &= loop_try!(regex_contains(store, b, b_count, id), failure);
-        i = i.saturating_add(1);
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    Ok(included)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), inner@ < old(store).graph().regexes.len(),
-        old(store).valid_store(),
-        regex_ids_valid(old(store).graph(), siblings@), index < siblings.len(),
-    ensures final(store).graph() == old(store).graph(),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(value) => value == (found || siblings@[index as int] == inner)
-                && (found == siblings@.subrange(0, index as int).contains(inner)
-                    ==> value == siblings@.subrange(0, index as int + 1).contains(inner)),
-            Err(_) => true,
-        },
-)]
-fn regex_complement_step<G: KernelStore>(
-    store: &mut G,
-    inner: RegexId,
-    siblings: &[RegexId],
-    index: usize,
-    found: bool,
-) -> KernelResult<bool> {
-    proof! { regex_contains_prefix(siblings@, index as int, inner); }
-    store.checkpoint()?;
-    Ok(found || id_at(siblings, index)? == inner)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), a@ < old(store).graph().regexes.len(),
-        old(store).valid_store(),
-        regex_ids_valid(old(store).graph(), siblings@),
-    ensures final(store).graph() == old(store).graph(),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        match result {
-            Ok(found) => found == match old(store).graph().regexes[a@ as int].kind {
-                model::RegexKindNode::Not(inner) => model::regex_ids(siblings@).contains(inner),
-                _ => false,
-            },
-            Err(_) => true,
-        },
-)]
-fn regex_has_complement<G: KernelStore>(
-    store: &mut G,
-    a: RegexId,
-    siblings: &[RegexId],
-) -> KernelResult<bool> {
-    proof! { regex_unfold(store.graph(), a@); }
-    store.checkpoint()?;
-    if let RegexHead::Not(inner) = a.head(store)? {
-        proof! { regex_ids_contains(siblings@, inner); }
-        let mut state = Ok(false);
-        scan!(state,index,siblings.len(),state.is_ok(),prior=>regex_complement_step(store,inner,siblings,index,prior);
-            invariant store.graph() == old(store).graph(), index <= siblings.len(),
-                store.restoration() == old(store).restoration(),
-                store.valid_store(), model::graph_wf(store.graph()), regex_ids_valid(store.graph(), siblings@),
-                inner@ < store.graph().regexes.len(),
-                match state { Ok(found) => found == siblings@.subrange(0, index as int).contains(inner), Err(_) => true },
-            decreases siblings.len() - index,
-        );
-        proof! { assert(siblings@.subrange(0, siblings.len() as int) =~= siblings@); }
-        state
-    } else {
-        Ok(false)
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().regexes.len(), regex_ids_valid(old(store).graph(), siblings@), index < siblings.len(),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(value) => value == (redundant || regex_absorbed_by(final(store).graph(), a@, siblings@[index as int]@, intersect)),
-            Err(_) => true,
-        },
-)]
-fn regex_absorbed_step<G: KernelStore>(
-    store: &mut G,
-    a: RegexId,
-    siblings: &[RegexId],
-    index: usize,
-    intersect: bool,
-    mut redundant: bool,
-) -> KernelResult<bool> {
-    let b = id_at(siblings, index)?;
-    store.checkpoint()?;
-    proof! {
-        regex_children_count(store.graph(), a@);
-        regex_children_count(store.graph(), b@);
-    }
-    if a != b {
-        let av = a.head(store)?;
-        let bv = b.head(store)?;
-        if let Some(n) = dual_regex_count(av, intersect) {
-            proof! { regex_dual_order(store.graph(), a@, intersect); }
-            redundant |= match dual_regex_count(bv, intersect) {
-                Some(m) => regex_subset(store, b, m, a, n)?,
-                None => regex_contains(store, a, n, b)?,
-            };
-        }
-    }
-    Ok(redundant)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        a@ < old(store).graph().regexes.len(), regex_ids_valid(old(store).graph(), siblings@),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result {
-            Ok(value) => value == (exists|i: int| 0 <= i < siblings.len()
-                && regex_absorbed_by(final(store).graph(), a@, siblings@[i]@, intersect)),
-            Err(_) => true,
-        },
-)]
-fn regex_absorbed<G: KernelStore>(
-    store: &mut G,
-    a: RegexId,
-    siblings: &[RegexId],
-    intersect: bool,
-) -> KernelResult<bool> {
-    let mut state = Ok(false);
-    scan!(state,index,siblings.len(),state.is_ok(),prior=>regex_absorbed_step(store,a,siblings,index,intersect,prior);
-        invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            a@ < store.graph().regexes.len(), regex_ids_valid(store.graph(), siblings@), index <= siblings.len(),
-            match state { Ok(value) => value == (exists|i: int| 0 <= i < index
-                && regex_absorbed_by(store.graph(), a@, siblings@[i]@, intersect)), Err(_) => true },
-        decreases siblings.len() - index,
-    );
-    state
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
-        count == regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
-    ensures regex_ids_valid(store.graph(), final(flat).view()),
-        old(flat).view().is_prefix_of(final(flat).view()),
-        match result {
-            Ok(()) => model::regex_ids(final(flat).view())
-                == model::regex_ids(old(flat).view()) + regex_children(store.graph(), id@),
-            Err(_) => true,
-        },
-)]
-fn collect_regex_children<G: KernelStore>(
-    store: &G,
-    id: RegexId,
-    count: usize,
-    flat: &mut WorkVec<RegexId>,
-) -> KernelResult<()> {
-    proof! { regex_children_wf(store.graph(), id@); }
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant i <= count, regex_ids_valid(store.graph(), flat.view()),
-            model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
-            count == regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
-            old(flat).view().is_prefix_of(flat.view()),
-            model::regex_ids(flat.view()) == model::regex_ids(old(flat).view())
-                + regex_children(store.graph(), id@).subrange(0, i as int),
-        ensures failure.is_none() ==> i == count,
-        decreases count - i,
-    ))]
-    while i < count {
-        proof_decl! { let ghost prior = flat.view(); }
-        let child = loop_try!(id.child(store, i), failure);
-        proof! { regex_child_exact(store.graph(), id@, i as nat, child@); }
-        flat.push(child);
-        proof! {
-            regex_ids_push(flat.view().drop_last(), child);
-            assert(flat.view() == flat.view().drop_last().push(child));
-            assert(flat.view() == prior.push(child));
-            assert(model::regex_ids(flat.view()) == model::regex_ids(prior).push(child@));
-        }
-        proof! {
-            assert(regex_children(store.graph(), id@).subrange(0, i as int + 1)
-                =~= regex_children(store.graph(), id@).subrange(0, i as int).push(regex_children(store.graph(), id@)[i as int]));
-            assert(model::regex_ids(prior).push(child@)
-                =~= model::regex_ids(old(flat).view())
-                    + regex_children(store.graph(), id@).subrange(0, i as int + 1));
-        }
-        i = i.saturating_add(1);
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    proof! {
-        assert(i == count);
-        assert(model::regex_ids(flat.view()) == model::regex_ids(old(flat).view())
-            + regex_children(store.graph(), id@).subrange(0, i as int));
-        assert(regex_children(store.graph(), id@).subrange(0, count as int) =~= regex_children(store.graph(), id@));
-    }
-    Ok(())
 }
 #[verus_verify]
 #[verus_verify(external_derive)]
@@ -1703,110 +1621,366 @@ struct RegexMode {
     identity: RegexId,
     absorber: RegexId,
 }
+
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_mode_wf(old(store).graph(), mode@),
-        regex_ids_valid(old(store).graph(), children@), index < children.len(), regex_ids_valid(old(store).graph(), old(flat).view()),
-        regex_equivalent(old(store).graph(), old(flat).view(), children@.subrange(0, index as int), mode.intersect),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        regex_ids_valid(final(store).graph(), final(flat).view()), old(flat).view().is_prefix_of(final(flat).view()),
-        match result {
-            Ok(absorbed) => absorbed == (children@[index as int] == mode.absorber)
-                && (!absorbed ==> model::regex_ids(final(flat).view()) == model::regex_ids(old(flat).view())
-                    + regex_set_piece(final(store).graph(), children@[index as int]@, mode@))
-                && (!absorbed ==> regex_equivalent(final(store).graph(), final(flat).view(), children@.subrange(0, index as int + 1), mode.intersect)),
+impl RegexMode {
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "Preserve the existing Verus-verified function shape."
+    )]
+    #[verus_verify]
+    #[verus_spec(result => ensures result == match head {
+        RegexHead::Union(n) => if self.intersect { Some(n) } else { None },
+        RegexHead::Intersect(n) => if !self.intersect { Some(n) } else { None },
+        _ => None,
+    })]
+    fn dual_count(self, head: RegexHead) -> Option<usize> {
+        match head {
+            RegexHead::Union(n) if self.intersect => Some(n),
+            RegexHead::Intersect(n) if !self.intersect => Some(n),
+            _ => None,
+        }
+    }
+
+    #[allow(
+        clippy::semicolon_if_nothing_returned,
+        reason = "Preserve the existing Verus-verified mutation branches."
+    )]
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), parent@ < store.graph().regexes.len(),
+            count == regex_children(store.graph(), parent@).len(),
+            model::strictly_increasing(regex_children(store.graph(), parent@)),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+            Ok(found) => found == regex_children(store.graph(), parent@).contains(id@),
             Err(_) => true,
         },
-)]
-fn collect_regex_step<G: KernelStore>(
-    store: &mut G,
-    children: &[RegexId],
-    index: usize,
-    mode: RegexMode,
-    flat: &mut WorkVec<RegexId>,
-) -> KernelResult<bool> {
-    let id = id_at(children, index)?;
-    store.checkpoint()?;
-    proof! { regex_children_count(store.graph(), id@); }
-    if id == mode.absorber {
-        return Ok(true);
-    }
-    if id != mode.identity {
-        match id.head(store)? {
-            RegexHead::Union(n) if !mode.intersect => {
-                collect_regex_children(store, id, n, flat)?;
-                proof! { assert(regex_set_piece(store.graph(), id@, mode@) == regex_children(store.graph(), id@)); }
-            }
-            RegexHead::Intersect(n) if mode.intersect => {
-                collect_regex_children(store, id, n, flat)?;
-                proof! { assert(regex_set_piece(store.graph(), id@, mode@) == regex_children(store.graph(), id@)); }
-            }
-            _ => {
-                flat.push(id);
-                proof! {
-                    regex_ids_push(old(flat).view(), id);
-                    assert(regex_set_piece(store.graph(), id@, mode@) == seq![id@]);
-                }
+    )]
+    fn contains<G: KernelStore>(
+        store: &G,
+        parent: RegexId,
+        count: usize,
+        id: RegexId,
+    ) -> KernelResult<bool> {
+        let mut low = 0;
+        let mut high = count;
+        let mut failure = None;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant low <= high <= count,
+                model::graph_wf(store.graph()), parent@ < store.graph().regexes.len(),
+                count == regex_children(store.graph(), parent@).len(), model::strictly_increasing(regex_children(store.graph(), parent@)),
+                forall|i: int| 0 <= i < low ==> regex_children(store.graph(), parent@)[i] < id@,
+                forall|i: int| high <= i < count ==> regex_children(store.graph(), parent@)[i] >= id@,
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> low == high,
+            decreases high - low,
+        ))]
+        while low < high {
+            let mid = loop_try!(midpoint(low, high), failure);
+            proof! { regex_lemma_child_available(store.graph(), parent@, mid as nat); }
+            let child = loop_try!(parent.child(store, mid), failure);
+            proof! { regex_child_exact(store.graph(), parent@, mid as nat, child@); }
+            if child < id {
+                low = mid.saturating_add(1)
+            } else {
+                high = mid
             }
         }
-    }
-    proof! {
-        assert(model::regex_ids(old(flat).view()).push(id@) =~= model::regex_ids(old(flat).view()) + seq![id@]);
-        assert(model::regex_ids(old(flat).view()) + Seq::<nat>::empty() =~= model::regex_ids(old(flat).view()));
-        regex_collect_preserves(store.graph(), id, old(flat).view(), flat.view(), mode@);
-        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
-            implies regex_combo(store.graph(), theta, flat.view(), word, mode.intersect)
-                == regex_combo(store.graph(), theta, children@.subrange(0, index as int + 1), word, mode.intersect) by {
-            regex_combo_push(store.graph(), old(flat).view(), id, theta, word, mode.intersect);
-            regex_combo_prefix(store.graph(), children@, index as int, theta, word, mode.intersect);
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        if low < count {
+            proof! { regex_lemma_child_available(store.graph(), parent@, low as nat); }
+            let child = parent.child(store, low)?;
+            proof! { regex_child_exact(store.graph(), parent@, low as nat, child@); }
+            Ok(child == id)
+        } else {
+            Ok(false)
         }
     }
-    Ok(false)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), flat@),
-        index < flat.len(), test_ids_valid(old(store).graph(), old(tests).view()), regex_ids_valid(old(store).graph(), old(others).view()),
-        regex_split_prefix(old(store).graph(), flat@, old(tests).view(), old(others).view(), index as nat),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        test_ids_valid(final(store).graph(), final(tests).view()), regex_ids_valid(final(store).graph(), final(others).view()),
-        match result {
-            Ok(()) => (match final(store).graph().regexes[flat@[index as int]@ as int].kind {
-                model::RegexKindNode::Test(t) => model::test_ids(final(tests).view()) == model::test_ids(old(tests).view()).push(t)
-                    && final(others).view() == old(others).view(),
-                _ => final(tests).view() == old(tests).view() && final(others).view() == old(others).view().push(flat@[index as int]),
-            }) && regex_split_prefix(final(store).graph(), flat@, final(tests).view(), final(others).view(), index as nat + 1),
-            Err(_) => final(tests).view() == old(tests).view() && final(others).view() == old(others).view(),
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), a@ < store.graph().regexes.len(), b@ < store.graph().regexes.len(),
+            a_count == regex_children(store.graph(), a@).len(), b_count == regex_children(store.graph(), b@).len(),
+            model::strictly_increasing(regex_children(store.graph(), b@)),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+            Ok(included) => included == (forall|i: int| 0 <= i < a_count
+                ==> regex_children(store.graph(), b@).contains(regex_children(store.graph(), a@)[i])),
+            Err(_) => true,
         },
-)]
-fn split_regex_step<G: KernelStore>(
-    store: &mut G,
-    flat: &[RegexId],
-    index: usize,
-    tests: &mut WorkVec<TestId>,
-    others: &mut WorkVec<RegexId>,
-) -> KernelResult<()> {
-    store.checkpoint()?;
-    let id = id_at(flat, index)?;
-    proof! { model::lemma_graph_regex_wf(store.graph(), id@); }
-    match id.head(store)? {
-        RegexHead::Test(t) => {
-            tests.push(t);
-            proof! { regex_test_ids_push(old(tests).view(), t); }
+    )]
+    fn subset<G: KernelStore>(
+        store: &G,
+        a: RegexId,
+        a_count: usize,
+        b: RegexId,
+        b_count: usize,
+    ) -> KernelResult<bool> {
+        let mut included = true;
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant i <= a_count,
+                model::graph_wf(store.graph()), a@ < store.graph().regexes.len(), b@ < store.graph().regexes.len(),
+                a_count == regex_children(store.graph(), a@).len(), b_count == regex_children(store.graph(), b@).len(),
+                model::strictly_increasing(regex_children(store.graph(), b@)),
+                included == (forall|j: int| 0 <= j < i
+                    ==> regex_children(store.graph(), b@).contains(regex_children(store.graph(), a@)[j])),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == a_count,
+            decreases a_count - i,
+        ))]
+        while i < a_count {
+            proof! { regex_lemma_child_available(store.graph(), a@, i as nat); }
+            let id = loop_try!(a.child(store, i), failure);
+            proof! { regex_child_exact(store.graph(), a@, i as nat, id@); }
+            included &= loop_try!(RegexMode::contains(store, b, b_count, id), failure);
+            i = i.saturating_add(1);
         }
-        _ => others.push(id),
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(included)
     }
-    proof! {
-        assert forall|theta: Subst, word: Seq<EventView>, intersect: bool|
-            regex_group_combo(store.graph(), theta, tests.view(), others.view(), word, intersect)
-                == regex_combo(store.graph(), theta, flat@.subrange(0, index as int + 1), word, intersect) by {
-            regex_split_preserves(store.graph(), id, old(tests).view(), old(others).view(), tests.view(), others.view(), intersect);
-            regex_combo_prefix(store.graph(), flat@, index as int, theta, word, intersect);
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), a@ < old(store).graph().regexes.len(),
+            old(store).valid_store(),
+            regex_ids_valid(old(store).graph(), siblings@),
+        ensures final(store).graph() == old(store).graph(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            final(store).valid_store(),
+            match result {
+                Ok(found) => found == match old(store).graph().regexes[a@ as int].kind {
+                    model::RegexKindNode::Not(inner) => model::regex_ids(siblings@).contains(inner),
+                    _ => false,
+                },
+                Err(_) => true,
+            },
+    )]
+    fn has_complement<G: KernelStore>(
+        store: &mut G,
+        a: RegexId,
+        siblings: &[RegexId],
+    ) -> KernelResult<bool> {
+        proof! { regex_unfold(store.graph(), a@); }
+        store.checkpoint()?;
+        if let RegexHead::Not(inner) = a.head(store)? {
+            proof! { regex_ids_contains(siblings@, inner); }
+            let mut state = Ok(false);
+            scan!(state,index,siblings.len(),state.is_ok(),prior=>{
+                proof! { regex_contains_prefix(siblings@, index as int, inner); }
+                match store.checkpoint() {
+                    Ok(()) => {
+                        match id_at(siblings, index) {
+                            Ok(id) => {
+                                Ok(prior || id == inner)
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Err(error) => Err(error),
+                }
+            };
+                    invariant store.graph() == old(store).graph(), index <= siblings.len(),
+                        store.restoration() == old(store).restoration(),
+                        store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                        store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                        store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                        store.errors_are_resource() == old(store).errors_are_resource(),
+                        old(store).valid_store() ==> store.valid_store(),
+                        old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                        old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                        old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                        old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                        store.valid_store(), model::graph_wf(store.graph()), regex_ids_valid(store.graph(), siblings@),
+                        inner@ < store.graph().regexes.len(),
+                        match state { Ok(found) => found == siblings@.subrange(0, index as int).contains(inner), Err(_) => true },
+                    decreases siblings.len() - index,
+                );
+            proof! { assert(siblings@.subrange(0, siblings.len() as int) =~= siblings@); }
+            state
+        } else {
+            Ok(false)
         }
     }
-    Ok(())
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            a@ < old(store).graph().regexes.len(), regex_ids_valid(old(store).graph(), siblings@),
+        ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+                Ok(value) => value == (exists|i: int| 0 <= i < siblings.len()
+                    && regex_absorbed_by(final(store).graph(), a@, siblings@[i]@, self.intersect)),
+                Err(_) => true,
+            },
+    )]
+    fn absorbed<G: KernelStore>(
+        self,
+        store: &mut G,
+        a: RegexId,
+        siblings: &[RegexId],
+    ) -> KernelResult<bool> {
+        let mut state = Ok(false);
+        scan!(state,index,siblings.len(),state.is_ok(),prior=>{
+            let redundant = prior;
+            match id_at(siblings, index) {
+                Ok(b) => {
+                    match store.checkpoint() {
+                        Ok(()) => {
+                            proof! { regex_children_count(store.graph(), a@); regex_children_count(store.graph(), b@); }
+                            if a != b {
+                                match a.head(store) {
+                                    Ok(av) => {
+                                        match b.head(store) {
+                                            Ok(bv) => {
+                                                if let Some(n) = self.dual_count(av) {
+                                                    proof! { regex_dual_order(store.graph(), a@, self.intersect); }
+                                                    match match self.dual_count(bv) { Some(m) => RegexMode::subset(store, b, m, a, n), None => RegexMode::contains(store, a, n, b) } {
+                                                        Ok(included) => {
+                                                            Ok(redundant | included)
+                                                        }
+                                                        Err(error) => Err(error),
+                                                    }
+                                                } else { Ok(redundant) }
+                                            }
+                                            Err(error) => Err(error),
+                                        }
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            } else { Ok(redundant) }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
+            invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                a@ < store.graph().regexes.len(), regex_ids_valid(store.graph(), siblings@), index <= siblings.len(),
+                match state { Ok(value) => value == (exists|i: int| 0 <= i < index
+                    && regex_absorbed_by(store.graph(), a@, siblings@[i]@, self.intersect)), Err(_) => true },
+            decreases siblings.len() - index,
+        );
+        state
+    }
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
+            count == regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            regex_ids_valid(store.graph(), final(flat).view()),
+            old(flat).view().is_prefix_of(final(flat).view()),
+            match result {
+                Ok(()) => model::regex_ids(final(flat).view())
+                    == model::regex_ids(old(flat).view()) + regex_children(store.graph(), id@),
+                Err(_) => true,
+            },
+    )]
+    fn append_children<G: KernelStore>(
+        store: &G,
+        id: RegexId,
+        count: usize,
+        flat: &mut WorkVec<RegexId>,
+    ) -> KernelResult<()> {
+        proof! { regex_children_wf(store.graph(), id@); }
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant i <= count, regex_ids_valid(store.graph(), flat.view()),
+                model::graph_wf(store.graph()), id@ < store.graph().regexes.len(),
+                count == regex_children(store.graph(), id@).len(), regex_ids_valid(store.graph(), old(flat).view()),
+                old(flat).view().is_prefix_of(flat.view()),
+                model::regex_ids(flat.view()) == model::regex_ids(old(flat).view())
+                    + regex_children(store.graph(), id@).subrange(0, i as int),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == count,
+            decreases count - i,
+        ))]
+        while i < count {
+            proof_decl! { let ghost prior = flat.view(); }
+            proof! { regex_lemma_child_available(store.graph(), id@, i as nat); }
+            let child = loop_try!(id.child(store, i), failure);
+            proof! { regex_child_exact(store.graph(), id@, i as nat, child@); }
+            flat.push(child);
+            proof! {
+                regex_ids_push(flat.view().drop_last(), child);
+                assert(flat.view() == flat.view().drop_last().push(child));
+                assert(flat.view() == prior.push(child));
+                assert(model::regex_ids(flat.view()) == model::regex_ids(prior).push(child@));
+            }
+            proof! {
+                assert(regex_children(store.graph(), id@).subrange(0, i as int + 1)
+                    =~= regex_children(store.graph(), id@).subrange(0, i as int).push(regex_children(store.graph(), id@)[i as int]));
+                assert(model::regex_ids(prior).push(child@)
+                    =~= model::regex_ids(old(flat).view())
+                        + regex_children(store.graph(), id@).subrange(0, i as int + 1));
+            }
+            i = i.saturating_add(1);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        proof! {
+            assert(i == count);
+            assert(model::regex_ids(flat.view()) == model::regex_ids(old(flat).view())
+                + regex_children(store.graph(), id@).subrange(0, i as int));
+            assert(regex_children(store.graph(), id@).subrange(0, count as int) =~= regex_children(store.graph(), id@));
+        }
+        Ok(())
+    }
 }
 #[verus_verify]
 #[verus_verify(external_derive)]
@@ -1818,163 +1992,68 @@ struct RegexStats {
     complement: bool,
     has_nonnullable: bool,
 }
+
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), ids@), index < ids.len(),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(next) => next@ == regex_stats_update(final(store).graph(), ids@, index as int, epsilon, stats@, complements)
-            && (regex_stats_prefix(old(store).graph(), ids@, index as nat, epsilon, stats@, complements)
-                ==> regex_stats_prefix(final(store).graph(), ids@, index as nat + 1, epsilon, next@, complements)), Err(_) => true },
-)]
-fn regex_stats_step<G: KernelStore>(
-    store: &mut G,
-    ids: &[RegexId],
-    index: usize,
-    epsilon: RegexId,
-    complements: bool,
-    mut stats: RegexStats,
-) -> KernelResult<RegexStats> {
-    proof! {
-        if regex_stats_prefix(store.graph(), ids@, index as nat, epsilon, stats@, complements) {
-            regex_stats_prefix_step(store.graph(), ids@, index as int, epsilon, stats@, complements);
-        }
-    }
-    store.checkpoint()?;
-    let id = id_at(ids, index)?;
-    let n = RegexId::nullable(id, store)?;
-    stats.all_nullable &= n;
-    stats.any_nullable |= id != epsilon && n;
-    stats.epsilon |= id == epsilon;
-    let head = id.head(store)?;
-    if !n {
-        match head {
-            RegexHead::Not(inner) if inner == epsilon => {}
-            _ => stats.has_nonnullable = true,
-        }
-    }
-    if complements {
-        stats.complement |= regex_has_complement(store, id, ids)?;
-    }
-    Ok(stats)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), old(ids).view()),
-        index < old(ids).view().len(),
-        model::strictly_increasing(model::regex_ids(old(ids).view())),
-    ensures final(store).graph() == old(store).graph(), final(store).valid_store(), regex_ids_valid(final(store).graph(), final(ids).view()),
-        final(store).restoration() == old(store).restoration(),
-        model::strictly_increasing(model::regex_ids(final(ids).view())),
-        match result {
-            Ok(removed) => final(ids).view() == (if removed { old(ids).view().remove(index as int) } else { old(ids).view() })
-                && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
-                    ==> regex_combo(final(store).graph(), theta, final(ids).view(), word, mode.intersect)
-                        == regex_combo(final(store).graph(), theta, old(ids).view(), word, mode.intersect),
-            Err(_) => final(ids).view() == old(ids).view(),
-        },
-)]
-fn retain_regex_step<G: KernelStore>(
-    store: &mut G,
-    ids: &mut WorkVec<RegexId>,
-    index: usize,
-    mode: RegexMode,
-) -> KernelResult<bool> {
-    store.checkpoint()?;
-    let id = id_at(ids, index)?;
-    let epsilon = store.constants().epsilon;
-    let mut stats = Ok(RegexStats {
-        all_nullable: true,
-        any_nullable: false,
-        epsilon: false,
-        complement: false,
-        has_nonnullable: false,
-    });
-    scan!(stats,scan_index,ids.len(),stats.is_ok(),prior=>regex_stats_step(store,ids,scan_index,epsilon,false,prior);
-        invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            ids.view() == old(ids).view(), regex_ids_valid(store.graph(), ids.view()), scan_index <= ids.len(),
-            match stats { Ok(value) => regex_stats_prefix(store.graph(), ids.view(), scan_index as nat, epsilon, value@, false), Err(_) => true },
-        decreases ids.len() - scan_index,
-    );
-    let stats = stats?;
-    let head = id.head(store)?;
-    let redundant = (!mode.intersect && id == epsilon && stats.any_nullable)
-        || (mode.intersect
-            && stats.has_nonnullable
-            && matches!(head,RegexHead::Not(inner) if inner==epsilon));
-    let absorbed = regex_absorbed(store, id, ids, mode.intersect)?;
-    if redundant || absorbed {
+impl RegexStats {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), ids@), index < ids.len(),
+        ensures final(store).graph() == old(store).graph(), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result { Ok(next) => next@ == regex_stats_update(final(store).graph(), ids@, index as int, epsilon, self@, complements)
+                && (regex_stats_prefix(old(store).graph(), ids@, index as nat, epsilon, self@, complements)
+                    ==> regex_stats_prefix(final(store).graph(), ids@, index as nat + 1, epsilon, next@, complements)), Err(_) => true },
+    )]
+    fn update<G: KernelStore>(
+        self,
+        store: &mut G,
+        ids: &[RegexId],
+        index: usize,
+        epsilon: RegexId,
+        complements: bool,
+    ) -> KernelResult<RegexStats> {
         proof! {
-            regex_retention_remove(store.graph(), ids.view(), index as int, mode@, epsilon, stats@);
-            regex_remove_strict(ids.view(), index as int);
-            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
-                implies regex_combo(store.graph(), theta, ids.view().remove(index as int), word, mode.intersect)
-                    == regex_combo(store.graph(), theta, ids.view(), word, mode.intersect) by {
-                assert(mode@.intersect == mode.intersect);
+            if regex_stats_prefix(store.graph(), ids@, index as nat, epsilon, self@, complements) {
+                regex_stats_prefix_step(store.graph(), ids@, index as int, epsilon, self@, complements);
             }
         }
-        ids.remove(index);
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), regex_ids_valid(store.graph(), ids@), index < ids.len(),
-    ensures match result {
-        Ok(value) => value == (if and { prior && language::nullable(model::lift_regex(store.graph(), ids@[index as int]@)) }
-            else { prior || language::nullable(model::lift_regex(store.graph(), ids@[index as int]@)) })
-            && (prior == regex_nullable_combo(store.graph(), ids@.subrange(0, index as int), and)
-                ==> value == regex_nullable_combo(store.graph(), ids@.subrange(0, index as int + 1), and)),
-        Err(_) => true,
-    },
-)]
-fn nullable_step<G: KernelStore>(
-    store: &G,
-    ids: &[RegexId],
-    index: usize,
-    and: bool,
-    prior: bool,
-) -> KernelResult<bool> {
-    proof! { regex_nullable_prefix(store.graph(), ids@, index as int, and); }
-    let n = RegexId::nullable(id_at(ids, index)?, store)?;
-    Ok(if and { prior && n } else { prior || n })
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), test_ids_valid(old(store).graph(), tests@), tests.len() > 0,
-    ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
-        final(store).restoration() == old(store).restoration(),
-        match result { Ok(id) => id@ < final(store).graph().regexes.len()
-            && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
-                ==> model::regex_lang(final(store).graph(), theta, id@, word)
-                    == regex_test_combo(final(store).graph(), theta, tests@, word, intersect), Err(_) => true },
-)]
-fn regex_group_test_step<G: KernelStore>(
-    store: &mut G,
-    tests: &[TestId],
-    intersect: bool,
-) -> KernelResult<RegexId> {
-    let test = TestId::connective(store, tests, intersect)?;
-    proof_decl! { let ghost test_graph = store.graph(); }
-    proof! {
-        assert forall|next: model::Graph| model::graph_extends(test_graph, next)
-            implies forall|theta: Subst, event: EventView| language::event_wf(theta)
-                ==> model::test_holds(theta, model::lift_test(next, test@), event)
-                    == test_combo(next, theta, tests@, event, intersect) by {
-            regex_test_connective_extends(test_graph, next, tests@, test, intersect);
+        let mut next = self;
+        store.checkpoint()?;
+        let id = id_at(ids, index)?;
+        let n = RegexId::nullable(id, store)?;
+        next.all_nullable &= n;
+        next.any_nullable |= id != epsilon && n;
+        next.epsilon |= id == epsilon;
+        let head = id.head(store)?;
+        if !n {
+            match head {
+                RegexHead::Not(inner) if inner == epsilon => {}
+                _ => next.has_nonnullable = true,
+            }
         }
+        if complements {
+            next.complement |= RegexMode::has_complement(store, id, ids)?;
+        }
+        Ok(next)
     }
-    let id = RegexId::from_test(store, test)?;
-    Ok(id)
 }
 #[verus_verify]
 pub(crate) trait RegexNormalize: Sized {
     #[verus_spec(result =>
         requires model::graph_wf(store.graph()), this@ < store.graph().regexes.len(),
-        ensures match result {
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
             Ok(value) => value == language::nullable(model::lift_regex(store.graph(), this@)),
             Err(_) => true,
         },
@@ -1986,15 +2065,27 @@ pub(crate) trait RegexNormalize: Sized {
             old(store).valid_store(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().regexes.len()
-                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    && (fimpl::regex_nf(model::lift_regex(old(store).graph(), this@))
+                        ==> fimpl::regex_nf(model::lift_regex(final(store).graph(), id@)))
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> model::regex_lang(final(store).graph(), theta, id@, word)
-                            == language::lang(model::gsem(theta), language::Regex::Star(Box::new(
+                            == language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(
                                 model::lift_regex(final(store).graph(), this@))), word),
                 Err(_) => true,
             },
+            result matches Ok(id) ==> vocab::regex_primitives(model::lift_regex(final(store).graph(), id@)).subset_of(
+                vocab::regex_primitives(model::lift_regex(final(store).graph(), this@))),
     )]
     fn star<G: KernelStore>(this: RegexId, store: &mut G) -> KernelResult<RegexId>;
 
@@ -2003,10 +2094,19 @@ pub(crate) trait RegexNormalize: Sized {
             old(store).valid_store(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().regexes.len()
-                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    && regex_not_result(final(store).graph(), this@, id@)
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> model::regex_lang(final(store).graph(), theta, id@, word)
                             == !model::regex_lang(final(store).graph(), theta, this@, word),
                 Err(_) => true,
@@ -2019,11 +2119,21 @@ pub(crate) trait RegexNormalize: Sized {
             old(store).valid_store(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             final(store).valid_store(),
             model::graph_wf(final(store).graph()),
             match result {
                 Ok(id) => id@ < final(store).graph().regexes.len()
-                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    && (if test@ == final(store).graph().constants.test_false { id@ == final(store).graph().constants.empty }
+                        else { final(store).graph().regexes[id@ as int].kind == model::RegexKindNode::Test(test@) })
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> model::regex_lang(final(store).graph(), theta, id@, word)
                             == (word.len() == 1 && model::test_holds(theta,
                                 model::lift_test(final(store).graph(), test@), word[0])),
@@ -2037,10 +2147,19 @@ pub(crate) trait RegexNormalize: Sized {
             old(store).valid_store(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().regexes.len()
-                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    && regex_concat_result(old(store).graph(), final(store).graph(), children@, id@)
+                    && forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> model::regex_lang(final(store).graph(), theta, id@, word)
                             == concat_combo(final(store).graph(), theta, children@, word),
                 Err(_) => true,
@@ -2053,6 +2172,14 @@ pub(crate) trait RegexNormalize: Sized {
             model::regex_node_wf(old(store).graph(), model::RegexNode { kind: kind@, nullable: n }),
         ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             match result {
                 Ok(id) => id@ < final(store).graph().regexes.len()
                     && final(store).graph().regexes[id@ as int] == (model::RegexNode { kind: kind@, nullable: n })
@@ -2070,9 +2197,20 @@ pub(crate) trait RegexNormalize: Sized {
         requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex_ids_valid(old(store).graph(), children@),
         ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             match result {
-                Ok(id) => id@ < final(store).graph().regexes.len() && forall|theta: Subst, word: Seq<EventView>|
-                    language::event_wf(theta) ==> model::regex_lang(final(store).graph(), theta, id@, word)
+                Ok(id) => id@ < final(store).graph().regexes.len()
+                    && (regex_set_flat_inputs(old(store).graph(), children@, intersect)
+                        ==> regex_set_shape(old(store).graph(), final(store).graph(), children@, intersect, id@))
+                    && forall|theta: Subst, word: Seq<EventView>|
+                    language::event_wf(theta, theta.len()) ==> model::regex_lang(final(store).graph(), theta, id@, word)
                         == regex_combo(final(store).graph(), theta, children@, word, intersect),
                 Err(_) => true,
             },
@@ -2097,9 +2235,11 @@ impl RegexNormalize for RegexId {
 
     fn star<G: KernelStore>(this: RegexId, store: &mut G) -> KernelResult<RegexId> {
         proof! {
+            reveal_with_fuel(vocab::regex_primitives, 1);
             regex_unfold(store.graph(), this@);
             regex_constants(store.graph());
             regex_star_laws(store.graph(), this@);
+            fcmp::lemma_star_future(store.graph(), this@);
         }
         store.checkpoint()?;
         let c = store.constants();
@@ -2151,14 +2291,57 @@ impl RegexNormalize for RegexId {
         proof! { regex_constants(store.graph()); }
         let mut flat = WorkVec::new();
         let mut collecting = Ok(false);
-        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>concat_collect_step(store,children,index,&mut flat);
+        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>{
+            proof_decl! { let ghost prior_flat = flat.view(); }
+            proof! { regex_concat_flat_prefix(store.graph(), children@, index as int); }
+            match store.checkpoint() {
+                Ok(()) => {
+                    match id_at(children, index) {
+                        Ok(id) => {
+                            match id.head(store) {
+                                Ok(head) => {
+                                    match head {
+                                        RegexHead::Empty => Ok(true),
+                                        RegexHead::Epsilon => Ok(false),
+                                        RegexHead::Concat(n) => {
+                                            proof! { regex_children_count(store.graph(), id@); }
+                                            match RegexMode::append_children(store, id, n, &mut flat) {
+                                                Ok(()) => {
+                                                    Ok(false)
+                                                }
+                                                Err(error) => Err(error),
+                                            }
+                                        },
+                                        _ => { flat.push(id); Ok(false) },
+                                    }
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant store.graph() == old(store).graph(), index <= children.len(),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> collecting != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(collecting),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(collecting matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (collecting matches Err(e) ==> resource_error(e)),
                 store.valid_store(),
                 model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
                 regex_ids_valid(store.graph(), flat.view()),
                 match collecting {
-                    Ok(false) => model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@.subrange(0, index as int)),
+                    Ok(false) => model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@.subrange(0, index as int))
+                        && forall|i: int| 0 <= i < index
+                            ==> store.graph().regexes[children@[i]@ as int].kind != model::RegexKindNode::Empty,
                     Ok(true) => exists|i: int| 0 <= i < index
                         && store.graph().regexes[children@[i]@ as int].kind == model::RegexKindNode::Empty,
                     Err(_) => true,
@@ -2178,13 +2361,37 @@ impl RegexNormalize for RegexId {
             assert(model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@));
         }
         let mut n = Ok(true);
-        scan!(n,index,flat.len(),n.is_ok(),prior=>nullable_step(store,&flat,index,true,prior);
+        scan!(n,index,flat.len(),n.is_ok(),prior=>{
+            proof! { regex_nullable_prefix(store.graph(), flat.view(), index as int, true); }
+            match id_at(&flat, index) {
+                Ok(id) => {
+                    match RegexId::nullable(id, store) {
+                        Ok(nullable) => {
+                            Ok(if true { prior && nullable } else { prior || nullable })
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant store.graph() == old(store).graph(), index <= flat.len(),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> n != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(n),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(n matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (n matches Err(e) ==> resource_error(e)),
                 store.valid_store(),
                 model::graph_wf(store.graph()), regex_ids_valid(store.graph(), children@),
                 regex_ids_valid(store.graph(), flat.view()),
                 model::regex_ids(flat.view()) == regex_concat_flat(store.graph(), children@),
+                forall|i: int| 0 <= i < children.len()
+                    ==> store.graph().regexes[children@[i]@ as int].kind != model::RegexKindNode::Empty,
                 match n { Ok(value) => value == regex_nullable_combo(store.graph(), flat.view().subrange(0, index as int), true), Err(_) => true },
             decreases flat.len() - index,
         );
@@ -2241,7 +2448,9 @@ impl RegexNormalize for RegexId {
     }
 
     #[verus_verify]
-
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    // rlimit 80 was exceeded when Regorus verifies this crate under its `history` feature set.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(160))]
     fn set<G: KernelStore>(
         store: &mut G,
         children: &[Self],
@@ -2258,13 +2467,102 @@ impl RegexNormalize for RegexId {
         };
         let mut flat = WorkVec::new();
         let mut collecting = Ok(false);
-        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>collect_regex_step(store,children,index,mode,&mut flat);
+        scan!(collecting,index,children.len(),matches!(collecting,Ok(false)),_prior=>{
+            proof_decl! { let ghost prior_flat = flat.view(); }
+            match id_at(children, index) {
+                Ok(id) => {
+                    match store.checkpoint() {
+                        Ok(()) => {
+                            proof! { regex_children_count(store.graph(), id@); }
+                            if id == mode.absorber { Ok(true) } else {
+                                match if id != mode.identity {
+                                    match id.head(store) {
+                                        Ok(head) => {
+                                            match head {
+                                                RegexHead::Union(n) if !mode.intersect => match RegexMode::append_children(store, id, n, &mut flat) {
+                                                Ok(()) => {
+                                                    proof! { assert(regex_set_piece(store.graph(), id@, mode@) == regex_children(store.graph(), id@)); }
+                                                    Ok(())
+                                                }
+                                                Err(error) => Err(error),
+                                            },
+                                                RegexHead::Intersect(n) if mode.intersect => match RegexMode::append_children(store, id, n, &mut flat) {
+                                                Ok(()) => {
+                                                    proof! { assert(regex_set_piece(store.graph(), id@, mode@) == regex_children(store.graph(), id@)); }
+                                                    Ok(())
+                                                }
+                                                Err(error) => Err(error),
+                                            },
+                                                _ => {
+                                                    flat.push(id);
+                                                    proof! { regex_ids_push(prior_flat, id); assert(regex_set_piece(store.graph(), id@, mode@) == seq![id@]); }
+                                                    Ok(())
+                                                },
+                                            }
+                                        }
+                                        Err(error) => Err(error),
+                                    }
+                                } else { Ok(()) } {
+                                    Ok(()) => {
+                                        proof! {
+                                            assert(model::regex_ids(prior_flat).push(id@) =~= model::regex_ids(prior_flat) + seq![id@]);
+                                            assert(model::regex_ids(prior_flat) + Seq::<nat>::empty() =~= model::regex_ids(prior_flat));
+                                            regex_collect_preserves(store.graph(), id, prior_flat, flat.view(), mode@);
+                                            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                                                implies regex_combo(store.graph(), theta, flat.view(), word, mode.intersect)
+                                                    == regex_combo(store.graph(), theta, children@.subrange(0, index as int + 1), word, mode.intersect) by {
+                                                regex_combo_push(store.graph(), prior_flat, id, theta, word, mode.intersect);
+                                                regex_combo_prefix(store.graph(), children@, index as int, theta, word, mode.intersect);
+                                            }
+                                            let piece = regex_set_piece(store.graph(), id@, mode@);
+                                            assert(model::regex_ids(flat.view()) == model::regex_ids(prior_flat) + piece);
+                                            assert(model::regex_ids(flat.view()).len() == flat.view().len());
+                                            assert(model::regex_ids(prior_flat).len() == prior_flat.len());
+                                            assert forall|k: int| 0 <= k < flat.view().len()
+                                                implies regex_member(store.graph(), children@, intersect, #[trigger] flat.view()[k]@) by {
+                                                assert(model::regex_ids(flat.view())[k] == flat.view()[k]@);
+                                                if k < prior_flat.len() {
+                                                    assert(model::regex_ids(prior_flat)[k] == prior_flat[k]@);
+                                                    assert(model::regex_ids(flat.view())[k] == model::regex_ids(prior_flat)[k]);
+                                                } else {
+                                                    assert(children@[index as int] == id);
+                                                    let j = k - prior_flat.len();
+                                                    assert(model::regex_ids(flat.view())[k] == (model::regex_ids(prior_flat) + piece)[k]);
+                                                    assert(model::regex_ids(flat.view())[k] == piece[j]);
+                                                    assert(piece.contains(piece[j]));
+                                                    assert(regex_piece_contains(store.graph(), children@[index as int]@, intersect, flat.view()[k]@));
+                                                }
+                                            }
+                                        }
+                                        Ok(false)
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> collecting != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(collecting),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(collecting matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (collecting matches Err(e) ==> resource_error(e)),
                 regex_mode_wf(store.graph(), mode@), regex_ids_valid(store.graph(), children@), regex_ids_valid(store.graph(), flat.view()), index <= children.len(),
                 mode.intersect == intersect, mode.absorber == absorber,
                 match collecting {
-                    Ok(false) => regex_equivalent(store.graph(), flat.view(), children@.subrange(0, index as int), intersect),
+                    Ok(false) => regex_equivalent(store.graph(), flat.view(), children@.subrange(0, index as int), intersect)
+                        && forall|k: int| 0 <= k < flat.view().len()
+                            ==> regex_member(store.graph(), children@, intersect, #[trigger] flat.view()[k]@),
                     Ok(true) => exists|i: int| 0 <= i < index && children@[i] == absorber,
                     Err(_) => true,
                 },
@@ -2281,12 +2579,73 @@ impl RegexNormalize for RegexId {
         let mut tests = WorkVec::new();
         let mut others = WorkVec::new();
         let mut splitting = Ok(());
-        scan!(splitting,index,flat.len(),splitting.is_ok(),_prior=>split_regex_step(store,&flat,index,&mut tests,&mut others);
+        scan!(splitting,index,flat.len(),splitting.is_ok(),_prior=>{
+            proof_decl! { let ghost prior_tests = tests.view(); let ghost prior_others = others.view(); }
+            match store.checkpoint() {
+                Ok(()) => {
+                    match id_at(&flat, index) {
+                        Ok(id) => {
+                            proof! { model::lemma_graph_regex_wf(store.graph(), id@); }
+                            match id.head(store) {
+                                Ok(head) => {
+                                    match head {
+                                        RegexHead::Test(t) => { tests.push(t); proof! { regex_test_ids_push(prior_tests, t); } },
+                                        _ => others.push(id),
+                                    }
+                                    proof! {
+                                        assert forall|theta: Subst, word: Seq<EventView>, intersect: bool|
+                                            regex_group_combo(store.graph(), theta, tests.view(), others.view(), word, intersect)
+                                                == regex_combo(store.graph(), theta, flat.view().subrange(0, index as int + 1), word, intersect) by {
+                                            regex_split_preserves(store.graph(), id, prior_tests, prior_others, tests.view(), others.view(), intersect);
+                                            regex_combo_prefix(store.graph(), flat.view(), index as int, theta, word, intersect);
+                                        }
+                                        assert(regex_member(store.graph(), children@, intersect, flat.view()[index as int]@));
+                                        assert forall|k: int| 0 <= k < others.view().len()
+                                            implies regex_member(store.graph(), children@, intersect, #[trigger] others.view()[k]@) by {
+                                            if k < prior_others.len() { assert(others.view()[k] == prior_others[k]); }
+                                            else { assert(others.view()[k] == flat.view()[index as int]); }
+                                        }
+                                        assert forall|k: int| 0 <= k < tests.view().len()
+                                            implies regex_member_test(store.graph(), children@, intersect, #[trigger] tests.view()[k]@) by {
+                                            if k < prior_tests.len() {
+                                                assert(tests.view()[k] == prior_tests[k]);
+                                            } else {
+                                                assert(store.graph().regexes[flat.view()[index as int]@ as int].kind
+                                                    == model::RegexKindNode::Test(tests.view()[k]@));
+                                            }
+                                        }
+                                    }
+                                    Ok(())
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant store.graph() == old(store).graph(), store.valid_store(), model::graph_wf(store.graph()),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> splitting != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(splitting),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(splitting matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (splitting matches Err(e) ==> resource_error(e)),
                 regex_ids_valid(store.graph(), flat.view()), regex_ids_valid(store.graph(), children@),
                 regex_equivalent(store.graph(), flat.view(), children@, intersect),
                 test_ids_valid(store.graph(), tests.view()), regex_ids_valid(store.graph(), others.view()), index <= flat.len(),
+                forall|k: int| 0 <= k < flat.view().len()
+                    ==> regex_member(store.graph(), children@, intersect, #[trigger] flat.view()[k]@),
+                forall|k: int| 0 <= k < others.view().len()
+                    ==> regex_member(store.graph(), children@, intersect, #[trigger] others.view()[k]@),
+                forall|k: int| 0 <= k < tests.view().len()
+                    ==> regex_member_test(store.graph(), children@, intersect, #[trigger] tests.view()[k]@),
                 match splitting { Ok(()) => regex_split_prefix(store.graph(), flat.view(), tests.view(), others.view(), index as nat), Err(_) => true },
             decreases flat.len() - index,
         );
@@ -2296,25 +2655,43 @@ impl RegexNormalize for RegexId {
             assert(flat.view().subrange(0, flat.view().len() as int) =~= flat.view());
             regex_group_equivalence_extends(grouped_graph, grouped_graph, children@, tests.view(), grouped_others, intersect);
             assert forall|next: model::Graph| model::graph_extends(grouped_graph, next)
-                implies forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                implies forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     ==> regex_group_combo(next, theta, tests.view(), grouped_others, word, intersect)
                         == regex_combo(next, theta, children@, word, intersect) by {
                 regex_group_equivalence_extends(grouped_graph, next, children@, tests.view(), grouped_others, intersect);
             }
         }
+        proof_decl! { let ghost mut chosen: nat = 0; let ghost mut chosen_graph = grouped_graph; }
         if !tests.is_empty() {
-            let r = regex_group_test_step(store, &tests, intersect)?;
+            let r = {
+                match TestId::connective(store, &tests, intersect) {
+                    Ok(test) => {
+                        proof_decl! { let ghost test_graph = store.graph(); }
+                        proof! {
+                            assert forall|next: model::Graph| model::graph_extends(test_graph, next)
+                                implies forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
+                                    ==> model::test_holds(theta, model::lift_test(next, test@), event)
+                                        == test_combo(next, theta, tests.view(), event, intersect) by {
+                                regex_test_connective_extends(test_graph, next, tests.view(), test, intersect);
+                            }
+                        }
+                        proof! { chosen = test@; chosen_graph = test_graph; }
+                        RegexId::from_test(store, test)
+                    }
+                    Err(error) => Err(error),
+                }
+            }?;
             proof! {
                 regex_constants(store.graph());
                 assert(model::graph_extends(grouped_graph, store.graph()));
                 regex_group_equivalence_extends(grouped_graph, store.graph(), children@, tests.view(), grouped_others, intersect);
-                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     implies model::regex_lang(store.graph(), theta, r@, word)
                         == regex_test_combo(store.graph(), theta, tests.view(), word, intersect) by {};
             }
             if intersect && r == c.empty {
                 proof! {
-                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         implies !regex_combo(store.graph(), theta, children@, word, intersect) by {
                         assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
                             == regex_combo(store.graph(), theta, children@, word, intersect));
@@ -2326,7 +2703,7 @@ impl RegexNormalize for RegexId {
             if r != c.empty {
                 others.push(r);
                 proof! {
-                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         implies regex_combo(store.graph(), theta, others.view(), word, intersect)
                             == regex_combo(store.graph(), theta, children@, word, intersect) by {
                         regex_combo_push(store.graph(), grouped_others, r, theta, word, intersect);
@@ -2337,7 +2714,7 @@ impl RegexNormalize for RegexId {
             }
             proof! {
                 if r == c.empty {
-                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                    assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         implies regex_combo(store.graph(), theta, others.view(), word, intersect)
                             == regex_combo(store.graph(), theta, children@, word, intersect) by {
                         assert(!intersect);
@@ -2346,17 +2723,34 @@ impl RegexNormalize for RegexId {
                             == regex_combo(store.graph(), theta, children@, word, intersect));
                     }
                 }
+                if r != c.empty {
+                    test_connective_result_extends(grouped_graph, chosen_graph, store.graph(), tests.view(), intersect, chosen);
+                    assert(store.graph().regexes[r@ as int].kind == model::RegexKindNode::Test(chosen));
+                    assert(regex_combined_test(old(store).graph(), store.graph(), children@, intersect, r@));
+                }
+                assert forall|k: int| 0 <= k < others.view().len()
+                    implies regex_set_operand_ok(old(store).graph(), store.graph(), children@, intersect, #[trigger] others.view()[k]@) by {
+                    if k < grouped_others.len() { assert(others.view()[k] == grouped_others[k]); }
+                }
             }
         }
         proof! {
-            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 implies regex_combo(store.graph(), theta, others.view(), word, intersect)
                     == regex_combo(store.graph(), theta, children@, word, intersect) by {
                 assert(regex_group_combo(store.graph(), theta, tests.view(), grouped_others, word, intersect)
                     == regex_combo(store.graph(), theta, children@, word, intersect));
             }
         }
+        proof_decl! { let ghost gt = store.graph(); }
+        proof! {
+            assert forall|k: int| 0 <= k < others.view().len()
+                implies regex_set_operand_ok(old(store).graph(), gt, children@, intersect, #[trigger] others.view()[k]@) by {
+                if tests.view().len() == 0 { assert(regex_member(old(store).graph(), children@, intersect, others.view()[k]@)); }
+            }
+        }
         proof_decl! { let ghost unsorted = others.view(); }
+        proof! { junco_core::kernel::RegexId::lemma_obeys_cmp(); }
         others.as_mut_slice().sort_unstable();
         proof! {
             regex_multiset_members(unsorted, others.view());
@@ -2373,6 +2767,12 @@ impl RegexNormalize for RegexId {
             regex_member_ids_valid(store.graph(), sorted, others.view());
             regex_combo_members(store.graph(), sorted, others.view(), intersect);
             regex_dedup_strict(sorted, others.view());
+            assert forall|k: int| 0 <= k < others.view().len()
+                implies regex_set_operand_ok(old(store).graph(), gt, children@, intersect, #[trigger] others.view()[k]@) by {
+                assert(sorted.contains(others.view()[k]));
+                assert(unsorted.contains(others.view()[k]));
+                let j = choose|j: int| 0 <= j < unsorted.len() && unsorted[j] == others.view()[k];
+            }
         }
         let mut stats = Ok(RegexStats {
             all_nullable: true,
@@ -2381,10 +2781,22 @@ impl RegexNormalize for RegexId {
             complement: false,
             has_nonnullable: false,
         });
-        scan!(stats,index,others.len(),stats.is_ok(),prior=>regex_stats_step(store,&others,index,c.epsilon,true,prior);
+        scan!(stats,index,others.len(),stats.is_ok(),prior=>prior.update(store,&others,index,c.epsilon,true);
             invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> stats != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(stats),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(stats matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (stats matches Err(e) ==> resource_error(e)),
                 store.graph().constants == c@, regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
+                store.graph() == gt,
+                forall|k: int| 0 <= k < others.view().len()
+                    ==> regex_set_operand_ok(old(store).graph(), gt, children@, intersect, #[trigger] others.view()[k]@),
                 regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
                 match stats { Ok(value) => regex_stats_prefix(store.graph(), others.view(), index as nat, c.epsilon, value@, true), Err(_) => true },
             decreases others.len() - index,
@@ -2409,9 +2821,21 @@ impl RegexNormalize for RegexId {
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
                 regex_ids_valid(store.graph(), others.view()), index <= others.len(),
+                store.graph() == gt, store.graph().constants == c@,
+                forall|k: int| 0 <= k < others.view().len()
+                    ==> regex_set_operand_ok(old(store).graph(), gt, children@, intersect, #[trigger] others.view()[k]@),
                 mode.intersect == intersect, regex_ids_valid(store.graph(), children@),
-                forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     ==> regex_combo(store.graph(), theta, others.view(), word, intersect)
                         == regex_combo(store.graph(), theta, children@, word, intersect),
                 model::strictly_increasing(model::regex_ids(others.view())),
@@ -2419,9 +2843,88 @@ impl RegexNormalize for RegexId {
         ))]
         while index < others.len() {
             proof_decl! { let ghost previous = others.view(); }
-            let removed = loop_try!(retain_regex_step(store, &mut others, index, mode), failure);
+            let removed = loop_try!(
+                {
+                    proof_decl! { let ghost prior_ids = others.view(); let ghost retention_graph = store.graph(); }
+                    match store.checkpoint() {
+                        Ok(()) => match id_at(&others, index) {
+                            Ok(id) => {
+                                let epsilon = store.constants().epsilon;
+                                let mut stats = Ok(RegexStats {
+                                    all_nullable: true,
+                                    any_nullable: false,
+                                    epsilon: false,
+                                    complement: false,
+                                    has_nonnullable: false,
+                                });
+                                scan!(stats,scan_index,others.len(),stats.is_ok(),prior=>prior.update(store,&others,scan_index,epsilon,false);
+                                    invariant store.graph() == retention_graph, store.valid_store(), model::graph_wf(store.graph()),
+                                        store.restoration() == old(store).restoration(),
+                                        store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                                        store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                                        store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                                        store.errors_are_resource() == old(store).errors_are_resource(),
+                                        old(store).valid_store() ==> store.valid_store(),
+                                        old(store).errors_are_non_owner() ==> stats != Err(HistoryError::WrongHistoryOwner),
+                                        old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(stats),
+                                        old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(stats matches Err(HistoryError::InvalidPolicy { .. })),
+                                        old(store).errors_are_resource() && old(store).valid_store() ==> (stats matches Err(e) ==> resource_error(e)),
+                                        others.view() == prior_ids, regex_ids_valid(store.graph(), others.view()), scan_index <= others.len(),
+                                        match stats { Ok(value) => regex_stats_prefix(store.graph(), others.view(), scan_index as nat, epsilon, value@, false), Err(_) => true },
+                                    decreases others.len() - scan_index,
+                                );
+                                match stats {
+                                    Ok(stats) => match id.head(store) {
+                                        Ok(head) => {
+                                            let redundant = (!mode.intersect
+                                                && id == epsilon
+                                                && stats.any_nullable)
+                                                || (mode.intersect
+                                                    && stats.has_nonnullable
+                                                    && matches!(head,RegexHead::Not(inner) if inner==epsilon));
+                                            match mode.absorbed(store, id, &others) {
+                                                Ok(absorbed) => {
+                                                    if redundant || absorbed {
+                                                        proof! {
+                                                            regex_retention_remove(store.graph(), others.view(), index as int, mode@, epsilon, stats@);
+                                                            regex_remove_strict(others.view(), index as int);
+                                                            assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                                                                implies regex_combo(store.graph(), theta, others.view().remove(index as int), word, mode.intersect)
+                                                                    == regex_combo(store.graph(), theta, others.view(), word, mode.intersect) by {
+                                                                assert(mode@.intersect == mode.intersect);
+                                                            }
+                                                        }
+                                                        others.remove(index);
+                                                        proof! {
+                                                            assert forall|k: int| 0 <= k < others.view().len()
+                                                                implies regex_set_operand_ok(old(store).graph(), gt, children@, intersect,
+                                                                    #[trigger] others.view()[k]@) by {
+                                                                if k < index { assert(others.view()[k] == prior_ids[k]); }
+                                                                else { assert(others.view()[k] == prior_ids[k + 1]); }
+                                                            }
+                                                        }
+                                                        Ok(true)
+                                                    } else {
+                                                        Ok(false)
+                                                    }
+                                                }
+                                                Err(error) => Err(error),
+                                            }
+                                        }
+                                        Err(error) => Err(error),
+                                    },
+                                    Err(error) => Err(error),
+                                }
+                            }
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    }
+                },
+                failure
+            );
             proof! {
-                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     implies regex_combo(store.graph(), theta, others.view(), word, intersect)
                         == regex_combo(store.graph(), theta, children@, word, intersect) by {
                     assert(regex_combo(store.graph(), theta, others.view(), word, intersect)
@@ -2436,10 +2939,35 @@ impl RegexNormalize for RegexId {
             return Err(error);
         }
         let mut n = Ok(intersect);
-        scan!(n,index,others.len(),n.is_ok(),prior=>nullable_step(store,&others,index,intersect,prior);
+        scan!(n,index,others.len(),n.is_ok(),prior=>{
+            proof! { regex_nullable_prefix(store.graph(), others.view(), index as int, intersect); }
+            match id_at(&others, index) {
+                Ok(id) => {
+                    match RegexId::nullable(id, store) {
+                        Ok(nullable) => {
+                            Ok(if intersect { prior && nullable } else { prior || nullable })
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
             invariant model::graph_extends(old(store).graph(), store.graph()), store.valid_store(), model::graph_wf(store.graph()),
                 store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> n != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(n),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(n matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (n matches Err(e) ==> resource_error(e)),
                 regex_ids_valid(store.graph(), others.view()), regex_ids_valid(store.graph(), children@),
+                store.graph() == gt, store.graph().constants == c@,
+                forall|k: int| 0 <= k < others.view().len()
+                    ==> regex_set_operand_ok(old(store).graph(), gt, children@, intersect, #[trigger] others.view()[k]@),
                 regex_equivalent(store.graph(), others.view(), children@, intersect), model::strictly_increasing(model::regex_ids(others.view())), index <= others.len(),
                 match n { Ok(value) => value == regex_nullable_combo(store.graph(), others.view().subrange(0, index as int), intersect), Err(_) => true },
             decreases others.len() - index,
@@ -2453,6 +2981,18 @@ impl RegexNormalize for RegexId {
             assert forall|next: model::Graph| model::graph_extends(store.graph(), next)
                 implies regex_equivalent(next, others.view(), children@, intersect) by {
                 regex_equivalence_extends(store.graph(), next, others.view(), children@, intersect);
+            }
+            if others.view().len() == 1 && regex_set_flat_inputs(old(store).graph(), children@, intersect) {
+                let o0 = others.view()[0]@;
+                assert(regex_set_operand_ok(old(store).graph(), gt, children@, intersect, o0));
+                if regex_member(old(store).graph(), children@, intersect, o0) {
+                    regex_member_valid(old(store).graph(), children@, intersect, o0);
+                    assert(!regex_is_set(old(store).graph(), o0, intersect));
+                    assert(old(store).graph().regexes == store.graph().regexes.subrange(0, old(store).graph().regexes.len() as int));
+                    assert(store.graph().regexes[o0 as int] == old(store).graph().regexes[o0 as int]);
+                }
+                assert forall|o: nat| #[trigger] regex_piece_contains(store.graph(), o0, intersect, o)
+                    implies regex_set_operand_ok(old(store).graph(), store.graph(), children@, intersect, o) by {}
             }
         }
         if others.is_empty() {
@@ -2470,7 +3010,7 @@ impl RegexNormalize for RegexId {
                 n,
             )?;
             proof! {
-                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+                assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     implies model::regex_lang(store.graph(), theta, id@, word)
                         == regex_combo(store.graph(), theta, children@, word, intersect) by {
                     regex_node_language(store.graph(), id@, theta, word);
@@ -2480,102 +3020,23 @@ impl RegexNormalize for RegexId {
                     assert(regex_combo(store.graph(), theta, others.view(), word, intersect)
                         == regex_combo(store.graph(), theta, children@, word, intersect));
                 }
+                assert forall|o: nat| #[trigger] regex_piece_contains(store.graph(), id@, intersect, o)
+                    implies regex_set_operand_ok(old(store).graph(), store.graph(), children@, intersect, o) by {
+                    let ids = model::regex_ids(others.view());
+                    assert(ids.contains(o));
+                    let k = choose|k: int| 0 <= k < ids.len() && ids[k] == o;
+                    assert(ids[k] == others.view()[k]@);
+                    assert(regex_set_operand_ok(old(store).graph(), gt, children@, intersect, others.view()[k]@));
+                    if !regex_member(old(store).graph(), children@, intersect, o) {
+                        regex_combined_test_extends(old(store).graph(), gt, store.graph(), children@, intersect, o);
+                    }
+                }
             }
             Ok(id)
         }
     }
 }
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), regex_ids_valid(old(store).graph(), ids@), index < ids.len(),
-        old(store).valid_store(),
-        regex_ids_valid(old(store).graph(), old(flat).view()),
-        model::regex_ids(old(flat).view()) == regex_concat_flat(old(store).graph(), ids@.subrange(0, index as int)),
-    ensures final(store).graph() == old(store).graph(),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store(),
-        regex_ids_valid(final(store).graph(), final(flat).view()),
-        old(flat).view().is_prefix_of(final(flat).view()),
-        match result {
-            Ok(absorbed) => absorbed == (old(store).graph().regexes[ids@[index as int]@ as int].kind == model::RegexKindNode::Empty)
-                && (!absorbed ==> model::regex_ids(final(flat).view()) == model::regex_ids(old(flat).view())
-                    + regex_concat_piece(final(store).graph(), ids@[index as int]@)
-                    && model::regex_ids(final(flat).view()) == regex_concat_flat(final(store).graph(), ids@.subrange(0, index as int + 1))),
-            Err(_) => true,
-        },
-)]
-fn concat_collect_step<G: KernelStore>(
-    store: &mut G,
-    ids: &[RegexId],
-    index: usize,
-    flat: &mut WorkVec<RegexId>,
-) -> KernelResult<bool> {
-    proof! { regex_concat_flat_prefix(store.graph(), ids@, index as int); }
-    store.checkpoint()?;
-    let id = id_at(ids, index)?;
-    match id.head(store)? {
-        RegexHead::Empty => Ok(true),
-        RegexHead::Epsilon => Ok(false),
-        RegexHead::Concat(n) => {
-            proof! { regex_children_count(store.graph(), id@); }
-            collect_regex_children(store, id, n, flat)?;
-            Ok(false)
-        }
-        _ => {
-            flat.push(id);
-            Ok(false)
-        }
-    }
-}
 
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
-        transition_ids_valid(store.graph(), old(flat).view()),
-    ensures old(flat).view().is_prefix_of(final(flat).view()), transition_ids_valid(store.graph(), final(flat).view()),
-        match result {
-            Ok(()) => model::transition_ids(final(flat).view())
-                == model::transition_ids(old(flat).view()) + transition_children(store.graph(), id@),
-            Err(_) => true,
-        },
-)]
-fn collect_transition_children<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    count: usize,
-    flat: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof! { transition_lemma_children(store.graph(), id@); }
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant i <= count,
-            model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
-            transition_children(store.graph(), id@).len() == count,
-            old(flat).view().is_prefix_of(flat.view()), transition_ids_valid(store.graph(), flat.view()),
-            flat.view().len() == old(flat).view().len() + i,
-            model::transition_ids(flat.view()) == model::transition_ids(old(flat).view())
-                + transition_children(store.graph(), id@).take(i as int),
-        ensures failure.is_none() ==> i == count,
-        decreases count - i,
-    ))]
-    while i < count {
-        let child = loop_try!(id.child(store, i), failure);
-        proof_decl! { let ghost prior = flat.view(); }
-        proof! { transition_lemma_child(store.graph(), id@, i as nat, child@); }
-        flat.push(child);
-        proof! {
-            transition_ids_push(prior, child);
-            assert(transition_children(store.graph(), id@).take(i as int).push(child@)
-                =~= transition_children(store.graph(), id@).take(i as int + 1));
-        }
-        i = i.saturating_add(1);
-    }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    Ok(())
-}
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[derive(Clone, Copy)]
@@ -2584,254 +3045,385 @@ struct TransitionMode {
     identity: TransitionId,
     absorber: TransitionId,
 }
+
 #[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_mode_valid(old(store).graph(), mode@),
-        transition_ids_valid(old(store).graph(), old(pending).view()), old(pending).view().len() > 0,
-        transition_ids_valid(old(store).graph(), old(flat).view()), regex_ids_valid(old(store).graph(), old(constants).view()),
-    ensures final(store).graph() == old(store).graph(), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store() == old(store).valid_store(),
-        transition_ids_valid(final(store).graph(), final(pending).view()),
-        transition_ids_valid(final(store).graph(), final(flat).view()), regex_ids_valid(final(store).graph(), final(constants).view()),
-        match result {
-            Ok(collapsed) => transition_collect_effect(final(store).graph(), mode@,
-                old(pending).view(), old(flat).view(), old(constants).view(),
-                final(pending).view(), final(flat).view(), final(constants).view(), collapsed)
-                && (!collapsed ==> collect_total(final(store).graph(), final(pending).view(), final(flat).view(),
-                        final(constants).view(), mode.intersect)
-                    <= collect_total(old(store).graph(), old(pending).view(), old(flat).view(),
-                        old(constants).view(), mode.intersect)),
-            Err(_) => true,
-        },
-)]
-fn transition_collect_step<G: KernelStore>(
-    store: &mut G,
-    mode: TransitionMode,
-    pending: &mut WorkVec<TransitionId>,
-    flat: &mut WorkVec<TransitionId>,
-    constants: &mut WorkVec<RegexId>,
-) -> KernelResult<bool> {
-    proof_decl! {
-        let ghost p0 = pending.view();
-        let ghost f0 = flat.view();
-        let ghost rs0 = constants.view();
-    }
-    let id = match pending.pop() {
-        Some(v) => v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    store.checkpoint()?;
-    proof_decl! { let ghost prefix = pending.view(); }
-    proof! {
-        transition_lemma_identities(store.graph(), mode@);
-        model::lemma_graph_transition_wf(store.graph(), id@);
-        assert(p0 =~= prefix.push(id));
-    }
-    if id == mode.absorber {
-        proof! { transition_lemma_collect_absorber(store.graph(), mode@, p0, f0, rs0); }
-        return Ok(true);
-    }
-    if id != mode.identity {
-        match id.head(store)? {
-            TransitionHead::Union(n) if !mode.intersect => {
-                collect_transition_children(store, id, n, pending)?;
-                proof! {
-                    let children = pending.view().subrange(prefix.len() as int, pending.view().len() as int);
-                    assert(prefix + children =~= pending.view());
-                    assert(model::transition_ids(prefix + children)
-                        =~= model::transition_ids(prefix) + model::transition_ids(children));
-                    transition_lemma_image_suffix(prefix, pending.view(), transition_children(store.graph(), id@));
-                    assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
-                    reveal(transition_children);
-                    transition_lemma_collect_expand(store.graph(), mode@, p0, f0, rs0, children);
-                    collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, mode.intersect);
-                }
-            }
-            TransitionHead::Intersect(n) if mode.intersect => {
-                collect_transition_children(store, id, n, pending)?;
-                proof! {
-                    let children = pending.view().subrange(prefix.len() as int, pending.view().len() as int);
-                    assert(prefix + children =~= pending.view());
-                    assert(model::transition_ids(prefix + children)
-                        =~= model::transition_ids(prefix) + model::transition_ids(children));
-                    transition_lemma_image_suffix(prefix, pending.view(), transition_children(store.graph(), id@));
-                    assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
-                    reveal(transition_children);
-                    transition_lemma_collect_expand(store.graph(), mode@, p0, f0, rs0, children);
-                    collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, mode.intersect);
-                }
-            }
-            TransitionHead::Const(r) => {
-                constants.push(r);
-                proof! {
-                    transition_lemma_collect_constant(store.graph(), mode@, p0, f0, rs0, r);
-                    collect_lemma_constant(store.graph(), prefix, id, f0, rs0, r, mode.intersect);
-                }
-            }
-            _ => {
-                flat.push(id);
-                proof! {
-                    transition_lemma_collect_leaf(store.graph(), mode@, p0, f0, rs0);
-                    collect_lemma_leaf(store.graph(), prefix, id, f0, rs0, mode.intersect);
-                }
-            }
-        }
-    }
-    proof! {
-        if id == mode.identity {
-            transition_lemma_collect_identity(store.graph(), mode@, p0, f0, rs0);
-            collect_lemma_drop(store.graph(), prefix, id, f0, rs0, mode.intersect);
-        }
-    }
-    Ok(false)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_mode_valid(old(store).graph(), mode@),
-        transition_ids_valid(old(store).graph(), old(pending).view()),
-        transition_ids_valid(old(store).graph(), old(flat).view()), regex_ids_valid(old(store).graph(), old(constants).view()),
-    ensures final(store).graph() == old(store).graph(), model::graph_wf(final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        final(store).valid_store() == old(store).valid_store(),
-        transition_ids_valid(final(store).graph(), final(pending).view()),
-        transition_ids_valid(final(store).graph(), final(flat).view()), regex_ids_valid(final(store).graph(), final(constants).view()),
-        match result {
-            Ok(collapsed) => transition_collect_effect(final(store).graph(), mode@,
-                old(pending).view(), old(flat).view(), old(constants).view(),
-                final(pending).view(), final(flat).view(), final(constants).view(), collapsed)
-                && (!collapsed ==> final(pending).view().len() == 0)
-                && (!collapsed ==> collect_total(final(store).graph(), final(pending).view(), final(flat).view(),
-                        final(constants).view(), mode.intersect)
-                    <= collect_total(old(store).graph(), old(pending).view(), old(flat).view(),
-                        old(constants).view(), mode.intersect)),
-            Err(_) => true,
-        },
-)]
-fn transition_collect_nodes<G: KernelStore>(
-    store: &mut G,
-    mode: TransitionMode,
-    pending: &mut WorkVec<TransitionId>,
-    flat: &mut WorkVec<TransitionId>,
-    constants: &mut WorkVec<RegexId>,
-) -> KernelResult<bool> {
-    proof_decl! {
-        let ghost p0 = pending.view();
-        let ghost f0 = flat.view();
-        let ghost rs0 = constants.view();
-    }
-    proof! {
-        if p0.len() > 0 { transition_lemma_pending_work_pop(store.graph(), p0, mode.intersect); }
-    }
-    let mut state = Ok(false);
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant store.graph() == old(store).graph(), model::graph_wf(store.graph()),
-            store.restoration() == old(store).restoration(),
-            store.valid_store(), transition_mode_valid(store.graph(), mode@),
-            transition_ids_valid(store.graph(), pending.view()), transition_ids_valid(store.graph(), flat.view()),
-            regex_ids_valid(store.graph(), constants.view()),
-            match state {
-                Ok(collapsed) => forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
-                    ==> transition_collect_combo(store.graph(), theta, p0, f0, rs0, event, word, mode.intersect)
-                        == if collapsed { !mode.intersect } else {
-                            transition_collect_combo(store.graph(), theta, pending.view(), flat.view(), constants.view(), event, word, mode.intersect)
-                        },
+impl TransitionMode {
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_mode_valid(old(store).graph(), self@),
+            transition_ids_valid(old(store).graph(), old(pending).view()),
+            transition_ids_valid(old(store).graph(), old(flat).view()), regex_ids_valid(old(store).graph(), old(constants).view()),
+        ensures final(store).graph() == old(store).graph(), model::graph_wf(final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            final(store).valid_store() == old(store).valid_store(),
+            transition_ids_valid(final(store).graph(), final(pending).view()),
+            transition_ids_valid(final(store).graph(), final(flat).view()), regex_ids_valid(final(store).graph(), final(constants).view()),
+            forall|i: int| old(flat).view().len() <= i < final(flat).view().len()
+                ==> transition_set_leaf(final(store).graph().transitions[final(flat).view()[i]@ as int], self.intersect),
+            match result {
+                Ok(collapsed) => transition_collect_effect(final(store).graph(), self@,
+                    old(pending).view(), old(flat).view(), old(constants).view(),
+                    final(pending).view(), final(flat).view(), final(constants).view(), collapsed)
+                    && (!collapsed ==> final(pending).view().len() == 0)
+                    && (!collapsed ==> collect_total(final(store).graph(), final(pending).view(), final(flat).view(),
+                            final(constants).view(), self.intersect)
+                        <= collect_total(old(store).graph(), old(pending).view(), old(flat).view(),
+                            old(constants).view(), self.intersect))
+                    && ((old(flat).view().len() == 0 && old(constants).view().len() == 0)
+                        ==> fcol::collect_members(final(store).graph(), model::transition_ids(old(pending).view()),
+                            self.intersect, final(pending).view(), final(flat).view(), final(constants).view())),
                 Err(_) => true,
             },
-            match state {
-                Ok(false) => collect_total(store.graph(), pending.view(), flat.view(), constants.view(), mode.intersect)
-                    <= collect_total(store.graph(), p0, f0, rs0, mode.intersect),
-                _ => true,
-            },
-        decreases match state { Ok(false) => transition_pending_work(store.graph(), pending.view(), mode.intersect) + 1, _ => 0nat },
-    ))]
-    while !pending.is_empty() && matches!(state, Ok(false)) {
-        state = transition_collect_step(store, mode, pending, flat, constants);
+    )]
+    fn collect<G: KernelStore>(
+        self,
+        store: &mut G,
+        pending: &mut WorkVec<TransitionId>,
+        flat: &mut WorkVec<TransitionId>,
+        constants: &mut WorkVec<RegexId>,
+    ) -> KernelResult<bool> {
+        proof_decl! {
+            let ghost p0 = pending.view();
+            let ghost f0 = flat.view();
+            let ghost rs0 = constants.view();
+            let ghost orig = model::transition_ids(pending.view());
+            let ghost fresh = flat.view().len() == 0 && constants.view().len() == 0;
+        }
+        proof! {
+            if p0.len() > 0 { transition_lemma_pending_work_pop(store.graph(), p0, self.intersect); }
+            if fresh {
+                fcol::lemma_members_start(store.graph(), p0, self.intersect);
+                assert(f0 =~= Seq::<TransitionId>::empty());
+                assert(rs0 =~= Seq::<RegexId>::empty());
+            }
+            assert(model::bounded(orig, store.graph().transitions.len()));
+        }
+        let mut state = Ok(false);
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant store.graph() == old(store).graph(), model::graph_wf(store.graph()),
+                store.restoration() == old(store).restoration(),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                store.valid_store(), transition_mode_valid(store.graph(), self@),
+                transition_ids_valid(store.graph(), pending.view()), transition_ids_valid(store.graph(), flat.view()),
+                regex_ids_valid(store.graph(), constants.view()),
+                flat.view().len() >= f0.len(),
+                forall|i: int| f0.len() <= i < flat.view().len()
+                    ==> transition_set_leaf(store.graph().transitions[flat.view()[i]@ as int], self.intersect),
+                model::bounded(orig, store.graph().transitions.len()),
+                fresh && state.is_ok() ==> fcol::collect_members(store.graph(), orig, self.intersect, pending.view(), flat.view(), constants.view()),
+                match state {
+                    Ok(collapsed) => forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                        ==> transition_collect_combo(store.graph(), theta, p0, f0, rs0, event, word, self.intersect)
+                            == if collapsed { !self.intersect } else {
+                                transition_collect_combo(store.graph(), theta, pending.view(), flat.view(), constants.view(), event, word, self.intersect)
+                            },
+                    Err(_) => true,
+                },
+                match state {
+                    Ok(false) => collect_total(store.graph(), pending.view(), flat.view(), constants.view(), self.intersect)
+                        <= collect_total(store.graph(), p0, f0, rs0, self.intersect),
+                    _ => true,
+                },
+            decreases match state { Ok(false) => transition_pending_work(store.graph(), pending.view(), self.intersect) + 1, _ => 0nat },
+        ))]
+        while !pending.is_empty() && matches!(state, Ok(false)) {
+            state = {
+                proof_decl! {
+                    let ghost p0 = pending.view();
+                    let ghost f0 = flat.view();
+                    let ghost rs0 = constants.view();
+                }
+                match match pending.pop() {
+                    Some(id) => Ok(id),
+                    None => Err(HistoryError::normalization_invariant()),
+                } {
+                    Ok(id) => match store.checkpoint() {
+                        Ok(()) => {
+                            proof_decl! { let ghost prefix = pending.view(); }
+                            proof! {
+                                transition_lemma_identities(store.graph(), self@);
+                                model::lemma_graph_transition_wf(store.graph(), id@);
+                                assert(p0 =~= prefix.push(id));
+                                if fresh { fcol::lemma_members_pop(store.graph(), orig, self.intersect, prefix, id, f0, rs0); }
+                            }
+                            if id == self.absorber {
+                                proof! { transition_lemma_collect_absorber(store.graph(), self@, p0, f0, rs0); }
+                                Ok(true)
+                            } else {
+                                match if id != self.identity {
+                                    match id.head(store) {
+                                        Ok(head) => match head {
+                                            TransitionHead::Union(n) if !self.intersect => {
+                                                match TransitionId::collect_children(
+                                                    store, id, n, pending,
+                                                ) {
+                                                    Ok(()) => {
+                                                        proof! {
+                                                            let children = pending.view().subrange(prefix.len() as int, pending.view().len() as int);
+                                                            assert(prefix + children =~= pending.view());
+                                                            assert(model::transition_ids(prefix + children)
+                                                                =~= model::transition_ids(prefix) + model::transition_ids(children));
+                                                            transition_lemma_image_suffix(prefix, pending.view(), transition_children(store.graph(), id@));
+                                                            assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
+                                                            reveal(transition_children);
+                                                            transition_lemma_collect_expand(store.graph(), self@, p0, f0, rs0, children);
+                                                            collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, self.intersect);
+                                                            if fresh {
+                                                                assert(store.graph().transitions[id@ as int]
+                                                                    == model::TransitionNode::Union(transition_children(store.graph(), id@)));
+                                                                fcol::lemma_members_expand(store.graph(), orig, self.intersect, prefix, id,
+                                                                    children, f0, rs0, transition_children(store.graph(), id@));
+                                                            }
+                                                        }
+
+                                                        Ok(())
+                                                    }
+                                                    Err(error) => Err(error),
+                                                }
+                                            }
+                                            TransitionHead::Intersect(n) if self.intersect => {
+                                                match TransitionId::collect_children(
+                                                    store, id, n, pending,
+                                                ) {
+                                                    Ok(()) => {
+                                                        proof! {
+                                                            let children = pending.view().subrange(prefix.len() as int, pending.view().len() as int);
+                                                            assert(prefix + children =~= pending.view());
+                                                            assert(model::transition_ids(prefix + children)
+                                                                =~= model::transition_ids(prefix) + model::transition_ids(children));
+                                                            transition_lemma_image_suffix(prefix, pending.view(), transition_children(store.graph(), id@));
+                                                            assert(model::transition_ids(children) =~= transition_children(store.graph(), id@));
+                                                            reveal(transition_children);
+                                                            transition_lemma_collect_expand(store.graph(), self@, p0, f0, rs0, children);
+                                                            collect_lemma_expand(store.graph(), prefix, id, children, f0, rs0, self.intersect);
+                                                            if fresh {
+                                                                assert(store.graph().transitions[id@ as int]
+                                                                    == model::TransitionNode::Intersect(transition_children(store.graph(), id@)));
+                                                                fcol::lemma_members_expand(store.graph(), orig, self.intersect, prefix, id,
+                                                                    children, f0, rs0, transition_children(store.graph(), id@));
+                                                            }
+                                                        }
+
+                                                        Ok(())
+                                                    }
+                                                    Err(error) => Err(error),
+                                                }
+                                            }
+                                            TransitionHead::Const(r) if self.intersect => {
+                                                constants.push(r);
+                                                proof! {
+                                                    transition_lemma_collect_constant(store.graph(), self@, p0, f0, rs0, r);
+                                                    collect_lemma_constant(store.graph(), prefix, id, f0, rs0, r, self.intersect);
+                                                    if fresh {
+                                                        assert(store.graph().transitions[id@ as int] == model::TransitionNode::Const(r@));
+                                                        fcol::lemma_members_const(store.graph(), orig, self.intersect, prefix, id, f0, rs0, r);
+                                                    }
+                                                }
+
+                                                Ok(())
+                                            }
+                                            _ => {
+                                                flat.push(id);
+                                                proof! {
+                                                    transition_lemma_collect_leaf(store.graph(), self@, p0, f0, rs0);
+                                                    collect_lemma_leaf(store.graph(), prefix, id, f0, rs0, self.intersect);
+                                                    if fresh {
+                                                        assert(fcol::flat_ok(store.graph(), self.intersect, id@));
+                                                        fcol::lemma_members_leaf(store.graph(), orig, self.intersect, prefix, id, f0, rs0);
+                                                    }
+                                                }
+
+                                                Ok(())
+                                            }
+                                        },
+                                        Err(error) => Err(error),
+                                    }
+                                } else {
+                                    Ok(())
+                                } {
+                                    Ok(()) => {
+                                        proof! {
+                                            if id == self.identity {
+                                                transition_lemma_collect_identity(store.graph(), self@, p0, f0, rs0);
+                                                collect_lemma_drop(store.graph(), prefix, id, f0, rs0, self.intersect);
+                                            }
+                                        }
+                                        Ok(false)
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            }
+                        }
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                }
+            };
+        }
+        state
     }
-    state
 }
-#[verus_verify]
+verus! {
 pub(crate) trait TransitionNormalize: Sized {
-    #[verus_spec(result =>
+    fn constant<G: KernelStore>(store: &mut G, regex: RegexId) -> (result: KernelResult<TransitionId>)
         requires model::graph_wf(old(store).graph()), old(store).valid_store(), regex@ < old(store).graph().regexes.len(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().transitions.len()
-                    && final(store).graph().transitions[id@ as int] is Const
-                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    && final(store).graph().transitions[id@ as int] == model::TransitionNode::Const(regex@)
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> transition_lang(final(store).graph(), theta, id, event, word)
                             == model::regex_lang(final(store).graph(), theta, regex@, word),
                 Err(_) => true,
             },
-    )]
-    fn constant<G: KernelStore>(store: &mut G, regex: RegexId) -> KernelResult<TransitionId>;
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@) == Set::empty(),
+    ;
 
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-            test@ < old(store).graph().tests.len(), then_id@ < old(store).graph().transitions.len(),
-            else_id@ < old(store).graph().transitions.len(),
-        ensures model::graph_extends(old(store).graph(), final(store).graph()),
-            final(store).restoration() == old(store).restoration(),
-            model::graph_wf(final(store).graph()), final(store).valid_store(),
-            match result { Ok(id) => id@ < final(store).graph().transitions.len()
-                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
-                    ==> transition_lang(final(store).graph(), theta, id, event, word)
-                        == transition_if_combo(final(store).graph(), theta, test, then_id, else_id, event, word), Err(_) => true },
-    )]
     fn if_then_else<G: KernelStore>(
         store: &mut G,
         test: TestId,
         then_id: TransitionId,
         else_id: TransitionId,
-    ) -> KernelResult<TransitionId>;
-
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
+    ) -> (result: KernelResult<TransitionId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            test@ < old(store).graph().tests.len(), then_id@ < old(store).graph().transitions.len(),
+            else_id@ < old(store).graph().transitions.len(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result { Ok(id) => id@ < final(store).graph().transitions.len()
-                && transition_result(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0), id), Err(_) => true },
-    )]
+                && ((ftr::nf_sum(old(store).graph(), then_id@) && ftr::nf_sum(old(store).graph(), else_id@))
+                    ==> fsteps::ite_bound(final(store).graph(), id@, then_id@, else_id@))
+                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                    ==> transition_lang(final(store).graph(), theta, id, event, word)
+                        == transition_if_combo(final(store).graph(), theta, test, then_id, else_id, event, word), Err(_) => true },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(
+                test_vocab(final(store).graph(), test@).union(guard_vocab(final(store).graph(), then_id@))
+                    .union(guard_vocab(final(store).graph(), else_id@))),
+    ;
+
     fn intersect<G: KernelStore>(
         store: &mut G,
         children: &[TransitionId],
-    ) -> KernelResult<TransitionId>;
+    ) -> (result: KernelResult<TransitionId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && transition_result(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0), id)
+                && (fcol::all_nf(old(store).graph(), model::transition_ids(children@))
+                    ==> fsteps::run_bound(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0), id@)), Err(_) => true },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(
+                guard_task_vocab(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0))),
+    ;
 
-    #[verus_spec(result =>
+    fn not<G: KernelStore>(this: TransitionId, store: &mut G) -> (result: KernelResult<TransitionId>)
         requires model::graph_wf(old(store).graph()), old(store).valid_store(), this@ < old(store).graph().transitions.len(),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result { Ok(id) => id@ < final(store).graph().transitions.len()
-                && transition_result(final(store).graph(), ActionShape::Not(this@), id), Err(_) => true },
-    )]
-    fn not<G: KernelStore>(this: TransitionId, store: &mut G) -> KernelResult<TransitionId>;
+                && transition_result(final(store).graph(), ActionShape::Not(this@), id)
+                && (ftr::nf_sum(old(store).graph(), this@) ==> fsteps::run_bound(final(store).graph(), ActionShape::Not(this@), id@)),
+                Err(_) => true },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(guard_vocab(final(store).graph(), this@)),
+    ;
 
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(), this@ < old(store).graph().transitions.len(),
-            regex_ids_valid(old(store).graph(), suffix@),
-        ensures model::graph_extends(old(store).graph(), final(store).graph()),
-            final(store).restoration() == old(store).restoration(),
-            model::graph_wf(final(store).graph()), final(store).valid_store(),
-            match result { Ok(id) => id@ < final(store).graph().transitions.len()
-                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
-                    ==> transition_lang(final(store).graph(), theta, id, event, word)
-                        == transition_append_combo(final(store).graph(), theta, this, suffix@, event, word), Err(_) => true },
-    )]
     fn append<G: KernelStore>(
         this: TransitionId,
         store: &mut G,
         suffix: &[RegexId],
-    ) -> KernelResult<TransitionId>;
+    ) -> (result: KernelResult<TransitionId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), this@ < old(store).graph().transitions.len(),
+            regex_ids_valid(old(store).graph(), suffix@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            match result { Ok(id) => id@ < final(store).graph().transitions.len()
+                && ((ftr::nf_sum(old(store).graph(), this@) && flink::ids_nf(old(store).graph(), suffix@))
+                    ==> fsteps::app_bound(final(store).graph(), id@, this@, flink::lifts(final(store).graph(), suffix@)))
+                && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                    ==> transition_lang(final(store).graph(), theta, id, event, word)
+                        == transition_append_combo(final(store).graph(), theta, this, suffix@, event, word),
+                Err(_) => true },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(guard_vocab(final(store).graph(), this@)),
+    ;
 
-    #[verus_spec(result =>
+    fn intern<G: KernelStore>(
+        store: &mut G,
+        node: TransitionView<'_>,
+    ) -> (result: KernelResult<TransitionId>)
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             model::transition_node_wf(old(store).graph(), node@),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().transitions.len()
@@ -2841,53 +3433,134 @@ pub(crate) trait TransitionNormalize: Sized {
                     && tdepth(final(store).graph(), id@) == tdepth_node(final(store).graph(), node@),
                 Err(_) => true,
             },
-    )]
-    fn intern<G: KernelStore>(
-        store: &mut G,
-        node: TransitionView<'_>,
-    ) -> KernelResult<TransitionId>;
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@) == guard_node_vocab(final(store).graph(), node@),
+    ;
 
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-            test@ < old(store).graph().tests.len(), a@ < old(store).graph().transitions.len(), b@ < old(store).graph().transitions.len(),
-        ensures model::graph_extends(old(store).graph(), final(store).graph()),
-            final(store).restoration() == old(store).restoration(),
-            model::graph_wf(final(store).graph()), final(store).valid_store(),
-            match result {
-                Ok(id) => id@ < final(store).graph().transitions.len()
-                    && tdepth(final(store).graph(), id@)
-                        <= if_bound(tdepth(old(store).graph(), a@), tdepth(old(store).graph(), b@))
-                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
-                        ==> transition_lang(final(store).graph(), theta, id, event, word)
-                            == transition_if_combo(final(store).graph(), theta, test, a, b, event, word),
-                Err(_) => true,
-            },
-    )]
     fn local_if<G: KernelStore>(
         store: &mut G,
         test: TestId,
         a: TransitionId,
         b: TransitionId,
-    ) -> KernelResult<TransitionId>;
-
-    #[verus_spec(result =>
-        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
-        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+    ) -> (result: KernelResult<TransitionId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            test@ < old(store).graph().tests.len(), a@ < old(store).graph().transitions.len(), b@ < old(store).graph().transitions.len(),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result {
                 Ok(id) => id@ < final(store).graph().transitions.len()
-                    && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, intersect)
-                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                    && tdepth(final(store).graph(), id@)
+                        <= if_bound(tdepth(old(store).graph(), a@), tdepth(old(store).graph(), b@))
+                    && (id@ == a@ || id@ == b@
+                        || final(store).graph().transitions[id@ as int] == model::TransitionNode::If(test@, a@, b@))
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                         ==> transition_lang(final(store).graph(), theta, id, event, word)
-                            == transition_combo(final(store).graph(), theta, children@, event, word, intersect),
+                            == transition_if_combo(final(store).graph(), theta, test, a, b, event, word),
                 Err(_) => true,
             },
-    )]
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(
+                test_vocab(final(store).graph(), test@).union(guard_vocab(final(store).graph(), a@))
+                    .union(guard_vocab(final(store).graph(), b@))),
+    ;
+
     fn collect<G: KernelStore>(
         store: &mut G,
         children: &[TransitionId],
         intersect: bool,
-    ) -> KernelResult<TransitionId>;
+    ) -> (result: KernelResult<TransitionId>)
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(), transition_ids_valid(old(store).graph(), children@),
+        ensures model::graph_extends(old(store).graph(), final(store).graph()), model::graph_wf(final(store).graph()), final(store).valid_store(),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+                Ok(id) => id@ < final(store).graph().transitions.len()
+                    && tdepth(final(store).graph(), id@) <= collect_bound(old(store).graph(), children@, intersect)
+                    && (match final(store).graph().transitions[id@ as int] {
+                        model::TransitionNode::Intersect(cs) => intersect ==> cs.len() > 1,
+                        model::TransitionNode::Union(cs) => !intersect ==> cs.len() > 1,
+                        _ => true,
+                    })
+                    && (fcol::all_nf(old(store).graph(), model::transition_ids(children@))
+                        ==> fcol::collect_out(final(store).graph(), model::transition_ids(children@), intersect, id@))
+                    && forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
+                        ==> transition_lang(final(store).graph(), theta, id, event, word)
+                            == transition_combo(final(store).graph(), theta, children@, event, word, intersect),
+                Err(_) => true,
+            },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(
+                guard_task_vocab(final(store).graph(), ActionShape::Fold(model::transition_ids(children@), 0))),
+    ;
+
+    fn collect_children<G: KernelStore>(
+        store: &G,
+        id: TransitionId,
+        count: usize,
+        flat: &mut WorkVec<TransitionId>,
+    ) -> (result: KernelResult<()>)
+        requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
+            transition_ids_valid(store.graph(), old(flat).view()),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            old(flat).view().is_prefix_of(final(flat).view()), transition_ids_valid(store.graph(), final(flat).view()),
+            match result {
+                Ok(()) => model::transition_ids(final(flat).view())
+                    == model::transition_ids(old(flat).view()) + transition_children(store.graph(), id@),
+                Err(_) => true,
+            },
+    {
+        proof! { transition_lemma_children(store.graph(), id@); }
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant i <= count,
+                model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
+                transition_children(store.graph(), id@).len() == count,
+                old(flat).view().is_prefix_of(flat.view()), transition_ids_valid(store.graph(), flat.view()),
+                flat.view().len() == old(flat).view().len() + i,
+                model::transition_ids(flat.view()) == model::transition_ids(old(flat).view())
+                    + transition_children(store.graph(), id@).take(i as int),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == count,
+            decreases count - i,
+        ))]
+        while i < count {
+            let child = loop_try!(id.child(store, i), failure);
+            proof_decl! { let ghost prior = flat.view(); }
+            proof! { transition_lemma_child(store.graph(), id@, i as nat, child@); }
+            flat.push(child);
+            proof! {
+                transition_ids_push(prior, child);
+                assert(transition_children(store.graph(), id@).take(i as int).push(child@)
+                    =~= transition_children(store.graph(), id@).take(i as int + 1));
+            }
+            i = i.saturating_add(1);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
 }
 
 #[verus_verify]
@@ -2898,7 +3571,7 @@ impl TransitionNormalize for TransitionId {
         proof! { model::lemma_graph_wf_elim(store.graph()); }
         store.checkpoint()?;
         let c = store.constants();
-        if regex == c.empty {
+        let result = if regex == c.empty {
             Ok(c.transition_empty)
         } else if regex == c.all {
             Ok(c.transition_all)
@@ -2906,7 +3579,15 @@ impl TransitionNormalize for TransitionId {
             Ok(c.transition_epsilon)
         } else {
             TransitionId::intern(store, TransitionView::Const(regex))
+        };
+        proof! {
+            if let Ok(id) = result {
+                lemma_guard_definition(store.graph(), id@);
+                transition_unfold(store.graph(), id@);
+                assert(guard_vocab(store.graph(), id@) == Set::empty());
+            }
         }
+        result
     }
 
     #[verus_verify]
@@ -2922,11 +3603,21 @@ impl TransitionNormalize for TransitionId {
         let id = TransitionId::local_if(store, test, then_id, else_id)?;
         let path = store.constants().test_true;
         proof! {
+            lemma_guard_constants(store.graph());
             assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
             machine_driver_extension_future(entry, store.graph());
             machine_driver_if_future(store.graph(), test, then_id, else_id, id);
+            if ftr::nf_sum(entry, then_id@) && ftr::nf_sum(entry, else_id@) {
+                fbr::lemma_ite_start(entry, store.graph(), test@, then_id@, else_id@, id@, path@);
+            }
         }
-        Action::Clean(id, path).run(store)
+        proof_decl! { let ghost before_clean = store.graph(); }
+        let result = Action::Clean(id, path).run(store);
+        proof! {
+            lemma_guards_stable(before_clean, store.graph());
+            lemma_guard_constants(store.graph());
+        }
+        result
     }
 
     #[verus_verify]
@@ -2959,6 +3650,9 @@ impl TransitionNormalize for TransitionId {
         proof! {
             machine_driver_extension_future(entry, store.graph());
             machine_driver_append_future(store.graph(), this, suffix@, r);
+            if ftr::nf_sum(entry, this@) && flink::ids_nf(entry, suffix@) {
+                fbr::lemma_app_future(entry, store.graph(), this@, suffix@, r@);
+            }
         }
         Action::Append(this, r).run(store)
     }
@@ -2970,7 +3664,10 @@ impl TransitionNormalize for TransitionId {
         node: TransitionView<'_>,
     ) -> KernelResult<TransitionId> {
         let id = store.intern_transition(node)?;
-        proof! { transition_unfold(store.graph(), id@); tdepth_lemma_unfold(store.graph(), id@); }
+        proof! {
+            transition_unfold(store.graph(), id@); tdepth_lemma_unfold(store.graph(), id@);
+            lemma_guard_node_unfold(store.graph(), id@);
+        }
         Ok(id)
     }
 
@@ -2984,7 +3681,7 @@ impl TransitionNormalize for TransitionId {
     ) -> KernelResult<TransitionId> {
         proof! { model::lemma_graph_wf_elim(store.graph()); tdepth_lemma_extends_forall(store.graph()); }
         let c = store.constants();
-        if test == c.test_true || a == b {
+        let result = if test == c.test_true || a == b {
             Ok(a)
         } else if test == c.test_false {
             Ok(b)
@@ -2997,22 +3694,34 @@ impl TransitionNormalize for TransitionId {
                     else_transition: b,
                 },
             )
+        };
+        proof! {
+            if let Ok(id) = result { lemma_guard_local_if(store.graph(), test@, a@, b@, id@); }
         }
+        result
     }
 
-    #[allow(
-        clippy::option_if_let_else,
-        reason = "Explicit matches preserve the Verus proof structure."
-    )]
-    #[verus_verify]
-
+    verus! {
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
     fn collect<G: KernelStore>(
         store: &mut G,
         children: &[Self],
         intersect: bool,
     ) -> KernelResult<Self> {
-        proof_decl! { let ghost original = children@; let ghost entry = store.graph(); }
+        hide(language::numeric_lang);
+        hide(language::interp_transition);
+        hide(model::test_holds);
+        hide(model::lift_transition);
+        hide(model::lift_regex);
+        hide(Seq::no_duplicates);
+        hide(model::unique_nodes);
+        hide(model::tables_wf);
+        proof_decl! { let ghost original = children@; let ghost entry = store.graph();
+            let ghost cs = model::transition_ids(children@); let ghost nf = fcol::all_nf(entry, cs); }
+        proof_decl! { let ghost allowed = guard_task_vocab(entry, ActionShape::Fold(cs, 0)); }
         proof! {
+            lemma_guard_constants(entry);
             tdepth_lemma_constants(entry);
             collect_lemma_bound(entry, original, intersect);
         }
@@ -3045,17 +3754,27 @@ impl TransitionNormalize for TransitionId {
             assert(flat.view() == Seq::<TransitionId>::empty());
             assert(constants.view() == Seq::<RegexId>::empty());
         }
-        if transition_collect_nodes(store, mode, &mut pending, &mut flat, &mut constants)? {
+        if mode.collect(store, &mut pending, &mut flat, &mut constants)? {
             proof! {
                 transition_lemma_initial_collection(store.graph(), mode@, original,
                     pending.view(), flat.view(), constants.view(), true);
+                model::lemma_graph_wf_elim(store.graph());
+                if nf { fcol::lemma_const_out(store.graph(), cs, intersect, absorber@); }
             }
             return Ok(absorber);
         }
+        proof! { assert forall|i: int| 0 <= i < flat.view().len() implies
+            transition_set_leaf(store.graph().transitions[flat.view()[i]@ as int], intersect) by {} }
         proof! {
             transition_lemma_initial_collection(store.graph(), mode@, original,
                 pending.view(), flat.view(), constants.view(), false);
             collect_lemma_flat(store.graph(), original, pending.view(), flat.view(), constants.view(), intersect);
+            assert(model::bounded(cs, entry.transitions.len()));
+            lemma_guard_collected(store.graph(), cs, intersect, flat.view(), constants.view());
+            if nf {
+                assert(pending.view() =~= Seq::<TransitionId>::empty());
+                fcol::lemma_members_elems(entry, cs, intersect, flat.view(), constants.view());
+            }
         }
         if !constants.is_empty() {
             proof_decl! { let ghost before_group = store.graph(); let ghost prior_flat = flat.view(); }
@@ -3069,22 +3788,52 @@ impl TransitionNormalize for TransitionId {
             let t = TransitionId::constant(store, r)?;
             proof! {
                 transition_lemma_extends_transitive(before_group, after_regex, store.graph());
+                lemma_guards_stable(before_group, store.graph());
                 transition_collected_extends(before_group, store.graph(), original, prior_flat, constants.view(), intersect);
                 regex_equivalence_extends(after_regex, store.graph(), seq![r], constants.view(), intersect);
                 regex_combo_extends(after_regex, store.graph(), seq![r], intersect);
                 regex_set_result(store.graph(), seq![r], constants.view(), intersect);
-                assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+                assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                     implies transition_lang(store.graph(), theta, t, event, word)
                         == regex_combo(store.graph(), theta, constants.view(), word, intersect) by {}
                 transition_lemma_group_result(store.graph(), original, prior_flat, constants.view(), mode@, t);
                 tdepth_lemma_constants(store.graph());
                 collect_lemma_const_result(before_group, store.graph(), original, prior_flat, t, t != identity, intersect);
+                if nf {
+                    fcol::lemma_elems_stable(entry, store.graph(), cs, intersect, prior_flat);
+                    if t == absorber { fcol::lemma_const_out(store.graph(), cs, intersect, absorber@); }
+                    if t != identity {
+                        assert(intersect);
+                        fcol::lemma_leaf_elem(entry, after_regex, store.graph(), cs, constants.view(), r@, t@);
+                    }
+                }
             }
             if t == absorber {
                 return Ok(absorber);
             }
             if t != identity {
                 flat.push(t);
+                proof! {
+                    broadcast use vstd::set::group_set_lemmas;
+                    lemma_guard_task_stable(entry, store.graph(), ActionShape::Fold(cs, 0));
+                    assert(guard_vocab(store.graph(), t@).subset_of(allowed));
+                    assert forall|i: int| 0 <= i < flat.view().len() implies guard_vocab(store.graph(), flat.view()[i]@).subset_of(allowed) by {
+                        if i < prior_flat.len() { assert(flat.view()[i] == prior_flat[i]); }
+                    }
+                    if nf {
+                        assert forall|k: int| 0 <= k < flat.view().len() implies #[trigger] fcol::elem_flat(store.graph(), cs, intersect, flat.view()[k]@) by {
+                            if k < prior_flat.len() { assert(flat.view()[k] == prior_flat[k]); }
+                        }
+                    }
+                }
+            }
+            proof! {
+                assert forall|i: int| 0 <= i < flat.view().len() implies
+                    transition_set_leaf(store.graph().transitions[flat.view()[i]@ as int], intersect) by {
+                    if i < prior_flat.len() {
+                        assert(store.graph().transitions[flat.view()[i]@ as int] == before_group.transitions[prior_flat[i]@ as int]);
+                    }
+                }
             }
         }
         proof! {
@@ -3096,19 +3845,29 @@ impl TransitionNormalize for TransitionId {
             assert(collect_weight(store.graph(), flat.view(), intersect) <= collect_weight(store.graph(), original, intersect));
         }
         proof_decl! { let ghost unsorted = flat.view(); }
+        proof! {
+            lemma_guard_task_stable(entry, store.graph(), ActionShape::Fold(cs, 0));
+            assert forall|i: int| #![trigger unsorted[i]] 0 <= i < unsorted.len() implies guard_vocab(store.graph(), unsorted[i]@).subset_of(allowed) by {}
+        }
+        proof! { junco_core::kernel::TransitionId::lemma_obeys_cmp(); }
         flat.as_mut_slice().sort_unstable();
         proof! {
             transition_multiset_members(unsorted, flat.view());
             transition_member_ids_valid(store.graph(), unsorted, flat.view());
             transition_combo_members(store.graph(), unsorted, flat.view(), intersect);
-            assert forall|i: int, j: int| 0 <= i < j < flat.view().len() implies flat.view()[i]@ <= flat.view()[j]@ by {
-                assert(!(flat.view()[i].cmp_spec(&flat.view()[j]) is Greater));
+            assert forall|i: int| 0 <= i < flat.view().len() implies guard_vocab(store.graph(), flat.view()[i]@).subset_of(allowed) by {
+                assert(unsorted.contains(flat.view()[i]));
+                let j = choose|j: int| 0 <= j < unsorted.len() && unsorted[j] == flat.view()[i];
             }
         }
         proof_decl! { let ghost sorted = flat.view(); }
         dedup_ids(&mut flat)?;
         proof! {
             transition_member_ids_valid(store.graph(), sorted, flat.view());
+            assert forall|i: int| 0 <= i < flat.view().len() implies guard_vocab(store.graph(), flat.view()[i]@).subset_of(allowed) by {
+                assert(sorted.contains(flat.view()[i]));
+                let j = choose|j: int| 0 <= j < sorted.len() && sorted[j] == flat.view()[i];
+            }
             transition_combo_members(store.graph(), sorted, flat.view(), intersect);
             transition_dedup_strict(sorted, flat.view());
             assert(transition_equivalent(store.graph(), original, flat.view(), intersect));
@@ -3119,17 +3878,33 @@ impl TransitionNormalize for TransitionId {
             assert forall|id: TransitionId| flat.view().contains(id) implies unsorted.contains(id) by {
                 assert(sorted.contains(id));
             }
-            assert(flat.view().no_duplicates()) by {
-                assert forall|i: int, j: int| 0 <= i < flat.view().len() && 0 <= j < flat.view().len() && i != j
-                    implies flat.view()[i] != flat.view()[j] by {
-                    assert(model::transition_ids(flat.view())[i] == flat.view()[i]@);
-                    assert(model::transition_ids(flat.view())[j] == flat.view()[j]@);
-                }
-            }
             collect_lemma_subset(store.graph(), flat.view(), unsorted, intersect);
             collect_lemma_final(entry, store.graph(), original, flat.view(), intersect);
             tdepths_lemma_extends_forall(store.graph(), flat.view());
+            assert forall|i: int| 0 <= i < flat.view().len() implies
+                transition_set_leaf(store.graph().transitions[flat.view()[i]@ as int], intersect) by {
+                assert(unsorted.contains(flat.view()[i]));
+                let j = choose|j: int| 0 <= j < unsorted.len() && unsorted[j] == flat.view()[i];
+            }
+            if nf {
+                assert forall|k: int| 0 <= k < flat.view().len() implies #[trigger] fcol::elem_flat(store.graph(), cs, intersect, flat.view()[k]@) by {
+                    assert(unsorted.contains(flat.view()[k]));
+                    let j = choose|j: int| 0 <= j < unsorted.len() && unsorted[j] == flat.view()[k];
+                    assert(fcol::elem_flat(store.graph(), cs, intersect, unsorted[j]@));
+                }
+                fcol::lemma_const_out(store.graph(), cs, intersect, identity@);
+                if flat.view().len() == 1 {
+                    assert(fcol::elem_flat(store.graph(), cs, intersect, flat.view()[0]@));
+                    fcol::lemma_elem_out(store.graph(), cs, intersect, flat.view()[0]@);
+                }
+                assert forall|k: int| 0 <= k < model::transition_ids(flat.view()).len() implies
+                    #[trigger] fcol::elem_flat(store.graph(), cs, intersect, model::transition_ids(flat.view())[k]) by {
+                    assert(model::transition_ids(flat.view())[k] == flat.view()[k]@);
+                }
+                fcol::lemma_node_future(store.graph(), cs, intersect, model::transition_ids(flat.view()));
+            }
         }
+        proof! { model::lemma_graph_wf_elim(store.graph()); }
         if flat.is_empty() {
             Ok(identity)
         } else if flat.len() == 1 {
@@ -3138,15 +3913,34 @@ impl TransitionNormalize for TransitionId {
                 None => Err(HistoryError::normalization_invariant()),
             }
         } else {
-            TransitionId::intern(
+            proof_decl! { let ghost before_intern = store.graph(); }
+            let result = TransitionId::intern(
                 store,
                 if intersect {
                     TransitionView::Intersect(&flat)
                 } else {
                     TransitionView::Union(&flat)
                 },
-            )
+            );
+            proof! {
+                if let Ok(id) = result {
+                    transition_lemma_extends_transitive(entry, before_intern, store.graph());
+                    lemma_guards_stable(before_intern, store.graph());
+                    lemma_guard_task_stable(entry, store.graph(), ActionShape::Fold(cs, 0));
+                    assert forall|i: int| #![trigger crate::progress::verify::transition_edges(store.graph(), id@)[i]]
+                        0 <= i < crate::progress::verify::transition_edges(store.graph(), id@).len() implies
+                            guard_vocab(store.graph(), crate::progress::verify::transition_edges(store.graph(), id@)[i]).subset_of(allowed) by {
+                        assert(flat.view()[i]@ < before_intern.transitions.len());
+                        assert(guard_vocab(before_intern, flat.view()[i]@).subset_of(allowed));
+                        assert(guard_vocab(store.graph(), flat.view()[i]@).subset_of(allowed));
+                        assert(crate::progress::verify::transition_edges(store.graph(), id@)[i] == flat.view()[i]@);
+                    }
+                    lemma_guard_node(store.graph(), id@, allowed);
+                }
+            }
+            result
         }
+    }
     }
 }
 #[verus_verify]
@@ -3185,7 +3979,11 @@ impl ChildAction {
         requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat),
             transition_child_action_valid(store.graph(), self@),
             transition_tasks_valid(store.graph(), transition_action_views(old(tasks).view())),
-        ensures transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
             match result {
                 Ok(()) => transition_action_views(final(tasks).view())
@@ -3217,6 +4015,10 @@ impl ChildAction {
                 base.is_prefix_of(transition_action_views(tasks.view())),
                 failure.is_none() ==> transition_action_views(tasks.view())
                     == base + transition_child_actions(store.graph(), id@, self@).take(count as int - remaining as int),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
             ensures failure.is_none() ==> remaining == 0,
             decreases remaining,
         ))]
@@ -3260,263 +4062,374 @@ impl ChildAction {
 }
 
 #[verus_verify]
-#[verus_spec(result => ensures match result {
-    Ok(taken) => count <= old(values).view().len()
-        && taken.view() == old(values).view().subrange(old(values).view().len() as int - count, old(values).view().len() as int)
-        && final(values).view() == old(values).view().take(old(values).view().len() as int - count),
-    Err(_) => final(values).view() == old(values).view(),
-})]
-fn take_values(
-    values: &mut WorkVec<TransitionId>,
-    count: usize,
-) -> KernelResult<WorkVec<TransitionId>> {
-    let start = match values.len().checked_sub(count) {
-        Some(v) => v,
-        None => return Err(HistoryError::normalization_invariant()),
-    };
-    let mut result = WorkVec::new();
-    match values.get(start..) {
-        Some(xs) => result.extend_from_slice(xs),
-        None => return Err(HistoryError::normalization_invariant()),
-    }
-    values.truncate(start);
-    Ok(result)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), transition_suffix_count(store.graph(), id@, count as nat),
-    ensures match result {
-        Ok(values) => regex_ids_valid(store.graph(), values.view())
-            && model::regex_ids(values.view()) == transition_suffix(store.graph(), id@),
-        Err(_) => true,
-    },
-)]
-fn suffix_values<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    count: usize,
-) -> KernelResult<WorkVec<RegexId>> {
-    proof! { transition_lemma_suffix(store.graph(), id@); }
-    let mut values = WorkVec::new();
-    let mut failure = None;
-    let mut i = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant i <= count, regex_ids_valid(store.graph(), values.view()), values.view().len() == i,
-            model::graph_wf(store.graph()), transition_suffix_count(store.graph(), id@, count as nat),
-            transition_suffix(store.graph(), id@).len() == count,
-            model::regex_ids(values.view()) == transition_suffix(store.graph(), id@).take(i as int),
-        ensures failure.is_none() ==> i == count,
-        decreases count - i,
-    ))]
-    while i < count {
-        let child = loop_try!(id.suffix_child(store, i), failure);
-        proof_decl! { let ghost prior = values.view(); }
-        proof! { transition_lemma_suffix_child(store.graph(), id@, i as nat, child@); }
-        values.push(child);
-        proof! {
-            regex_ids_push(prior, child);
-            assert(transition_suffix(store.graph(), id@).take(i as int).push(child@)
-                =~= transition_suffix(store.graph(), id@).take(i as int + 1));
+impl Action {
+    #[verus_verify]
+    #[verus_spec(result => ensures result != Err(HistoryError::WrongHistoryOwner),
+        !(result matches Err(HistoryError::InvalidPolicy { .. })),
+        count <= old(values).view().len() ==> (result matches Err(e) ==> resource_error(e)),
+        count <= old(values).view().len() ==> language::no_invariant_failure(result), match result {
+        Ok(taken) => count <= old(values).view().len()
+            && taken.view() == old(values).view().subrange(old(values).view().len() as int - count, old(values).view().len() as int)
+            && final(values).view() == old(values).view().take(old(values).view().len() as int - count),
+        Err(_) => final(values).view() == old(values).view(),
+    })]
+    fn take_values(
+        values: &mut WorkVec<TransitionId>,
+        count: usize,
+    ) -> KernelResult<WorkVec<TransitionId>> {
+        let start = match values.len().checked_sub(count) {
+            Some(v) => v,
+            None => return Err(HistoryError::normalization_invariant()),
+        };
+        let mut result = WorkVec::new();
+        match values.get(start..) {
+            Some(xs) => result.extend_from_slice(xs),
+            None => return Err(HistoryError::normalization_invariant()),
         }
-        i = i.saturating_add(1);
+        values.truncate(start);
+        Ok(result)
     }
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    Ok(values)
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat), path@ < store.graph().tests.len(),
-        transition_tasks_valid(store.graph(), transition_action_views(old(tasks).view())),
-        match store.graph().transitions[id@ as int] {
-            model::TransitionNode::Union(ids) => !intersect,
-            model::TransitionNode::Intersect(ids) => intersect,
-            _ => false,
-        },
-    ensures transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_action_views(final(tasks).view())
-                    == transition_clean_child_tasks(store.graph(), id, path, intersect, transition_action_views(old(tasks).view()))
-                && forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
-                transition_action_views(old(tasks).view()), prior, transition_action_views(final(tasks).view()), prior),
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), transition_suffix_count(store.graph(), id@, count as nat),
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            match result {
+            Ok(values) => regex_ids_valid(store.graph(), values.view())
+                && model::regex_ids(values.view()) == transition_suffix(store.graph(), id@),
             Err(_) => true,
         },
-)]
-fn clean_children<G: KernelStore>(
-    store: &G,
-    id: TransitionId,
-    count: usize,
-    intersect: bool,
-    path: TestId,
-    tasks: &mut WorkVec<Action>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost initial = tasks.view(); let ghost base = transition_action_views(initial); }
-    proof! {
-        transition_lemma_children(store.graph(), id@);
-        transition_lemma_clean_children_effect(store.graph(), id, path, intersect, base);
-    }
-    tasks.push(if intersect {
-        Action::Intersect(count)
-    } else {
-        Action::Union(count)
-    });
-    proof! {
-        assert(tasks.view() == initial.push(tasks.view().last()));
-        transition_action_views_push(initial, tasks.view().last());
-        assert(tasks.view().last()@ == if intersect { ActionShape::Intersect(count as nat) } else { ActionShape::Union(count as nat) });
-    }
-    ChildAction::Clean(path).schedule(store, id, count, tasks)?;
-    proof! {
-        assert(transition_action_views(tasks.view()) == transition_clean_child_tasks(store.graph(), id, path, intersect, base));
-        assert forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
-            base, prior, transition_action_views(tasks.view()), prior) by {
-            assert(transition_effect(store.graph(), ActionShape::Clean(id@, path@), base, prior,
-                transition_clean_child_tasks(store.graph(), id, path, intersect, base), prior));
+    )]
+    fn suffix_values<G: KernelStore>(
+        store: &G,
+        id: TransitionId,
+        count: usize,
+    ) -> KernelResult<WorkVec<RegexId>> {
+        proof! { transition_lemma_suffix(store.graph(), id@); }
+        let mut values = WorkVec::new();
+        let mut failure = None;
+        let mut i = 0;
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant i <= count, regex_ids_valid(store.graph(), values.view()), values.view().len() == i,
+                model::graph_wf(store.graph()), transition_suffix_count(store.graph(), id@, count as nat),
+                transition_suffix(store.graph(), id@).len() == count,
+                model::regex_ids(values.view()) == transition_suffix(store.graph(), id@).take(i as int),
+                store.errors_are_non_owner() ==> failure != Some(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> (match failure { Some(error) => language::no_invariant_failure::<()>(Err(error)), None => true }),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> (match failure { Some(error) => !(error is InvalidPolicy), None => true }),
+                store.errors_are_resource() && store.valid_store() ==> (failure matches Some(e) ==> resource_error(e)),
+            ensures failure.is_none() ==> i == count,
+            decreases count - i,
+        ))]
+        while i < count {
+            let child = loop_try!(id.suffix_child(store, i), failure);
+            proof_decl! { let ghost prior = values.view(); }
+            proof! { transition_lemma_suffix_child(store.graph(), id@, i as nat, child@); }
+            values.push(child);
+            proof! {
+                regex_ids_push(prior, child);
+                assert(transition_suffix(store.graph(), id@).take(i as int).push(child@)
+                    =~= transition_suffix(store.graph(), id@).take(i as int + 1));
+            }
+            i = i.saturating_add(1);
         }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(values)
     }
-    Ok(())
-}
-#[verus_verify]
-#[verus_spec(result =>
-    requires model::graph_wf(old(store).graph()), old(store).valid_store(),
-        transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
-        a@ < old(store).graph().transitions.len(),
-        b@ < old(store).graph().transitions.len(),
-        left@ == model::transition_node_head(old(store).graph().transitions[a@ as int]),
-        right@ == model::transition_node_head(old(store).graph().transitions[b@ as int]),
-        match left { TransitionHead::If(_, _, _) => true, _ => false },
-        match right { TransitionHead::If(_, _, _) => true, _ => false },
-    ensures model::graph_extends(old(store).graph(), final(store).graph()),
-        final(store).restoration() == old(store).restoration(),
-        model::graph_wf(final(store).graph()), final(store).valid_store(),
-        transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-        transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
-        match result {
-            Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
-                transition_action_views(old(tasks).view()), old(values).view(),
-                transition_action_views(final(tasks).view()), final(values).view())
-                && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
-                    ActionShape::Pair(a@, b@), old(values).view(),
-                    final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
-            Err(_) => true,
-        },
-)]
-fn pair_conditionals<G: KernelStore>(
-    store: &mut G,
-    a: TransitionId,
-    b: TransitionId,
-    left: TransitionHead,
-    right: TransitionHead,
-    tasks: &mut WorkVec<Action>,
-    values: &mut WorkVec<TransitionId>,
-) -> KernelResult<()> {
-    proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
-    let ghost entry = store.graph(); }
-    proof! {
-        assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
-        transition_configuration_future(store.graph(), p0, v0);
-        model::lemma_graph_transition_wf(store.graph(), a@);
-        model::lemma_graph_transition_wf(store.graph(), b@);
-        graph_lemma_extends_refl(entry);
-        tdepth_lemma_constants(entry);
-    }
-    let c = store.constants();
-    if let (TransitionHead::If(x, xt, xe), TransitionHead::If(y, yt, ye)) = (left, right) {
+
+    #[verus_verify]
+    #[verus_spec(result =>
+        requires model::graph_wf(store.graph()), transition_child_count(store.graph(), id@, count as nat), path@ < store.graph().tests.len(),
+            transition_tasks_valid(store.graph(), transition_action_views(old(tasks).view())),
+            match store.graph().transitions[id@ as int] {
+                model::TransitionNode::Union(ids) => !intersect,
+                model::TransitionNode::Intersect(ids) => intersect,
+                _ => false,
+            },
+        ensures store.errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+                store.errors_are_non_invariant() && store.valid_store() ==> language::no_invariant_failure(result),
+                store.errors_are_non_invalid_policy() && store.valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+                store.errors_are_resource() && store.valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            transition_tasks_valid(store.graph(), transition_action_views(final(tasks).view())),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+            match result {
+                Ok(()) => transition_action_views(final(tasks).view())
+                        == transition_clean_child_tasks(store.graph(), id, path, intersect, transition_action_views(old(tasks).view()))
+                    && forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
+                    transition_action_views(old(tasks).view()), prior, transition_action_views(final(tasks).view()), prior),
+                Err(_) => true,
+            },
+            result is Ok ==> forall|prior: Seq<TransitionId>| guard_effect(store.graph(),
+                transition_action_views(old(tasks).view()), ActionShape::Clean(id@, path@), prior,
+                transition_action_views(final(tasks).view()), prior),
+    )]
+    fn clean_children<G: KernelStore>(
+        store: &G,
+        id: TransitionId,
+        count: usize,
+        intersect: bool,
+        path: TestId,
+        tasks: &mut WorkVec<Action>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost initial = tasks.view(); let ghost base = transition_action_views(initial); }
         proof! {
-            assert(store.graph().transitions[a@ as int] == model::TransitionNode::If(x@, xt@, xe@));
-            assert(store.graph().transitions[b@ as int] == model::TransitionNode::If(y@, yt@, ye@));
-            machine_pair_if_language(store.graph(), a, x, xt, xe);
-            machine_pair_if_language(store.graph(), b, y, yt, ye);
+            transition_lemma_children(store.graph(), id@);
+            transition_lemma_clean_children_effect(store.graph(), id, path, intersect, base);
         }
-        if xe == c.transition_empty && ye == c.transition_empty {
-            let guard = TestId::connective(store, &[x, y], true)?;
-            proof! {
-                assert forall|theta: Subst, event: EventView| language::event_wf(theta)
-                    implies model::test_holds(theta, model::lift_test(store.graph(), guard@), event)
-                        == test_combo(store.graph(), theta, seq![x, y], event, true) by {
-                    assert(test_truth(store.graph(), theta, guard@, event)
-                        == test_combo(store.graph(), theta, seq![x, y], event, true));
-                }
-                machine_pair_empty_branches(store.graph(), a, b, x, xt, y, yt, c.transition_empty, guard);
-                tdepth_lemma_extends(entry, store.graph(), c.transition_empty@);
-                tdepth_lemma_pos(entry, a@);
-                tdepth_lemma_pos(entry, b@);
-                lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
-            }
-            if guard == c.test_false {
-                values.push(c.transition_empty);
-                proof! {
-                    transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
-                    machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
-                }
-            } else {
-                tasks.push(Action::CleanIf(guard, c.test_true));
-                values.push(c.transition_empty);
-                tasks.push(Action::SwapThen);
-                tasks.push(Action::Pair(xt, yt));
-                proof! {
-                    machine_pair_empty_effect(store.graph(), a, b, xt, yt, guard, c.transition_empty, p0, v0);
-                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(guard@, c.test_true@))
-                        .push(ActionShape::SwapThen).push(ActionShape::Pair(xt@, yt@)));
-                    machine_pair_empty(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, guard, c.test_true,
-                        c.transition_empty, v0);
-                }
-            }
-        } else if x == y {
-            tasks.push(Action::CleanIf(x, c.test_true));
-            tasks.push(Action::Pair(xe, ye));
-            tasks.push(Action::Pair(xt, yt));
-            proof! {
-                machine_pair_if_effect(store.graph(), a, b, x, xt, yt, xe, ye, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
-                    .push(ActionShape::Pair(xe@, ye@)).push(ActionShape::Pair(xt@, yt@)));
-                machine_pair_both(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, c.test_true, v0);
-            }
-        } else if xe == c.transition_empty || (ye != c.transition_empty && x < y) {
-            tasks.push(Action::CleanIf(x, c.test_true));
-            tasks.push(Action::Pair(xe, b));
-            tasks.push(Action::Pair(xt, b));
-            proof! {
-                machine_pair_if_effect(store.graph(), a, b, x, xt, b, xe, b, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
-                    .push(ActionShape::Pair(xe@, b@)).push(ActionShape::Pair(xt@, b@)));
-                machine_pair_split(entry, store.graph(), p0, a, b, x, xt, xe, c.test_true, true, v0);
-            }
+        tasks.push(if intersect {
+            Action::Intersect(count)
         } else {
-            tasks.push(Action::CleanIf(y, c.test_true));
-            tasks.push(Action::Pair(a, ye));
-            tasks.push(Action::Pair(a, yt));
-            proof! {
-                machine_pair_if_effect(store.graph(), a, b, y, a, yt, a, ye, p0, v0);
-                assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(y@, c.test_true@))
-                    .push(ActionShape::Pair(a@, ye@)).push(ActionShape::Pair(a@, yt@)));
-                machine_pair_split(entry, store.graph(), p0, a, b, y, yt, ye, c.test_true, false, v0);
+            Action::Union(count)
+        });
+        proof! {
+            assert(tasks.view() == initial.push(tasks.view().last()));
+            transition_action_views_push(initial, tasks.view().last());
+            assert(tasks.view().last()@ == if intersect { ActionShape::Intersect(count as nat) } else { ActionShape::Union(count as nat) });
+        }
+        ChildAction::Clean(path).schedule(store, id, count, tasks)?;
+        proof! { lemma_guard_child_actions(store.graph(), id@, ChildShape::Clean(path@)); }
+        proof! {
+            assert(transition_action_views(tasks.view()) == transition_clean_child_tasks(store.graph(), id, path, intersect, base));
+            assert forall|prior: Seq<TransitionId>| transition_effect(store.graph(), ActionShape::Clean(id@, path@),
+                base, prior, transition_action_views(tasks.view()), prior) by {
+                assert(transition_effect(store.graph(), ActionShape::Clean(id@, path@), base, prior,
+                    transition_clean_child_tasks(store.graph(), id, path, intersect, base), prior));
+            }
+            assert forall|prior: Seq<TransitionId>| guard_effect(store.graph(), base,
+                ActionShape::Clean(id@, path@), prior, transition_action_views(tasks.view()), prior) by {
+                assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), base, prior, allowed)
+                    && guard_task_vocab(store.graph(), ActionShape::Clean(id@, path@)).subset_of(allowed)
+                    implies guard_config(store.graph(), transition_action_views(tasks.view()), prior, allowed) by {
+                    let added = transition_child_actions(store.graph(), id@, ChildShape::Clean(path@));
+                    assert forall|i: int| 0 <= i < transition_action_views(tasks.view()).len() implies
+                        guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < base.len() { assert(transition_action_views(tasks.view())[i] == base[i]); }
+                        else if i > base.len() { assert(transition_action_views(tasks.view())[i] == added[i - base.len() as int - 1]); }
+                    }
+                }
             }
         }
         Ok(())
-    } else {
-        Err(HistoryError::normalization_invariant())
     }
-}
 
-#[verus_verify]
-impl Action {
+    #[verus_verify]
+    // The default rlimit was exceeded in the no-std configuration once `KeyHash`/`KeyedMap` specs were verified.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
+    #[verus_spec(result =>
+        requires model::graph_wf(old(store).graph()), old(store).valid_store(),
+            transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            a@ < old(store).graph().transitions.len(),
+            b@ < old(store).graph().transitions.len(),
+            left@ == model::transition_node_head(old(store).graph().transitions[a@ as int]),
+            right@ == model::transition_node_head(old(store).graph().transitions[b@ as int]),
+            match left { TransitionHead::If(_, _, _) => true, _ => false },
+            match right { TransitionHead::If(_, _, _) => true, _ => false },
+        ensures model::graph_extends(old(store).graph(), final(store).graph()),
+            final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
+            model::graph_wf(final(store).graph()), final(store).valid_store(),
+            transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+            transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Pair(a@, b@), old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
+            match result {
+                Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
+                    transition_action_views(old(tasks).view()), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Pair(a@, b@), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Pair(a@, b@), transition_action_views(old(tasks).view()),
+                            old(values).view(), transition_action_views(final(tasks).view()), final(values).view()))
+                    && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
+                        ActionShape::Pair(a@, b@), old(values).view(),
+                        final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                Err(_) => true,
+            },
+    )]
+    fn pair_conditionals<G: KernelStore>(
+        store: &mut G,
+        a: TransitionId,
+        b: TransitionId,
+        left: TransitionHead,
+        right: TransitionHead,
+        tasks: &mut WorkVec<Action>,
+        values: &mut WorkVec<TransitionId>,
+    ) -> KernelResult<()> {
+        proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
+        let ghost entry = store.graph(); }
+        proof! {
+            assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
+            transition_configuration_future(store.graph(), p0, v0);
+            model::lemma_graph_transition_wf(store.graph(), a@);
+            model::lemma_graph_transition_wf(store.graph(), b@);
+            lemma_guard_children(store.graph(), a@);
+            lemma_guard_children(store.graph(), b@);
+            graph_lemma_extends_refl(entry);
+            lemma_guard_constants(store.graph());
+            tdepth_lemma_constants(entry);
+        }
+        let c = store.constants();
+        if let (TransitionHead::If(x, xt, xe), TransitionHead::If(y, yt, ye)) = (left, right) {
+            proof! {
+                assert(store.graph().transitions[a@ as int] == model::TransitionNode::If(x@, xt@, xe@));
+                assert(store.graph().transitions[b@ as int] == model::TransitionNode::If(y@, yt@, ye@));
+                machine_pair_if_language(store.graph(), a, x, xt, xe);
+                machine_pair_if_language(store.graph(), b, y, yt, ye);
+            }
+            if xe == c.transition_empty && ye == c.transition_empty {
+                proof_decl! { let ghost before_guard = store.graph(); }
+                let guard = TestId::connective(store, &[x, y], true)?;
+                proof! {
+                    broadcast use vstd::set::group_set_lemmas;
+                    lemma_test_connective_pair(before_guard, store.graph(), x, y, true, guard@);
+                    lemma_guards_stable(before_guard, store.graph());
+                    assert(test_vocab(store.graph(), guard@).subset_of(test_vocab(store.graph(), x@).union(test_vocab(store.graph(), y@))));
+                    assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
+                        implies model::test_holds(theta, model::lift_test(store.graph(), guard@), event)
+                            == test_combo(store.graph(), theta, seq![x, y], event, true) by {
+                        assert(test_truth(store.graph(), theta, guard@, event)
+                            == test_combo(store.graph(), theta, seq![x, y], event, true));
+                    }
+                    machine_pair_empty_branches(store.graph(), a, b, x, xt, y, yt, c.transition_empty, guard);
+                    tdepth_lemma_extends(entry, store.graph(), c.transition_empty@);
+                    tdepth_lemma_pos(entry, a@);
+                    tdepth_lemma_pos(entry, b@);
+                    lemma_pair_bound_ge(tdepth(entry, a@), tdepth(entry, b@));
+                }
+                if guard == c.test_false {
+                    values.push(c.transition_empty);
+                    proof! {
+                        transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
+                        machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
+                        if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                            fbr::lemma_pair_keep(entry, store.graph(), p0, v0, a, b, c.transition_empty);
+                        }
+                    }
+                } else {
+                    tasks.push(Action::CleanIf(guard, c.test_true));
+                    values.push(c.transition_empty);
+                    tasks.push(Action::SwapThen);
+                    tasks.push(Action::Pair(xt, yt));
+                    proof! {
+                        machine_pair_empty_effect(store.graph(), a, b, xt, yt, guard, c.transition_empty, p0, v0);
+                        assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(guard@, c.test_true@))
+                            .push(ActionShape::SwapThen).push(ActionShape::Pair(xt@, yt@)));
+                        machine_pair_empty(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, guard, c.test_true,
+                            c.transition_empty, v0);
+                        if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                            assert(values.view() == v0.push(c.transition_empty));
+                            fbr::lemma_pair_empty_branches(entry, store.graph(), p0, v0, a, b, x, xt, y, yt, guard, c.transition_empty);
+                        }
+                    }
+                }
+            } else if x == y {
+                tasks.push(Action::CleanIf(x, c.test_true));
+                tasks.push(Action::Pair(xe, ye));
+                tasks.push(Action::Pair(xt, yt));
+                proof! {
+                    machine_pair_if_effect(store.graph(), a, b, x, xt, yt, xe, ye, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
+                        .push(ActionShape::Pair(xe@, ye@)).push(ActionShape::Pair(xt@, yt@)));
+                    machine_pair_both(entry, store.graph(), p0, a, b, x, xt, xe, y, yt, ye, c.test_true, v0);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                        fbr::lemma_pair_both(entry, store.graph(), p0, v0, a, b, x, xt, xe, y, yt, ye);
+                    }
+                }
+            } else if xe == c.transition_empty || (ye != c.transition_empty && x < y) {
+                tasks.push(Action::CleanIf(x, c.test_true));
+                tasks.push(Action::Pair(xe, b));
+                tasks.push(Action::Pair(xt, b));
+                proof! {
+                    machine_pair_if_effect(store.graph(), a, b, x, xt, b, xe, b, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(x@, c.test_true@))
+                        .push(ActionShape::Pair(xe@, b@)).push(ActionShape::Pair(xt@, b@)));
+                    machine_pair_split(entry, store.graph(), p0, a, b, x, xt, xe, c.test_true, true, v0);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                        fbr::lemma_pair_split(entry, store.graph(), p0, v0, a, b, x, xt, xe, true);
+                    }
+                }
+            } else {
+                tasks.push(Action::CleanIf(y, c.test_true));
+                tasks.push(Action::Pair(a, ye));
+                tasks.push(Action::Pair(a, yt));
+                proof! {
+                    machine_pair_if_effect(store.graph(), a, b, y, a, yt, a, ye, p0, v0);
+                    assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(y@, c.test_true@))
+                        .push(ActionShape::Pair(a@, ye@)).push(ActionShape::Pair(a@, yt@)));
+                    machine_pair_split(entry, store.graph(), p0, a, b, y, yt, ye, c.test_true, false, v0);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                        fbr::lemma_pair_split(entry, store.graph(), p0, v0, a, b, y, yt, ye, false);
+                    }
+                }
+            }
+            proof! {
+                lemma_guards_stable(entry, store.graph());
+                assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                    && guard_task_vocab(store.graph(), ActionShape::Pair(a@, b@)).subset_of(allowed)
+                    implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                    broadcast use vstd::set::group_set_lemmas;
+                    assert forall|i: int| 0 <= i < tasks.view().len() implies
+                        guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                            if i < p0.len() {
+                                assert(transition_action_views(tasks.view())[i] == p0[i]);
+                            }
+                        }
+                    assert forall|i: int| 0 <= i < values.view().len() implies
+                        guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                            if v0.contains(values.view()[i]) {
+                                let j = choose|j: int| 0 <= j < v0.len() && v0[j] == values.view()[i];
+                                assert(guard_vocab(store.graph(), v0[j]@).subset_of(allowed));
+                            }
+                        }
+                }
+            }
+            Ok(())
+        } else {
+            Err(HistoryError::normalization_invariant())
+        }
+    }
     #[verus_verify]
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
             transition_ids_valid(old(store).graph(), xs.view()),
+            0 < index < xs.view().len() ==> old(values).view().len() > 0,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Fold(model::transition_ids(xs.view()), index as nat), old(values).view(),
+                    transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
+                            transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Fold(model::transition_ids(xs.view()), index as nat),
+                            transition_action_views(old(tasks).view()), old(values).view(),
+                            transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
                         ActionShape::Fold(model::transition_ids(xs.view()), index as nat), old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
@@ -3535,6 +4448,7 @@ impl Action {
         proof! {
             transition_configuration_future(store.graph(), p0, v0);
             graph_lemma_extends_refl(entry);
+            lemma_guard_union(store.graph(), model::transition_ids(original), guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), index as nat)));
             assert(value_depths(entry, original) =~= tdepths(entry, model::transition_ids(original)));
         }
         {
@@ -3544,7 +4458,8 @@ impl Action {
                 match flat.head(store)? {
                     TransitionHead::Intersect(n) => {
                         let mut children = WorkVec::new();
-                        collect_transition_children(store, flat, n, &mut children)?;
+                        TransitionId::collect_children(store, flat, n, &mut children)?;
+                        proof! { transition_lemma_children(store.graph(), flat@); }
                         let first = match children.first() {
                             Some(v) => *v,
                             None => return Err(HistoryError::normalization_invariant()),
@@ -3552,6 +4467,8 @@ impl Action {
                         proof_decl! { let ghost cs = children.view(); }
                         proof! {
                             assert(model::transition_ids(cs) == transition_children(store.graph(), flat@));
+                            lemma_guard_children(store.graph(), flat@);
+                            lemma_guard_union(store.graph(), model::transition_ids(cs), guard_vocab(store.graph(), flat@));
                             transition_lemma_children(store.graph(), flat@);
                             assert(store.graph().transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(cs)));
                             machine_pair_fold_collection_effect(store.graph(), original, flat, cs, p0, v0);
@@ -3560,19 +4477,36 @@ impl Action {
                         values.push(first);
                         tasks.push(Action::Fold(children, 1));
                         proof! {
+                            broadcast use vstd::set::group_set_lemmas;
+                            assert forall|i: int| 0 <= i < cs.len() implies guard_vocab(store.graph(), cs[i]@).subset_of(guard_vocab(store.graph(), flat@)) by {
+                                assert(model::transition_ids(cs)[i] == cs[i]@);
+                                assert(crate::progress::verify::transition_edges(store.graph(), flat@)[i] == cs[i]@);
+                            }
+                            assert(first == cs[0]);
+                            assert(guard_vocab(store.graph(), first@).subset_of(guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), 0))));
+                            assert(guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(cs), 1)).subset_of(guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), 0))));
                             assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(cs), 1)));
+                            if fsteps::xpre(entry, ActionShape::Fold(model::transition_ids(original), 0), p0, v0) {
+                                assert(first == cs[0]);
+                                fbr::lemma_fold_start(entry, store.graph(), p0, v0, model::transition_ids(original), flat, cs);
+                            }
                         }
                     }
                     _ => {
                         values.push(flat);
                         proof! {
+                            assert(guard_vocab(store.graph(), flat@).subset_of(guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), 0))));
                             machine_pair_set_result(store.graph(), original, ActionShape::Fold(model::transition_ids(original), 0), flat);
                             transition_lemma_push_result(store.graph(), ActionShape::Fold(model::transition_ids(original), 0), p0, v0, flat);
                             machine_fold_flat(entry, store.graph(), p0, model::transition_ids(original), v0, flat);
+                            if fsteps::xpre(entry, ActionShape::Fold(model::transition_ids(original), 0), p0, v0) {
+                                fbr::lemma_fold_flat(entry, store.graph(), p0, v0, model::transition_ids(original), flat);
+                            }
                         }
                     }
                 }
             } else if let Some(next) = xs.get(index) {
+                proof! { assert(index < xs.view().len()); assert(index < usize::MAX); }
                 let a = match values.pop() {
                     Some(v) => v,
                     None => return Err(HistoryError::normalization_invariant()),
@@ -3585,25 +4519,61 @@ impl Action {
                 tasks.push(Action::Fold(xs, next_index));
                 tasks.push(Action::Pair(a, b));
                 proof! {
+                    assert(a == v0[v0.len() - 1]);
+                    assert(guard_vocab(store.graph(), b@).subset_of(guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), index as nat))));
+                    assert forall|allowed: Set<model::Primitive>| #![trigger guard_config(store.graph(), p0, v0, allowed)]
+                        guard_config(store.graph(), p0, v0, allowed) implies guard_vocab(store.graph(), a@).subset_of(allowed) by {
+                        assert(guard_vocab(store.graph(), v0[v0.len() - 1]@).subset_of(allowed));
+                    }
                     machine_pair_fold_next_effect(store.graph(), original, index as nat, p0, v0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(model::transition_ids(original), next_index as nat))
                         .push(ActionShape::Pair(a@, b@)));
                     assert(model::transition_ids(original)[index as int] == b@);
                     assert(values.view() == v0.drop_last());
                     machine_fold_next(store.graph(), p0, model::transition_ids(original), index as nat, v0);
+                    if fsteps::xpre(entry, ActionShape::Fold(model::transition_ids(original), index as nat), p0, v0) {
+                        fbr::lemma_fold_next(entry, store.graph(), p0, v0, model::transition_ids(original), index as nat, a, b);
+                    }
                 }
             }
             proof! {
                 if index != 0 && index >= original.len() {
                     machine_pair_fold_noop(store.graph(), original, index as nat, p0, v0);
                     machine_fold_noop(store.graph(), p0, model::transition_ids(original), index as nat, v0);
+                    if fsteps::xpre(entry, ActionShape::Fold(model::transition_ids(original), index as nat), p0, v0) {
+                        fbr::lemma_fold_noop(entry, store.graph(), p0, v0, model::transition_ids(original), index as nat);
+                    }
                 }
+            }
+        }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            lemma_guard_task_stable(entry, store.graph(), ActionShape::Fold(model::transition_ids(original), index as nat));
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                && guard_task_vocab(store.graph(), ActionShape::Fold(model::transition_ids(original), index as nat)).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < p0.len() {
+                            assert(transition_action_views(tasks.view())[i] == p0[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if v0.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < v0.len() && v0[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), v0[j]@).subset_of(allowed));
+                        }
+                    }
             }
         }
         Ok(())
     }
 
     #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(30))]
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
@@ -3612,13 +4582,26 @@ impl Action {
             c@ == old(store).graph().constants,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Clean(id@, path@), old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), ActionShape::Clean(id@, path@),
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Clean(id@, path@), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Clean(id@, path@), transition_action_views(old(tasks).view()),
+                            old(values).view(), transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
                         ActionShape::Clean(id@, path@), old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
@@ -3638,6 +4621,7 @@ impl Action {
         // Expose only constants; full table facts unfold irrelevant recursive semantics.
         proof! { assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); } model::lemma_graph_transition_wf(store.graph(), id@); }
         proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
+        proof! { lemma_guard_children(store.graph(), id@); }
         match id.head(store)? {
             TransitionHead::Const(_) => {
                 values.push(id);
@@ -3645,20 +4629,40 @@ impl Action {
                     transition_lemma_clean_identity(store.graph(), id, path);
                     transition_lemma_push_result(store.graph(), ActionShape::Clean(id@, path@), p0, v0, id);
                     machine_value_result(entry, store.graph(), p0, ActionShape::Clean(id@, path@), v0, id);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) { fbr::lemma_clean_self(entry, store.graph(), p0, v0, id, path); }
                 }
             }
             TransitionHead::If(test, a, b) => {
                 let yes = TestId::connective(store, &[path, test], true)?;
                 proof_decl! { let ghost after_yes = store.graph(); }
+                proof! {
+                    lemma_test_connective_pair(entry, after_yes, path, test, true, yes@);
+                    assert(test_vocab(after_yes, yes@).subset_of(test_vocab(entry, path@).union(test_vocab(entry, test@))));
+                }
                 let neg = TestId::not(test, store)?;
                 proof_decl! { let ghost after_negated = store.graph(); }
+                proof! {
+                    lemma_test_definition(after_negated, test@); lemma_test_definition(after_negated, neg@);
+                    assert(test_vocab(after_negated, test@) == test_vocab(after_negated, neg@));
+                }
                 let no = TestId::connective(store, &[path, neg], true)?;
                 proof! {
+                    broadcast use vstd::set::group_set_lemmas;
+                    lemma_test_connective_pair(after_negated, store.graph(), path, neg, true, no@);
                     transition_lemma_extends_transitive(after_yes, after_negated, store.graph());
                     transition_lemma_extends_transitive(entry, after_yes, store.graph());
+                    lemma_guards_stable(entry, store.graph());
+                    lemma_guards_stable(after_yes, store.graph());
+                    lemma_guards_stable(after_negated, store.graph());
+                    assert(test_vocab(store.graph(), yes@).subset_of(test_vocab(store.graph(), path@).union(test_vocab(store.graph(), test@))));
+                    assert(test_vocab(store.graph(), no@).subset_of(test_vocab(store.graph(), path@).union(test_vocab(store.graph(), test@))));
+                    lemma_guard_children(store.graph(), id@);
+                    assert(guard_task_vocab(store.graph(), ActionShape::Clean(a@, yes@)).subset_of(guard_task_vocab(store.graph(), ActionShape::Clean(id@, path@))));
+                    assert(guard_task_vocab(store.graph(), ActionShape::Clean(b@, no@)).subset_of(guard_task_vocab(store.graph(), ActionShape::Clean(id@, path@))));
+                    assert(guard_task_vocab(store.graph(), ActionShape::If(test@)).subset_of(guard_task_vocab(store.graph(), ActionShape::Clean(id@, path@))));
                     regex_test_connective_extends(after_yes, store.graph(), seq![path, test], yes, true);
                     transition_test_not_extends(after_negated, store.graph(), test, neg);
-                    assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                    assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                         implies (model::test_holds(theta, model::lift_test(store.graph(), yes@), event)
                             == (model::test_holds(theta, model::lift_test(store.graph(), path@), event)
                                 && model::test_holds(theta, model::lift_test(store.graph(), test@), event)))
@@ -3682,15 +4686,30 @@ impl Action {
                 proof! {
                     assert(transition_action_views(tasks.view()) == transition_clean_if_tasks(store.graph(), test, a, b, yes, no, p0));
                     machine_clean_if(entry, store.graph(), p0, id, path, test, a, b, yes, no, v0);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) {
+                        fbr::lemma_clean_if(entry, store.graph(), p0, v0, id, path, test, a, b, yes, no);
+                    }
                 }
             }
             TransitionHead::Union(n) => {
-                clean_children(store, id, n, false, path, tasks)?;
-                proof! { machine_clean_children(store.graph(), p0, id, path, false, v0); }
+                Self::clean_children(store, id, n, false, path, tasks)?;
+                proof! {
+                    assert(guard_effect(store.graph(), p0, ActionShape::Clean(id@, path@), v0, transition_action_views(tasks.view()), v0));
+                    machine_clean_children(store.graph(), p0, id, path, false, v0);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) {
+                        fbr::lemma_clean_children(entry, store.graph(), p0, v0, id, path, false);
+                    }
+                }
             }
             TransitionHead::Intersect(n) => {
-                clean_children(store, id, n, true, path, tasks)?;
-                proof! { machine_clean_children(store.graph(), p0, id, path, true, v0); }
+                Self::clean_children(store, id, n, true, path, tasks)?;
+                proof! {
+                    assert(guard_effect(store.graph(), p0, ActionShape::Clean(id@, path@), v0, transition_action_views(tasks.view()), v0));
+                    machine_clean_children(store.graph(), p0, id, path, true, v0);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) {
+                        fbr::lemma_clean_children(entry, store.graph(), p0, v0, id, path, true);
+                    }
+                }
             }
             TransitionHead::Not(inner) => {
                 tasks.push(Action::NotResult);
@@ -3699,11 +4718,17 @@ impl Action {
                     transition_lemma_clean_not_effect(store.graph(), id, path, inner, p0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::NotResult).push(ActionShape::Clean(inner@, path@)));
                     machine_clean_not(entry, store.graph(), p0, id, path, inner, v0);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) {
+                        fbr::lemma_clean_not(entry, store.graph(), p0, v0, id, path, inner);
+                    }
                 }
             }
             TransitionHead::Append(inner, n) => {
-                let xs = suffix_values(store, id, n)?;
-                proof! { transition_lemma_suffix(store.graph(), id@); }
+                let xs = Self::suffix_values(store, id, n)?;
+                proof! {
+                    transition_lemma_suffix(store.graph(), id@);
+                    assert(entry.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(xs.view())));
+                }
                 let r = RegexId::concat(store, &xs)?;
                 tasks.push(Action::AppendResult(r));
                 tasks.push(Action::Clean(inner, path));
@@ -3712,7 +4737,32 @@ impl Action {
                     transition_lemma_clean_append_effect(store.graph(), id, path, inner, xs.view(), r, p0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::AppendResult(r@)).push(ActionShape::Clean(inner@, path@)));
                     machine_clean_append(entry, store.graph(), p0, id, path, inner, r, v0);
+                    if fsteps::xpre(entry, ActionShape::Clean(id@, path@), p0, v0) {
+                        fbr::lemma_clean_append(entry, store.graph(), p0, v0, id, path, inner, xs.view(), r);
+                    }
                 }
+            }
+        }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            lemma_guard_children(store.graph(), id@);
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                && guard_task_vocab(store.graph(), ActionShape::Clean(id@, path@)).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < p0.len() {
+                            assert(transition_action_views(tasks.view())[i] == p0[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if v0.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < v0.len() && v0[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), v0[j]@).subset_of(allowed));
+                        }
+                    }
             }
         }
         Ok(())
@@ -3728,13 +4778,26 @@ impl Action {
             c@ == old(store).graph().constants,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Not(id@), old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), ActionShape::Not(id@),
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Not(id@), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Not(id@), transition_action_views(old(tasks).view()),
+                            old(values).view(), transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
                         ActionShape::Not(id@), old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
@@ -3753,8 +4816,10 @@ impl Action {
         proof! {
             assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
             model::lemma_graph_transition_wf(store.graph(), id@);
+            lemma_guard_children(store.graph(), id@);
             transition_configuration_future(entry, base, prior);
             graph_lemma_extends_refl(entry);
+            lemma_guard_constants(store.graph());
         }
         match id.head(store)? {
             TransitionHead::Const(r) => {
@@ -3768,6 +4833,9 @@ impl Action {
                     transition_lemma_extends_transitive(entry, before_const, store.graph());
                     assert(values.view() == prior.push(values.view().last()));
                     machine_value_result(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
+                    if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                        fbr::lemma_not_const(entry, before_const, store.graph(), base, prior, id, head, r, values.view().last());
+                    }
                 }
             }
             TransitionHead::Not(inner) => {
@@ -3776,22 +4844,33 @@ impl Action {
                     machine_unary_double_not_result(store.graph(), id, inner);
                     transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, inner);
                     machine_not_double(entry, store.graph(), base, id, inner, prior);
+                    if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                        fbr::lemma_not_double(entry, store.graph(), base, prior, id, inner);
+                    }
                 }
             }
             TransitionHead::Append(_, _) => {
                 values.push(TransitionId::intern(store, TransitionView::Not(id))?);
                 proof! {
+                    reveal(guard_node_vocab);
+                    assert(guard_vocab(store.graph(), values.view().last()@) == guard_vocab(store.graph(), id@));
                     transition_lemma_result_same_term(store.graph(), ActionShape::Not(id@), values.view().last());
                     transition_lemma_push_result(store.graph(), ActionShape::Not(id@), base, prior, values.view().last());
                     assert(values.view() == prior.push(values.view().last()));
                     machine_wrap_interned(entry, store.graph(), base, ActionShape::Not(id@), prior, values.view().last());
+                    if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                        fbr::lemma_not_wrap(entry, store.graph(), base, prior, id, values.view().last());
+                    }
                 }
             }
             TransitionHead::If(test, a, b) => {
                 if a == c.transition_all && b == c.transition_empty {
                     let guard = TestId::not(test, store)?;
                     proof! {
-                        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+                        lemma_test_definition(store.graph(), test@); lemma_test_definition(store.graph(), guard@);
+                        assert(test_vocab(store.graph(), test@) == test_vocab(store.graph(), guard@));
+                        lemma_guards_stable(entry, store.graph());
+                        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                             implies model::test_holds(theta, model::lift_test(store.graph(), guard@), event)
                                 == !model::test_holds(theta, model::lift_test(store.graph(), test@), event) by {
                             assert(test_truth(store.graph(), theta, guard@, event)
@@ -3802,12 +4881,18 @@ impl Action {
                     let out = TransitionId::local_if(store, guard, a, b)?;
                     tasks.push(Action::Clean(out, c.test_true));
                     proof! {
+                        lemma_guards_stable(before_if, store.graph());
+                        lemma_guard_constants(store.graph());
+                        lemma_guard_children(store.graph(), id@);
                         machine_unary_flip_result(before_if, store.graph(), id, test, a, b, guard, out);
                         machine_unary_clean_result_effect(store.graph(), ActionShape::Not(id@), out, base, prior);
                         assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Clean(out@, c.test_true@)));
                         transition_lemma_extends_transitive(entry, before_if, store.graph());
                         tdepth_lemma_constants(before_if);
                         machine_not_flip(entry, store.graph(), base, id, test, a, b, out, c.test_true, prior);
+                        if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                            fbr::lemma_not_flip(entry, store.graph(), base, prior, id, test, a, b, guard, out);
+                        }
                     }
                 } else {
                     tasks.push(Action::CleanIf(test, c.test_true));
@@ -3817,6 +4902,9 @@ impl Action {
                         machine_unary_if_effect(store.graph(), id, test, a, b, None, base, prior);
                         assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, None, base));
                         machine_unary_if(entry, store.graph(), base, id, test, a, b, None, prior);
+                        if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                            fbr::lemma_unary_if(entry, store.graph(), base, prior, id, test, a, b, None);
+                        }
                     }
                 }
             }
@@ -3828,10 +4916,14 @@ impl Action {
                     assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
                 }
                 ChildAction::Not.schedule(store, id, n, tasks)?;
+                proof! { broadcast use vstd::set::group_set_lemmas; lemma_guard_scheduled(store.graph(), id@, ChildShape::Not, ActionShape::Intersect(n as nat), ActionShape::Not(id@), base, prior); }
                 proof! {
                     machine_unary_children_effect(store.graph(), id, None, true, base, prior);
                     assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, true, base));
                     machine_unary_children(store.graph(), base, id, None, true, prior);
+                    if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                        fbr::lemma_unary_children(entry, store.graph(), base, prior, id, None, true);
+                    }
                 }
             }
             TransitionHead::Intersect(n) => {
@@ -3842,11 +4934,36 @@ impl Action {
                     assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
                 }
                 ChildAction::Not.schedule(store, id, n, tasks)?;
+                proof! { broadcast use vstd::set::group_set_lemmas; lemma_guard_scheduled(store.graph(), id@, ChildShape::Not, ActionShape::Union(n as nat), ActionShape::Not(id@), base, prior); }
                 proof! {
                     machine_unary_children_effect(store.graph(), id, None, false, base, prior);
                     assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, None, false, base));
                     machine_unary_children(store.graph(), base, id, None, false, prior);
+                    if fsteps::xpre(entry, ActionShape::Not(id@), base, prior) {
+                        fbr::lemma_unary_children(entry, store.graph(), base, prior, id, None, false);
+                    }
                 }
+            }
+        }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), base, prior, allowed)
+                && guard_task_vocab(store.graph(), ActionShape::Not(id@)).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < base.len() {
+                            assert(transition_action_views(tasks.view())[i] == base[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if prior.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < prior.len() && prior[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), prior[j]@).subset_of(allowed));
+                        }
+                    }
             }
         }
         Ok(())
@@ -3867,13 +4984,26 @@ impl Action {
             c@ == old(store).graph().constants,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Append(id@, r@), old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), ActionShape::Append(id@, r@),
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Append(id@, r@), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Append(id@, r@), transition_action_views(old(tasks).view()),
+                            old(values).view(), transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
                         ActionShape::Append(id@, r@), old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
@@ -3893,9 +5023,11 @@ impl Action {
         proof! {
             assert(model::constants_wf(store.graph())) by { model::lemma_graph_wf_elim(store.graph()); }
             model::lemma_graph_transition_wf(store.graph(), id@);
+            lemma_guard_children(store.graph(), id@);
             model::lemma_graph_regex_wf(store.graph(), r@);
             transition_configuration_future(entry, base, prior);
             graph_lemma_extends_refl(entry);
+            lemma_guard_constants(store.graph());
             tdepth_lemma_constants(entry);
         }
         {
@@ -3905,6 +5037,9 @@ impl Action {
                     machine_unary_append_identity_result(store.graph(), id, r, id);
                     transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, id);
                     machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, id);
+                    if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                        fbr::lemma_append_eps(entry, store.graph(), base, prior, id, r);
+                    }
                 }
             } else if r == c.empty {
                 values.push(c.transition_empty);
@@ -3912,6 +5047,9 @@ impl Action {
                     machine_unary_append_identity_result(store.graph(), id, r, c.transition_empty);
                     transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, c.transition_empty);
                     machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, c.transition_empty);
+                    if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                        fbr::lemma_append_empty(entry, store.graph(), base, prior, id, r, c.transition_empty);
+                    }
                 }
             } else {
                 match id.head(store)? {
@@ -3925,6 +5063,9 @@ impl Action {
                             transition_lemma_extends_transitive(entry, before_const, store.graph());
                             assert(values.view() == prior.push(values.view().last()));
                             machine_value_result(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
+                            if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                                fbr::lemma_append_const(entry, before_const, store.graph(), base, prior, id, r, head, out, values.view().last());
+                            }
                         }
                     }
                     TransitionHead::If(test, a, b) => {
@@ -3935,6 +5076,9 @@ impl Action {
                             machine_unary_if_effect(store.graph(), id, test, a, b, Some(r), base, prior);
                             assert(transition_action_views(tasks.view()) =~= machine_unary_if_tasks(store.graph(), test, a, b, Some(r), base));
                             machine_unary_if(entry, store.graph(), base, id, test, a, b, Some(r), prior);
+                            if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                                fbr::lemma_unary_if(entry, store.graph(), base, prior, id, test, a, b, Some(r));
+                            }
                         }
                     }
                     TransitionHead::Union(n) => {
@@ -3945,16 +5089,23 @@ impl Action {
                             assert(transition_tasks_valid(store.graph(), transition_action_views(tasks.view())));
                         }
                         ChildAction::Append(r).schedule(store, id, n, tasks)?;
+                        proof! { broadcast use vstd::set::group_set_lemmas; lemma_guard_scheduled(store.graph(), id@, ChildShape::Append(r@), ActionShape::Union(n as nat), ActionShape::Append(id@, r@), base, prior); }
                         proof! {
                             machine_unary_children_effect(store.graph(), id, Some(r), false, base, prior);
                             assert(transition_action_views(tasks.view()) =~= machine_unary_child_tasks(store.graph(), id, Some(r), false, base));
                             machine_unary_children(store.graph(), base, id, Some(r), false, prior);
+                            if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                                fbr::lemma_unary_children(entry, store.graph(), base, prior, id, Some(r), false);
+                            }
                         }
                     }
                     TransitionHead::Append(inner, n) => {
-                        let mut xs = suffix_values(store, id, n)?;
+                        let mut xs = Self::suffix_values(store, id, n)?;
                         proof_decl! { let ghost children = xs.view(); }
-                        proof! { transition_lemma_suffix(store.graph(), id@); }
+                        proof! {
+                            transition_lemma_suffix(store.graph(), id@);
+                            assert(entry.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(children)));
+                        }
                         xs.push(r);
                         let combined = RegexId::concat(store, &xs)?;
                         tasks.push(Action::Append(inner, combined));
@@ -3962,6 +5113,9 @@ impl Action {
                             machine_unary_append_nested_effect(store.graph(), id, inner, r, combined, children, base, prior);
                             assert(transition_action_views(tasks.view()) =~= base.push(ActionShape::Append(inner@, combined@)));
                             machine_append_nested(entry, store.graph(), base, id, r, inner, combined, prior);
+                            if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                                fbr::lemma_append_nested(entry, store.graph(), base, prior, id, r, inner, children, combined);
+                            }
                         }
                     }
                     TransitionHead::Intersect(_) | TransitionHead::Not(_) => {
@@ -3969,7 +5123,7 @@ impl Action {
                         match r.head(store)? {
                             RegexHead::Concat(n) => {
                                 proof! { regex_children_count(store.graph(), r@); }
-                                collect_regex_children(store, r, n, &mut xs)?
+                                RegexMode::append_children(store, r, n, &mut xs)?
                             }
                             _ => xs.push(r),
                         }
@@ -3986,14 +5140,40 @@ impl Action {
                             },
                         )?);
                         proof! {
+                            reveal(guard_node_vocab);
+                            assert(guard_vocab(store.graph(), values.view().last()@) == guard_vocab(store.graph(), id@));
                             machine_unary_append_raw_result(before_intern, store.graph(), id, r, xs.view(), values.view().last());
                             transition_lemma_push_result(store.graph(), ActionShape::Append(id@, r@), base, prior, values.view().last());
                             transition_lemma_extends_transitive(entry, before_intern, store.graph());
                             assert(values.view() == prior.push(values.view().last()));
                             machine_wrap_interned(entry, store.graph(), base, ActionShape::Append(id@, r@), prior, values.view().last());
+                            if fsteps::xpre(entry, ActionShape::Append(id@, r@), base, prior) {
+                                fbr::lemma_append_raw(entry, store.graph(), base, prior, id, r, xs.view(), values.view().last());
+                            }
                         }
                     }
                 }
+            }
+        }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), base, prior, allowed)
+                && guard_task_vocab(store.graph(), ActionShape::Append(id@, r@)).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < base.len() {
+                            assert(transition_action_views(tasks.view())[i] == base[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if prior.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < prior.len() && prior[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), prior[j]@).subset_of(allowed));
+                        }
+                    }
             }
         }
         Ok(())
@@ -4004,6 +5184,9 @@ impl Action {
         reason = "Preserve the existing Verus-verified match arms."
     )]
     #[verus_verify]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    // rlimit 30 was exceeded in the no-std configuration once `HistoryError` gained `GraphIndex`.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(80))]
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
@@ -4012,13 +5195,26 @@ impl Action {
             c@ == old(store).graph().constants,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    ActionShape::Pair(a@, b@), old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), ActionShape::Pair(a@, b@),
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), ActionShape::Pair(a@, b@), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), ActionShape::Pair(a@, b@), transition_action_views(old(tasks).view()),
+                            old(values).view(), transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()),
                         ActionShape::Pair(a@, b@), old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
@@ -4041,7 +5237,10 @@ impl Action {
             transition_configuration_future(store.graph(), p0, v0);
             model::lemma_graph_transition_wf(store.graph(), a@);
             model::lemma_graph_transition_wf(store.graph(), b@);
+            lemma_guard_children(store.graph(), a@);
+            lemma_guard_children(store.graph(), b@);
             graph_lemma_extends_refl(entry);
+            lemma_guard_constants(store.graph());
             tdepth_lemma_constants(entry);
             tdepth_lemma_pos(entry, a@);
             tdepth_lemma_pos(entry, b@);
@@ -4054,6 +5253,7 @@ impl Action {
                     machine_pair_identity_result(store.graph(), a, b, a, c.transition_all, c.transition_empty);
                     transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, a);
                     machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, a);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) { fbr::lemma_pair_keep(entry, store.graph(), p0, v0, a, b, a); }
                 }
             } else if a == c.transition_all {
                 values.push(b);
@@ -4061,6 +5261,7 @@ impl Action {
                     machine_pair_identity_result(store.graph(), a, b, b, c.transition_all, c.transition_empty);
                     transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, b);
                     machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, b);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) { fbr::lemma_pair_keep(entry, store.graph(), p0, v0, a, b, b); }
                 }
             } else if a == c.transition_empty || b == c.transition_empty {
                 values.push(c.transition_empty);
@@ -4068,6 +5269,9 @@ impl Action {
                     machine_pair_identity_result(store.graph(), a, b, c.transition_empty, c.transition_all, c.transition_empty);
                     transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, c.transition_empty);
                     machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, c.transition_empty);
+                    if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                        fbr::lemma_pair_keep(entry, store.graph(), p0, v0, a, b, c.transition_empty);
+                    }
                 }
             } else {
                 let left = a.head(store)?;
@@ -4083,10 +5287,13 @@ impl Action {
                             transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
                             transition_lemma_extends_transitive(entry, after_regex, store.graph());
                             machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_const(entry, after_regex, store.graph(), p0, v0, a, b, x, y, r, out);
+                            }
                         }
                     }
                     (TransitionHead::If(_, _, _), TransitionHead::If(_, _, _)) => {
-                        pair_conditionals(store, a, b, left, right, tasks, values)?
+                        Self::pair_conditionals(store, a, b, left, right, tasks, values)?
                     }
                     (TransitionHead::Union(n), _) => {
                         tasks.push(Action::Union(n));
@@ -4097,6 +5304,7 @@ impl Action {
                             assert(transition_children(store.graph(), a@).len() == n);
                         }
                         ChildAction::PairLeft(b).schedule(store, a, n, tasks)?;
+                        proof! { broadcast use vstd::set::group_set_lemmas; lemma_guard_scheduled(store.graph(), a@, ChildShape::PairLeft(b@), ActionShape::Union(n as nat), ActionShape::Pair(a@, b@), p0, v0); }
                         proof! {
                             machine_pair_union_effect(store.graph(), a, b, true, p0, v0);
                             assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
@@ -4105,6 +5313,9 @@ impl Action {
                                 transition_children(store.graph(), a@).len())) + transition_child_actions(store.graph(), a@,
                                 ChildShape::PairLeft(b@)));
                             machine_pair_union(store.graph(), p0, a, b, true, v0);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_union(entry, store.graph(), p0, v0, a, b, true);
+                            }
                         }
                     }
                     (_, TransitionHead::Union(n)) => {
@@ -4116,6 +5327,7 @@ impl Action {
                             assert(transition_children(store.graph(), b@).len() == n);
                         }
                         ChildAction::PairRight(a).schedule(store, b, n, tasks)?;
+                        proof! { broadcast use vstd::set::group_set_lemmas; lemma_guard_scheduled(store.graph(), b@, ChildShape::PairRight(a@), ActionShape::Union(n as nat), ActionShape::Pair(a@, b@), p0, v0); }
                         proof! {
                             machine_pair_union_effect(store.graph(), a, b, false, p0, v0);
                             assert(transition_effect(store.graph(), ActionShape::Pair(a@, b@), p0, v0,
@@ -4124,6 +5336,9 @@ impl Action {
                                 transition_children(store.graph(), b@).len())) + transition_child_actions(store.graph(), b@,
                                 ChildShape::PairRight(a@)));
                             machine_pair_union(store.graph(), p0, a, b, false, v0);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_union(entry, store.graph(), p0, v0, a, b, false);
+                            }
                         }
                     }
                     (TransitionHead::If(test, t, e), _) => {
@@ -4136,6 +5351,9 @@ impl Action {
                             assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
                                 .push(ActionShape::Pair(e@, b@)).push(ActionShape::Pair(t@, b@)));
                             machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, true, v0);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_split(entry, store.graph(), p0, v0, a, b, test, t, e, true);
+                            }
                         }
                     }
                     (_, TransitionHead::If(test, t, e)) => {
@@ -4148,39 +5366,86 @@ impl Action {
                             assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::CleanIf(test@, c.test_true@))
                                 .push(ActionShape::Pair(a@, e@)).push(ActionShape::Pair(a@, t@)));
                             machine_pair_split(entry, store.graph(), p0, a, b, test, t, e, c.test_true, false, v0);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_split(entry, store.graph(), p0, v0, a, b, test, t, e, false);
+                            }
                         }
                     }
                     _ => {
                         values.push(TransitionId::collect(store, &[a, b], true)?);
                         proof! {
+                            broadcast use vstd::set::group_set_lemmas;
+                            lemma_guard_union(store.graph(), seq![a@, b@], guard_vocab(store.graph(), a@).union(guard_vocab(store.graph(), b@)));
+                            assert(model::transition_ids(seq![a, b]) =~= seq![a@, b@]);
+                            assert(guard_vocab(store.graph(), values.view().last()@).subset_of(guard_vocab(store.graph(), a@).union(guard_vocab(store.graph(), b@))));
                             let out = values.view().last();
                             machine_pair_set_result(store.graph(), seq![a, b], ActionShape::Pair(a@, b@), out);
                             transition_lemma_push_result(store.graph(), ActionShape::Pair(a@, b@), p0, v0, out);
                             collect_lemma_pair_bound(entry, a, b);
                             machine_value_result(entry, store.graph(), p0, ActionShape::Pair(a@, b@), v0, out);
+                            if fsteps::xpre(entry, ActionShape::Pair(a@, b@), p0, v0) {
+                                fbr::lemma_pair_collect(entry, store.graph(), p0, v0, a, b, out);
+                            }
                         }
                     }
                 }
             }
         }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                && guard_task_vocab(store.graph(), ActionShape::Pair(a@, b@)).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < p0.len() {
+                            assert(transition_action_views(tasks.view())[i] == p0[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if v0.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < v0.len() && v0[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), v0[j]@).subset_of(allowed));
+                        }
+                    }
+            }
+        }
         Ok(())
     }
 
-    #[verus_verify]
+    verus! {
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    // Keep headroom for the resource-error postcondition on every dispatcher branch.
+    #[cfg_attr(verus_keep_ghost, verifier::rlimit(60))]
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_action_valid(old(store).graph(), self@),
             transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            transition_program(old(store).graph(), transition_action_views(old(tasks).view()).push(self@), old(values).view()) is Some,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
             transition_action_views(old(tasks).view()).is_prefix_of(transition_action_views(final(tasks).view())),
+                result is Ok ==> guard_effect(final(store).graph(), transition_action_views(old(tasks).view()),
+                    self@, old(values).view(), transition_action_views(final(tasks).view()), final(values).view()),
             match result {
                 Ok(()) => transition_effect(final(store).graph(), self@,
                     transition_action_views(old(tasks).view()), old(values).view(),
                     transition_action_views(final(tasks).view()), final(values).view())
+                    && (fsteps::xpre(old(store).graph(), self@, transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xeffect(final(store).graph(), self@, transition_action_views(old(tasks).view()), old(values).view(),
+                            transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_progress(old(store).graph(), transition_action_views(old(tasks).view()), self@, old(values).view(),
                         final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
                 Err(_) => true,
@@ -4192,29 +5457,62 @@ impl Action {
         tasks: &mut WorkVec<Action>,
         values: &mut WorkVec<TransitionId>,
     ) -> KernelResult<()> {
+        hide(transition_program);
+        hide(resource_error);
+        hide(guarded_run);
+        hide(guarded_apply);
+        hide(transition_effect);
+        hide(machine_run);
+        hide(language::numeric_lang);
+        hide(model::test_holds);
+        hide(model::lift_transition);
         proof_decl! { let ghost p0 = transition_action_views(tasks.view()); let ghost v0 = values.view();
         let ghost entry = store.graph(); }
         proof! { transition_configuration_future(store.graph(), p0, v0); graph_lemma_extends_refl(entry); }
+        proof! { lemma_guard_constants(store.graph()); }
+        proof! { transition_lemma_stack_ready(store.graph(), p0, self@, v0); }
         store.checkpoint()?;
         let c = store.constants();
         match self {
             Action::Union(n) => {
-                let xs = take_values(values, n)?;
+                let xs = Self::take_values(values, n)?;
                 values.push(TransitionId::collect(store, &xs, false)?);
                 proof! {
+                    assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                        implies guard_vocab(store.graph(), values.view().last()@).subset_of(allowed) by {
+                        broadcast use vstd::set::group_set_lemmas;
+                        lemma_guard_union(store.graph(), model::transition_ids(xs.view()), allowed);
+                        assert forall|i: int| 0 <= i < xs.view().len() implies guard_vocab(store.graph(), xs.view()[i]@).subset_of(allowed) by {
+                            assert(xs.view()[i] == v0[v0.len() - n + i]);
+                        }
+                    }
                     machine_driver_union_effect(store.graph(), n as nat, p0, v0, values.view().last());
                     assert(values.view() == v0.take(v0.len() as int - n as int).push(values.view().last()));
                     machine_driver_union(entry, store.graph(), p0, n as nat, v0, values.view().last());
+                    if fsteps::xpre(entry, ActionShape::Union(n as nat), p0, v0) {
+                        fbr::lemma_step_union(entry, store.graph(), p0, v0, n as nat, values.view().last());
+                    }
                 }
             }
             Action::Intersect(n) => {
-                let xs = take_values(values, n)?;
+                let xs = Self::take_values(values, n)?;
                 tasks.push(Action::Fold(xs, 0));
                 proof! {
+                    assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                        implies guard_task_vocab(store.graph(), transition_action_views(tasks.view()).last()).subset_of(allowed) by {
+                        lemma_guard_union(store.graph(), model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int)), allowed);
+                        assert forall|i: int| #![trigger guard_vocab(store.graph(), model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int))[i])]
+                            0 <= i < n implies guard_vocab(store.graph(), model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int))[i]).subset_of(allowed) by {
+                            assert(model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int))[i] == v0[v0.len() - n + i]@);
+                        }
+                    }
                     machine_driver_intersect_effect(store.graph(), n as nat, p0, v0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Fold(
                         model::transition_ids(v0.subrange(v0.len() as int - n as int, v0.len() as int)), 0)));
                     machine_driver_intersect(store.graph(), p0, n as nat, v0);
+                    if fsteps::xpre(entry, ActionShape::Intersect(n as nat), p0, v0) {
+                        fbr::lemma_step_intersect(entry, store.graph(), p0, v0, n as nat);
+                    }
                 }
             }
             Action::Fold(xs, index) => {
@@ -4243,6 +5541,9 @@ impl Action {
                     machine_driver_if_effect(store.graph(), test, None, p0, v0, values.view().last());
                     assert(values.view() == v0.take(v0.len() as int - 2).push(values.view().last()));
                     machine_driver_if(entry, store.graph(), p0, ActionShape::If(test@), v0, values.view().last());
+                    if fsteps::xpre(entry, ActionShape::If(test@), p0, v0) {
+                        fbr::lemma_step_if(entry, store.graph(), p0, v0, test@, values.view().last());
+                    }
                 }
             }
             Action::CleanIf(test, path) => {
@@ -4264,6 +5565,9 @@ impl Action {
                     machine_driver_if_effect(store.graph(), test, Some(path), p0, v0, out);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Clean(out@, path@)));
                     machine_driver_clean_if(entry, store.graph(), p0, test, path, v0, out);
+                    if fsteps::xpre(entry, ActionShape::CleanIf(test@, path@), p0, v0) {
+                        fbr::lemma_step_clean_if(entry, store.graph(), p0, v0, test@, path@, out);
+                    }
                 }
             }
             Action::Clean(id, path) => Action::clean_step(store, id, path, &c, tasks, values)?,
@@ -4281,6 +5585,9 @@ impl Action {
                     machine_driver_result_effect(store.graph(), ActionShape::NotResult, p0, v0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Not(id@)));
                     machine_driver_result(store.graph(), p0, None, v0);
+                    if fsteps::xpre(entry, ActionShape::NotResult, p0, v0) {
+                        fbr::lemma_step_result(entry, store.graph(), p0, v0, None);
+                    }
                 }
             }
             Action::AppendResult(r) => {
@@ -4294,6 +5601,9 @@ impl Action {
                     machine_driver_result_effect(store.graph(), ActionShape::AppendResult(r@), p0, v0);
                     assert(transition_action_views(tasks.view()) =~= p0.push(ActionShape::Append(id@, r@)));
                     machine_driver_result(store.graph(), p0, Some(r@), v0);
+                    if fsteps::xpre(entry, ActionShape::AppendResult(r@), p0, v0) {
+                        fbr::lemma_step_result(entry, store.graph(), p0, v0, Some(r@));
+                    }
                 }
             }
             Action::SwapThen => {
@@ -4312,10 +5622,35 @@ impl Action {
                     machine_driver_swap_effect(store.graph(), p0, v0);
                     assert(values.view() =~= v0.take(v0.len() as int - 2).push(v0[v0.len() - 1]).push(v0[v0.len() - 2]));
                     machine_driver_swap(store.graph(), p0, v0);
+                    if fsteps::xpre(entry, ActionShape::SwapThen, p0, v0) {
+                        fbr::lemma_step_swap(entry, store.graph(), p0, v0);
+                    }
                 }
             }
         }
+        proof! {
+            lemma_guards_stable(entry, store.graph());
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                && guard_task_vocab(store.graph(), self@).subset_of(allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                broadcast use vstd::set::group_set_lemmas;
+                assert forall|i: int| 0 <= i < tasks.view().len() implies
+                    guard_task_vocab(store.graph(), transition_action_views(tasks.view())[i]).subset_of(allowed) by {
+                        if i < p0.len() {
+                            assert(transition_action_views(tasks.view())[i] == p0[i]);
+                        }
+                    }
+                assert forall|i: int| 0 <= i < values.view().len() implies
+                    guard_vocab(store.graph(), values.view()[i]@).subset_of(allowed) by {
+                        if v0.contains(values.view()[i]) {
+                            let j = choose|j: int| 0 <= j < v0.len() && v0[j] == values.view()[i];
+                            assert(guard_vocab(store.graph(), v0[j]@).subset_of(allowed));
+                        }
+                    }
+            }
+        }
         Ok(())
+    }
     }
 
     #[verus_verify]
@@ -4323,16 +5658,32 @@ impl Action {
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_configuration_valid(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+            old(tasks).view().len() > 0,
+            transition_program(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()) is Some,
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             transition_configuration_valid(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()),
+                result is Ok ==> forall|allowed: Set<model::Primitive>|
+                    guard_config(final(store).graph(), transition_action_views(old(tasks).view()), old(values).view(), allowed)
+                        ==> guard_config(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view(), allowed),
             match result {
                 Ok(()) => transition_program_refines(
                     transition_program(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
                     transition_program(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view()))
                     && machine_cost(final(store).graph(), transition_action_views(final(tasks).view()), final(values).view())
-                        < machine_cost(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view()),
+                        < machine_cost(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view())
+                    && (fsteps::xcfg(old(store).graph(), transition_action_views(old(tasks).view()), old(values).view())
+                        ==> fsteps::xstep(final(store).graph(), transition_action_views(old(tasks).view()), old(values).view(),
+                            transition_action_views(final(tasks).view()), final(values).view())),
                 Err(_) => true,
             },
     )]
@@ -4348,6 +5699,7 @@ impl Action {
         };
         proof_decl! { let ghost shape = task@; let ghost pending = transition_action_views(tasks.view()); }
         proof! { assert(p0 =~= pending.push(shape)); }
+        proof! { transition_lemma_stack_ready(store.graph(), pending, shape, v0); }
         proof! {
             assert forall|i: int| 0 <= i < pending.len() implies transition_action_valid(store.graph(), pending[i]) by {
                 assert(p0[i] == pending[i]);
@@ -4356,8 +5708,19 @@ impl Action {
         }
         task.step(store, tasks, values)?;
         proof! {
+            assert forall|allowed: Set<model::Primitive>| guard_config(store.graph(), p0, v0, allowed)
+                implies guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed) by {
+                assert forall|i: int| 0 <= i < pending.len() implies guard_task_vocab(store.graph(), pending[i]).subset_of(allowed) by {
+                    assert(p0[i] == pending[i]);
+                }
+                assert(guard_config(store.graph(), pending, v0, allowed));
+                assert(guard_task_vocab(store.graph(), shape).subset_of(allowed));
+            }
             transition_lemma_program_stable(entry, store.graph(), p0, v0);
             transition_lemma_effect_frame(store.graph(), shape, pending, v0, transition_action_views(tasks.view()), values.view());
+            if fsteps::xcfg(entry, p0, v0) {
+                fbr::lemma_next(entry, store.graph(), pending, shape, v0, transition_action_views(tasks.view()), values.view());
+            }
         }
         Ok(())
     }
@@ -4367,20 +5730,31 @@ impl Action {
         reason = "Explicit matches preserve the Verus proof structure."
     )]
     #[verus_verify]
-    // Only successful-return correctness is claimed; each step lowers `verify::machine_cost`.
+    // Language correctness is conditional on success; error provenance follows the store capabilities.
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     #[verus_spec(result =>
         requires model::graph_wf(old(store).graph()), old(store).valid_store(),
             transition_action_valid(old(store).graph(), self@), transition_action_pushes(self@),
         ensures model::graph_extends(old(store).graph(), final(store).graph()),
             final(store).restoration() == old(store).restoration(),
+            final(store).errors_are_non_owner() == old(store).errors_are_non_owner(),
+            final(store).errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+            final(store).errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+            final(store).errors_are_resource() == old(store).errors_are_resource(),
+            old(store).errors_are_non_owner() ==> result != Err(HistoryError::WrongHistoryOwner),
+            old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(result),
+            old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(result matches Err(HistoryError::InvalidPolicy { .. })),
+            old(store).errors_are_resource() && old(store).valid_store() ==> (result matches Err(e) ==> resource_error(e)),
             model::graph_wf(final(store).graph()), final(store).valid_store(),
             match result { Ok(id) => id@ < final(store).graph().transitions.len()
-                && transition_result(final(store).graph(), self@, id), Err(_) => true },
+                && transition_result(final(store).graph(), self@, id)
+                && (fsteps::xnf_task(old(store).graph(), self@) ==> fsteps::run_bound(final(store).graph(), self@, id@)), Err(_) => true },
+            result matches Ok(id) ==> guard_vocab(final(store).graph(), id@).subset_of(guard_task_vocab(final(store).graph(), self@)),
     )]
     fn run<G: KernelStore>(self, store: &mut G) -> KernelResult<TransitionId> {
         proof_decl! { let ghost entry = store.graph(); let ghost shape = self@;
         let ghost original = transition_program(entry, seq![shape], Seq::empty()); }
+        proof_decl! { let ghost allowed = guard_task_vocab(entry, shape); }
         let mut tasks = WorkVec::new();
         let mut values = WorkVec::new();
         tasks.push(self);
@@ -4388,28 +5762,57 @@ impl Action {
             assert(tasks.view() =~= seq![self]);
             assert(transition_action_views(tasks.view())[0] == shape);
             assert(transition_action_views(tasks.view()) =~= seq![shape]);
+            assert(transition_freeze_tasks(entry, seq![shape]) =~= seq![transition_freeze_action(entry, shape)]);
+            assert(transition_known_values(entry, Seq::<TransitionId>::empty()) =~= Seq::<TransitionMeaning>::empty());
+            guarded_lemma_run_singleton(transition_context_sem(), transition_freeze_action(entry, shape), Seq::<TransitionMeaning>::empty());
+            assert(guarded_apply(transition_context_sem(), transition_freeze_action(entry, shape), Seq::<TransitionMeaning>::empty()) is Some);
+            assert(original is Some);
+            assert(values.view() =~= Seq::<TransitionId>::empty());
+            if fsteps::xnf_task(entry, shape) { fbr::lemma_run_start(entry, shape); }
         }
         let mut state = Ok(());
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant
                 store.restoration() == old(store).restoration(),
-                model::graph_wf(store.graph()), store.valid_store(), model::graph_extends(entry, store.graph()),
+                store.errors_are_non_owner() == old(store).errors_are_non_owner(),
+                store.errors_are_non_invariant() == old(store).errors_are_non_invariant(),
+                store.errors_are_non_invalid_policy() == old(store).errors_are_non_invalid_policy(),
+                store.errors_are_resource() == old(store).errors_are_resource(),
+                old(store).valid_store() ==> store.valid_store(),
+                old(store).errors_are_non_owner() ==> state != Err(HistoryError::WrongHistoryOwner),
+                old(store).errors_are_non_invariant() && old(store).valid_store() ==> language::no_invariant_failure(state),
+                old(store).errors_are_non_invalid_policy() && old(store).valid_store() ==> !(state matches Err(HistoryError::InvalidPolicy { .. })),
+                old(store).errors_are_resource() && old(store).valid_store() ==> (state matches Err(e) ==> resource_error(e)),
+                model::graph_wf(store.graph()), store.valid_store(), model::graph_extends(entry, store.graph()), model::graph_wf(entry),
+                transition_action_valid(entry, shape),
                 transition_configuration_valid(store.graph(), transition_action_views(tasks.view()), values.view()),
+                state.is_ok() ==> transition_program(store.graph(), transition_action_views(tasks.view()), values.view()) is Some,
                 state.is_ok() ==> transition_program_refines(original,
                     transition_program(store.graph(), transition_action_views(tasks.view()), values.view())),
+                fsteps::xnf_task(entry, shape) && state.is_ok() ==> fsteps::xrun(store.graph(), shape, transition_action_views(tasks.view()), values.view()),
+                state.is_ok() ==> guard_config(store.graph(), transition_action_views(tasks.view()), values.view(), allowed),
             decreases if state.is_ok() {
                 machine_cost(store.graph(), transition_action_views(tasks.view()), values.view()) + 1
             } else { 0 },
         ))]
         while !tasks.is_empty() && state.is_ok() {
             proof_decl! { let ghost before = store.graph();
-            let ghost before_program = transition_program(before, transition_action_views(tasks.view()), values.view()); }
+            let ghost before_program = transition_program(before, transition_action_views(tasks.view()), values.view());
+            let ghost before_tasks = transition_action_views(tasks.view()); let ghost before_values = values.view(); }
             state = Action::next(store, &mut tasks, &mut values);
+            proof! {
+                lemma_guard_config_stable(before, store.graph(), before_tasks, before_values, allowed);
+                lemma_guard_task_stable(entry, store.graph(), shape);
+            }
             proof! {
                 transition_lemma_extends_transitive(entry, before, store.graph());
                 if state.is_ok() {
                     guarded_lemma_program_transitive(transition_context_sem(), transition_context_valid(), original,
                         before_program, transition_program(store.graph(), transition_action_views(tasks.view()), values.view()));
+                }
+                if fsteps::xnf_task(entry, shape) && state.is_ok() {
+                    fbr::lemma_run_step(entry, before, store.graph(), shape, before_tasks, before_values,
+                        transition_action_views(tasks.view()), values.view());
                 }
             }
         }
@@ -4419,6 +5822,10 @@ impl Action {
             assert(transition_freeze_tasks(store.graph(), transition_action_views(tasks.view())) =~= Seq::<TransitionAction>::empty());
             transition_lemma_program_stable(entry, store.graph(), seq![shape], Seq::empty());
             machine_driver_complete(store.graph(), shape, values.view());
+            assert(transition_action_views(tasks.view()) =~= Seq::<ActionShape>::empty());
+            if fsteps::xnf_task(entry, shape) { fbr::lemma_run_end(store.graph(), shape, values.view()); }
+            lemma_guard_task_stable(entry, store.graph(), shape);
+            assert(guard_vocab(store.graph(), values.view().last()@).subset_of(allowed));
         }
         match values.pop() {
             Some(v) => Ok(v),
@@ -4428,11 +5835,413 @@ impl Action {
 }
 
 #[cfg(verus_keep_ghost)]
-pub(crate) mod verify {
+pub mod verify {
     use super::*;
 
     verus! {
-            broadcast use junco_core::kernel::verify::group_kernel_views;
+    broadcast use junco_core::kernel::verify::group_kernel_views;
+
+    #[verifier::opaque]
+    pub open spec fn guard_vocab(g: model::Graph, t: nat) -> Set<model::Primitive> {
+        vocab::transition_primitives(model::lift_transition(g, t))
+    }
+
+    #[verifier::opaque]
+    pub open spec fn test_vocab(g: model::Graph, t: nat) -> Set<model::Primitive> {
+        vocab::test_primitives(model::lift_test(g, t))
+    }
+
+    #[verifier::opaque]
+    pub open spec fn guard_union_vocab(g: model::Graph, ids: Seq<nat>) -> Set<model::Primitive> {
+        vocab::transition_primitives(language::Transition::Union(ids.map_values(|t: nat| model::lift_transition(g, t))))
+    }
+
+    pub open spec fn guard_task_vocab(g: model::Graph, task: ActionShape) -> Set<model::Primitive> {
+        match task {
+            ActionShape::Clean(t, p) => guard_vocab(g, t).union(test_vocab(g, p)),
+            ActionShape::Not(t) | ActionShape::Append(t, _) => guard_vocab(g, t),
+            ActionShape::Pair(a, b) => guard_vocab(g, a).union(guard_vocab(g, b)),
+            ActionShape::If(t) => test_vocab(g, t),
+            ActionShape::CleanIf(t, p) => test_vocab(g, t).union(test_vocab(g, p)),
+            ActionShape::Fold(ids, _) => guard_union_vocab(g, ids),
+            _ => Set::empty(),
+        }
+    }
+
+    pub open spec fn guard_config(g: model::Graph, tasks: Seq<ActionShape>, values: Seq<TransitionId>, allowed: Set<model::Primitive>) -> bool {
+        (forall|i: int| 0 <= i < tasks.len() ==> guard_task_vocab(g, tasks[i]).subset_of(allowed))
+        && (forall|i: int| 0 <= i < values.len() ==> guard_vocab(g, values[i]@).subset_of(allowed))
+    }
+
+    pub open spec fn guard_effect(g: model::Graph, pending: Seq<ActionShape>, task: ActionShape, values: Seq<TransitionId>,
+        after: Seq<ActionShape>, out: Seq<TransitionId>) -> bool {
+        forall|allowed: Set<model::Primitive>| guard_config(g, pending, values, allowed)
+            && guard_task_vocab(g, task).subset_of(allowed) ==> guard_config(g, after, out, allowed)
+    }
+
+    pub proof fn lemma_guard_task_stable(a: model::Graph, b: model::Graph, task: ActionShape)
+        requires model::graph_wf(a), model::graph_extends(a, b), transition_action_valid(a, task),
+        ensures guard_task_vocab(a, task) == guard_task_vocab(b, task),
+    {
+        reveal(guard_union_vocab);
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_wf_elim(a);
+        model::lemma_lift_stable_under_extends(a, b);
+        match task {
+            ActionShape::Fold(ids, _) => {
+                assert(ids.map_values(|t: nat| model::lift_transition(a, t))
+                    =~= ids.map_values(|t: nat| model::lift_transition(b, t)));
+            },
+            _ => {},
+        }
+    }
+
+    pub proof fn lemma_guard_config_stable(a: model::Graph, b: model::Graph, tasks: Seq<ActionShape>, values: Seq<TransitionId>, allowed: Set<model::Primitive>)
+        requires model::graph_wf(a), model::graph_extends(a, b), transition_tasks_valid(a, tasks), transition_ids_valid(a, values),
+        ensures guard_config(a, tasks, values, allowed) == guard_config(b, tasks, values, allowed),
+    {
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_wf_elim(a);
+        model::lemma_lift_stable_under_extends(a, b);
+        assert forall|i: int| 0 <= i < tasks.len() implies guard_task_vocab(a, tasks[i]) == guard_task_vocab(b, tasks[i]) by {
+            lemma_guard_task_stable(a, b, tasks[i]);
+        }
+    }
+    pub proof fn lemma_guard_children(g: model::Graph, id: nat)
+        requires model::graph_wf(g), id < g.transitions.len(),
+        ensures forall|i: int| #![trigger crate::progress::verify::transition_edges(g, id)[i]] 0 <= i < crate::progress::verify::transition_edges(g, id).len()
+            ==> guard_vocab(g, crate::progress::verify::transition_edges(g, id)[i]).subset_of(guard_vocab(g, id)),
+            forall|i: int| #![trigger crate::progress::verify::transition_tests(g, id)[i]] 0 <= i < crate::progress::verify::transition_tests(g, id).len()
+            ==> test_vocab(g, crate::progress::verify::transition_tests(g, id)[i]).subset_of(guard_vocab(g, id)),
+            match g.transitions[id as int] {
+                model::TransitionNode::If(t, a, b) => test_vocab(g, t).subset_of(guard_vocab(g, id))
+                    && guard_vocab(g, a).subset_of(guard_vocab(g, id)) && guard_vocab(g, b).subset_of(guard_vocab(g, id)),
+                model::TransitionNode::Not(t) | model::TransitionNode::Append(t, _) => guard_vocab(g, t).subset_of(guard_vocab(g, id)),
+                model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => forall|i: int| 0 <= i < cs.len()
+                    ==> guard_vocab(g, cs[i]).subset_of(guard_vocab(g, id)),
+                _ => true,
+            },
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_transition_wf(g, id);
+        assert forall|i: int| #![trigger crate::progress::verify::transition_edges(g, id)[i]]
+            0 <= i < crate::progress::verify::transition_edges(g, id).len() implies
+                guard_vocab(g, crate::progress::verify::transition_edges(g, id)[i]).subset_of(guard_vocab(g, id)) by {
+            let child = crate::progress::verify::transition_edges(g, id)[i];
+            assert forall|p: model::Primitive| guard_vocab(g, child).contains(p) implies guard_vocab(g, id).contains(p) by {
+                vocab::lemma_transition_primitives_lift(g, child, p);
+                assert(crate::progress::verify::transition_reaches_primitive(g, id, p));
+                vocab::lemma_transition_primitives_lift(g, id, p);
+            }
+        }
+        assert forall|i: int| #![trigger crate::progress::verify::transition_tests(g, id)[i]]
+            0 <= i < crate::progress::verify::transition_tests(g, id).len() implies
+                test_vocab(g, crate::progress::verify::transition_tests(g, id)[i]).subset_of(guard_vocab(g, id)) by {
+            let child = crate::progress::verify::transition_tests(g, id)[i];
+            assert forall|p: model::Primitive| test_vocab(g, child).contains(p) implies guard_vocab(g, id).contains(p) by {
+                vocab::lemma_test_primitives_lift(g, child, p);
+                assert(crate::progress::verify::transition_reaches_primitive(g, id, p));
+                vocab::lemma_transition_primitives_lift(g, id, p);
+            }
+        }
+        match g.transitions[id as int] {
+            model::TransitionNode::If(t, a, b) => {
+                assert(crate::progress::verify::transition_tests(g, id)[0] == t);
+                assert(crate::progress::verify::transition_edges(g, id)[0] == a);
+                assert(crate::progress::verify::transition_edges(g, id)[1] == b);
+            },
+            model::TransitionNode::Not(t) | model::TransitionNode::Append(t, _) => {
+                assert(crate::progress::verify::transition_edges(g, id)[0] == t);
+            },
+            model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => {
+                assert forall|i: int| 0 <= i < cs.len() implies guard_vocab(g, cs[i]).subset_of(guard_vocab(g, id)) by {
+                    assert(crate::progress::verify::transition_edges(g, id)[i] == cs[i]);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    pub proof fn lemma_guard_union(g: model::Graph, ids: Seq<nat>, allowed: Set<model::Primitive>)
+        ensures guard_union_vocab(g, ids).subset_of(allowed)
+            == (forall|i: int| 0 <= i < ids.len() ==> guard_vocab(g, ids[i]).subset_of(allowed)),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        reveal_with_fuel(vocab::transition_primitives, 2);
+        reveal(guard_union_vocab);
+        reveal(guard_vocab);
+        let cs = ids.map_values(|t: nat| model::lift_transition(g, t));
+        let tree = language::Transition::Union(cs);
+        assert(vocab::transition_primitives(tree) == vocab::transition_primitive_prefix(tree, cs.len()));
+        assert forall|p: model::Primitive| vocab::transition_primitives(tree).contains(p)
+            == (exists|i: int| 0 <= i < ids.len() && guard_vocab(g, ids[i]).contains(p)) by {
+            vocab::lemma_transition_primitive_prefix(tree, cs.len(), p);
+            if vocab::transition_primitives(tree).contains(p) {
+                let i = choose|i: int| 0 <= i < cs.len() && vocab::transition_primitives(cs[i]).contains(p);
+                assert(cs[i] == model::lift_transition(g, ids[i]));
+                assert(exists|j: int| 0 <= j < ids.len() && guard_vocab(g, ids[j]).contains(p));
+            }
+            if exists|i: int| 0 <= i < ids.len() && guard_vocab(g, ids[i]).contains(p) {
+                let i = choose|i: int| 0 <= i < ids.len() && guard_vocab(g, ids[i]).contains(p);
+                assert(cs[i] == model::lift_transition(g, ids[i]));
+                assert(exists|j: int| 0 <= j < cs.len() && vocab::transition_primitives(cs[j]).contains(p));
+            }
+        }
+        if !vocab::transition_primitives(tree).subset_of(allowed) {
+            let p = choose|p: model::Primitive| vocab::transition_primitives(tree).contains(p) && !allowed.contains(p);
+            let i = choose|i: int| 0 <= i < ids.len() && guard_vocab(g, ids[i]).contains(p);
+        }
+        assert forall|i: int| 0 <= i < ids.len() implies
+            vocab::transition_primitives(tree).subset_of(allowed) ==> guard_vocab(g, ids[i]).subset_of(allowed) by {
+            assert forall|p: model::Primitive| guard_vocab(g, ids[i]).contains(p) implies vocab::transition_primitives(tree).contains(p) by {}
+        }
+    }
+
+    pub proof fn lemma_guard_piece(g: model::Graph, root: nat, inter: bool, t: nat)
+        requires model::graph_wf(g), root < g.transitions.len(), fmach::tpiece(g, root, inter, t),
+        ensures t < g.transitions.len(), guard_vocab(g, t).subset_of(guard_vocab(g, root)),
+        decreases root,
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        if t != root {
+            model::lemma_graph_transition_wf(g, root);
+            lemma_guard_children(g, root);
+            match g.transitions[root as int] {
+                model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => {
+                    let i = choose|i: int| 0 <= i < cs.len() && cs[i] < root && fmach::tpiece(g, cs[i], inter, t);
+                    lemma_guard_piece(g, cs[i], inter, t);
+                    assert(crate::progress::verify::transition_edges(g, root)[i] == cs[i]);
+                },
+                _ => {},
+            }
+        }
+    }
+
+    pub proof fn lemma_guard_collected(g: model::Graph, orig: Seq<nat>, inter: bool, flat: Seq<TransitionId>, constants: Seq<RegexId>)
+        requires model::graph_wf(g), model::bounded(orig, g.transitions.len()),
+            fcol::collect_members(g, orig, inter, Seq::empty(), flat, constants),
+        ensures forall|i: int| 0 <= i < flat.len() ==> guard_vocab(g, flat[i]@).subset_of(
+            guard_task_vocab(g, ActionShape::Fold(orig, 0))),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        let allowed = guard_task_vocab(g, ActionShape::Fold(orig, 0));
+        lemma_guard_union(g, orig, allowed);
+        assert forall|i: int| 0 <= i < flat.len() implies guard_vocab(g, flat[i]@).subset_of(allowed) by {
+            let j = choose|j: int| 0 <= j < orig.len() && fmach::tpiece(g, orig[j], inter, flat[i]@);
+            lemma_guard_piece(g, orig[j], inter, flat[i]@);
+            assert(guard_vocab(g, orig[j]).subset_of(allowed));
+        }
+    }
+
+    pub proof fn lemma_guard_node(g: model::Graph, id: nat, allowed: Set<model::Primitive>)
+        requires model::graph_wf(g), id < g.transitions.len(),
+            forall|i: int| #![trigger crate::progress::verify::transition_edges(g, id)[i]] 0 <= i < crate::progress::verify::transition_edges(g, id).len()
+                ==> guard_vocab(g, crate::progress::verify::transition_edges(g, id)[i]).subset_of(allowed),
+            forall|i: int| #![trigger crate::progress::verify::transition_tests(g, id)[i]] 0 <= i < crate::progress::verify::transition_tests(g, id).len()
+                ==> test_vocab(g, crate::progress::verify::transition_tests(g, id)[i]).subset_of(allowed),
+        ensures guard_vocab(g, id).subset_of(allowed),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_transition_wf(g, id);
+        assert forall|p: model::Primitive| guard_vocab(g, id).contains(p) implies allowed.contains(p) by {
+            vocab::lemma_transition_primitives_lift(g, id, p);
+            reveal_with_fuel(crate::progress::verify::transition_reaches_primitive, 1);
+            if exists|i: int| 0 <= i < crate::progress::verify::transition_tests(g, id).len()
+                && crate::progress::verify::test_reaches_primitive(g, crate::progress::verify::transition_tests(g, id)[i], p) {
+                let i = choose|i: int| 0 <= i < crate::progress::verify::transition_tests(g, id).len()
+                    && crate::progress::verify::test_reaches_primitive(g, crate::progress::verify::transition_tests(g, id)[i], p);
+                vocab::lemma_test_primitives_lift(g, crate::progress::verify::transition_tests(g, id)[i], p);
+            } else {
+                let i = choose|i: int| 0 <= i < crate::progress::verify::transition_edges(g, id).len()
+                    && crate::progress::verify::transition_edges(g, id)[i] < id
+                    && crate::progress::verify::transition_reaches_primitive(g, crate::progress::verify::transition_edges(g, id)[i], p);
+                vocab::lemma_transition_primitives_lift(g, crate::progress::verify::transition_edges(g, id)[i], p);
+            }
+        }
+    }
+
+    pub open spec fn guard_child_extra(g: model::Graph, action: ChildShape) -> Set<model::Primitive> {
+        match action {
+            ChildShape::Clean(path) => test_vocab(g, path),
+            ChildShape::PairLeft(other) | ChildShape::PairRight(other) => guard_vocab(g, other),
+            _ => Set::empty(),
+        }
+    }
+
+    pub proof fn lemma_guard_child_actions(g: model::Graph, id: nat, action: ChildShape)
+        requires model::graph_wf(g), id < g.transitions.len(), transition_child_action_valid(g, action),
+        ensures forall|i: int| 0 <= i < transition_child_actions(g, id, action).len()
+            ==> guard_task_vocab(g, transition_child_actions(g, id, action)[i]).subset_of(
+                guard_vocab(g, id).union(guard_child_extra(g, action))),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        transition_lemma_children(g, id);
+        lemma_guard_children(g, id);
+        let cs = transition_children(g, id);
+        assert forall|i: int| 0 <= i < transition_child_actions(g, id, action).len() implies
+            guard_task_vocab(g, transition_child_actions(g, id, action)[i]).subset_of(
+                guard_vocab(g, id).union(guard_child_extra(g, action))) by {
+            let j = cs.len() as int - 1 - i;
+            assert(transition_child_actions(g, id, action)[i] == transition_child_shape(action, cs[j]));
+            assert(crate::progress::verify::transition_edges(g, id)[j] == cs[j]);
+        }
+    }
+
+    pub proof fn lemma_guard_scheduled(g: model::Graph, id: nat, action: ChildShape, marker: ActionShape, task: ActionShape,
+        pending: Seq<ActionShape>, values: Seq<TransitionId>)
+        requires model::graph_wf(g), id < g.transitions.len(), transition_child_action_valid(g, action),
+            guard_task_vocab(g, marker) == Set::empty(),
+            guard_vocab(g, id).union(guard_child_extra(g, action)).subset_of(guard_task_vocab(g, task)),
+        ensures guard_effect(g, pending, task, values, pending.push(marker) + transition_child_actions(g, id, action), values),
+    {
+        lemma_guard_child_actions(g, id, action);
+        let children = transition_child_actions(g, id, action);
+        let after = pending.push(marker) + children;
+        assert forall|allowed: Set<model::Primitive>| guard_config(g, pending, values, allowed)
+            && guard_task_vocab(g, task).subset_of(allowed) implies guard_config(g, after, values, allowed) by {
+            broadcast use vstd::set::group_set_lemmas;
+            assert forall|i: int| 0 <= i < after.len() implies guard_task_vocab(g, after[i]).subset_of(allowed) by {
+                if i < pending.len() {
+                    assert(after[i] == pending[i]);
+                } else if i == pending.len() {
+                    assert(after[i] == marker);
+                } else {
+                    let j = i - pending.len() - 1;
+                    assert(after[i] == children[j]);
+                }
+            }
+        }
+    }
+
+    pub proof fn lemma_test_connective_guards(a: model::Graph, b: model::Graph, ids: Seq<TestId>, and: bool, t: nat)
+        requires model::graph_wf(a), model::graph_wf(b), model::graph_extends(a, b), test_ids_valid(a, ids),
+            t < b.tests.len(), test_connective_result(a, b, ids, and, t),
+        ensures test_vocab(b, t).subset_of(vocab::test_primitives(model::Test::And(
+            ids.map_values(|id: TestId| model::lift_test(a, id@))))),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        reveal(test_vocab);
+        let cs = ids.map_values(|id: TestId| model::lift_test(a, id@));
+        let parent = model::Test::And(cs);
+        assert forall|p: model::Primitive| test_vocab(b, t).contains(p) implies vocab::test_primitives(parent).contains(p) by {
+            vocab::lemma_test_connective_primitives(a, b, ids, and, t, p);
+            let i = choose|i: int| 0 <= i < ids.len() && vocab::test_primitives(model::lift_test(a, ids[i]@)).contains(p);
+            vocab::lemma_test_primitive_prefix(parent, cs.len(), p);
+            assert(cs[i] == model::lift_test(a, ids[i]@));
+        }
+    }
+
+    pub proof fn lemma_test_connective_pair(a: model::Graph, b: model::Graph, x: TestId, y: TestId, and: bool, t: nat)
+        requires model::graph_wf(a), model::graph_wf(b), model::graph_extends(a, b), x@ < a.tests.len(), y@ < a.tests.len(),
+            t < b.tests.len(), test_connective_result(a, b, seq![x, y], and, t),
+        ensures test_vocab(b, t).subset_of(test_vocab(a, x@).union(test_vocab(a, y@))),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        lemma_test_connective_guards(a, b, seq![x, y], and, t);
+        let cs = seq![x, y].map_values(|id: TestId| model::lift_test(a, id@));
+        assert(cs =~= seq![model::lift_test(a, x@), model::lift_test(a, y@)]);
+        lemma_test_definition(a, x@); lemma_test_definition(a, y@);
+        vocab::lemma_test_pair_vocab(model::lift_test(a, x@), model::lift_test(a, y@));
+    }
+
+    pub proof fn lemma_test_definition(g: model::Graph, id: nat)
+        ensures test_vocab(g, id) == vocab::test_primitives(model::lift_test(g, id)),
+    { reveal(test_vocab); }
+
+    pub proof fn lemma_guard_definition(g: model::Graph, id: nat)
+        ensures guard_vocab(g, id) == vocab::transition_primitives(model::lift_transition(g, id)),
+    { reveal(guard_vocab); }
+
+    pub proof fn lemma_guard_subset(g: model::Graph, id: nat, allowed: Set<model::Primitive>)
+        requires guard_vocab(g, id).subset_of(allowed),
+        ensures vocab::transition_primitives(model::lift_transition(g, id)).subset_of(allowed),
+    { reveal(guard_vocab); }
+
+    pub proof fn lemma_guard_constants(g: model::Graph)
+        requires model::graph_wf(g),
+        ensures guard_vocab(g, g.constants.transition_empty) == Set::empty(),
+            guard_vocab(g, g.constants.transition_all) == Set::empty(),
+            guard_vocab(g, g.constants.transition_epsilon) == Set::empty(),
+            test_vocab(g, g.constants.test_true) == Set::empty(),
+            test_vocab(g, g.constants.test_false) == Set::empty(),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_wf_elim(g);
+        transition_unfold(g, g.constants.transition_empty);
+        transition_unfold(g, g.constants.transition_all);
+        transition_unfold(g, g.constants.transition_epsilon);
+        reveal_with_fuel(vocab::transition_primitives, 1);
+        reveal_with_fuel(vocab::test_primitives, 1);
+        reveal_with_fuel(model::lift_test, 1);
+    }
+
+    pub proof fn lemma_guards_stable(a: model::Graph, b: model::Graph)
+        requires model::graph_wf(a), model::graph_extends(a, b),
+        ensures forall|id: nat| id < a.transitions.len() ==> guard_vocab(a, id) == guard_vocab(b, id),
+            forall|id: nat| id < a.tests.len() ==> test_vocab(a, id) == test_vocab(b, id),
+    {
+        reveal(guard_vocab); reveal(test_vocab);
+        model::lemma_graph_wf_elim(a);
+        model::lemma_lift_stable_under_extends(a, b);
+    }
+
+    pub proof fn lemma_guard_local_if(g: model::Graph, test: nat, a: nat, b: nat, out: nat)
+        requires model::graph_wf(g), test < g.tests.len(), a < g.transitions.len(), b < g.transitions.len(), out < g.transitions.len(),
+            out == a || out == b || g.transitions[out as int] == model::TransitionNode::If(test, a, b),
+        ensures guard_vocab(g, out).subset_of(test_vocab(g, test).union(guard_vocab(g, a)).union(guard_vocab(g, b))),
+    {
+        broadcast use vstd::set::group_set_lemmas;
+        if out != a && out != b {
+            let allowed = test_vocab(g, test).union(guard_vocab(g, a)).union(guard_vocab(g, b));
+            lemma_guard_node(g, out, allowed);
+        }
+    }
+
+    #[verifier::opaque]
+    pub open spec fn guard_node_vocab(g: model::Graph, node: model::TransitionNode) -> Set<model::Primitive> {
+        match node {
+            model::TransitionNode::Const(_) => Set::empty(),
+            model::TransitionNode::If(t, a, b) => test_vocab(g, t).union(guard_vocab(g, a)).union(guard_vocab(g, b)),
+            model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => guard_task_vocab(g, ActionShape::Fold(cs, 0)),
+            model::TransitionNode::Not(t) | model::TransitionNode::Append(t, _) => guard_vocab(g, t),
+        }
+    }
+
+    pub proof fn lemma_guard_node_unfold(g: model::Graph, id: nat)
+        requires model::graph_wf(g), id < g.transitions.len(),
+        ensures guard_vocab(g, id) == guard_node_vocab(g, g.transitions[id as int]),
+    {
+        reveal(guard_node_vocab);
+        broadcast use vstd::set::group_set_lemmas;
+        model::lemma_graph_transition_wf(g, id);
+        lemma_guard_children(g, id);
+        let node = g.transitions[id as int];
+        let allowed = guard_node_vocab(g, node);
+        match node {
+            model::TransitionNode::Union(cs) | model::TransitionNode::Intersect(cs) => {
+                lemma_guard_union(g, cs, guard_vocab(g, id));
+                lemma_guard_union(g, cs, allowed);
+                assert forall|i: int| 0 <= i < cs.len() implies
+                    crate::progress::verify::transition_edges(g, id)[i] == cs[i] by {}
+            },
+            model::TransitionNode::If(t, a, b) => {
+                assert(crate::progress::verify::transition_tests(g, id)[0] == t);
+                assert(crate::progress::verify::transition_edges(g, id)[0] == a);
+                assert(crate::progress::verify::transition_edges(g, id)[1] == b);
+            },
+            model::TransitionNode::Not(t) | model::TransitionNode::Append(t, _) => {
+                assert(crate::progress::verify::transition_edges(g, id)[0] == t);
+            },
+            _ => {},
+        }
+        lemma_guard_node(g, id, allowed);
+        assert(allowed.subset_of(guard_vocab(g, id)));
+        assert(guard_vocab(g, id) =~= allowed);
+    }
+
             pub open spec fn test_ids_valid(g: model::Graph, ids: Seq<TestId>) -> bool {
                 forall|i: int| 0 <= i < ids.len() ==> ids[i]@ < g.tests.len()
             }
@@ -4465,13 +6274,13 @@ pub(crate) mod verify {
             pub open spec fn concat_combo(
                 g: model::Graph, theta: Subst, ids: Seq<RegexId>, w: Seq<EventView>,
             ) -> bool {
-                language::lang(model::gsem(theta),
+                language::numeric_lang(model::gsem(theta),
                     language::Regex::Concat(model::lift_regexes(g, model::regex_ids(ids))), w)
             }
             pub open spec fn transition_lang(
                 g: model::Graph, theta: Subst, id: TransitionId, e: EventView, w: Seq<EventView>,
             ) -> bool {
-                language::lang(model::gsem(theta), language::interp_transition(
+                language::numeric_lang(model::gsem(theta), language::interp_transition(
                     model::gsem(theta), e, model::lift_transition(g, id@)), w)
             }
             pub open spec fn transition_combo(
@@ -4498,7 +6307,7 @@ pub(crate) mod verify {
         theta: Subst, left: model::TestHeadNode,
         right: model::TestHeadNode, event: EventView,
     )
-        requires language::event_wf(theta), test_distinct_heads(left, right),
+        requires language::event_wf(theta, theta.len()), test_distinct_heads(left, right),
         ensures match (left, right) {
             (model::TestHeadNode::Atom(p, _), model::TestHeadNode::Atom(q, _))
                 => !(model::primitive_holds(theta, p, event)
@@ -4665,6 +6474,67 @@ pub(crate) mod verify {
         }
     }
 
+    pub(crate) proof fn lemma_combo_inclusion<T>(
+        left: Seq<T>, right: Seq<T>, holds: spec_fn(T) -> bool, all: bool,
+    )
+        requires forall|value: T| left.contains(value) ==> right.contains(value),
+        ensures if all {
+            (forall|i: int| 0 <= i < right.len() ==> holds(right[i]))
+                ==> (forall|i: int| 0 <= i < left.len() ==> holds(left[i]))
+        } else {
+            (exists|i: int| 0 <= i < left.len() && holds(left[i]))
+                ==> (exists|i: int| 0 <= i < right.len() && holds(right[i]))
+        },
+    {
+        if all {
+            if forall|i: int| 0 <= i < right.len() ==> holds(right[i]) {
+                assert forall|i: int| 0 <= i < left.len() implies holds(left[i]) by {
+                    assert(left.contains(left[i]));
+                    assert(right.contains(left[i]));
+                    let j = right.lemma_contains_to_index(left[i]);
+                }
+            }
+        } else if exists|i: int| 0 <= i < left.len() && holds(left[i]) {
+            let i = choose|i: int| 0 <= i < left.len() && holds(left[i]);
+            assert(left.contains(left[i]));
+            assert(right.contains(left[i]));
+            let j = right.lemma_contains_to_index(left[i]);
+            assert(holds(right[j]));
+        }
+    }
+
+    pub(crate) proof fn lemma_combo_pointwise(
+        count: nat, left: spec_fn(int) -> bool, right: spec_fn(int) -> bool, all: bool,
+    )
+        requires forall|i: int| #![trigger left(i)] #![trigger right(i)]
+            0 <= i < count ==> left(i) == right(i),
+        ensures
+            (if all { forall|i: int| 0 <= i < count ==> #[trigger] left(i) }
+             else { exists|i: int| 0 <= i < count && #[trigger] left(i) })
+            ==
+            (if all { forall|i: int| 0 <= i < count ==> #[trigger] right(i) }
+             else { exists|i: int| 0 <= i < count && #[trigger] right(i) }),
+    {
+        if all {
+            if forall|i: int| 0 <= i < count ==> #[trigger] left(i) {
+                assert forall|i: int| 0 <= i < count implies #[trigger] right(i) by {}
+            }
+            if forall|i: int| 0 <= i < count ==> #[trigger] right(i) {
+                assert forall|i: int| 0 <= i < count implies #[trigger] left(i) by {}
+            }
+        } else {
+            if exists|i: int| 0 <= i < count && #[trigger] left(i) {
+                let i = choose|i: int| 0 <= i < count && #[trigger] left(i);
+                assert(right(i));
+            }
+            if exists|i: int| 0 <= i < count && #[trigger] right(i) {
+                let i = choose|i: int| 0 <= i < count && #[trigger] right(i);
+                assert(left(i));
+            }
+        }
+    }
+
+
     pub proof fn test_lemma_combo_inclusion(
         g: model::Graph, theta: Subst, event: EventView,
         left: Seq<TestId>, right: Seq<TestId>, and: bool,
@@ -4676,23 +6546,8 @@ pub(crate) mod verify {
             test_combo(g, theta, left, event, and) ==> test_combo(g, theta, right, event, and)
         },
     {
-        if and {
-            if test_combo(g, theta, right, event, and) {
-                assert forall|i: int| 0 <= i < left.len()
-                    implies model::test_holds(theta, model::lift_test(g, left[i]@), event) by {
-                    assert(left.contains(left[i]));
-                    assert(right.contains(left[i]));
-                    let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                }
-            }
-        } else if test_combo(g, theta, left, event, and) {
-            let i = choose|i: int| 0 <= i < left.len()
-                && model::test_holds(theta, model::lift_test(g, left[i]@), event);
-            assert(left.contains(left[i]));
-            assert(right.contains(left[i]));
-            let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-            assert(model::test_holds(theta, model::lift_test(g, right[j]@), event));
-        }
+        lemma_combo_inclusion(left, right,
+            |id: TestId| model::test_holds(theta, model::lift_test(g, id@), event), and);
     }
 
     pub proof fn test_lemma_combo_membership(
@@ -4868,7 +6723,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn test_dominates(g: model::Graph, a: TestId, b: TestId, and: bool) -> bool {
-        forall|theta: Subst, event: EventView| language::event_wf(theta)
+        forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             ==> if and { test_truth(g, theta, b@, event) ==> test_truth(g, theta, a@, event) }
                 else { test_truth(g, theta, a@, event) ==> test_truth(g, theta, b@, event) }
     }
@@ -4891,7 +6746,7 @@ pub(crate) mod verify {
                 test_lemma_strict_subset_length(bc, ac);
             }
         }
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies if and { test_truth(g, theta, b@, event) ==> test_truth(g, theta, a@, event) }
                 else { test_truth(g, theta, a@, event) ==> test_truth(g, theta, b@, event) } by {
             test_lemma_truth(g, theta, a@, event);
@@ -4928,10 +6783,10 @@ pub(crate) mod verify {
     pub proof fn test_lemma_retention(g: model::Graph, siblings: Seq<TestId>, kept: Seq<TestId>, and: bool)
         requires model::graph_wf(g), test_ids_valid(g, siblings),
             forall|id: TestId| kept.contains(id) <==> siblings.contains(id) && !test_redundant_in(g, id, siblings, and),
-        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             ==> test_combo(g, theta, kept, event, and) == test_combo(g, theta, siblings, event, and),
     {
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies test_combo(g, theta, kept, event, and) == test_combo(g, theta, siblings, event, and) by {
             test_lemma_combo_inclusion(g, theta, event, kept, siblings, and);
             if and && test_combo(g, theta, kept, event, and) {
@@ -4964,7 +6819,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn test_absorbs(g: model::Graph, ids: Seq<TestId>, and: bool) -> bool {
-        forall|theta: Subst, event: EventView| language::event_wf(theta)
+        forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             ==> test_combo(g, theta, ids, event, and) == !and
     }
 
@@ -5030,7 +6885,7 @@ pub(crate) mod verify {
         requires test_absorbs(g, left, and), forall|id: TestId| left.contains(id) ==> right.contains(id),
         ensures test_absorbs(g, right, and),
     {
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies test_combo(g, theta, right, event, and) == !and by {
             test_lemma_combo_inclusion(g, theta, event, left, right, and);
         }
@@ -5046,7 +6901,7 @@ pub(crate) mod verify {
                     }),
         ensures test_absorbs(g, seq![a, b], and),
     {
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies test_combo(g, theta, seq![a, b], event, and) == !and by {
             test_lemma_truth(g, theta, a@, event);
             test_lemma_truth(g, theta, b@, event);
@@ -5088,7 +6943,7 @@ pub(crate) mod verify {
             test_complement_covered(g, test_children(g, a), siblings),
         ensures test_absorbs(g, seq![a] + siblings, and),
     {
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies test_combo(g, theta, seq![a] + siblings, event, and) == !and by {
             test_lemma_truth(g, theta, a@, event);
             test_lemma_combo_concat(g, theta, event, seq![a], siblings, and);
@@ -6110,52 +7965,52 @@ pub(crate) mod verify {
     }
 
     pub proof fn regex_star_nil<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>)
-        ensures language::lang(sem, language::Regex::Star(Box::new(r)), Seq::empty()),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(r)), Seq::empty()),
     {
         let parts = Seq::<Seq<EventView>>::empty();
         assert(parts.flatten() == Seq::<EventView>::empty());
-        assert(forall|i: int| 0 <= i < parts.len() ==> language::lang(sem, r, parts[i]));
+        assert(forall|i: int| 0 <= i < parts.len() ==> language::numeric_lang(sem, r, parts[i]));
     }
 
     pub proof fn regex_star_single<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, word: Seq<EventView>)
-        requires language::lang(sem, r, word),
-        ensures language::lang(sem, language::Regex::Star(Box::new(r)), word),
+        requires language::numeric_lang(sem, r, word),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(r)), word),
     {
         let parts = seq![word];
         parts.lemma_flatten_one_element();
-        assert forall|i: int| 0 <= i < parts.len() implies language::lang(sem, r, parts[i]) by {
+        assert forall|i: int| 0 <= i < parts.len() implies language::numeric_lang(sem, r, parts[i]) by {
             assert(i == 0);
         }
     }
 
     pub proof fn regex_star_join<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, a: Seq<EventView>, b: Seq<EventView>)
-        requires language::lang(sem, language::Regex::Star(Box::new(r)), a),
-            language::lang(sem, language::Regex::Star(Box::new(r)), b),
-        ensures language::lang(sem, language::Regex::Star(Box::new(r)), a + b),
+        requires language::numeric_lang(sem, language::Regex::Star(Box::new(r)), a),
+            language::numeric_lang(sem, language::Regex::Star(Box::new(r)), b),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(r)), a + b),
     {
         let ap = choose|p: Seq<Seq<EventView>>| a == p.flatten()
-            && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, r, p[i]);
+            && forall|i: int| 0 <= i < p.len() ==> language::numeric_lang(sem, r, p[i]);
         let bp = choose|p: Seq<Seq<EventView>>| b == p.flatten()
-            && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, r, p[i]);
+            && forall|i: int| 0 <= i < p.len() ==> language::numeric_lang(sem, r, p[i]);
         let parts = ap + bp;
         vstd::seq_lib::lemma_flatten_concat(ap, bp);
         assert(parts.flatten() == a + b);
-        assert forall|i: int| 0 <= i < parts.len() implies language::lang(sem, r, parts[i]) by {
+        assert forall|i: int| 0 <= i < parts.len() implies language::numeric_lang(sem, r, parts[i]) by {
             if i < ap.len() { assert(parts[i] == ap[i]); }
             else { assert(parts[i] == bp[i - ap.len()]); }
         }
     }
 
     pub proof fn regex_star_parts<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, parts: Seq<Seq<EventView>>)
-        requires forall|i: int| 0 <= i < parts.len() ==> language::lang(sem, language::Regex::Star(Box::new(r)), parts[i]),
-        ensures language::lang(sem, language::Regex::Star(Box::new(r)), parts.flatten()),
+        requires forall|i: int| 0 <= i < parts.len() ==> language::numeric_lang(sem, language::Regex::Star(Box::new(r)), parts[i]),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(r)), parts.flatten()),
         decreases parts.len(),
     {
         if parts.len() == 0 {
             regex_star_nil(sem, r);
         } else {
             assert forall|i: int| 0 <= i < parts.drop_first().len()
-                implies language::lang(sem, language::Regex::Star(Box::new(r)), parts.drop_first()[i]) by {
+                implies language::numeric_lang(sem, language::Regex::Star(Box::new(r)), parts.drop_first()[i]) by {
                 assert(parts.drop_first()[i] == parts[i + 1]);
             }
             regex_star_parts(sem, r, parts.drop_first());
@@ -6164,32 +8019,32 @@ pub(crate) mod verify {
     }
 
     pub proof fn regex_star_collapse<L>(sem: spec_fn(L, EventView) -> bool, r: language::Regex<L>, word: Seq<EventView>)
-        ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word)
-            == language::lang(sem, language::Regex::Star(Box::new(r)), word),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word)
+            == language::numeric_lang(sem, language::Regex::Star(Box::new(r)), word),
     {
-        if language::lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word) {
+        if language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::Star(Box::new(r)))), word) {
             let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
-                && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::Star(Box::new(r)), p[i]);
+                && forall|i: int| 0 <= i < p.len() ==> language::numeric_lang(sem, language::Regex::Star(Box::new(r)), p[i]);
             regex_star_parts(sem, r, parts);
         }
-        if language::lang(sem, language::Regex::Star(Box::new(r)), word) {
+        if language::numeric_lang(sem, language::Regex::Star(Box::new(r)), word) {
             regex_star_single(sem, language::Regex::Star(Box::new(r)), word);
         }
     }
 
     pub proof fn regex_star_constants<L>(sem: spec_fn(L, EventView) -> bool, word: Seq<EventView>)
-        ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) == (word.len() == 0),
-            language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) == (word.len() == 0),
-            language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::All)), word),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) == (word.len() == 0),
+            language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) == (word.len() == 0),
+            language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::All)), word),
     {
-        if language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) {
+        if language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Empty)), word) {
             let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
-                && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::<L>::Empty, p[i]);
-            assert(parts.len() == 0) by { if parts.len() > 0 { assert(language::lang(sem, language::Regex::<L>::Empty, parts[0])); } }
+                && forall|i: int| 0 <= i < p.len() ==> language::numeric_lang(sem, language::Regex::<L>::Empty, p[i]);
+            assert(parts.len() == 0) by { if parts.len() > 0 { assert(language::numeric_lang(sem, language::Regex::<L>::Empty, parts[0])); } }
         }
-        if language::lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) {
+        if language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::<L>::Epsilon)), word) {
             let parts = choose|p: Seq<Seq<EventView>>| word == p.flatten()
-                && forall|i: int| 0 <= i < p.len() ==> language::lang(sem, language::Regex::<L>::Epsilon, p[i]);
+                && forall|i: int| 0 <= i < p.len() ==> language::numeric_lang(sem, language::Regex::<L>::Epsilon, p[i]);
             language::lemma_flatten_empty(parts);
         }
         if word.len() == 0 {
@@ -6202,7 +8057,7 @@ pub(crate) mod verify {
 
     pub proof fn regex_star_test_true<L>(sem: spec_fn(L, EventView) -> bool, leaf: L, word: Seq<EventView>)
         requires forall|event: EventView| #[trigger] sem(leaf, event),
-        ensures language::lang(sem, language::Regex::Star(Box::new(language::Regex::Test(leaf))), word),
+        ensures language::numeric_lang(sem, language::Regex::Star(Box::new(language::Regex::Test(leaf))), word),
         decreases word.len(),
     {
         if word.len() == 0 {
@@ -6211,7 +8066,7 @@ pub(crate) mod verify {
         } else {
             let tail = word.drop_first();
             regex_star_test_true(sem, leaf, tail);
-            assert(language::lang(sem, language::Regex::Test(leaf), seq![word[0]]));
+            assert(language::numeric_lang(sem, language::Regex::Test(leaf), seq![word[0]]));
             regex_star_single(sem, language::Regex::Test(leaf), seq![word[0]]);
             regex_star_join(sem, language::Regex::Test(leaf), seq![word[0]], tail);
             assert(word =~= seq![word[0]] + tail);
@@ -6221,17 +8076,17 @@ pub(crate) mod verify {
     pub proof fn regex_star_laws(g: model::Graph, id: nat)
         requires model::graph_wf(g), id < g.regexes.len(),
         ensures forall|theta: Subst, word: Seq<EventView>|
-            #![trigger language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
+            #![trigger language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
             match g.regexes[id as int].kind {
                 model::RegexKindNode::Empty | model::RegexKindNode::Epsilon =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == (word.len() == 0),
                 model::RegexKindNode::All =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Test(t) => t == g.constants.test_true ==>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Star(_) =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == model::regex_lang(g, theta, id, word),
                 _ => true,
             },
@@ -6239,17 +8094,17 @@ pub(crate) mod verify {
         regex_unfold(g, id);
         regex_constants(g);
         assert forall|theta: Subst, word: Seq<EventView>|
-            #![trigger language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
+            #![trigger language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)]
             match g.regexes[id as int].kind {
                 model::RegexKindNode::Empty | model::RegexKindNode::Epsilon =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == (word.len() == 0),
                 model::RegexKindNode::All =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Test(t) => t == g.constants.test_true ==>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word),
                 model::RegexKindNode::Star(_) =>
-                    language::lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
+                    language::numeric_lang(model::gsem(theta), language::Regex::Star(Box::new(model::lift_regex(g, id))), word)
                         == model::regex_lang(g, theta, id, word),
                 _ => true,
             } by {
@@ -6277,47 +8132,47 @@ pub(crate) mod verify {
     }
 
     pub open spec fn regex_concat_nats(g: model::Graph, theta: Subst, ids: Seq<nat>, word: Seq<EventView>) -> bool {
-        language::lang(model::gsem(theta), language::Regex::Concat(model::lift_regexes(g, ids)), word)
+        language::numeric_lang(model::gsem(theta), language::Regex::Concat(model::lift_regexes(g, ids)), word)
     }
 
     pub proof fn regex_concat_append<L>(sem: spec_fn(L, EventView) -> bool, a: Seq<language::Regex<L>>, b: Seq<language::Regex<L>>, word: Seq<EventView>)
-        ensures language::lang(sem, language::Regex::Concat(a + b), word)
+        ensures language::numeric_lang(sem, language::Regex::Concat(a + b), word)
             == (exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                && language::lang(sem, language::Regex::Concat(a), u)
-                && language::lang(sem, language::Regex::Concat(b), v)),
+                && language::numeric_lang(sem, language::Regex::Concat(a), u)
+                && language::numeric_lang(sem, language::Regex::Concat(b), v)),
     {
-        if language::lang(sem, language::Regex::Concat(a + b), word) {
+        if language::numeric_lang(sem, language::Regex::Concat(a + b), word) {
             let parts = choose|p: Seq<Seq<EventView>>| p.len() == (a + b).len() && word == p.flatten()
-                && forall|i: int| 0 <= i < (a + b).len() ==> language::lang(sem, (a + b)[i], p[i]);
+                && forall|i: int| 0 <= i < (a + b).len() ==> language::numeric_lang(sem, (a + b)[i], p[i]);
             let ap = parts.subrange(0, a.len() as int);
             let bp = parts.subrange(a.len() as int, parts.len() as int);
             assert(parts =~= ap + bp);
             vstd::seq_lib::lemma_flatten_concat(ap, bp);
             assert(parts.flatten() == ap.flatten() + bp.flatten());
-            assert forall|i: int| 0 <= i < a.len() implies language::lang(sem, a[i], ap[i]) by {
+            assert forall|i: int| 0 <= i < a.len() implies language::numeric_lang(sem, a[i], ap[i]) by {
                 assert(a[i] == (a + b)[i]);
             }
-            assert forall|i: int| 0 <= i < b.len() implies language::lang(sem, b[i], bp[i]) by {
+            assert forall|i: int| 0 <= i < b.len() implies language::numeric_lang(sem, b[i], bp[i]) by {
                 assert(b[i] == (a + b)[a.len() + i]);
                 assert(bp[i] == parts[a.len() + i]);
             }
-            assert(language::lang(sem, language::Regex::Concat(a), ap.flatten()));
-            assert(language::lang(sem, language::Regex::Concat(b), bp.flatten()));
+            assert(language::numeric_lang(sem, language::Regex::Concat(a), ap.flatten()));
+            assert(language::numeric_lang(sem, language::Regex::Concat(b), bp.flatten()));
         }
         if exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-            && language::lang(sem, language::Regex::Concat(a), u)
-            && language::lang(sem, language::Regex::Concat(b), v) {
+            && language::numeric_lang(sem, language::Regex::Concat(a), u)
+            && language::numeric_lang(sem, language::Regex::Concat(b), v) {
             let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                && language::lang(sem, language::Regex::Concat(a), u)
-                && language::lang(sem, language::Regex::Concat(b), v);
+                && language::numeric_lang(sem, language::Regex::Concat(a), u)
+                && language::numeric_lang(sem, language::Regex::Concat(b), v);
             let ap = choose|p: Seq<Seq<EventView>>| p.len() == a.len() && u == p.flatten()
-                && forall|i: int| 0 <= i < a.len() ==> language::lang(sem, a[i], p[i]);
+                && forall|i: int| 0 <= i < a.len() ==> language::numeric_lang(sem, a[i], p[i]);
             let bp = choose|p: Seq<Seq<EventView>>| p.len() == b.len() && v == p.flatten()
-                && forall|i: int| 0 <= i < b.len() ==> language::lang(sem, b[i], p[i]);
+                && forall|i: int| 0 <= i < b.len() ==> language::numeric_lang(sem, b[i], p[i]);
             let parts = ap + bp;
             vstd::seq_lib::lemma_flatten_concat(ap, bp);
             assert(parts.flatten() == word);
-            assert forall|i: int| 0 <= i < (a + b).len() implies language::lang(sem, (a + b)[i], parts[i]) by {
+            assert forall|i: int| 0 <= i < (a + b).len() implies language::numeric_lang(sem, (a + b)[i], parts[i]) by {
                 if i < a.len() { assert((a + b)[i] == a[i]); assert(parts[i] == ap[i]); }
                 else { assert((a + b)[i] == b[i - a.len()]); assert(parts[i] == bp[i - a.len()]); }
             }
@@ -6325,61 +8180,61 @@ pub(crate) mod verify {
     }
 
     pub proof fn regex_concat_empty<L>(sem: spec_fn(L, EventView) -> bool, word: Seq<EventView>)
-        ensures language::lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) == (word.len() == 0),
+        ensures language::numeric_lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) == (word.len() == 0),
     {
-        if language::lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) {
+        if language::numeric_lang(sem, language::Regex::Concat(Seq::<language::Regex<L>>::empty()), word) {
             let parts = choose|p: Seq<Seq<EventView>>| p.len() == 0 && word == p.flatten()
-                && forall|i: int| 0 <= i < 0 ==> language::lang(sem, Seq::<language::Regex<L>>::empty()[i], p[i]);
+                && forall|i: int| 0 <= i < 0 ==> language::numeric_lang(sem, Seq::<language::Regex<L>>::empty()[i], p[i]);
             assert(parts =~= Seq::<Seq<EventView>>::empty());
         }
         if word.len() == 0 {
             let parts = Seq::<Seq<EventView>>::empty();
             assert(word =~= parts.flatten());
-            assert(forall|i: int| 0 <= i < 0 ==> language::lang(sem, Seq::<language::Regex<L>>::empty()[i], parts[i]));
+            assert(forall|i: int| 0 <= i < 0 ==> language::numeric_lang(sem, Seq::<language::Regex<L>>::empty()[i], parts[i]));
         }
     }
 
     pub proof fn regex_concat_replace<L>(sem: spec_fn(L, EventView) -> bool, prefix: Seq<language::Regex<L>>, tail: Seq<language::Regex<L>>, r: language::Regex<L>)
-        requires forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), word) == language::lang(sem, r, word),
-        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
-            == language::lang(sem, language::Regex::Concat(prefix.push(r)), word),
+        requires forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(tail), word) == language::numeric_lang(sem, r, word),
+        ensures forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(prefix + tail), word)
+            == language::numeric_lang(sem, language::Regex::Concat(prefix.push(r)), word),
     {
-        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(prefix + tail), word)
-            == language::lang(sem, language::Regex::Concat(prefix.push(r)), word) by {
+        assert forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(prefix + tail), word)
+            == language::numeric_lang(sem, language::Regex::Concat(prefix.push(r)), word) by {
             assert(prefix.push(r) =~= prefix + seq![r]);
             regex_concat_append(sem, prefix, tail, word);
             regex_concat_append(sem, prefix, seq![r], word);
-            if language::lang(sem, language::Regex::Concat(prefix + tail), word) {
+            if language::numeric_lang(sem, language::Regex::Concat(prefix + tail), word) {
                 let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                    && language::lang(sem, language::Regex::Concat(prefix), u)
-                    && language::lang(sem, language::Regex::Concat(tail), v);
-                assert(language::lang(sem, r, v));
+                    && language::numeric_lang(sem, language::Regex::Concat(prefix), u)
+                    && language::numeric_lang(sem, language::Regex::Concat(tail), v);
+                assert(language::numeric_lang(sem, r, v));
                 language::lemma_concat_singleton(sem, r, v);
                 assert(exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                    && language::lang(sem, language::Regex::Concat(prefix), u)
-                    && language::lang(sem, language::Regex::Concat(seq![r]), v));
+                    && language::numeric_lang(sem, language::Regex::Concat(prefix), u)
+                    && language::numeric_lang(sem, language::Regex::Concat(seq![r]), v));
             }
-            if language::lang(sem, language::Regex::Concat(prefix.push(r)), word) {
+            if language::numeric_lang(sem, language::Regex::Concat(prefix.push(r)), word) {
                 let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                    && language::lang(sem, language::Regex::Concat(prefix), u)
-                    && language::lang(sem, language::Regex::Concat(seq![r]), v);
+                    && language::numeric_lang(sem, language::Regex::Concat(prefix), u)
+                    && language::numeric_lang(sem, language::Regex::Concat(seq![r]), v);
                 language::lemma_concat_singleton(sem, r, v);
-                assert(language::lang(sem, language::Regex::Concat(tail), v));
+                assert(language::numeric_lang(sem, language::Regex::Concat(tail), v));
                 assert(exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                    && language::lang(sem, language::Regex::Concat(prefix), u)
-                    && language::lang(sem, language::Regex::Concat(tail), v));
+                    && language::numeric_lang(sem, language::Regex::Concat(prefix), u)
+                    && language::numeric_lang(sem, language::Regex::Concat(tail), v));
             }
         }
     }
 
     pub proof fn regex_concat_append_congruent<L>(sem: spec_fn(L, EventView) -> bool, left: Seq<language::Regex<L>>, right: Seq<language::Regex<L>>, suffix: Seq<language::Regex<L>>)
-        requires forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
-            == language::lang(sem, language::Regex::Concat(right), word),
-        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left + suffix), word)
-            == language::lang(sem, language::Regex::Concat(right + suffix), word),
+        requires forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(left), word)
+            == language::numeric_lang(sem, language::Regex::Concat(right), word),
+        ensures forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(left + suffix), word)
+            == language::numeric_lang(sem, language::Regex::Concat(right + suffix), word),
     {
-        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left + suffix), word)
-            == language::lang(sem, language::Regex::Concat(right + suffix), word) by {
+        assert forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(left + suffix), word)
+            == language::numeric_lang(sem, language::Regex::Concat(right + suffix), word) by {
             regex_concat_append(sem, left, suffix, word);
             regex_concat_append(sem, right, suffix, word);
         }
@@ -6396,7 +8251,7 @@ pub(crate) mod verify {
             regex_concat_nats(g, theta, after, word)
                 == regex_concat_nats(g, theta, before.push(id), word),
     {
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(model::tables_wf);
         hide(model::lift_regex);
         regex_unfold(g, id);
@@ -6413,13 +8268,13 @@ pub(crate) mod verify {
             assert(model::lift_regexes(g, after) =~= lhs + rhs);
             assert(model::lift_regexes(g, before.push(id)) =~= lhs + seq![model::lift_regex(g, id)]);
             assert(lhs.push(model::lift_regex(g, id)) =~= lhs + seq![model::lift_regex(g, id)]);
-            assert forall|v: Seq<EventView>| language::lang(sem, language::Regex::Concat(rhs), v)
-                == language::lang(sem, model::lift_regex(g, id), v) by {
+            assert forall|v: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(rhs), v)
+                == language::numeric_lang(sem, model::lift_regex(g, id), v) by {
                 language::lemma_concat_singleton(sem, model::lift_regex(g, id), v);
                 match g.regexes[id as int].kind {
                     model::RegexKindNode::Epsilon => {
                         regex_concat_empty::<model::Test>(sem, v);
-                        reveal(language::lang);
+                        reveal(language::numeric_lang);
                     },
                     _ => {},
                 }
@@ -6470,7 +8325,7 @@ pub(crate) mod verify {
             == concat_combo(g, theta, ids, word),
         decreases ids.len(),
     {
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(model::tables_wf);
         hide(model::lift_regex);
         if ids.len() > 0 {
@@ -6484,8 +8339,8 @@ pub(crate) mod verify {
             let last_lifts = seq![model::lift_regex(g, id)];
             assert(model::lift_regexes(g, flat.push(id)) =~= flat_lifts + last_lifts);
             assert(model::lift_regexes(g, model::regex_ids(ids)) =~= input_lifts + last_lifts);
-            assert forall|v: Seq<EventView>| language::lang(sem, language::Regex::Concat(flat_lifts), v)
-                == language::lang(sem, language::Regex::Concat(input_lifts), v) by {
+            assert forall|v: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(flat_lifts), v)
+                == language::numeric_lang(sem, language::Regex::Concat(input_lifts), v) by {
                 regex_concat_flat_law(g, before, theta, v);
             }
             regex_concat_append_congruent(sem, flat_lifts, input_lifts, last_lifts);
@@ -6505,9 +8360,9 @@ pub(crate) mod verify {
             if concat_combo(g, theta, ids, word) {
                 let lifts = model::lift_regexes(g, model::regex_ids(ids));
                 let parts = choose|p: Seq<Seq<EventView>>| p.len() == lifts.len() && word == p.flatten()
-                    && forall|i: int| 0 <= i < lifts.len() ==> language::lang(model::gsem(theta), lifts[i], p[i]);
+                    && forall|i: int| 0 <= i < lifts.len() ==> language::numeric_lang(model::gsem(theta), lifts[i], p[i]);
                 assert(lifts[index] == language::Regex::Empty);
-                assert(language::lang(model::gsem(theta), lifts[index], parts[index]));
+                assert(language::numeric_lang(model::gsem(theta), lifts[index], parts[index]));
             }
         }
     }
@@ -6522,27 +8377,27 @@ pub(crate) mod verify {
     )
         requires left.len() == right.len(),
             forall|i: int, word: Seq<EventView>| 0 <= i < left.len()
-                ==> language::lang(sem, left[i], word) == language::lang(sem, right[i], word),
-        ensures forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
-            == language::lang(sem, language::Regex::Concat(right), word),
+                ==> language::numeric_lang(sem, left[i], word) == language::numeric_lang(sem, right[i], word),
+        ensures forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(left), word)
+            == language::numeric_lang(sem, language::Regex::Concat(right), word),
     {
-        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(left), word)
-            == language::lang(sem, language::Regex::Concat(right), word) by {
-            if language::lang(sem, language::Regex::Concat(left), word) {
+        assert forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(left), word)
+            == language::numeric_lang(sem, language::Regex::Concat(right), word) by {
+            if language::numeric_lang(sem, language::Regex::Concat(left), word) {
                 let parts = choose|p: Seq<Seq<EventView>>| p.len() == left.len() && word == p.flatten()
-                    && forall|i: int| 0 <= i < left.len() ==> language::lang(sem, left[i], p[i]);
-                assert forall|i: int| 0 <= i < right.len() implies language::lang(sem, right[i], parts[i]) by {
-                    assert(language::lang(sem, left[i], parts[i]));
+                    && forall|i: int| 0 <= i < left.len() ==> language::numeric_lang(sem, left[i], p[i]);
+                assert forall|i: int| 0 <= i < right.len() implies language::numeric_lang(sem, right[i], parts[i]) by {
+                    assert(language::numeric_lang(sem, left[i], parts[i]));
                 }
-                assert(language::lang(sem, language::Regex::Concat(right), word));
+                assert(language::numeric_lang(sem, language::Regex::Concat(right), word));
             }
-            if language::lang(sem, language::Regex::Concat(right), word) {
+            if language::numeric_lang(sem, language::Regex::Concat(right), word) {
                 let parts = choose|p: Seq<Seq<EventView>>| p.len() == right.len() && word == p.flatten()
-                    && forall|i: int| 0 <= i < right.len() ==> language::lang(sem, right[i], p[i]);
-                assert forall|i: int| 0 <= i < left.len() implies language::lang(sem, left[i], parts[i]) by {
-                    assert(language::lang(sem, right[i], parts[i]));
+                    && forall|i: int| 0 <= i < right.len() ==> language::numeric_lang(sem, right[i], p[i]);
+                assert forall|i: int| 0 <= i < left.len() implies language::numeric_lang(sem, left[i], parts[i]) by {
+                    assert(language::numeric_lang(sem, right[i], parts[i]));
                 }
-                assert(language::lang(sem, language::Regex::Concat(left), word));
+                assert(language::numeric_lang(sem, language::Regex::Concat(left), word));
             }
         }
     }
@@ -6555,6 +8410,17 @@ pub(crate) mod verify {
     {
         reveal(regex_children);
         regex_children_wf(g, id);
+        match g.regexes[id as int].kind {
+            model::RegexKindNode::Union(_) | model::RegexKindNode::Concat(_) | model::RegexKindNode::Intersect(_) => {},
+            _ => {},
+        }
+    }
+
+    pub proof fn regex_lemma_child_available(g: model::Graph, id: nat, index: nat)
+        requires id < g.regexes.len(), index < regex_children(g, id).len(),
+        ensures model::regex_node_child(g.regexes[id as int].kind, index) is Some,
+    {
+        reveal(regex_children);
         match g.regexes[id as int].kind {
             model::RegexKindNode::Union(_) | model::RegexKindNode::Concat(_) | model::RegexKindNode::Intersect(_) => {},
             _ => {},
@@ -6803,13 +8669,13 @@ pub(crate) mod verify {
 
     pub proof fn regex_language_unfold<L>(sem: spec_fn(L, EventView) -> bool, regex: language::Regex<L>, word: Seq<EventView>)
         ensures match regex {
-            language::Regex::Union(cs) => language::lang(sem, regex, word) == (exists|i: int| 0 <= i < cs.len() && language::lang(sem, cs[i], word)),
-            language::Regex::Intersect(cs) => language::lang(sem, regex, word) == (forall|i: int| 0 <= i < cs.len() ==> language::lang(sem, cs[i], word)),
-            language::Regex::Test(t) => language::lang(sem, regex, word) == (word.len() == 1 && sem(t, word[0])),
-            language::Regex::Not(r) => language::lang(sem, regex, word) == !language::lang(sem, *r, word),
-            language::Regex::Epsilon => language::lang(sem, regex, word) == (word.len() == 0),
-            language::Regex::Empty => !language::lang(sem, regex, word),
-            language::Regex::All => language::lang(sem, regex, word),
+            language::Regex::Union(cs) => language::numeric_lang(sem, regex, word) == (exists|i: int| 0 <= i < cs.len() && language::numeric_lang(sem, cs[i], word)),
+            language::Regex::Intersect(cs) => language::numeric_lang(sem, regex, word) == (forall|i: int| 0 <= i < cs.len() ==> language::numeric_lang(sem, cs[i], word)),
+            language::Regex::Test(t) => language::numeric_lang(sem, regex, word) == (word.len() == 1 && sem(t, word[0])),
+            language::Regex::Not(r) => language::numeric_lang(sem, regex, word) == !language::numeric_lang(sem, *r, word),
+            language::Regex::Epsilon => language::numeric_lang(sem, regex, word) == (word.len() == 0),
+            language::Regex::Empty => !language::numeric_lang(sem, regex, word),
+            language::Regex::All => language::numeric_lang(sem, regex, word),
             _ => true,
         },
     {
@@ -6839,22 +8705,22 @@ pub(crate) mod verify {
         match g.regexes[id as int].kind {
             model::RegexKindNode::Union(cs) => {
                 if model::regex_lang(g, theta, id, word) {
-                    let i = choose|i: int| 0 <= i < cs.len() && language::lang(sem, model::lift_regexes(g, cs)[i], word);
+                    let i = choose|i: int| 0 <= i < cs.len() && language::numeric_lang(sem, model::lift_regexes(g, cs)[i], word);
                     assert(model::regex_lang(g, theta, cs[i], word));
                 }
                 if regex_combo_nats(g, theta, cs, word, false) {
                     let i = choose|i: int| 0 <= i < cs.len() && model::regex_lang(g, theta, cs[i], word);
-                    assert(language::lang(sem, model::lift_regexes(g, cs)[i], word));
+                    assert(language::numeric_lang(sem, model::lift_regexes(g, cs)[i], word));
                 }
             },
             model::RegexKindNode::Intersect(cs) => {
                 if model::regex_lang(g, theta, id, word) {
                     assert forall|i: int| 0 <= i < cs.len() implies model::regex_lang(g, theta, cs[i], word) by {
-                        assert(language::lang(sem, model::lift_regexes(g, cs)[i], word));
+                        assert(language::numeric_lang(sem, model::lift_regexes(g, cs)[i], word));
                     }
                 }
                 if regex_combo_nats(g, theta, cs, word, true) {
-                    assert forall|i: int| 0 <= i < cs.len() implies language::lang(sem, model::lift_regexes(g, cs)[i], word) by {
+                    assert forall|i: int| 0 <= i < cs.len() implies language::numeric_lang(sem, model::lift_regexes(g, cs)[i], word) by {
                         assert(model::regex_lang(g, theta, cs[i], word));
                     }
                 }
@@ -6974,13 +8840,13 @@ pub(crate) mod verify {
             regex_stats_prefix(g, ids, ids.len(), epsilon, stats, false), epsilon@ == g.constants.epsilon,
             !regex_retained(g, ids, index, mode, stats),
         ensures regex_ids_valid(g, ids.remove(index)),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> regex_combo(g, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, theta, ids, word, mode.intersect),
     {
         regex_constants(g);
         let a = ids[index]@;
         regex_unfold(g, a);
-        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies regex_combo(g, theta, ids.remove(index), word, mode.intersect) == regex_combo(g, theta, ids, word, mode.intersect) by {
             let sem = model::gsem(theta);
             if exists|i: int| 0 <= i < ids.len() && regex_absorbed_by(g, a, ids[i]@, mode.intersect) {
@@ -7013,7 +8879,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn regex_equivalent(g: model::Graph, left: Seq<RegexId>, right: Seq<RegexId>, intersect: bool) -> bool {
-        forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+        forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> regex_combo(g, theta, left, word, intersect) == regex_combo(g, theta, right, word, intersect)
     }
 
@@ -7031,41 +8897,12 @@ pub(crate) mod verify {
         requires forall|id: RegexId| left.contains(id) == right.contains(id),
         ensures regex_equivalent(g, left, right, intersect),
     {
-        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies regex_combo(g, theta, left, word, intersect) == regex_combo(g, theta, right, word, intersect) by {
-            if intersect {
-                if regex_combo(g, theta, left, word, true) {
-                    assert forall|i: int| 0 <= i < right.len() implies model::regex_lang(g, theta, right[i]@, word) by {
-                        assert(right.contains(right[i]));
-                        assert(left.contains(right[i]));
-                        let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                        assert(model::regex_lang(g, theta, left[j]@, word));
-                    }
-                }
-                if regex_combo(g, theta, right, word, true) {
-                    assert forall|i: int| 0 <= i < left.len() implies model::regex_lang(g, theta, left[i]@, word) by {
-                        assert(left.contains(left[i]));
-                        assert(right.contains(left[i]));
-                        let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                        assert(model::regex_lang(g, theta, right[j]@, word));
-                    }
-                }
-            } else {
-                if regex_combo(g, theta, left, word, false) {
-                    let i = choose|i: int| 0 <= i < left.len() && model::regex_lang(g, theta, left[i]@, word);
-                    assert(left.contains(left[i]));
-                    assert(right.contains(left[i]));
-                    let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                    assert(model::regex_lang(g, theta, right[j]@, word));
-                }
-                if regex_combo(g, theta, right, word, false) {
-                    let i = choose|i: int| 0 <= i < right.len() && model::regex_lang(g, theta, right[i]@, word);
-                    assert(right.contains(right[i]));
-                    assert(left.contains(right[i]));
-                    let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                    assert(model::regex_lang(g, theta, left[j]@, word));
-                }
-            }
+            lemma_combo_inclusion(left, right,
+                |id: RegexId| model::regex_lang(g, theta, id@, word), intersect);
+            lemma_combo_inclusion(right, left,
+                |id: RegexId| model::regex_lang(g, theta, id@, word), intersect);
         }
     }
 
@@ -7129,27 +8966,27 @@ pub(crate) mod verify {
         let root = if intersect { language::Regex::Intersect(cs) } else { language::Regex::Union(cs) };
         language::lemma_nullable_iff_nil(sem, root);
         regex_language_unfold(sem, root, word);
-        assert forall|i: int| 0 <= i < ids.len() implies language::lang(sem, cs[i], word)
+        assert forall|i: int| 0 <= i < ids.len() implies language::numeric_lang(sem, cs[i], word)
             == language::nullable(model::lift_regex(g, ids[i]@)) by {
             assert(cs[i] == model::lift_regex(g, ids[i]@));
             language::lemma_nullable_iff_nil(sem, cs[i]);
         }
         if intersect {
             if nullable {
-                assert forall|i: int| 0 <= i < cs.len() implies language::lang(sem, cs[i], word) by {};
+                assert forall|i: int| 0 <= i < cs.len() implies language::numeric_lang(sem, cs[i], word) by {};
             }
-            if language::lang(sem, root, word) {
+            if language::numeric_lang(sem, root, word) {
                 assert forall|i: int| 0 <= i < ids.len() implies language::nullable(model::lift_regex(g, ids[i]@)) by {
-                    assert(language::lang(sem, cs[i], word));
+                    assert(language::numeric_lang(sem, cs[i], word));
                 }
             }
         } else {
             if nullable {
                 let i = choose|i: int| 0 <= i < ids.len() && language::nullable(model::lift_regex(g, ids[i]@));
-                assert(language::lang(sem, cs[i], word));
+                assert(language::numeric_lang(sem, cs[i], word));
             }
-            if language::lang(sem, root, word) {
-                let i = choose|i: int| 0 <= i < cs.len() && language::lang(sem, cs[i], word);
+            if language::numeric_lang(sem, root, word) {
+                let i = choose|i: int| 0 <= i < cs.len() && language::numeric_lang(sem, cs[i], word);
                 assert(language::nullable(model::lift_regex(g, ids[i]@)));
             }
         }
@@ -7177,7 +9014,7 @@ pub(crate) mod verify {
                 == if intersect { regex_group_combo(g, theta, tests, others, word, true) && model::regex_lang(g, theta, id@, word) }
                     else { regex_group_combo(g, theta, tests, others, word, false) || model::regex_lang(g, theta, id@, word) },
     {
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(model::test_holds);
         regex_test_ids_shape(tests);
         regex_test_ids_shape(next_tests);
@@ -7235,7 +9072,7 @@ pub(crate) mod verify {
                 == if mode.intersect { regex_combo(g, theta, before, word, true) && model::regex_lang(g, theta, id@, word) }
                     else { regex_combo(g, theta, before, word, false) || model::regex_lang(g, theta, id@, word) },
     {
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(model::lift_regex);
         regex_ids_shape(before);
         regex_ids_shape(after);
@@ -7407,9 +9244,9 @@ pub(crate) mod verify {
 
     pub proof fn regex_group_equivalence_extends(g: model::Graph, next: model::Graph, original: Seq<RegexId>, tests: Seq<TestId>, others: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(g), model::graph_extends(g, next), regex_ids_valid(g, original), test_ids_valid(g, tests), regex_ids_valid(g, others),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> regex_group_combo(g, theta, tests, others, word, intersect) == regex_combo(g, theta, original, word, intersect),
-        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> regex_group_combo(next, theta, tests, others, word, intersect) == regex_combo(next, theta, original, word, intersect),
     {
         regex_group_extends(g, next, tests, others, intersect);
@@ -7458,7 +9295,7 @@ pub(crate) mod verify {
 
     pub proof fn regex_set_result(g: model::Graph, ids: Seq<RegexId>, original: Seq<RegexId>, intersect: bool)
         requires model::graph_wf(g), regex_ids_valid(g, ids), regex_ids_valid(g, original), regex_equivalent(g, ids, original, intersect),
-        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta) ==>
+        ensures forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len()) ==>
             (ids.len() == 0 ==> regex_combo(g, theta, original, word, intersect) == intersect)
             && (ids.len() == 1 ==> regex_combo(g, theta, original, word, intersect) == model::regex_lang(g, theta, ids[0]@, word)),
     {
@@ -7471,18 +9308,18 @@ pub(crate) mod verify {
 
     pub proof fn regex_test_connective_extends(g: model::Graph, next: model::Graph, tests: Seq<TestId>, id: TestId, intersect: bool)
         requires model::graph_wf(g), model::graph_extends(g, next), test_ids_valid(g, tests), id@ < g.tests.len(),
-            forall|theta: Subst, event: EventView| language::event_wf(theta)
+            forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                 ==> model::test_holds(theta, model::lift_test(g, id@), event) == test_combo(g, theta, tests, event, intersect),
-        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             ==> model::test_holds(theta, model::lift_test(next, id@), event) == test_combo(next, theta, tests, event, intersect),
     {
         hide(model::test_holds);
-        hide(language::lang);
+        hide(language::numeric_lang);
         model::lemma_lift_test_stable(g, next, id@);
         assert forall|i: int| 0 <= i < tests.len() implies model::lift_test(g, tests[i]@) == model::lift_test(next, tests[i]@) by {
             model::lemma_lift_test_stable(g, next, tests[i]@);
         }
-        assert forall|theta: Subst, event: EventView| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             implies model::test_holds(theta, model::lift_test(next, id@), event) == test_combo(next, theta, tests, event, intersect) by {
             assert(model::test_holds(theta, model::lift_test(g, id@), event) == test_combo(g, theta, tests, event, intersect));
             assert forall|i: int| 0 <= i < tests.len() implies model::test_holds(theta, model::lift_test(g, tests[i]@), event)
@@ -7613,7 +9450,7 @@ pub(crate) mod verify {
         value: GuardedTransition<L, C>, word: Seq<EventView>,
     ) -> bool {
         let context_sem = guarded_semantics(sem, ctx);
-        language::lang(context_sem, language::interp_transition(context_sem, event, value.term), word)
+        language::numeric_lang(context_sem, language::interp_transition(context_sem, event, value.term), word)
     }
 
     pub open spec fn guarded_refines<L, C>(
@@ -7801,8 +9638,8 @@ pub(crate) mod verify {
                 guarded_language(sem, ctx, event, guarded_set(before, intersect), word)
                     == guarded_language(sem, ctx, event, guarded_set(after, intersect), word) by {
                 assert forall|i: int| 0 <= i < before.len() implies
-                    language::lang(context_sem, language::interp_transition(context_sem, event, left[i]), word)
-                        == language::lang(context_sem, language::interp_transition(context_sem, event, right[i]), word) by {
+                    language::numeric_lang(context_sem, language::interp_transition(context_sem, event, left[i]), word)
+                        == language::numeric_lang(context_sem, language::interp_transition(context_sem, event, right[i]), word) by {
                     assert(guarded_refines(sem, valid, before[i], after[i]));
                     assert((before[i].guard)(ctx, event));
                     assert(guarded_language(sem, ctx, event, before[i], word)
@@ -7815,16 +9652,16 @@ pub(crate) mod verify {
                     language::lemma_interp_union(context_sem, event, left, word);
                     language::lemma_interp_union(context_sem, event, right, word);
                     if exists|i: int| 0 <= i < left.len()
-                        && language::lang(context_sem, language::interp_transition(context_sem, event, left[i]), word) {
+                        && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, left[i]), word) {
                         let i = choose|i: int| 0 <= i < left.len()
-                            && language::lang(context_sem, language::interp_transition(context_sem, event, left[i]), word);
-                        assert(language::lang(context_sem, language::interp_transition(context_sem, event, right[i]), word));
+                            && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, left[i]), word);
+                        assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, right[i]), word));
                     }
                     if exists|i: int| 0 <= i < right.len()
-                        && language::lang(context_sem, language::interp_transition(context_sem, event, right[i]), word) {
+                        && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, right[i]), word) {
                         let i = choose|i: int| 0 <= i < right.len()
-                            && language::lang(context_sem, language::interp_transition(context_sem, event, right[i]), word);
-                        assert(language::lang(context_sem, language::interp_transition(context_sem, event, left[i]), word));
+                            && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, right[i]), word);
+                        assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, left[i]), word));
                     }
                 }
             }
@@ -7849,7 +9686,7 @@ pub(crate) mod verify {
             let left = seq![language::interp_transition(context_sem, event, before.term), suffix];
             let right = seq![language::interp_transition(context_sem, event, after.term), suffix];
             assert forall|i: int, word: Seq<EventView>| 0 <= i < left.len() implies
-                language::lang(context_sem, left[i], word) == language::lang(context_sem, right[i], word) by {
+                language::numeric_lang(context_sem, left[i], word) == language::numeric_lang(context_sem, right[i], word) by {
                 if i == 0 {
                     assert(guarded_language(sem, ctx, event, before, word)
                         == guarded_language(sem, ctx, event, after, word));
@@ -8234,7 +10071,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn transition_context_valid() -> spec_fn(TransitionContext) -> bool {
-        |ctx: TransitionContext| language::event_wf(ctx.bindings)
+        |ctx: TransitionContext| language::event_wf(ctx.bindings, ctx.bindings.len())
     }
 
     pub enum ActionShape {
@@ -8335,6 +10172,28 @@ pub(crate) mod verify {
         guarded_run(transition_context_sem(), transition_freeze_tasks(g, tasks), transition_known_values(g, values))
     }
 
+    /// A defined continuation cannot consume values that have not been completed.
+    pub proof fn transition_lemma_stack_ready(g: model::Graph, pending: Seq<ActionShape>, task: ActionShape, values: Seq<TransitionId>)
+        requires transition_program(g, pending.push(task), values) is Some,
+        ensures match task {
+            ActionShape::Union(n) | ActionShape::Intersect(n) => n <= values.len(),
+            ActionShape::If(_) | ActionShape::CleanIf(_, _) | ActionShape::SwapThen => values.len() >= 2,
+            ActionShape::NotResult | ActionShape::AppendResult(_) => values.len() > 0,
+            ActionShape::Fold(ids, index) => 0 < index < ids.len() ==> values.len() > 0,
+            _ => true,
+        },
+    {
+        let actions = transition_freeze_tasks(g, pending.push(task));
+        assert(actions.last() == transition_freeze_action(g, task));
+        assert(guarded_apply(transition_context_sem(), actions.last(), transition_known_values(g, values)) is Some);
+        match task {
+            ActionShape::Union(_) | ActionShape::Intersect(_) | ActionShape::If(_)
+            | ActionShape::CleanIf(_, _) | ActionShape::SwapThen
+            | ActionShape::NotResult | ActionShape::AppendResult(_) | ActionShape::Fold(_, _) => {},
+            _ => {},
+        }
+    }
+
     pub open spec fn transition_program_refines(
         before: Option<Seq<TransitionMeaning>>, after: Option<Seq<TransitionMeaning>>,
     ) -> bool {
@@ -8348,6 +10207,14 @@ pub(crate) mod verify {
         if model::test_holds(theta, model::lift_test(g, test@), event) {
             transition_lang(g, theta, yes, event, word)
         } else { transition_lang(g, theta, no, event, word) }
+    }
+
+    pub open spec fn transition_set_leaf(node: model::TransitionNode, intersect: bool) -> bool {
+        match node {
+            model::TransitionNode::Union(_) => intersect,
+            model::TransitionNode::Intersect(_) => !intersect,
+            _ => true,
+        }
     }
 
     #[verifier::opaque]
@@ -9067,7 +10934,7 @@ pub(crate) mod verify {
             if n == 0 {
                 assert(pp == 1);
                 assert(sp == 0);
-                assert(pp * (l + 1) == l + 1);
+                assert(pp * (l + 1) == l + 1) by (nonlinear_arith) requires pp == 1;
             } else {
                 assert(pp * (l + 1) >= sp + l + 1 && pp * (l + 1) >= n + 2) by (nonlinear_arith)
                     requires pp >= sp, pp >= n + 1, n >= 1, l >= 1;
@@ -9106,9 +10973,11 @@ pub(crate) mod verify {
 
     // ---------------------------------------------------------------- monotonicity
 
+    #[verifier::spinoff_prover]
     proof fn lemma_clean_steps_ok()
         ensures steps_ok(clean_cost_fn()),
     {
+        hide(clean_cost);
         reveal(steps_ok);
         assert forall|d: nat| #[trigger] clean_cost_fn()(d) <= clean_cost_fn()(d + 1)
             && (d >= 1 ==> 2 * clean_cost_fn()(d) <= clean_cost_fn()(d + 1)) by {
@@ -9116,9 +10985,11 @@ pub(crate) mod verify {
         }
     }
 
+    #[verifier::spinoff_prover]
     proof fn lemma_not_steps_ok()
         ensures steps_ok(not_cost_fn()),
     {
+        hide(not_cost);
         reveal(steps_ok);
         assert forall|d: nat| #[trigger] not_cost_fn()(d) <= not_cost_fn()(d + 1)
             && (d >= 1 ==> 2 * not_cost_fn()(d) <= not_cost_fn()(d + 1)) by {
@@ -9126,9 +10997,11 @@ pub(crate) mod verify {
         }
     }
 
+    #[verifier::spinoff_prover]
     proof fn lemma_append_steps_ok()
         ensures steps_ok(append_cost_fn()),
     {
+        hide(append_cost);
         reveal(steps_ok);
         assert forall|d: nat| #[trigger] append_cost_fn()(d) <= append_cost_fn()(d + 1)
             && (d >= 1 ==> 2 * append_cost_fn()(d) <= append_cost_fn()(d + 1)) by {
@@ -11216,7 +13089,7 @@ pub(crate) mod verify {
         if n == 0 { 1 } else { 2 * pow2((n - 1) as nat) }
     }
 
-    /// Conserved quantity of `transition_collect_nodes`: pending, flattened, and constant children.
+    /// Conserved quantity of `TransitionMode::collect`: pending, flattened, and constant children.
     pub open spec fn collect_total(
         g: model::Graph, pending: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>, intersect: bool,
     ) -> nat {
@@ -11405,7 +13278,7 @@ pub(crate) mod verify {
         }
     }
 
-    /// After `transition_collect_nodes`: the flattened children and constants fit in the original weight.
+    /// After `TransitionMode::collect`: the flattened children and constants fit in the original weight.
     pub proof fn collect_lemma_flat(
         g: model::Graph, original: Seq<TransitionId>, pending: Seq<TransitionId>, flat: Seq<TransitionId>,
         rs: Seq<RegexId>, intersect: bool,
@@ -11648,7 +13521,7 @@ pub(crate) mod verify {
             let sem = model::gsem(theta);
             assert forall|i: int| 0 <= i < children.len() implies
                 transition_lang(g, theta, children[i], event, word)
-                    == language::lang(sem, language::interp_transition(sem, event, terms[i]), word) by {
+                    == language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word) by {
                 assert(terms[i] == model::lift_transition(g, children[i]@));
             }
             if intersect {
@@ -11657,13 +13530,13 @@ pub(crate) mod verify {
                 language::lemma_interp_union(sem, event, terms, word);
                 if transition_lang(g, theta, id, event, word) {
                     let i = choose|i: int| 0 <= i < terms.len()
-                        && language::lang(sem, language::interp_transition(sem, event, terms[i]), word);
+                        && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word);
                     assert(transition_lang(g, theta, children[i], event, word));
                 }
                 if transition_combo(g, theta, children, event, word, false) {
                     let i = choose|i: int| 0 <= i < children.len()
                         && transition_lang(g, theta, children[i], event, word);
-                    assert(language::lang(sem, language::interp_transition(sem, event, terms[i]), word));
+                    assert(language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word));
                 }
             }
         }
@@ -11704,7 +13577,7 @@ pub(crate) mod verify {
         g: model::Graph, mode: TransitionModeModel, pending: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>,
         next_pending: Seq<TransitionId>, next_flat: Seq<TransitionId>, next_constants: Seq<RegexId>, collapsed: bool,
     ) -> bool {
-        (forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        (forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == if collapsed { !mode.intersect } else {
                     transition_collect_combo(g, theta, next_pending, next_flat, next_constants, event, word, mode.intersect)
@@ -11732,7 +13605,7 @@ pub(crate) mod verify {
         transition_lemma_identities(g, mode);
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == transition_collect_combo(g, theta, pending.drop_last(), flat, constants, event, word, mode.intersect) by {
             transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
@@ -11744,12 +13617,12 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), transition_mode_valid(g, mode),
             pending.len() > 0, pending.last() == mode.absorber,
-        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect,
     {
         transition_lemma_identities(g, mode);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect) == !mode.intersect by {
             transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
         }
@@ -11765,7 +13638,7 @@ pub(crate) mod verify {
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
         assert(flat + seq![pending.last()] =~= flat.push(pending.last()));
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == transition_collect_combo(g, theta, pending.drop_last(), flat.push(pending.last()), constants, event, word, mode.intersect) by {
             transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
@@ -11784,7 +13657,7 @@ pub(crate) mod verify {
         transition_lemma_constant(g, pending.last(), regex);
         transition_lemma_pending_work_pop(g, pending, mode.intersect);
         assert(pending.drop_last() + seq![pending.last()] =~= pending);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == transition_collect_combo(g, theta, pending.drop_last(), flat, constants.push(regex), event, word, mode.intersect) by {
             transition_lemma_combo_concat(g, theta, pending.drop_last(), seq![pending.last()], event, word, mode.intersect);
@@ -11819,7 +13692,7 @@ pub(crate) mod verify {
         assert(transition_children(g, id@) == model::transition_ids(children));
         assert(prefix.push(id) =~= pending);
         transition_lemma_children_language(g, id, children, mode.intersect);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_collect_combo(g, theta, pending, flat, constants, event, word, mode.intersect)
                 == transition_collect_combo(g, theta, prefix + children, flat, constants, event, word, mode.intersect) by {
             transition_lemma_combo_concat(g, theta, prefix, seq![id], event, word, mode.intersect);
@@ -11943,7 +13816,7 @@ pub(crate) mod verify {
 
 
     pub open spec fn transition_equivalent(g: model::Graph, left: Seq<TransitionId>, right: Seq<TransitionId>, intersect: bool) -> bool {
-        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_combo(g, theta, left, event, word, intersect)
                 == transition_combo(g, theta, right, event, word, intersect)
     }
@@ -11979,9 +13852,12 @@ pub(crate) mod verify {
 
     pub proof fn transition_dedup_strict(sorted: Seq<TransitionId>, result: Seq<TransitionId>)
         requires result == dedup_spec(sorted),
-            forall|i: int, j: int| 0 <= i < j < sorted.len() ==> sorted[i]@ <= sorted[j]@,
-        ensures model::strictly_increasing(model::transition_ids(result)),
+            forall|i: int, j: int| 0 <= i < j < sorted.len() ==> !(sorted[i].cmp_spec(&sorted[j]) is Greater),
+        ensures model::strictly_increasing(model::transition_ids(result)), result.no_duplicates(),
     {
+        assert forall|i: int, j: int| 0 <= i < j < sorted.len() implies sorted[i]@ <= sorted[j]@ by {
+            assert(!(sorted[i].cmp_spec(&sorted[j]) is Greater));
+        }
         let key: spec_fn(TransitionId) -> nat = |id: TransitionId| id@;
         lemma_dedup_strict::<TransitionId>(sorted, key);
         assert forall|i: int, j: int| 0 <= i < j < result.len() implies
@@ -11989,51 +13865,34 @@ pub(crate) mod verify {
             assert(key(dedup_spec(sorted)[i])
                 < key(dedup_spec(sorted)[j]));
         }
+        assert forall|i: int, j: int| 0 <= i < result.len() && 0 <= j < result.len() && i != j
+            implies result[i] != result[j] by {
+            if i < j {
+                assert(model::transition_ids(result)[i] < model::transition_ids(result)[j]);
+            } else {
+                assert(model::transition_ids(result)[j] < model::transition_ids(result)[i]);
+            }
+        }
     }
 
     pub proof fn transition_combo_members(g: model::Graph, left: Seq<TransitionId>, right: Seq<TransitionId>, intersect: bool)
         requires forall|id: TransitionId| left.contains(id) == right.contains(id),
         ensures transition_equivalent(g, left, right, intersect),
     {
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_combo(g, theta, left, event, word, intersect)
                 == transition_combo(g, theta, right, event, word, intersect) by {
-            if intersect {
-                if transition_combo(g, theta, left, event, word, true) {
-                    assert forall|i: int| 0 <= i < right.len() implies transition_lang(g, theta, right[i], event, word) by {
-                        assert(right.contains(right[i])); assert(left.contains(right[i]));
-                        let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                        assert(transition_lang(g, theta, left[j], event, word));
-                    }
-                }
-                if transition_combo(g, theta, right, event, word, true) {
-                    assert forall|i: int| 0 <= i < left.len() implies transition_lang(g, theta, left[i], event, word) by {
-                        assert(left.contains(left[i])); assert(right.contains(left[i]));
-                        let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                        assert(transition_lang(g, theta, right[j], event, word));
-                    }
-                }
-            } else {
-                if transition_combo(g, theta, left, event, word, false) {
-                    let i = choose|i: int| 0 <= i < left.len() && transition_lang(g, theta, left[i], event, word);
-                    assert(left.contains(left[i])); assert(right.contains(left[i]));
-                    let j = choose|j: int| 0 <= j < right.len() && right[j] == left[i];
-                    assert(transition_lang(g, theta, right[j], event, word));
-                }
-                if transition_combo(g, theta, right, event, word, false) {
-                    let i = choose|i: int| 0 <= i < right.len() && transition_lang(g, theta, right[i], event, word);
-                    assert(right.contains(right[i])); assert(left.contains(right[i]));
-                    let j = choose|j: int| 0 <= j < left.len() && left[j] == right[i];
-                    assert(transition_lang(g, theta, left[j], event, word));
-                }
-            }
+            lemma_combo_inclusion(left, right,
+                |id: TransitionId| transition_lang(g, theta, id, event, word), intersect);
+            lemma_combo_inclusion(right, left,
+                |id: TransitionId| transition_lang(g, theta, id, event, word), intersect);
         }
     }
 
     pub open spec fn transition_collected(
         g: model::Graph, original: Seq<TransitionId>, flat: Seq<TransitionId>, constants: Seq<RegexId>, intersect: bool,
     ) -> bool {
-        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_combo(g, theta, original, event, word, intersect)
                 == transition_collect_combo(g, theta, Seq::empty(), flat, constants, event, word, intersect)
     }
@@ -12062,12 +13921,12 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), transition_mode_valid(g, mode),
             transition_collected(g, original, flat, constants, mode.intersect),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(g, theta, grouped, event, word) == regex_combo(g, theta, constants, word, mode.intersect),
         ensures
             transition_equivalent(g, original, flat.push(grouped), mode.intersect),
             grouped == mode.identity ==> transition_equivalent(g, original, flat, mode.intersect),
-            grouped == mode.absorber ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            grouped == mode.absorber ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_combo(g, theta, original, event, word, mode.intersect)
                     == transition_lang(g, theta, mode.absorber, event, word),
     {
@@ -12076,7 +13935,7 @@ pub(crate) mod verify {
         hide(regex_combo);
         transition_lemma_identities(g, mode);
         assert(flat + seq![grouped] =~= flat.push(grouped));
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_combo(g, theta, original, event, word, mode.intersect)
                 == transition_combo(g, theta, flat.push(grouped), event, word, mode.intersect) by {
             transition_lemma_combo_concat(g, theta, flat, seq![grouped], event, word, mode.intersect);
@@ -12088,7 +13947,7 @@ pub(crate) mod verify {
                 == regex_combo(g, theta, constants, word, mode.intersect));
         }
         if grouped == mode.identity {
-            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 implies transition_combo(g, theta, original, event, word, mode.intersect)
                     == transition_combo(g, theta, flat, event, word, mode.intersect) by {
                 transition_lemma_combo_concat(g, theta, flat, seq![grouped], event, word, mode.intersect);
@@ -12102,7 +13961,7 @@ pub(crate) mod verify {
 
     pub proof fn transition_lemma_set_result(g: model::Graph, ids: Seq<TransitionId>, original: Seq<TransitionId>, intersect: bool)
         requires transition_equivalent(g, ids, original, intersect),
-        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        ensures forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> (ids.len() == 0 ==> transition_combo(g, theta, original, event, word, intersect) == intersect)
                 && (ids.len() == 1 ==> transition_combo(g, theta, original, event, word, intersect)
                     == transition_lang(g, theta, ids[0], event, word)),
@@ -12138,20 +13997,20 @@ pub(crate) mod verify {
 
     pub proof fn transition_set_law(ids: Seq<TransitionId>, intersect: bool)
         ensures forall|g: model::Graph, theta: Subst, event: EventView, word: Seq<EventView>|
-            language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
+            language::numeric_lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
                 transition_unbounded_node(g, if intersect { model::TransitionNode::Intersect(model::transition_ids(ids)) }
                     else { model::TransitionNode::Union(model::transition_ids(ids)) })), word)
                 == transition_combo(g, theta, ids, event, word, intersect),
     {
         assert forall|g: model::Graph, theta: Subst, event: EventView, word: Seq<EventView>|
-            language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
+            language::numeric_lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event,
                 transition_unbounded_node(g, if intersect { model::TransitionNode::Intersect(model::transition_ids(ids)) }
                     else { model::TransitionNode::Union(model::transition_ids(ids)) })), word)
                 == transition_combo(g, theta, ids, event, word, intersect) by {
             let sem = model::gsem(theta);
             let terms = model::transition_ids(ids).map(|i: int, id: nat| model::lift_transition(g, id));
             assert forall|i: int| 0 <= i < ids.len() implies
-                language::lang(sem, language::interp_transition(sem, event, terms[i]), word)
+                language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word)
                     == transition_lang(g, theta, ids[i], event, word) by {
                 assert(terms[i] == model::lift_transition(g, ids[i]@));
             }
@@ -12160,14 +14019,14 @@ pub(crate) mod verify {
             } else {
                 language::lemma_interp_union(sem, event, terms, word);
                 if exists|i: int| 0 <= i < terms.len()
-                    && language::lang(sem, language::interp_transition(sem, event, terms[i]), word) {
+                    && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word) {
                     let i = choose|i: int| 0 <= i < terms.len()
-                        && language::lang(sem, language::interp_transition(sem, event, terms[i]), word);
+                        && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word);
                     assert(transition_lang(g, theta, ids[i], event, word));
                 }
                 if transition_combo(g, theta, ids, event, word, false) {
                     let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, theta, ids[i], event, word);
-                    assert(language::lang(sem, language::interp_transition(sem, event, terms[i]), word));
+                    assert(language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word));
                 }
             }
         }
@@ -12245,7 +14104,7 @@ pub(crate) mod verify {
             !collapsed ==> pending.len() == 0,
         ensures
             !collapsed ==> transition_collected(g, original, flat, constants, mode.intersect),
-            collapsed ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            collapsed ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_combo(g, theta, original, event, word, mode.intersect)
                     == transition_lang(g, theta, mode.absorber, event, word),
     {
@@ -12253,7 +14112,7 @@ pub(crate) mod verify {
         hide(transition_combo);
         hide(regex_combo);
         transition_lemma_identities(g, mode);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_combo(g, theta, original, event, word, mode.intersect)
                 == if collapsed { transition_lang(g, theta, mode.absorber, event, word) }
                     else { transition_collect_combo(g, theta, Seq::empty(), flat, constants, event, word, mode.intersect) } by {
@@ -12404,7 +14263,7 @@ pub(crate) mod verify {
     pub open spec fn transition_result(g: model::Graph, task: ActionShape, id: TransitionId) -> bool {
         match transition_initial_value(g, task) {
             Some(expected) => forall|theta: Subst, event: EventView, word: Seq<EventView>|
-                language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+                language::event_wf(theta, theta.len()) && (expected.guard)(TransitionContext { bindings: theta }, event)
                     ==> guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
                         == transition_lang(g, theta, id, event, word),
             None => false,
@@ -12526,7 +14385,7 @@ pub(crate) mod verify {
     {
         let expected = transition_initial_value(g, task).unwrap();
         assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
-            language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+            language::event_wf(theta, theta.len()) && (expected.guard)(TransitionContext { bindings: theta }, event)
             implies #[trigger] guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
                 == transition_lang(g, theta, id, event, word) by {
             let ctx = TransitionContext { bindings: theta };
@@ -12624,10 +14483,10 @@ pub(crate) mod verify {
 
     pub proof fn transition_test_not_extends(before: model::Graph, after: model::Graph, root: TestId, negated: TestId)
         requires model::graph_wf(before), model::graph_extends(before, after), root@ < before.tests.len(), negated@ < before.tests.len(),
-            forall|theta: Subst, event: EventView| language::event_wf(theta)
+            forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                 ==> model::test_holds(theta, model::lift_test(before, negated@), event)
                     == !model::test_holds(theta, model::lift_test(before, root@), event),
-        ensures forall|theta: Subst, event: EventView| language::event_wf(theta)
+        ensures forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
             ==> model::test_holds(theta, model::lift_test(after, negated@), event)
                 == !model::test_holds(theta, model::lift_test(after, root@), event),
     {
@@ -12669,7 +14528,7 @@ pub(crate) mod verify {
     }
 
     pub open spec fn transition_path_tests(g: model::Graph, path: TestId, test: TestId, yes: TestId, no: TestId) -> bool {
-        forall|theta: Subst, event: EventView| language::event_wf(theta) ==>
+        forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len()) ==>
             (model::test_holds(theta, model::lift_test(g, yes@), event)
                 == (model::test_holds(theta, model::lift_test(g, path@), event)
                     && model::test_holds(theta, model::lift_test(g, test@), event)))
@@ -12760,20 +14619,20 @@ pub(crate) mod verify {
         sem: spec_fn(L, EventView) -> bool, event: EventView,
         a: language::Transition<L>, b: language::Transition<L>, word: Seq<EventView>,
     )
-        ensures language::lang(sem, language::interp_transition(sem, event,
+        ensures language::numeric_lang(sem, language::interp_transition(sem, event,
             language::Transition::Intersect(seq![a, b])), word)
-            == (language::lang(sem, language::interp_transition(sem, event, a), word)
-                && language::lang(sem, language::interp_transition(sem, event, b), word)),
+            == (language::numeric_lang(sem, language::interp_transition(sem, event, a), word)
+                && language::numeric_lang(sem, language::interp_transition(sem, event, b), word)),
     {
         language::lemma_interp_intersect(sem, event, seq![a, b], word);
-        assert((forall|i: int| 0 <= i < 2 ==> language::lang(sem,
+        assert((forall|i: int| 0 <= i < 2 ==> language::numeric_lang(sem,
             language::interp_transition(sem, event, seq![a, b][i]), word))
-            == (language::lang(sem, language::interp_transition(sem, event, a), word)
-                && language::lang(sem, language::interp_transition(sem, event, b), word))) by {
-            assert forall|i: int| 0 <= i < 2 implies language::lang(sem,
+            == (language::numeric_lang(sem, language::interp_transition(sem, event, a), word)
+                && language::numeric_lang(sem, language::interp_transition(sem, event, b), word))) by {
+            assert forall|i: int| 0 <= i < 2 implies language::numeric_lang(sem,
                 language::interp_transition(sem, event, seq![a, b][i]), word)
-                    == if i == 0 { language::lang(sem, language::interp_transition(sem, event, a), word) }
-                    else { language::lang(sem, language::interp_transition(sem, event, b), word) } by {}
+                    == if i == 0 { language::numeric_lang(sem, language::interp_transition(sem, event, a), word) }
+                    else { language::numeric_lang(sem, language::interp_transition(sem, event, b), word) } by {}
         }
     }
 
@@ -12803,7 +14662,7 @@ pub(crate) mod verify {
     )
         requires task == ActionShape::Fold(model::transition_ids(ids), 0)
                 || (ids.len() == 2 && task == ActionShape::Pair(ids[0]@, ids[1]@)),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(g, theta, out, event, word)
                     == transition_combo(g, theta, ids, event, word, true),
         ensures transition_result(g, task, out),
@@ -12815,14 +14674,14 @@ pub(crate) mod verify {
         }
         assert(expected.term == language::Transition::Intersect(terms));
         assert forall|theta: Subst, event: EventView, word: Seq<EventView>|
-            language::event_wf(theta) && (expected.guard)(TransitionContext { bindings: theta }, event)
+            language::event_wf(theta, theta.len()) && (expected.guard)(TransitionContext { bindings: theta }, event)
             implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
                 == transition_lang(g, theta, out, event, word) by {
             let ctx = TransitionContext { bindings: theta };
             transition_lemma_context_sem(ctx);
             language::lemma_interp_intersect(model::gsem(theta), event, terms, word);
             assert forall|i: int| 0 <= i < ids.len() implies
-                language::lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event, terms[i]), word)
+                language::numeric_lang(model::gsem(theta), language::interp_transition(model::gsem(theta), event, terms[i]), word)
                     == transition_lang(g, theta, ids[i], event, word) by {
                 assert(terms[i] == model::lift_transition(g, ids[i]@));
             }
@@ -12845,7 +14704,7 @@ pub(crate) mod verify {
         // Expose only constants; full table facts unfold irrelevant recursive semantics.
         assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_lemma_identities(g, TransitionModeModel { intersect: true, identity: all, absorber: empty });
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(g, theta, out, event, word)
                 == transition_combo(g, theta, seq![a, b], event, word, true) by {
             assert(transition_lang(g, theta, all, event, word));
@@ -12875,7 +14734,7 @@ pub(crate) mod verify {
         at: TransitionId, bt: TransitionId, ae: TransitionId, be: TransitionId,
     )
         requires model::graph_wf(g),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
                     == if model::test_holds(theta, model::lift_test(g, test@), event) {
                         transition_lang(g, theta, at, event, word) && transition_lang(g, theta, bt, event, word)
@@ -12919,7 +14778,7 @@ pub(crate) mod verify {
         pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires model::graph_wf(g),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
                     == if model::test_holds(theta, model::lift_test(g, test@), event) {
                         transition_lang(g, theta, at, event, word) && transition_lang(g, theta, bt, event, word)
@@ -12984,7 +14843,7 @@ pub(crate) mod verify {
         guard: TestId, empty: TransitionId, pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires model::graph_wf(g), empty@ == g.constants.transition_empty,
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
                     == (model::test_holds(theta, model::lift_test(g, guard@), event)
                         && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)),
@@ -13057,7 +14916,7 @@ pub(crate) mod verify {
         hide(model::test_holds);
         hide(model::lift_regex);
         hide(model::lift_transition);
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(language::interp_transition);
         let root = if left { a } else { b };
         transition_unfold(g, root@);
@@ -13089,25 +14948,25 @@ pub(crate) mod verify {
                 language::lemma_interp_union(context_sem, event, terms, word);
                 language::lemma_interp_union(context_sem, event, outputs, word);
                 assert forall|i: int| 0 <= i < children.len() implies
-                    language::lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word)
+                    language::numeric_lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word)
                         == if left {
-                            language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
+                            language::numeric_lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
                                 && transition_lang(g, ctx.bindings, b, event, word)
                         } else { transition_lang(g, ctx.bindings, a, event, word)
-                            && language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word) } by {
+                            && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word) } by {
                     if left { machine_pair_binary_language(context_sem, event, terms[i], model::lift_transition(g, b@), word); }
                     else { machine_pair_binary_language(context_sem, event, model::lift_transition(g, a@), terms[i], word); }
                 }
                 if guarded_language(sem, ctx, event, expected, word) {
                     let i = choose|i: int| 0 <= i < terms.len()
-                        && language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word);
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word));
+                        && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word);
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word));
                 }
                 if guarded_language(sem, ctx, event, result, word) {
                     let i = choose|i: int| 0 <= i < outputs.len()
-                        && language::lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word);
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word));
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, language::Transition::Union(terms)), word));
+                        && language::numeric_lang(context_sem, language::interp_transition(context_sem, event, outputs[i]), word);
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word));
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, language::Transition::Union(terms)), word));
                 }
             }
         }
@@ -13153,29 +15012,29 @@ pub(crate) mod verify {
                 if index + 1 < terms.len() { language::lemma_interp_intersect(context_sem, event, ats, word); }
                 machine_pair_binary_language(context_sem, event, head, terms[index as int], word);
                 if guarded_language(sem, ctx, event, before, word) {
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, bs[0]), word));
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, bs[1]), word));
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, bs[0]), word));
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, bs[1]), word));
                     assert forall|i: int| 0 <= i < ats.len() implies
-                        language::lang(context_sem, language::interp_transition(context_sem, event, ats[i]), word) by {
+                        language::numeric_lang(context_sem, language::interp_transition(context_sem, event, ats[i]), word) by {
                         if i > 0 {
                             assert(ats[i] == bs[i + 1]);
-                            assert(language::lang(context_sem, language::interp_transition(context_sem, event, bs[i + 1]), word));
+                            assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, bs[i + 1]), word));
                         }
                     }
                 }
                 if guarded_language(sem, ctx, event, after, word) {
                     if index + 1 < terms.len() {
                         assert(after.term == language::Transition::Intersect(ats));
-                        assert(language::lang(context_sem, language::interp_transition(context_sem, event, ats[0]), word));
+                        assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, ats[0]), word));
                         assert(ats[0] == pair.term);
                     }
-                    assert(language::lang(context_sem, language::interp_transition(context_sem, event, pair.term), word));
+                    assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, pair.term), word));
                     assert forall|i: int| 0 <= i < bs.len() implies
-                        language::lang(context_sem, language::interp_transition(context_sem, event, bs[i]), word) by {
+                        language::numeric_lang(context_sem, language::interp_transition(context_sem, event, bs[i]), word) by {
                         if i > 1 {
                             assert(index + 1 < terms.len());
                             assert(bs[i] == ats[i - 1]);
-                            assert(language::lang(context_sem, language::interp_transition(context_sem, event, ats[i - 1]), word));
+                            assert(language::numeric_lang(context_sem, language::interp_transition(context_sem, event, ats[i - 1]), word));
                         }
                     }
                 }
@@ -13226,7 +15085,7 @@ pub(crate) mod verify {
         g: model::Graph, ids: Seq<TransitionId>, children: Seq<TransitionId>, pending: Seq<ActionShape>, prior: Seq<TransitionId>,
     )
         requires children.len() > 0,
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_combo(g, theta, ids, event, word, true)
                     == transition_combo(g, theta, children, event, word, true),
         ensures transition_effect(g, ActionShape::Fold(model::transition_ids(ids), 0), pending, prior,
@@ -13256,10 +15115,10 @@ pub(crate) mod verify {
                     language::lemma_interp_intersect(context_sem, event, terms, word);
                 }
                 assert forall|i: int| 0 <= i < ids.len() implies
-                    language::lang(context_sem, language::interp_transition(context_sem, event, input_terms[i]), word)
+                    language::numeric_lang(context_sem, language::interp_transition(context_sem, event, input_terms[i]), word)
                         == transition_lang(g, ctx.bindings, ids[i], event, word) by {};
                 assert forall|i: int| 0 <= i < children.len() implies
-                    language::lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
+                    language::numeric_lang(context_sem, language::interp_transition(context_sem, event, terms[i]), word)
                         == transition_lang(g, ctx.bindings, children[i], event, word) by {};
                 assert(transition_combo(g, ctx.bindings, ids, event, word, true)
                     == transition_combo(g, ctx.bindings, children, event, word, true));
@@ -13282,11 +15141,11 @@ pub(crate) mod verify {
             empty@ == g.constants.transition_empty,
             g.transitions[a@ as int] == model::TransitionNode::If(x@, xt@, empty@),
             g.transitions[b@ as int] == model::TransitionNode::If(y@, yt@, empty@),
-            forall|theta: Subst, event: EventView| language::event_wf(theta)
+            forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                 ==> model::test_holds(theta, model::lift_test(g, guard@), event)
                     == test_combo(g, theta, seq![x, y], event, true),
         ensures
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
                     == (model::test_holds(theta, model::lift_test(g, guard@), event)
                         && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)),
@@ -13298,7 +15157,7 @@ pub(crate) mod verify {
         assert(model::constants_wf(g)) by { model::lemma_graph_wf_elim(g); }
         transition_unfold(g, empty@);
         regex_unfold(g, g.constants.empty);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies (transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
                 == (model::test_holds(theta, model::lift_test(g, guard@), event)
                     && transition_lang(g, theta, xt, event, word) && transition_lang(g, theta, yt, event, word)) by {
@@ -13307,7 +15166,7 @@ pub(crate) mod verify {
                 == test_combo(g, theta, seq![x, y], event, true));
         }
         if guard@ == g.constants.test_false {
-            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 implies transition_lang(g, theta, empty, event, word)
                     == transition_combo(g, theta, seq![a, b], event, word, true) by {
                 assert((transition_lang(g, theta, a, event, word) && transition_lang(g, theta, b, event, word))
@@ -13351,7 +15210,7 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(suffix)),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(g, theta, combined@, word) == concat_combo(g, theta, suffix, word),
         ensures forall|prior: Seq<TransitionId>| #[trigger] transition_effect(g, ActionShape::Clean(id@, path@), base, prior,
             base.push(ActionShape::AppendResult(combined@)).push(ActionShape::Clean(inner@, path@)), prior),
@@ -13372,8 +15231,8 @@ pub(crate) mod verify {
             let suffix_terms = model::lift_regexes(g, model::regex_ids(suffix));
             language::lemma_interp_append(context_sem, event, term, suffix_terms);
             language::lemma_interp_append(context_sem, event, term, seq![combined_term]);
-            assert forall|word: Seq<EventView>| language::lang(context_sem, language::Regex::Concat(suffix_terms), word)
-                == language::lang(context_sem, combined_term, word) by {
+            assert forall|word: Seq<EventView>| language::numeric_lang(context_sem, language::Regex::Concat(suffix_terms), word)
+                == language::numeric_lang(context_sem, combined_term, word) by {
                 assert(model::regex_lang(g, ctx.bindings, combined@, word)
                     == concat_combo(g, ctx.bindings, suffix, word));
             }
@@ -13392,12 +15251,12 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_unary_not_result(g: model::Graph, id: TransitionId, out: TransitionId)
-        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_lang(g, theta, out, event, word) == !transition_lang(g, theta, id, event, word),
         ensures transition_result(g, ActionShape::Not(id@), out),
     {
         let expected = transition_initial_value(g, ActionShape::Not(id@)).unwrap();
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             && (expected.guard)(TransitionContext { bindings: theta }, event)
             implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
                 == transition_lang(g, theta, out, event, word) by {
@@ -13410,20 +15269,20 @@ pub(crate) mod verify {
         g: model::Graph, theta: Subst, id: TransitionId, suffix: RegexId,
         event: EventView, word: Seq<EventView>,
     ) -> bool {
-        language::lang(model::gsem(theta), language::Regex::Concat(seq![
+        language::numeric_lang(model::gsem(theta), language::Regex::Concat(seq![
             language::interp_transition(model::gsem(theta), event, model::lift_transition(g, id@)),
             model::lift_regex(g, suffix@),
         ]), word)
     }
 
     pub proof fn machine_unary_append_result(g: model::Graph, id: TransitionId, suffix: RegexId, out: TransitionId)
-        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        requires forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             ==> transition_lang(g, theta, out, event, word)
                 == machine_unary_append_language(g, theta, id, suffix, event, word),
         ensures transition_result(g, ActionShape::Append(id@, suffix@), out),
     {
         let expected = transition_initial_value(g, ActionShape::Append(id@, suffix@)).unwrap();
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             && (expected.guard)(TransitionContext { bindings: theta }, event)
             implies guarded_language(transition_context_sem(), TransitionContext { bindings: theta }, event, expected, word)
                 == transition_lang(g, theta, out, event, word) by {
@@ -13436,28 +15295,28 @@ pub(crate) mod verify {
     }
 
     pub proof fn machine_unary_append_identity<L>(sem: spec_fn(L, EventView) -> bool, head: language::Regex<L>, word: Seq<EventView>)
-        ensures language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Epsilon]), word) == language::lang(sem, head, word),
-            !language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Empty]), word),
+        ensures language::numeric_lang(sem, language::Regex::Concat(seq![head, language::Regex::Epsilon]), word) == language::numeric_lang(sem, head, word),
+            !language::numeric_lang(sem, language::Regex::Concat(seq![head, language::Regex::Empty]), word),
     {
         language::lemma_concat_pair(sem, head, language::Regex::Epsilon, word);
         language::lemma_concat_pair(sem, head, language::Regex::Empty, word);
-        if language::lang(sem, head, word) {
+        if language::numeric_lang(sem, head, word) {
             let empty = Seq::<EventView>::empty();
             assert(word == word + empty);
-            assert(language::lang(sem, language::Regex::Epsilon, empty));
+            assert(language::numeric_lang(sem, language::Regex::Epsilon, empty));
         }
     }
 
     pub proof fn machine_unary_append_reassociate<L>(
         sem: spec_fn(L, EventView) -> bool, head: language::Regex<L>, suffix: Seq<language::Regex<L>>, last: language::Regex<L>,
     )
-        ensures forall|word: Seq<EventView>| language::lang(sem,
+        ensures forall|word: Seq<EventView>| language::numeric_lang(sem,
             language::Regex::Concat(seq![language::Regex::Concat(seq![head] + suffix), last]), word)
-            == language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(suffix.push(last))]), word),
+            == language::numeric_lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(suffix.push(last))]), word),
     {
         let flat = seq![head] + suffix;
-        assert forall|word: Seq<EventView>| language::lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)]), word)
-            == language::lang(sem, language::Regex::Concat(flat), word) by {
+        assert forall|word: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)]), word)
+            == language::numeric_lang(sem, language::Regex::Concat(flat), word) by {
             language::lemma_concat_singleton(sem, language::Regex::Concat(flat), word);
         }
         regex_concat_append_congruent(sem, seq![language::Regex::Concat(flat)], flat, seq![last]);
@@ -13466,45 +15325,45 @@ pub(crate) mod verify {
         assert(flat + seq![last] =~= seq![head] + tail);
         assert(seq![language::Regex::Concat(flat)] + seq![last] =~= seq![language::Regex::Concat(flat), last]);
         assert(seq![head].push(language::Regex::Concat(tail)) =~= seq![head, language::Regex::Concat(tail)]);
-        assert forall|word: Seq<EventView>| language::lang(sem,
+        assert forall|word: Seq<EventView>| language::numeric_lang(sem,
             language::Regex::Concat(seq![language::Regex::Concat(flat), last]), word)
-            == language::lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail)]), word) by {
-            assert(language::lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)] + seq![last]), word)
-                == language::lang(sem, language::Regex::Concat(flat + seq![last]), word));
-            assert(language::lang(sem, language::Regex::Concat(seq![head] + tail), word)
-                == language::lang(sem, language::Regex::Concat(seq![head].push(language::Regex::Concat(tail))), word));
+            == language::numeric_lang(sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail)]), word) by {
+            assert(language::numeric_lang(sem, language::Regex::Concat(seq![language::Regex::Concat(flat)] + seq![last]), word)
+                == language::numeric_lang(sem, language::Regex::Concat(flat + seq![last]), word));
+            assert(language::numeric_lang(sem, language::Regex::Concat(seq![head] + tail), word)
+                == language::numeric_lang(sem, language::Regex::Concat(seq![head].push(language::Regex::Concat(tail))), word));
         }
     }
 
     pub proof fn machine_unary_demorgan<L>(
         sem: spec_fn(L, EventView) -> bool, event: EventView, terms: Seq<language::Transition<L>>, intersect: bool, word: Seq<EventView>,
     )
-        ensures language::lang(sem, language::interp_transition(sem, event, language::Transition::Not(Box::new(
+        ensures language::numeric_lang(sem, language::interp_transition(sem, event, language::Transition::Not(Box::new(
             if intersect { language::Transition::Intersect(terms) } else { language::Transition::Union(terms) }))), word)
-            == language::lang(sem, language::interp_transition(sem, event,
+            == language::numeric_lang(sem, language::interp_transition(sem, event,
                 if intersect { language::Transition::Union(terms.map(|i: int, term: language::Transition<L>| language::Transition::Not(Box::new(term)))) }
                 else { language::Transition::Intersect(terms.map(|i: int, term: language::Transition<L>| language::Transition::Not(Box::new(term)))) }), word),
     {
         let negated = terms.map(|i: int, term: language::Transition<L>| language::Transition::Not(Box::new(term)));
         assert forall|i: int| 0 <= i < terms.len() implies
-            language::lang(sem, language::interp_transition(sem, event, negated[i]), word)
-                == !language::lang(sem, language::interp_transition(sem, event, terms[i]), word) by {
+            language::numeric_lang(sem, language::interp_transition(sem, event, negated[i]), word)
+                == !language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word) by {
             language::lemma_interp_not(sem, event, terms[i]);
         }
         if intersect {
             language::lemma_interp_not(sem, event, language::Transition::Intersect(terms));
             language::lemma_interp_intersect(sem, event, terms, word);
             language::lemma_interp_union(sem, event, negated, word);
-            if !(forall|i: int| 0 <= i < terms.len() ==> language::lang(sem, language::interp_transition(sem, event, terms[i]), word)) {
-                let i = choose|i: int| 0 <= i < terms.len() && !language::lang(sem, language::interp_transition(sem, event, terms[i]), word);
-                assert(language::lang(sem, language::interp_transition(sem, event, negated[i]), word));
+            if !(forall|i: int| 0 <= i < terms.len() ==> language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word)) {
+                let i = choose|i: int| 0 <= i < terms.len() && !language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word);
+                assert(language::numeric_lang(sem, language::interp_transition(sem, event, negated[i]), word));
             }
         } else {
             language::lemma_interp_not(sem, event, language::Transition::Union(terms));
             language::lemma_interp_union(sem, event, terms, word);
             language::lemma_interp_intersect(sem, event, negated, word);
-            if !(exists|i: int| 0 <= i < terms.len() && language::lang(sem, language::interp_transition(sem, event, terms[i]), word)) {
-                assert forall|i: int| 0 <= i < terms.len() implies language::lang(sem, language::interp_transition(sem, event, negated[i]), word) by {}
+            if !(exists|i: int| 0 <= i < terms.len() && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), word)) {
+                assert forall|i: int| 0 <= i < terms.len() implies language::numeric_lang(sem, language::interp_transition(sem, event, negated[i]), word) by {}
             }
         }
     }
@@ -13512,9 +15371,9 @@ pub(crate) mod verify {
     pub proof fn machine_unary_append_union<L>(
         sem: spec_fn(L, EventView) -> bool, event: EventView, terms: Seq<language::Transition<L>>, suffix: language::Regex<L>, word: Seq<EventView>,
     )
-        ensures language::lang(sem, language::interp_transition(sem, event,
+        ensures language::numeric_lang(sem, language::interp_transition(sem, event,
             language::Transition::Append(Box::new(language::Transition::Union(terms)), seq![suffix])), word)
-            == language::lang(sem, language::interp_transition(sem, event, language::Transition::Union(
+            == language::numeric_lang(sem, language::interp_transition(sem, event, language::Transition::Union(
                 terms.map(|i: int, term: language::Transition<L>| language::Transition::Append(Box::new(term), seq![suffix])))), word),
     {
         let head = language::interp_transition(sem, event, language::Transition::Union(terms));
@@ -13524,27 +15383,27 @@ pub(crate) mod verify {
         language::lemma_concat_pair(sem, head, suffix, word);
         language::lemma_interp_union(sem, event, appended, word);
         assert forall|i: int| 0 <= i < terms.len() implies
-            language::lang(sem, language::interp_transition(sem, event, appended[i]), word)
+            language::numeric_lang(sem, language::interp_transition(sem, event, appended[i]), word)
                 == (exists|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                    && language::lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::lang(sem, suffix, v)) by {
+                    && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::numeric_lang(sem, suffix, v)) by {
             language::lemma_interp_append(sem, event, terms[i], seq![suffix]);
             let r = language::interp_transition(sem, event, terms[i]);
             assert(seq![r] + seq![suffix] =~= seq![r, suffix]);
             language::lemma_concat_pair(sem, r, suffix, word);
         }
-        if language::lang(sem, language::Regex::Concat(seq![head, suffix]), word) {
-            let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v && language::lang(sem, head, u) && language::lang(sem, suffix, v);
+        if language::numeric_lang(sem, language::Regex::Concat(seq![head, suffix]), word) {
+            let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v && language::numeric_lang(sem, head, u) && language::numeric_lang(sem, suffix, v);
             language::lemma_interp_union(sem, event, terms, u);
-            let i = choose|i: int| 0 <= i < terms.len() && language::lang(sem, language::interp_transition(sem, event, terms[i]), u);
-            assert(language::lang(sem, language::interp_transition(sem, event, appended[i]), word));
+            let i = choose|i: int| 0 <= i < terms.len() && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), u);
+            assert(language::numeric_lang(sem, language::interp_transition(sem, event, appended[i]), word));
         }
-        if language::lang(sem, language::interp_transition(sem, event, language::Transition::Union(appended)), word) {
-            let i = choose|i: int| 0 <= i < appended.len() && language::lang(sem, language::interp_transition(sem, event, appended[i]), word);
+        if language::numeric_lang(sem, language::interp_transition(sem, event, language::Transition::Union(appended)), word) {
+            let i = choose|i: int| 0 <= i < appended.len() && language::numeric_lang(sem, language::interp_transition(sem, event, appended[i]), word);
             let (u, v) = choose|u: Seq<EventView>, v: Seq<EventView>| word == u + v
-                && language::lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::lang(sem, suffix, v);
+                && language::numeric_lang(sem, language::interp_transition(sem, event, terms[i]), u) && language::numeric_lang(sem, suffix, v);
             language::lemma_interp_union(sem, event, terms, u);
-            assert(language::lang(sem, head, u));
-            assert(language::lang(sem, language::Regex::Concat(seq![head, suffix]), word));
+            assert(language::numeric_lang(sem, head, u));
+            assert(language::numeric_lang(sem, language::Regex::Concat(seq![head, suffix]), word));
         }
     }
 
@@ -13740,9 +15599,9 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::Const(head@),
             negated@ < before.regexes.len(),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(before, theta, negated@, word) == !model::regex_lang(before, theta, head@, word),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, negated@, word),
         ensures transition_result(after, ActionShape::Not(id@), out),
     {
@@ -13750,7 +15609,7 @@ pub(crate) mod verify {
         model::lemma_graph_transition_wf(before, id@);
         model::lemma_lift_stable_under_extends(before, after);
         transition_unfold(after, id@);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(after, theta, out, event, word) == !transition_lang(after, theta, id, event, word) by {
             language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(after, head@));
             assert(model::regex_lang(before, theta, negated@, word) == !model::regex_lang(before, theta, head@, word));
@@ -13763,7 +15622,7 @@ pub(crate) mod verify {
         ensures transition_result(g, ActionShape::Not(id@), inner),
     {
         transition_unfold(g, id@);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(g, theta, inner, event, word) == !transition_lang(g, theta, id, event, word) by {
             language::lemma_interp_not(model::gsem(theta), event, model::lift_transition(g, inner@));
         }
@@ -13780,7 +15639,7 @@ pub(crate) mod verify {
         transition_unfold(g, g.constants.transition_empty);
         regex_unfold(g, g.constants.empty);
         regex_unfold(g, g.constants.epsilon);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(g, theta, out, event, word)
                 == machine_unary_append_language(g, theta, id, suffix, event, word) by {
             machine_unary_append_identity(model::gsem(theta),
@@ -13790,6 +15649,30 @@ pub(crate) mod verify {
         machine_unary_append_result(g, id, suffix, out);
     }
 
+    pub proof fn machine_unary_append_const_language(
+        before: model::Graph, after: model::Graph, id: TransitionId, head: RegexId, suffix: RegexId,
+        theta: Subst, event: EventView, word: Seq<EventView>,
+    )
+        requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
+            id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::Const(head@),
+            suffix@ < before.regexes.len(),
+        ensures machine_unary_append_language(after, theta, id, suffix, event, word)
+            == concat_combo(before, theta, seq![head, suffix], word),
+    {
+        hide(language::numeric_lang);
+        hide(model::test_holds);
+        hide(model::lift_regex);
+        hide(model::lift_transition);
+        model::lemma_graph_transition_wf(before, id@);
+        model::lemma_graph_wf_elim(before);
+        model::lemma_lift_regex_stable(before, after, head@);
+        model::lemma_lift_regex_stable(before, after, suffix@);
+        transition_unfold(after, id@);
+        language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(after, head@));
+        assert(model::lift_regexes(before, model::regex_ids(seq![head, suffix]))
+            =~= seq![model::lift_regex(before, head@), model::lift_regex(before, suffix@)]);
+    }
+
     #[verifier::spinoff_prover]
     pub proof fn machine_unary_append_const_result(
         before: model::Graph, after: model::Graph, id: TransitionId, head: RegexId, suffix: RegexId, combined: RegexId, out: TransitionId,
@@ -13797,31 +15680,25 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::Const(head@),
             suffix@ < before.regexes.len(), combined@ < before.regexes.len(),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, seq![head, suffix], word),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, combined@, word),
         ensures transition_result(after, ActionShape::Append(id@, suffix@), out),
     {
         hide(model::test_holds);
-        hide(language::lang);
+        hide(language::numeric_lang);
         hide(language::event_wf);
         hide(model::lift_regex);
         hide(model::lift_transition);
         hide(language::interp_transition);
         hide(transition_result);
         model::lemma_graph_wf_elim(before);
-        model::lemma_graph_transition_wf(before, id@);
-        model::lemma_lift_regex_stable(before, after, head@);
-        model::lemma_lift_regex_stable(before, after, suffix@);
         model::lemma_lift_regex_stable(before, after, combined@);
-        transition_unfold(after, id@);
-        assert(model::lift_regexes(before, model::regex_ids(seq![head, suffix]))
-            =~= seq![model::lift_regex(before, head@), model::lift_regex(before, suffix@)]);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(after, theta, out, event, word)
                 == machine_unary_append_language(after, theta, id, suffix, event, word) by {
-            language::lemma_interp_const(model::gsem(theta), event, model::lift_regex(after, head@));
+            machine_unary_append_const_language(before, after, id, head, suffix, theta, event, word);
             assert(model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, seq![head, suffix], word));
         }
         machine_unary_append_result(after, id, suffix, out);
@@ -13834,10 +15711,10 @@ pub(crate) mod verify {
         requires model::graph_wf(before), model::graph_wf(after), model::graph_extends(before, after),
             id@ < before.transitions.len(), before.transitions[id@ as int] == model::TransitionNode::If(test@, yes@, no@),
             yes@ == before.constants.transition_all, no@ == before.constants.transition_empty, negated@ < before.tests.len(),
-            forall|theta: Subst, event: EventView| language::event_wf(theta)
+            forall|theta: Subst, event: EventView| language::event_wf(theta, theta.len())
                 ==> model::test_holds(theta, model::lift_test(before, negated@), event)
                     == !model::test_holds(theta, model::lift_test(before, test@), event),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, negated, yes, no, event, word),
         ensures transition_result(after, ActionShape::Not(id@), out),
     {
@@ -13850,7 +15727,7 @@ pub(crate) mod verify {
         transition_unfold(after, no@);
         regex_unfold(after, after.constants.empty);
         regex_unfold(after, after.constants.all);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(after, theta, out, event, word) == !transition_lang(after, theta, id, event, word) by {
             let sem = model::gsem(theta);
             language::lemma_interp_if(sem, event, model::lift_test(after, test@), model::lift_transition(after, yes@), model::lift_transition(after, no@));
@@ -13868,7 +15745,7 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), id@ < g.transitions.len(),
             g.transitions[id@ as int] == model::TransitionNode::Append(inner@, model::regex_ids(children)),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(g, theta, combined@, word) == concat_combo(g, theta, children.push(suffix), word),
         ensures transition_effect(g, ActionShape::Append(id@, suffix@), base, prior,
             base.push(ActionShape::Append(inner@, combined@)), prior),
@@ -13894,8 +15771,8 @@ pub(crate) mod verify {
             language::lemma_interp_append(context_sem, event, model::lift_transition(g, id@), seq![last]);
             language::lemma_interp_append(context_sem, event, model::lift_transition(g, inner@), seq![combined_term]);
             machine_unary_append_reassociate(context_sem, head, tail, last);
-            assert forall|word: Seq<EventView>| language::lang(context_sem, language::Regex::Concat(tail.push(last)), word)
-                == language::lang(context_sem, combined_term, word) by {
+            assert forall|word: Seq<EventView>| language::numeric_lang(context_sem, language::Regex::Concat(tail.push(last)), word)
+                == language::numeric_lang(context_sem, combined_term, word) by {
                 assert(model::regex_lang(g, ctx.bindings, combined@, word)
                     == concat_combo(g, ctx.bindings, children.push(suffix), word));
             }
@@ -13908,12 +15785,12 @@ pub(crate) mod verify {
             assert(seq![head] + seq![combined_term] =~= seq![head, combined_term]);
             assert forall|word: Seq<EventView>| guarded_language(sem, ctx, event, expected, word)
                 == guarded_language(sem, ctx, event, result, word) by {
-                assert(language::lang(context_sem, language::Regex::Concat(seq![language::Regex::Concat(seq![head] + tail), last]), word)
-                    == language::lang(context_sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail.push(last))]), word));
-                assert(language::lang(context_sem, language::Regex::Concat(seq![head] + tail.push(last)), word)
-                    == language::lang(context_sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail.push(last))]), word));
-                assert(language::lang(context_sem, language::Regex::Concat(seq![head] + tail.push(last)), word)
-                    == language::lang(context_sem, language::Regex::Concat(seq![head, combined_term]), word));
+                assert(language::numeric_lang(context_sem, language::Regex::Concat(seq![language::Regex::Concat(seq![head] + tail), last]), word)
+                    == language::numeric_lang(context_sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail.push(last))]), word));
+                assert(language::numeric_lang(context_sem, language::Regex::Concat(seq![head] + tail.push(last)), word)
+                    == language::numeric_lang(context_sem, language::Regex::Concat(seq![head, language::Regex::Concat(tail.push(last))]), word));
+                assert(language::numeric_lang(context_sem, language::Regex::Concat(seq![head] + tail.push(last)), word)
+                    == language::numeric_lang(context_sem, language::Regex::Concat(seq![head, combined_term]), word));
             }
         }
         machine_unary_replace_effect(g, task, next, base, prior);
@@ -13950,7 +15827,7 @@ pub(crate) mod verify {
         assert(model::tables_wf(before)) by { model::lemma_graph_wf_elim(before); }
         model::lemma_lift_stable_under_extends(before, after);
         assert(model::lift_regexes(before, model::regex_ids(children)) =~= model::lift_regexes(after, model::regex_ids(children)));
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(after, theta, out, event, word)
                 == machine_unary_append_language(after, theta, id, suffix, event, word) by {
             let sem = model::gsem(theta);
@@ -13958,7 +15835,7 @@ pub(crate) mod verify {
             let tail = model::lift_regexes(after, model::regex_ids(children));
             let last = model::lift_regex(after, suffix@);
             language::lemma_interp_append(sem, event, model::lift_transition(after, id@), tail);
-            assert forall|w: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, last, w) by {
+            assert forall|w: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(tail), w) == language::numeric_lang(sem, last, w) by {
                 assert(model::regex_lang(before, theta, suffix@, w) == concat_combo(before, theta, children, w));
             }
             regex_concat_replace(sem, seq![head], tail, last);
@@ -13977,9 +15854,9 @@ pub(crate) mod verify {
             x@ < before.regexes.len(), y@ < before.regexes.len(), regex@ < before.regexes.len(),
             after.transitions[a@ as int] == model::TransitionNode::Const(x@),
             after.transitions[b@ as int] == model::TransitionNode::Const(y@),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(before, theta, regex@, word) == regex_combo(before, theta, seq![x, y], word, true),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == model::regex_lang(after, theta, regex@, word),
         ensures transition_result(after, ActionShape::Pair(a@, b@), out),
     {
@@ -13987,7 +15864,7 @@ pub(crate) mod verify {
         regex_combo_extends(before, after, seq![x, y], true);
         transition_lemma_constant(after, a, x);
         transition_lemma_constant(after, b, y);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_lang(after, theta, out, event, word)
                 == transition_combo(after, theta, seq![a, b], event, word, true) by {
             assert(model::regex_lang(before, theta, regex@, word)
@@ -14011,13 +15888,13 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(g), flat@ < g.transitions.len(), children.len() > 0,
             g.transitions[flat@ as int] == model::TransitionNode::Intersect(model::transition_ids(children)),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(g, theta, flat, event, word) == transition_combo(g, theta, ids, event, word, true),
         ensures transition_effect(g, ActionShape::Fold(model::transition_ids(ids), 0), pending, prior,
             pending.push(ActionShape::Fold(model::transition_ids(children), 1)), prior.push(children[0])),
     {
         transition_lemma_children_language(g, flat, children, true);
-        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+        assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
             implies transition_combo(g, theta, ids, event, word, true)
                 == transition_combo(g, theta, children, event, word, true) by {
             assert(transition_lang(g, theta, flat, event, word)
@@ -14032,7 +15909,7 @@ pub(crate) mod verify {
         g: model::Graph, count: nat, pending: Seq<ActionShape>, prior: Seq<TransitionId>, out: TransitionId,
     )
         requires count <= prior.len(),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(g, theta, out, event, word)
                     == transition_combo(g, theta, prior.subrange(prior.len() as int - count as int, prior.len() as int), event, word, false),
         ensures transition_effect(g, ActionShape::Union(count), pending, prior, pending,
@@ -14055,17 +15932,17 @@ pub(crate) mod verify {
                 == guarded_language(sem, ctx, event, result, word) by {
                 let terms = children.map(|i: int, value: TransitionMeaning| value.term);
                 language::lemma_interp_union(model::gsem(ctx.bindings), event, terms, word);
-                assert forall|i: int| 0 <= i < ids.len() implies language::lang(model::gsem(ctx.bindings),
+                assert forall|i: int| 0 <= i < ids.len() implies language::numeric_lang(model::gsem(ctx.bindings),
                     language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word)
                         == transition_lang(g, ctx.bindings, ids[i], event, word) by {}
                 if guarded_language(sem, ctx, event, expected, word) {
-                    let i = choose|i: int| 0 <= i < terms.len() && language::lang(model::gsem(ctx.bindings),
+                    let i = choose|i: int| 0 <= i < terms.len() && language::numeric_lang(model::gsem(ctx.bindings),
                         language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word);
                     assert(transition_combo(g, ctx.bindings, ids, event, word, false));
                 }
                 if transition_combo(g, ctx.bindings, ids, event, word, false) {
                     let i = choose|i: int| 0 <= i < ids.len() && transition_lang(g, ctx.bindings, ids[i], event, word);
-                    assert(language::lang(model::gsem(ctx.bindings),
+                    assert(language::numeric_lang(model::gsem(ctx.bindings),
                         language::interp_transition(model::gsem(ctx.bindings), event, terms[i]), word));
                 }
                 transition_lemma_known_language(g, out, ctx, event, word);
@@ -14115,7 +15992,7 @@ pub(crate) mod verify {
         g: model::Graph, test: TestId, path: Option<TestId>, pending: Seq<ActionShape>, prior: Seq<TransitionId>, out: TransitionId,
     )
         requires prior.len() >= 2,
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(g, theta, out, event, word)
                     == transition_if_combo(g, theta, test, prior[prior.len() as int - 2], prior.last(), event, word),
         ensures match path {
@@ -14236,7 +16113,7 @@ pub(crate) mod verify {
         g: model::Graph, theta: Subst, root: TransitionId, suffix: Seq<RegexId>, event: EventView, word: Seq<EventView>,
     ) -> bool {
         let sem = model::gsem(theta);
-        language::lang(sem, language::Regex::Concat(seq![language::interp_transition(sem, event, model::lift_transition(g, root@))]
+        language::numeric_lang(sem, language::Regex::Concat(seq![language::interp_transition(sem, event, model::lift_transition(g, root@))]
             + model::lift_regexes(g, model::regex_ids(suffix))), word)
     }
 
@@ -14254,17 +16131,17 @@ pub(crate) mod verify {
     )
         requires model::graph_wf(before), test@ < before.tests.len(),
             yes@ < before.transitions.len(), no@ < before.transitions.len(), local@ < before.transitions.len(),
-            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(before, theta, local, event, word) == transition_if_combo(before, theta, test, yes, no, event, word),
         ensures forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Clean(local@, before.constants.test_true), out)
-            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word),
     {
         model::lemma_graph_wf_elim(before);
         assert forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Clean(local@, before.constants.test_true), out)
-            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word) by {
             model::lemma_lift_test_stable(before, after, test@);
             model::lemma_lift_transition_stable(before, after, yes@);
@@ -14272,7 +16149,7 @@ pub(crate) mod verify {
             model::lemma_lift_transition_stable(before, after, local@);
             transition_lemma_test_constants(after);
             let expected = transition_initial_value(after, ActionShape::Clean(local@, before.constants.test_true)).unwrap();
-            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 implies transition_lang(after, theta, out, event, word) == transition_if_combo(after, theta, test, yes, no, event, word) by {
                 let ctx = TransitionContext { bindings: theta };
                 transition_lemma_context_sem(ctx);
@@ -14289,22 +16166,22 @@ pub(crate) mod verify {
         before: model::Graph, root: TransitionId, suffix: Seq<RegexId>, combined: RegexId,
     )
         requires model::graph_wf(before), combined@ < before.regexes.len(), regex_ids_valid(before, suffix),
-            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta)
+            forall|theta: Subst, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> model::regex_lang(before, theta, combined@, word) == concat_combo(before, theta, suffix, word),
         ensures forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Append(root@, combined@), out)
-            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            ==> forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word),
     {
         model::lemma_graph_wf_elim(before);
         assert forall|after: model::Graph, out: TransitionId| model::graph_extends(before, after) && model::graph_wf(after)
             && #[trigger] transition_result(after, ActionShape::Append(root@, combined@), out)
-            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            implies forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 ==> transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word) by {
             model::lemma_lift_regex_stable(before, after, combined@);
             regex_concat_extends(before, after, suffix);
             let expected = transition_initial_value(after, ActionShape::Append(root@, combined@)).unwrap();
-            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta)
+            assert forall|theta: Subst, event: EventView, word: Seq<EventView>| language::event_wf(theta, theta.len())
                 implies transition_lang(after, theta, out, event, word) == transition_append_combo(after, theta, root, suffix, event, word) by {
                 let ctx = TransitionContext { bindings: theta };
                 transition_lemma_context_sem(ctx);
@@ -14313,7 +16190,7 @@ pub(crate) mod verify {
                 let tail = model::lift_regexes(after, model::regex_ids(suffix));
                 let combined_term = model::lift_regex(after, combined@);
                 language::lemma_interp_append(sem, event, model::lift_transition(after, root@), seq![combined_term]);
-                assert forall|w: Seq<EventView>| language::lang(sem, language::Regex::Concat(tail), w) == language::lang(sem, combined_term, w) by {
+                assert forall|w: Seq<EventView>| language::numeric_lang(sem, language::Regex::Concat(tail), w) == language::numeric_lang(sem, combined_term, w) by {
                     assert(model::regex_lang(before, theta, combined@, w) == concat_combo(before, theta, suffix, w));
                     assert(concat_combo(before, theta, suffix, w) == concat_combo(after, theta, suffix, w));
                 }
@@ -14327,4 +16204,255 @@ pub(crate) mod verify {
     }
 
         }
+
+    verus! {
+    // ----- Structural contract of the normalizer ((N0)–(N5) of `verify::finite_states::Model::contract`) -----
+
+    /// Interning: in a well-formed graph, a regex kind determines its id. In particular a union,
+    /// intersection, or list state is determined by its operands, and a complement by its body.
+    pub proof fn regex_kind_unique(g: model::Graph, a: nat, b: nat)
+        requires model::graph_wf(g), a < g.regexes.len(), b < g.regexes.len(),
+            g.regexes[a as int].kind == g.regexes[b as int].kind,
+        ensures a == b,
+    {
+        regex_unfold(g, a);
+        regex_unfold(g, b);
+        model::lemma_graph_wf_elim(g);
+        assert(g.regexes[a as int] == g.regexes[b as int]);
+    }
+
+    /// (N3), exactly: the result `r` of `N(¬x)`.
+    pub open spec fn regex_not_result(g: model::Graph, x: nat, r: nat) -> bool {
+        match g.regexes[x as int].kind {
+            model::RegexKindNode::Empty => r == g.constants.all,
+            model::RegexKindNode::All => r == g.constants.empty,
+            model::RegexKindNode::Not(inner) => r == inner,
+            _ => r < g.regexes.len() && g.regexes[r as int].kind == model::RegexKindNode::Not(x),
+        }
+    }
+
+    /// (N4), exactly: the result `r` of `N(x₁⋯xₖ)` absorbs `∅`, flattens concatenations, drops
+    /// `ε`, and returns `ε`, the single remaining factor, or the list of the factors. Factors are
+    /// read in `before`, the interned list in `after`.
+    pub open spec fn regex_concat_result(before: model::Graph, after: model::Graph, children: Seq<RegexId>, r: nat) -> bool {
+        let f = regex_concat_flat(before, children);
+        if exists|i: int| 0 <= i < children.len() && before.regexes[children[i]@ as int].kind == model::RegexKindNode::Empty {
+            r == before.constants.empty
+        } else if f.len() == 0 {
+            r == before.constants.epsilon
+        } else if f.len() == 1 {
+            r == f[0]
+        } else {
+            r < after.regexes.len() && after.regexes[r as int].kind == model::RegexKindNode::Concat(f)
+        }
+    }
+
+    /// `t` is in the piece contributed by the test `c` to a flattened `∧` (`and`) or `∨`.
+    pub open spec fn test_piece_contains(g: model::Graph, c: nat, and: bool, t: nat) -> bool {
+        match g.tests[c as int] {
+            model::TestNode::And(cs) => if and { cs.contains(t) } else { t == c },
+            model::TestNode::Or(cs) => if !and { cs.contains(t) } else { t == c },
+            _ => t == c,
+        }
+    }
+
+    /// `t` is an operand of the flattened connective over `children`.
+    pub open spec fn test_member(g: model::Graph, children: Seq<TestId>, and: bool, t: nat) -> bool {
+        exists|i: int| 0 <= i < children.len() && #[trigger] test_piece_contains(g, children[i]@, and, t)
+    }
+
+    /// Shape of the test connective (the basis of (N5)): the result `r` is `⊤`, `⊥`, an operand of
+    /// the flattened input, or an interned `∧`/`∨` node over such operands. Operands are read in
+    /// `before`, the result node in `after`.
+    pub open spec fn test_connective_result(before: model::Graph, after: model::Graph, children: Seq<TestId>, and: bool, r: nat) -> bool {
+        ||| r == before.constants.test_true
+        ||| r == before.constants.test_false
+        ||| test_member(before, children, and, r)
+        ||| r < after.tests.len() && match after.tests[r as int] {
+            model::TestNode::And(ks) => and && forall|k: int| 0 <= k < ks.len() ==> test_member(before, children, and, #[trigger] ks[k]),
+            model::TestNode::Or(ks) => !and && forall|k: int| 0 <= k < ks.len() ==> test_member(before, children, and, #[trigger] ks[k]),
+            _ => false,
+        }
+    }
+
+    pub proof fn test_connective_result_extends(before: model::Graph, a: model::Graph, b: model::Graph,
+        children: Seq<TestId>, and: bool, r: nat)
+        requires test_connective_result(before, a, children, and, r), model::graph_extends(a, b),
+        ensures test_connective_result(before, b, children, and, r),
+    {
+        if r < a.tests.len() {
+            assert(a.tests == b.tests.subrange(0, a.tests.len() as int));
+            assert(b.tests[r as int] == a.tests[r as int]);
+        }
+    }
+
+    /// `o` is in the piece contributed by the regex `c` to a flattened `+` (`&` for `intersect`):
+    /// the operands of a union (intersection), otherwise `c` itself.
+    pub open spec fn regex_piece_contains(g: model::Graph, c: nat, intersect: bool, o: nat) -> bool {
+        match g.regexes[c as int].kind {
+            model::RegexKindNode::Union(cs) => if !intersect { cs.contains(o) } else { o == c },
+            model::RegexKindNode::Intersect(cs) => if intersect { cs.contains(o) } else { o == c },
+            _ => o == c,
+        }
+    }
+
+    /// `o ∈ ops₊(X)` (`ops_&(X)` for `intersect`).
+    pub open spec fn regex_member(g: model::Graph, children: Seq<RegexId>, intersect: bool, o: nat) -> bool {
+        exists|i: int| 0 <= i < children.len() && #[trigger] regex_piece_contains(g, children[i]@, intersect, o)
+    }
+
+    pub open spec fn regex_is_set(g: model::Graph, o: nat, intersect: bool) -> bool {
+        match g.regexes[o as int].kind {
+            model::RegexKindNode::Union(_) => !intersect,
+            model::RegexKindNode::Intersect(_) => intersect,
+            _ => false,
+        }
+    }
+
+    pub proof fn regex_member_valid(g: model::Graph, children: Seq<RegexId>, intersect: bool, o: nat)
+        requires model::graph_wf(g), regex_ids_valid(g, children), regex_member(g, children, intersect, o),
+        ensures o < g.regexes.len(),
+    {
+        let i = choose|i: int| 0 <= i < children.len() && #[trigger] regex_piece_contains(g, children[i]@, intersect, o);
+        let c = children[i]@;
+        model::lemma_graph_regex_wf(g, c);
+        match g.regexes[c as int].kind {
+            model::RegexKindNode::Union(cs) | model::RegexKindNode::Intersect(cs) => {
+                if cs.contains(o) { let j = choose|j: int| 0 <= j < cs.len() && cs[j] == o; }
+            },
+            _ => {},
+        }
+    }
+
+    /// The inputs are normalized for this connective: `ops₊(X)` contains no unions (resp.
+    /// `ops_&(X)` no intersections), as holds when `X` consists of states.
+    pub open spec fn regex_set_flat_inputs(g: model::Graph, children: Seq<RegexId>, intersect: bool) -> bool {
+        forall|o: nat| regex_member(g, children, intersect, o) ==> !regex_is_set(g, o, intersect)
+    }
+
+    /// `t` is the test of some member of `ops₊(X)` (`ops_&(X)`).
+    pub open spec fn regex_member_test(g: model::Graph, children: Seq<RegexId>, intersect: bool, t: nat) -> bool {
+        exists|o: nat| #[trigger] regex_member(g, children, intersect, o)
+            && o < g.regexes.len() && g.regexes[o as int].kind == model::RegexKindNode::Test(t)
+    }
+
+    /// `o` is a test combined by the test connective from tests of `ops₊(X)` (`ops_&(X)`).
+    pub open spec fn regex_combined_test(before: model::Graph, after: model::Graph, children: Seq<RegexId>, intersect: bool, o: nat) -> bool {
+        o < after.regexes.len() && exists|t: nat, ts: Seq<TestId>|
+            after.regexes[o as int].kind == model::RegexKindNode::Test(t)
+            && (forall|k: int| 0 <= k < ts.len() ==> regex_member_test(before, children, intersect, #[trigger] ts[k]@))
+            && #[trigger] test_connective_result(before, after, ts, intersect, t)
+    }
+
+    /// A legal operand of `N(ΣX)` (`N(&X)`): a member of `ops₊(X)` or a combined test.
+    pub open spec fn regex_set_operand_ok(before: model::Graph, after: model::Graph, children: Seq<RegexId>, intersect: bool, o: nat) -> bool {
+        regex_member(before, children, intersect, o) || regex_combined_test(before, after, children, intersect, o)
+    }
+
+    /// (N1)/(N2): the result `r` of `N(ΣX)` (`N(&X)`) is a constant, or its operands are members of
+    /// `ops₊(X)` (`ops_&(X)`) or tests combined from the tests among them. Inputs are read in
+    /// `before`, the result in `after`.
+    pub open spec fn regex_set_shape(before: model::Graph, after: model::Graph, children: Seq<RegexId>, intersect: bool, r: nat) -> bool {
+        ||| r == before.constants.empty
+        ||| r == before.constants.all
+        ||| r == before.constants.epsilon
+        ||| r < after.regexes.len() && forall|o: nat| #[trigger] regex_piece_contains(after, r, intersect, o)
+            ==> regex_member(before, children, intersect, o) || regex_combined_test(before, after, children, intersect, o)
+    }
+
+    pub proof fn regex_combined_test_extends(before: model::Graph, a: model::Graph, b: model::Graph,
+        children: Seq<RegexId>, intersect: bool, o: nat)
+        requires regex_combined_test(before, a, children, intersect, o), model::graph_extends(a, b),
+        ensures regex_combined_test(before, b, children, intersect, o),
+    {
+        let (t, ts) = choose|t: nat, ts: Seq<TestId>|
+            a.regexes[o as int].kind == model::RegexKindNode::Test(t)
+            && (forall|k: int| 0 <= k < ts.len() ==> regex_member_test(before, children, intersect, #[trigger] ts[k]@))
+            && #[trigger] test_connective_result(before, a, ts, intersect, t);
+        assert(a.regexes == b.regexes.subrange(0, a.regexes.len() as int));
+        assert(b.regexes[o as int] == a.regexes[o as int]);
+        test_connective_result_extends(before, a, b, ts, intersect, t);
+    }
+
+    /// (N0) for complements: `N(¬p) = ¬p` whenever `¬p` is a state.
+    pub proof fn regex_not_fixpoint(g: model::Graph, x: nat, p: nat, r: nat)
+        requires model::graph_wf(g), x < g.regexes.len(), p < g.regexes.len(),
+            g.regexes[x as int].kind == model::RegexKindNode::Not(p),
+            !(g.regexes[p as int].kind is Empty || g.regexes[p as int].kind is All || g.regexes[p as int].kind is Not),
+            regex_not_result(g, p, r),
+        ensures r == x,
+    {
+        regex_kind_unique(g, r, x);
+    }
+
+    /// (N3) involution: `N(¬N(¬x)) = x` for every node `x` that is not the complement of `∅`,
+    /// `Univ`, or a complement; in particular for every state.
+    pub proof fn regex_not_involution(g: model::Graph, x: nat, r: nat, r2: nat)
+        requires model::graph_wf(g), x < g.regexes.len(),
+            forall|p: nat| #[trigger] g.regexes[x as int].kind == model::RegexKindNode::Not(p)
+                ==> !(g.regexes[p as int].kind is Empty || g.regexes[p as int].kind is All || g.regexes[p as int].kind is Not),
+            regex_not_result(g, x, r), regex_not_result(g, r, r2),
+        ensures r2 == x,
+    {
+        regex_constants(g);
+        regex_unfold(g, g.constants.empty);
+        regex_unfold(g, g.constants.all);
+        regex_unfold(g, x);
+        match g.regexes[x as int].kind {
+            model::RegexKindNode::Empty => {
+                assert(g.regexes[g.constants.all as int].kind is All);
+                assert(g.regexes[g.constants.empty as int].kind is Empty);
+                regex_kind_unique(g, x, g.constants.empty);
+            },
+            model::RegexKindNode::All => {
+                assert(g.regexes[g.constants.empty as int].kind is Empty);
+                assert(g.regexes[g.constants.all as int].kind is All);
+                regex_kind_unique(g, x, g.constants.all);
+            },
+            model::RegexKindNode::Not(p) => {
+                assert(r == p);
+                assert(p < g.regexes.len());
+                regex_not_fixpoint(g, x, p, r2);
+            },
+            _ => {
+                assert(g.regexes[r as int].kind == model::RegexKindNode::Not(x));
+            },
+        }
+    }
+
+    /// Factors that are neither `∅`, `ε`, nor concatenations flatten to themselves.
+    pub proof fn regex_concat_flat_atoms(g: model::Graph, children: Seq<RegexId>)
+        requires forall|i: int| 0 <= i < children.len() ==> !(#[trigger] g.regexes[children[i]@ as int].kind is Empty
+            || g.regexes[children[i]@ as int].kind is Epsilon || g.regexes[children[i]@ as int].kind is Concat),
+        ensures regex_concat_flat(g, children) == model::regex_ids(children),
+        decreases children.len(),
+    {
+        if children.len() > 0 {
+            let init = children.drop_last();
+            assert forall|i: int| 0 <= i < init.len() implies !(#[trigger] g.regexes[init[i]@ as int].kind is Empty
+                || g.regexes[init[i]@ as int].kind is Epsilon || g.regexes[init[i]@ as int].kind is Concat) by {
+                assert(init[i] == children[i]);
+            }
+            regex_concat_flat_atoms(g, init);
+            assert(g.regexes[children.last()@ as int].kind == g.regexes[children[children.len() - 1]@ as int].kind);
+            assert(model::regex_ids(children) =~= model::regex_ids(init) + seq![children.last()@]);
+        }
+    }
+
+    /// (N0) for lists: applied to the elements of a list state, `N` returns that state.
+    pub proof fn regex_concat_fixpoint(before: model::Graph, after: model::Graph, q: nat, children: Seq<RegexId>, r: nat)
+        requires model::graph_wf(after), model::graph_extends(before, after), q < before.regexes.len(),
+            before.regexes[q as int].kind == model::RegexKindNode::Concat(model::regex_ids(children)), children.len() >= 2,
+            forall|i: int| 0 <= i < children.len() ==> !(#[trigger] before.regexes[children[i]@ as int].kind is Empty
+                || before.regexes[children[i]@ as int].kind is Epsilon || before.regexes[children[i]@ as int].kind is Concat),
+            regex_concat_result(before, after, children, r),
+        ensures r == q,
+    {
+        regex_concat_flat_atoms(before, children);
+        assert(!exists|i: int| 0 <= i < children.len() && before.regexes[children[i]@ as int].kind == model::RegexKindNode::Empty);
+        assert(before.regexes == after.regexes.subrange(0, before.regexes.len() as int));
+        assert(after.regexes[q as int] == before.regexes[q as int]);
+        regex_kind_unique(after, r, q);
+    }
+    }
 }

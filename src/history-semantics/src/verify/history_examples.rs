@@ -10,6 +10,7 @@ use crate::runtime::RuleRuntime;
 use crate::runtime::verify::{self as cache, HistorySnapshots};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use history_store::cache::HistoryCursor;
 use history_store::history::StoredHistory;
 use history_store::store::{Event, HistoryStore};
@@ -28,22 +29,22 @@ verus! {
 broadcast use junco_core::kernel::verify::group_kernel_views;
 
 pub open spec fn event(principal: nat, action: nat, resource: nat) -> EventView {
-    EventView { principal, action, resource }
+    seq![principal, action, resource]
 }
 
 pub open spec fn any_head() -> Head {
-    Head { principal: HeadField::Any, action: HeadField::Any, resource: HeadField::Any }
+    seq![HeadField::Any, HeadField::Any, HeadField::Any]
 }
 
 pub open spec fn release_head() -> Head {
-    Head { principal: HeadField::Bind, action: HeadField::Constant(3), resource: HeadField::Bind }
+    seq![HeadField::Bind, HeadField::Constant(3), HeadField::Bind]
 }
 
 pub open spec fn prior_edit_test() -> SrcTest {
     SrcTest::And(seq![
-        SrcTest::Eq(Component::Principal, Term::Variable(Component::Principal)),
-        SrcTest::Eq(Component::Action, Term::Constant(2)),
-        SrcTest::Eq(Component::Resource, Term::Variable(Component::Resource)),
+        SrcTest::Eq(Component(0), Term::Variable(Component(0))),
+        SrcTest::Eq(Component(1), Term::Constant(2)),
+        SrcTest::Eq(Component(2), Term::Variable(Component(2))),
     ])
 }
 
@@ -52,6 +53,7 @@ pub open spec fn prior_edit_tail() -> Regex<SrcTest> {
 }
 
 pub proof fn epsilon_versus_test_true_on_empty_history(request: EventView)
+    requires request.len() == 3,
     ensures language::pair_lang(any_head(), Regex::Epsilon, request, Seq::empty()),
         !language::pair_lang(any_head(), Regex::Test(SrcTest::Bool(true)), request, Seq::empty()),
 {
@@ -92,10 +94,10 @@ pub proof fn prior_edit_grants_matching_release(principal: nat, resource: nat)
     assert(parts.flatten() =~= history);
     let children = prior_edit_tail()->Concat_0;
     assert forall|i: int| 0 <= i < children.len()
-        implies language::lang(src_sem(theta), children[i], parts[i]) by {
+        implies language::numeric_lang(src_sem(theta), children[i], parts[i]) by {
         assert(i == 0 || i == 1 || i == 2);
     }
-    assert(language::lang(src_sem(theta), prior_edit_tail(), history));
+    assert(language::numeric_lang(src_sem(theta), prior_edit_tail(), history));
     language::lemma_pair_lang_substitutions(release_head(), prior_edit_tail(),
         event(principal, 3, resource), history, theta);
 }
@@ -115,23 +117,23 @@ pub proof fn mandatory_field_neq_is_eq_complement(theta: Subst, field: Component
 { }
 
 pub proof fn empty_regex_lists_keep_their_identities(theta: Subst, history: Seq<EventView>)
-    ensures language::lang(src_sem(theta), Regex::Concat(Seq::empty()), history) == (history.len() == 0),
-        !language::lang(src_sem(theta), Regex::Union(Seq::empty()), history),
-        language::lang(src_sem(theta), Regex::Intersect(Seq::empty()), history),
+    ensures language::numeric_lang(src_sem(theta), Regex::Concat(Seq::empty()), history) == (history.len() == 0),
+        !language::numeric_lang(src_sem(theta), Regex::Union(Seq::empty()), history),
+        language::numeric_lang(src_sem(theta), Regex::Intersect(Seq::empty()), history),
 {
     algebra::lemma_parts_concat_nil(src_sem(theta), history);
 }
 
 pub proof fn regex_not_is_not_one_event_neq(theta: Subst, first: EventView, second: EventView)
-    ensures language::lang(src_sem(theta), Regex::Not(Box::new(Regex::Test(SrcTest::Bool(true)))), seq![first, second]),
-        !language::lang(src_sem(theta), Regex::Test(SrcTest::Bool(false)), seq![first, second]),
+    ensures language::numeric_lang(src_sem(theta), Regex::Not(Box::new(Regex::Test(SrcTest::Bool(true)))), seq![first, second]),
+        !language::numeric_lang(src_sem(theta), Regex::Test(SrcTest::Bool(false)), seq![first, second]),
 {
-    reveal_with_fuel(language::lang, 2);
+    reveal_with_fuel(language::numeric_lang, 2);
     assert(seq![first, second].len() == 2);
 }
 
 pub proof fn star_accepts_two_typed_events(theta: Subst, first: EventView, second: EventView)
-    ensures language::lang(src_sem(theta), Regex::Star(Box::new(Regex::Test(SrcTest::Bool(true)))), seq![first, second]),
+    ensures language::numeric_lang(src_sem(theta), Regex::Star(Box::new(Regex::Test(SrcTest::Bool(true)))), seq![first, second]),
 {
     let item = Regex::Test(SrcTest::Bool(true));
     algebra::lemma_parts_star_single(src_sem(theta), item, seq![first]);
@@ -152,7 +154,7 @@ pub(crate) fn fold_decision<L: Limits>(
         result matches Ok(answer) ==> answer == model::regex_lang(
             (*old(pair)).store.graph(), bindings@, residual@, history_store::store::verify::events_view(events@)),
 {
-    hide(language::lang);
+    hide(language::numeric_lang);
     hide(model::lift_regex);
     hide(model::test_holds);
     proof {
@@ -190,7 +192,7 @@ pub(crate) proof fn cache_rejects_wrong_residual(
         cursor.residual@ == pair.store.graph().constants.all,
         snapshots.contains_key((cursor.history, cursor.revision)),
         cursor.consumed <= snapshots[(cursor.history, cursor.revision)].len(),
-        language::event_wf(cursor.bindings@),
+        language::event_wf(cursor.bindings@, cursor.bindings@.len()),
     ensures !cache::cursor_matches_snapshot(pair, cursor, snapshots),
         !cache::cursor_cache_wf(pair, seq![cursor], snapshots),
 {
@@ -218,9 +220,9 @@ pub(crate) fn cached_decision<L: Limits>(
     target_len: usize, batch_size: usize, limits: &mut L, world: &mut ObservationWorld,
 ) -> (result: KernelResult<bool>)
     requires cache::cursor_cache_wf(old(runtime).pair, old(runtime).cursors@, old(runtime).snapshots@),
-        cache::snapshot_compatible(old(runtime).snapshots@, stored.id(), (stored@.revision as u64),
+        cache::snapshot_compatible(old(runtime).snapshots@, stored.id(), stored.revision(),
             stored@.events),
-        language::event_wf(bindings@), batch_size > 0, target_len <= stored@.events.len(),
+        language::event_wf(bindings@, bindings@.len()), batch_size > 0, target_len <= stored@.events.len(),
     ensures cache::cursor_cache_wf(final(runtime).pair, final(runtime).cursors@, final(runtime).snapshots@),
         progress::pair_frame(old(runtime).pair, final(runtime).pair),
         final(runtime).spec_store() == old(runtime).spec_store(),
@@ -228,7 +230,7 @@ pub(crate) fn cached_decision<L: Limits>(
             old(runtime).pair.store.graph(), bindings@, old(runtime).pair.root@,
             stored@.events.take(target_len as int)),
 {
-    hide(language::lang);
+    hide(language::numeric_lang);
     hide(model::lift_regex);
     hide(model::test_holds);
     reveal(cache::runtime_wf);
@@ -245,15 +247,18 @@ pub(crate) fn cached_decision<L: Limits>(
             progress::pair_wf(entry),
             cache::cursor_cache_wf(runtime.pair, runtime.cursors@, runtime.snapshots@),
             progress::pair_frame(entry, runtime.pair),
-            runtime.snapshots@.contains_key((stored.id(), (stored@.revision as u64))),
-            runtime.snapshots@[(stored.id(), (stored@.revision as u64))] == stored@.events,
-            cache::batch_matches_snapshot(runtime.pair, cursor, stored.id(), (stored@.revision as u64),
+            runtime.snapshots@.contains_key((stored.id(), stored.revision())),
+            runtime.snapshots@[(stored.id(), stored.revision())] == stored@.events,
+            cache::batch_matches_snapshot(runtime.pair, cursor, stored.id(), stored.revision(),
                 *bindings, runtime.snapshots@),
             cursor.consumed <= target_len, target_len <= stored@.events.len(),
-            language::event_wf(bindings@), batch_size > 0,
+            language::event_wf(bindings@, bindings@.len()), batch_size > 0,
         decreases target_len - cursor.consumed,
     {
-        proof { history_store::history::lemma_stored_history_view(*stored); }
+        proof {
+            history_store::history::lemma_stored_history_view(*stored);
+            cache::lemma_snapshot_compatible_intro(runtime.snapshots@, stored.id(), stored.revision(), stored@.events);
+        }
         let ghost batch_entry = runtime.pair;
         let ghost consumed = cursor.consumed;
         let result = runtime.advance_cursor(&mut cursor, bindings, stored,
@@ -289,17 +294,21 @@ pub(crate) fn template_cached_decision<L: Limits>(
     stored: &StoredHistory, target_len: usize, batch_size: usize,
     limits: &mut L, world: &mut ObservationWorld,
 ) -> (result: KernelResult<bool>)
-    requires language::event_wf(bindings@), batch_size > 0, target_len <= stored@.events.len(),
+    requires language::event_wf(bindings@, bindings@.len()), batch_size > 0, target_len <= stored@.events.len(),
     ensures result matches Ok(answer) ==> answer == source::source_regex(
         *template, template.root as nat, bindings@,
         stored@.events.take(target_len as int)),
 {
-    hide(language::lang);
+    hide(language::numeric_lang);
     hide(model::lift_regex);
     hide(model::test_holds);
     reveal(cache::constructor_result);
     reveal(cache::runtime_wf);
     let mut runtime = RuleRuntime::new(store, template, precompile, limits, world)?;
+    proof {
+        history_store::history::lemma_stored_history_view(*stored);
+        cache::lemma_constructor_snapshot_compatible(runtime, *store, *template, *stored);
+    }
     cached_decision(&mut runtime, bindings, stored, target_len, batch_size, limits, world)
 }
 
@@ -313,17 +322,18 @@ pub(crate) fn flat_template_cached_decision<L: Limits>(
     requires junco_core::flat::verify::structural_wf(*template), batch_size > 0,
         target_len <= stored@.events.len(), junco_core::verify::encoding::event_representation(candidate, request@),
         junco_core::verify::encoding::word_representation(word, stored@.events.take(target_len as int)),
+        forall|i: int| 0 <= i < word.len() ==> #[trigger] word[i].len() == candidate.len(),
     ensures result matches Ok(answer) ==> match answer {
         None => !junco_core::flat::verify::head_matches(template.head@, candidate,
             junco_core::verify::encoding::numeric_equality()),
         Some(accepted) => junco_core::flat::verify::head_matches(template.head@, candidate,
             junco_core::verify::encoding::numeric_equality())
-            && accepted == junco_core::flat::verify::lang(template.tests@, template.regexes@,
+            && accepted == junco_core::flat::verify::flat_lang(template.tests@, template.regexes@,
                 template.root as nat, candidate, word, junco_core::verify::encoding::numeric_equality()),
     },
 {
     proof { source::lemma_flat_head(*template, candidate, request@); }
-    let bindings = match crate::compile::bindings(template, request) {
+    let bindings = match crate::runtime::RuleRuntime::bindings(template, request) {
         Some(bindings) => {
             proof { source::lemma_bindings_match(*template, *request, bindings); }
             bindings
@@ -333,7 +343,7 @@ pub(crate) fn flat_template_cached_decision<L: Limits>(
             return Ok(None);
         },
     };
-    proof { assert(language::event_wf(bindings@)); }
+    proof { assert(language::event_wf(bindings@, bindings@.len())); }
     let accepted = template_cached_decision(store, template, precompile, &bindings,
         stored, target_len, batch_size, limits, world)?;
     proof {
@@ -341,6 +351,57 @@ pub(crate) fn flat_template_cached_decision<L: Limits>(
             word, stored@.events.take(target_len as int), bindings@);
     }
     Ok(Some(accepted))
+}
+
+/// The crate-internal cursor API, driven once from a fresh store: resume, advance to the stored
+/// length, and read the answer against `runtime_accepts`.
+fn numeric_runtime_readiness<L: Limits>(bindings: &Bindings,
+    limits: &mut L, world: &mut ObservationWorld) -> Result<(), junco_core::HistoryError>
+    requires language::event_wf(bindings@, bindings@.len()),
+        1 <= bindings@.len() <= history_syntax::MAX_ARITY,
+{
+    let arity = bindings.arity();
+    let owner = HistoryStore::new(arity);
+    let store = history_store::store::borrow_numeric_owner(&owner);
+    let handle = owner.new_history(limits, world)?;
+    let record = store.history_record(&handle)?;
+    let guard = record.read();
+    let stored: &StoredHistory = &guard;
+    let target = stored.len();
+    let mut regexes = Vec::new();
+    regexes.push(junco_core::flat::FlatRegex::All);
+    let mut head = Vec::new();
+    while head.len() < arity
+        invariant head@.len() <= arity,
+            forall|i: int| 0 <= i < head@.len() ==> head@[i] == junco_core::flat::FlatHead::<u64>::Bind,
+        decreases arity - head@.len(),
+    {
+        head.push(junco_core::flat::FlatHead::<u64>::Bind);
+    }
+    let template = FlatPair {
+        head,
+        tests: Vec::new(), regexes, root: 0,
+    };
+    let mut state = RuleRuntime::new(&owner, &template, false, limits, world)?;
+    let ghost constructed = state;
+    proof {
+        cache::lemma_constructor_runtime_wf(state, owner, template);
+        cache::lemma_constructor_snapshot_compatible(state, owner, template, *stored);
+        cache::lemma_resume_requires(state, *bindings, *stored, target);
+    }
+    let mut cursor = state.resume_cursor(bindings, stored, target);
+    proof { cache::lemma_resume_can_advance(constructed, state, cursor, *bindings, *stored, target); }
+    let ghost before = state;
+    let ghost start = cursor;
+    let answer = state.advance_cursor(&mut cursor, bindings, stored, target, target, limits, world);
+    proof {
+        cache::lemma_advance_result_facts(before, state, start, cursor, *bindings, *stored, target, target, answer);
+        cache::lemma_runtime_frame_accepts(constructed, before, bindings@, stored@.events.take(target as int));
+        assert(answer matches Ok(Some(accepted)) ==>
+            accepted == cache::runtime_accepts(constructed, bindings@, stored@.events.take(target as int)));
+        assert(answer != Err(junco_core::HistoryError::WrongHistoryOwner));
+    }
+    Ok(())
 }
 
 }

@@ -253,9 +253,9 @@ The canonical owned DSL and Event trait belong to in-tree `src/history-syntax`;
 `history-store` owns interning and history transactions, and `history-semantics`
 owns numeric compilation/evaluation and generic policies. Regorus retains the
 borrowed-string compiler adapter, VM dispatch/limit adapter, and shared Program-keyed table
-cache. Its public `HistoryStore::{new, intern_principal, intern_action,
-intern_resource, new_history, append, truncate, len}` APIs keep their signatures;
-every wrapper shares one process-wide numeric store (`history_store::store::HistoryStore::global()`). Store's
+cache. Its public `HistoryStore::{new, intern, event, new_history, append,
+truncate, len}` API wraps one process-wide arity-3 numeric store
+(`history_store::store::HistoryStore::new(3)`). Store's
 generic typed `Store<E>`/`History<E>` APIs are separate, not replacement Regorus
 entrypoints. Native no_std + alloc remains supported. `std` and Semantics' `cache`
 do not imply `runtime`; Regorus `history` enables Store and Semantics runtime,
@@ -267,10 +267,12 @@ dev-only integration probes.
 Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Each
 wrapper owns only its Program-keyed table cache; identities and histories live in
 one process-wide store, so wrappers accept each other's handles and IDs and are
-not a tenant isolation boundary. Intern exact raw UTF-8 paths separately with
-`intern_principal`, `intern_action`, and `intern_resource`. The resulting opaque
-eight-byte `Principal`, `Action`, and `Resource` IDs form an `Event` containing
-exactly those three coordinates. Case, slashes, embedded NULs, and distinct
+not a tenant isolation boundary. Intern exact raw UTF-8 paths per coordinate with
+`intern(PRINCIPAL, path)`, `intern(ACTION, path)`, and `intern(RESOURCE, path)`,
+then build an `Event` from the three opaque `u64` IDs with
+`store.event(&[principal, action, resource])`, which validates arity and domain
+membership; `event.component(index)` reads one coordinate back. Case, slashes,
+embedded NULs, and distinct
 Unicode encodings remain distinct; there is no normalization or ancestry match.
 Interned paths live for the process; IDs are not recycled. IDs issued only by a
 typed `Store<E>` view are not byte-domain members and are rejected.
@@ -289,9 +291,11 @@ execution and requires explicit reattachment and restaging.
 
 Policies are authored only with the Rust DSL re-exported from
 `regorus::languages::history_table`: `Rule`, `RuleMode`, `Head`,
-`ComponentPattern`, `TestExpr`, `AtomPattern`, `Comparison`, and `RegexExpr`.
-`compile` borrows `&[Rule<SourceEvent<'_>>]`; constants are `&str` values copied
-exactly into the compiled program, so the source strings and rules may be
+`ComponentPattern`, `TestExpr`, `AtomPattern`, `Comparison`, `RegexExpr`,
+`Component`, the `PRINCIPAL`/`ACTION`/`RESOURCE` coordinates and
+`SourceComponent`. `compile` borrows `&[Rule<SourceEvent<'_>>]`; constants are
+`SourceComponent` values tagged with their coordinate whose `&str` payloads are
+copied exactly into the compiled program, so the source strings and rules may be
 dropped after compilation. There is no JSON policy grammar.
 
 ```rust
@@ -299,17 +303,17 @@ use regorus::languages::history_table::*;
 
 let rule = Rule::new(
     RuleMode::Require,
-    Head::new(
+    Head::new([
         ComponentPattern::variable("actor"),
-        ComponentPattern::constant("release"),
+        ComponentPattern::constant(SourceComponent::Action("release")),
         ComponentPattern::variable("doc"),
-    ),
+    ]),
     RegexExpr::concat([
         RegexExpr::all(),
         RegexExpr::test(TestExpr::and([
-            TestExpr::atom(Comparison::Eq, AtomPattern::Principal(ComponentPattern::variable("actor"))),
-            TestExpr::atom(Comparison::Eq, AtomPattern::Action(ComponentPattern::constant("edit"))),
-            TestExpr::atom(Comparison::Eq, AtomPattern::Resource(ComponentPattern::variable("doc"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor"))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::new(ACTION, ComponentPattern::constant(SourceComponent::Action("edit")))),
+            TestExpr::atom(Comparison::Eq, AtomPattern::new(RESOURCE, ComponentPattern::variable("doc"))),
         ])),
         RegexExpr::all(),
     ]),
@@ -322,7 +326,8 @@ its language; forbid rejects when it is inside. Nonmatching request heads skip t
 rule. Each head coordinate is a constant or a variable; use a distinct unused
 variable for a wildcard. Variables belong to one coordinate; reusing a name across
 coordinates or referencing an unbound name fails with
-`HistoryTableError::InvalidRule { index, source }` carrying a typed `CompileError`.
+`HistoryTableError::InvalidRule { index, source }` carrying a typed `CompileError`;
+so does a constant tagged with another coordinate (`ComponentCoordinate`).
 
 Tests are `TestExpr::{True, False, And, Or}` and component `Eq`/`Neq` atoms whose
 term is a constant or a head variable from the same coordinate. Empty conjunction
@@ -369,7 +374,9 @@ replayed through bounded dispatches. Native errors remain typed in
 Programs contain portable postorder source tables, not live IDs or store identity.
 `HistoryTableRule` retains its mode/source envelope, now using core `RuleMode`
 and `FlatPair<String>` with `Component`, `FlatHead`, `FlatTerm`, `FlatTest`, and
-`FlatRegex`. The v8 field/variant order and serialized names are unchanged.
+`FlatRegex`. `head` is a length-prefixed sequence (validated arity 1..=8; attaching
+to the arity-3 store requires three slots) and `Component` serializes as its
+coordinate index.
 `Program::validate_limits` validates these sources even without `history`;
 repeated edges, unused nodes, and valid non-last roots remain supported without
 unfolding the DAG. Attachment interns constants in the supplied store outside

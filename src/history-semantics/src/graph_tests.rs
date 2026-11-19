@@ -2,17 +2,17 @@
 // Licensed under the MIT License.
 #![allow(clippy::panic_in_result_fn)]
 use crate::normalize::RegexNormalize;
-use crate::progress::TransitionAtoms;
+use crate::progress::CompiledPair;
 use crate::symbolic::{RegexDerivative, TransitionInterpret};
 use alloc::vec::Vec;
-use history_store::graph::{ArenaStorage, CanonicalStore, RuntimeKernel};
+use history_store::graph::{CanonicalStore, RuntimeKernel};
 use junco_core::kernel::*;
 use junco_core::observation::ObservationWorld;
 #[test]
 fn interned_nodes_keep_ids_bytes_and_derivative_semantics() -> KernelResult<()> {
     let mut world = ObservationWorld;
     let mut limits = junco_core::limits::Unmetered;
-    let mut graph = CanonicalStore::new(ArenaStorage::new()?, &mut world)?;
+    let mut graph = CanonicalStore::new()?;
     let mut store = RuntimeKernel {
         store: &mut graph,
         limits: &mut limits,
@@ -20,7 +20,7 @@ fn interned_nodes_keep_ids_bytes_and_derivative_semantics() -> KernelResult<()> 
     };
     let node = TestView::Atom {
         primitive: Primitive::Eq {
-            field: history_syntax::syntax::Component::Principal,
+            field: history_syntax::syntax::Component(0),
             term: Term::Constant(0),
         },
         positive: true,
@@ -59,7 +59,7 @@ fn interned_nodes_keep_ids_bytes_and_derivative_semantics() -> KernelResult<()> 
         RegexId::derivative(regex, &mut kernel, &mut derivatives)?,
         transition
     );
-    let atoms = AtomSet::from_transition(&mut kernel, transition)?;
+    let atoms = CompiledPair::collect_atoms(&mut kernel, transition)?;
     let accepted = TransitionId::interpret(transition, &mut kernel, &atoms, &[1])?;
     assert!(RegexId::nullable(accepted, &kernel)?);
     Ok(())

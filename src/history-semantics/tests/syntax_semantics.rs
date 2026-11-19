@@ -5,7 +5,8 @@ use std::sync::Arc;
 use history_semantics::CompiledRule;
 use history_store::{History, Store};
 use history_syntax::{
-    AtomPattern, Comparison, ComponentPattern, Event, Head, RegexExpr, Rule, RuleMode, TestExpr,
+    AtomPattern, Comparison, Component, Component3, ComponentPattern, Event, Head, N3, RegexExpr,
+    Rule, RuleMode, TestExpr,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -16,6 +17,13 @@ enum Action {
     Remove,
 }
 
+// Unverified glue: `hash_respects_eq` is a hypothesis for this type (as `event_laws` already is).
+impl history_syntax::KeyHash for Action {
+    fn key_hash(&self) -> u64 {
+        history_syntax::key_hash::hash_via_std(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Record {
     principal: u32,
@@ -24,18 +32,23 @@ struct Record {
 }
 
 impl Event for Record {
-    type Principal = u32;
-    type Action = Action;
-    type Resource = u32;
+    type Component = Component3<u32, Action, u32>;
+    type Arity = N3;
 
-    fn principal(self) -> u32 {
-        self.principal
+    fn component(self, index: usize) -> Self::Component {
+        match index {
+            0 => Component3::C0(self.principal),
+            1 => Component3::C1(self.action),
+            _ => Component3::C2(self.resource),
+        }
     }
-    fn action(self) -> Action {
-        self.action
-    }
-    fn resource(self) -> u32 {
-        self.resource
+
+    fn coordinate(component: Self::Component) -> usize {
+        match component {
+            Component3::C0(_) => 0,
+            Component3::C1(_) => 1,
+            Component3::C2(_) => 2,
+        }
     }
 }
 
@@ -50,11 +63,11 @@ fn event(principal: u32, action: Action, resource: u32) -> Record {
 fn rule(tail: RegexExpr<Record>) -> Rule<Record> {
     Rule::new(
         RuleMode::Require,
-        Head::new(
+        Head::new([
             ComponentPattern::variable("actor"),
             ComponentPattern::variable("action"),
             ComponentPattern::variable("resource"),
-        ),
+        ]),
         tail,
     )
 }
@@ -62,7 +75,10 @@ fn rule(tail: RegexExpr<Record>) -> Rule<Record> {
 fn action_test(comparison: Comparison, value: Action) -> TestExpr<Record> {
     TestExpr::atom(
         comparison,
-        AtomPattern::Action(ComponentPattern::constant(value)),
+        AtomPattern::new(
+            Component(1),
+            ComponentPattern::constant(Component3::C1(value)),
+        ),
     )
 }
 
@@ -73,14 +89,20 @@ fn action(value: Action) -> RegexExpr<Record> {
 fn principal(comparison: Comparison, value: u32) -> TestExpr<Record> {
     TestExpr::atom(
         comparison,
-        AtomPattern::Principal(ComponentPattern::constant(value)),
+        AtomPattern::new(
+            Component(0),
+            ComponentPattern::constant(Component3::C0(value)),
+        ),
     )
 }
 
 fn resource(value: u32) -> TestExpr<Record> {
     TestExpr::atom(
         Comparison::Eq,
-        AtomPattern::Resource(ComponentPattern::constant(value)),
+        AtomPattern::new(
+            Component(2),
+            ComponentPattern::constant(Component3::C2(value)),
+        ),
     )
 }
 
@@ -180,11 +202,17 @@ fn boolean_absorption_and_distinct_component_equalities_keep_their_languages() {
         vec![
             TestExpr::atom(
                 Comparison::Neq,
-                AtomPattern::Resource(ComponentPattern::constant(0u32)),
+                AtomPattern::new(
+                    Component(2),
+                    ComponentPattern::constant(Component3::C2(0u32)),
+                ),
             ),
             TestExpr::atom(
                 Comparison::Neq,
-                AtomPattern::Resource(ComponentPattern::constant(1u32)),
+                AtomPattern::new(
+                    Component(2),
+                    ComponentPattern::constant(Component3::C2(1u32)),
+                ),
             ),
         ],
     ] {
@@ -379,7 +407,7 @@ fn candidate_bindings_and_wide_constant_alphabets_remain_exact() {
         store.clone(),
         rule(RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Action(ComponentPattern::variable("action")),
+            AtomPattern::new(Component(1), ComponentPattern::variable("action")),
         ))),
     )
     .unwrap();

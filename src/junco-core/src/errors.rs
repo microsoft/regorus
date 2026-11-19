@@ -15,7 +15,9 @@ pub enum HistoryError {
     #[error("history variable {name:?} is not bound by request pattern")]
     UnboundVariable { name: String },
     #[error("history symbolic graph payload exceeds {limit} bytes")]
-    GraphLimit { limit: usize },
+    GraphBudget { limit: usize },
+    #[error("history graph index or size computation overflowed")]
+    GraphIndex,
     #[error("history allocation failed")]
     AllocationFailed,
     #[error("history arena exhausted")]
@@ -69,6 +71,7 @@ impl HistoryError {
 
     #[cfg(feature = "runtime")]
     #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
     #[inline]
     pub const fn normalization_invariant() -> HistoryError {
         HistoryError::Invariant {
@@ -77,6 +80,7 @@ impl HistoryError {
     }
     #[cfg(feature = "runtime")]
     #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
     #[inline]
     pub const fn symbolic_invariant() -> HistoryError {
         HistoryError::Invariant {
@@ -85,6 +89,7 @@ impl HistoryError {
     }
     #[cfg(feature = "runtime")]
     #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
     #[inline]
     pub const fn invalid_truth_assignment() -> HistoryError {
         HistoryError::Invariant {
@@ -101,15 +106,14 @@ impl HistoryError {
         }
     }
     #[verus_verify]
-    #[verus_spec(result => ensures result is GraphLimit)]
+    #[verus_spec(result => ensures result is GraphIndex)]
     #[inline]
     pub const fn graph_index_overflow() -> HistoryError {
-        HistoryError::GraphLimit {
-            limit: crate::limits::MAX_GRAPH_BYTES,
-        }
+        HistoryError::GraphIndex
     }
     #[cfg(feature = "runtime")]
     #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
     #[inline]
     pub const fn invalid_atom_set() -> HistoryError {
         HistoryError::Invariant {
@@ -118,6 +122,7 @@ impl HistoryError {
     }
     #[cfg(feature = "runtime")]
     #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
     #[inline]
     pub const fn missing_transition_atom() -> HistoryError {
         HistoryError::Invariant {
@@ -131,6 +136,12 @@ impl HistoryError {
 #[verus_verify(external_derive)]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompileError {
+    /// The head must have exactly the event type's number of coordinates.
+    #[error("head has {found} slots but the event type has {expected}")]
+    HeadArity { expected: usize, found: usize },
+    /// Tagged constants may only be used in their own coordinate.
+    #[error("constant of coordinate {coordinate} used in coordinate {component}")]
+    ComponentCoordinate { component: usize, coordinate: usize },
     /// One variable name occurs in different product components in the same rule.
     #[error("variable {name:?} occurs in different product components")]
     VariableComponentConflict { name: String },

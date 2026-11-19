@@ -10,10 +10,10 @@ pub(crate) mod limits;
 pub(crate) mod store;
 
 pub use history_syntax::{
-    AtomPattern, Comparison, ComponentPattern, Head, RegexExpr, Rule, RuleMode, TestExpr,
+    AtomPattern, Comparison, Component, ComponentPattern, Head, RegexExpr, Rule, RuleMode, TestExpr,
 };
 pub use junco_core::{CompileError, HistoryError};
-pub use store::{Action, Event, HistoryHandle, HistoryStore, Principal, Resource};
+pub use store::{Event, HistoryHandle, HistoryStore};
 
 use crate::rvm::instructions::HistoryStepParams;
 use crate::rvm::program::{HistoryTable, HistoryTableRule, Program};
@@ -22,11 +22,16 @@ use crate::utils::limits::ExecutionTimer;
 use alloc::string::{String, ToString as _};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use history_syntax::Component;
 use junco_core::flat::{FlatHead, FlatPair, FlatTerm, FlatTest};
 use junco_core::limits::Limits as _;
 use junco_core::observation::ObservationWorld;
-use junco_core::ComponentValue;
+
+/// Principal coordinate of a [`SourceEvent`] and of store events.
+pub const PRINCIPAL: Component = Component(0);
+/// Action coordinate of a [`SourceEvent`] and of store events.
+pub const ACTION: Component = Component(1);
+/// Resource coordinate of a [`SourceEvent`] and of store events.
+pub const RESOURCE: Component = Component(2);
 
 /// Borrowed-string authoring event for portable history-table rules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -36,21 +41,38 @@ pub struct SourceEvent<'a> {
     pub resource: &'a str,
 }
 
+/// Tagged coordinate of a [`SourceEvent`]; constants in rules carry their coordinate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SourceComponent<'a> {
+    Principal(&'a str),
+    Action(&'a str),
+    Resource(&'a str),
+}
+
+impl history_syntax::KeyHash for SourceComponent<'_> {
+    fn key_hash(&self) -> u64 {
+        history_syntax::key_hash::hash_via_std(self)
+    }
+}
+
 impl<'a> history_syntax::Event for SourceEvent<'a> {
-    type Principal = &'a str;
-    type Action = &'a str;
-    type Resource = &'a str;
+    type Component = SourceComponent<'a>;
+    type Arity = history_syntax::N3;
 
-    fn principal(self) -> Self::Principal {
-        self.principal
+    fn component(self, index: usize) -> SourceComponent<'a> {
+        match index {
+            0 => SourceComponent::Principal(self.principal),
+            1 => SourceComponent::Action(self.action),
+            _ => SourceComponent::Resource(self.resource),
+        }
     }
 
-    fn action(self) -> Self::Action {
-        self.action
-    }
-
-    fn resource(self) -> Self::Resource {
-        self.resource
+    fn coordinate(component: SourceComponent<'a>) -> usize {
+        match component {
+            SourceComponent::Principal(_) => 0,
+            SourceComponent::Action(_) => 1,
+            SourceComponent::Resource(_) => 2,
+        }
     }
 }
 
@@ -134,28 +156,28 @@ pub fn compile(
 
 /// Copy borrowed constants into a store-independent source, moving every other table unchanged.
 fn into_portable_source(
-    source: FlatPair<ComponentValue<SourceEvent<'_>>>,
+    source: FlatPair<SourceComponent<'_>>,
     limits: &mut limits::RegorusLimits<'_>,
     world: &mut ObservationWorld,
 ) -> Result<FlatPair<String>, HistoryError> {
     let FlatPair {
-        head: [principal, action, resource],
+        head,
         tests,
         regexes,
         root,
     } = source;
-    let mut own_head = |field, head| {
-        Ok::<_, HistoryError>(match head {
+    let mut owned_head = Vec::new();
+    world
+        .try_reserve_vec_exact(&mut owned_head, head.len())
+        .map_err(|_| HistoryError::AllocationFailed)?;
+    limits.enforce_memory()?;
+    for slot in head {
+        owned_head.push(match slot {
             FlatHead::Any => FlatHead::Any,
             FlatHead::Bind => FlatHead::Bind,
-            FlatHead::Constant(value) => FlatHead::Constant(own_constant(field, value, limits)?),
-        })
-    };
-    let head = [
-        own_head(Component::Principal, principal)?,
-        own_head(Component::Action, action)?,
-        own_head(Component::Resource, resource)?,
-    ];
+            FlatHead::Constant(value) => FlatHead::Constant(own_constant(value, limits)?),
+        });
+    }
     let mut owned = Vec::new();
     world
         .try_reserve_vec_exact(&mut owned, tests.len())
@@ -172,9 +194,7 @@ fn into_portable_source(
             } => FlatTest::Atom {
                 field,
                 term: match term {
-                    FlatTerm::Constant(value) => {
-                        FlatTerm::Constant(own_constant(field, value, limits)?)
-                    }
+                    FlatTerm::Constant(value) => FlatTerm::Constant(own_constant(value, limits)?),
                     FlatTerm::Variable(variable) => FlatTerm::Variable(variable),
                 },
                 positive,
@@ -184,23 +204,21 @@ fn into_portable_source(
         });
     }
     Ok(FlatPair {
-        head,
+        head: owned_head,
         tests: owned,
         regexes,
         root,
     })
 }
 
-/// Copy one coordinate-checked constant's exact bytes into an owned string.
+/// Copy one constant's exact bytes into an owned string; flattening already checked its coordinate.
 fn own_constant(
-    field: Component,
-    value: ComponentValue<SourceEvent<'_>>,
+    value: SourceComponent<'_>,
     limits: &mut limits::RegorusLimits<'_>,
 ) -> Result<String, HistoryError> {
-    junco_core::compile::validate_component(field, &value)?;
-    let (ComponentValue::Principal(text)
-    | ComponentValue::Action(text)
-    | ComponentValue::Resource(text)) = value;
+    let (SourceComponent::Principal(text)
+    | SourceComponent::Action(text)
+    | SourceComponent::Resource(text)) = value;
     let mut owned = String::new();
     owned
         .try_reserve_exact(text.len())

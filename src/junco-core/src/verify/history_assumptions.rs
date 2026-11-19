@@ -7,8 +7,8 @@
 //! exact SmallVec sequence operations; concrete successor-cache wrappers
 //! (including their opaque default hasher type); the exact native Iterator::position
 //! selector for retained cursor keys (the pinned vstd lacks its specification);
-//! sort_unstable, dedup, strictly-sorted binary_search, rotate_right.
-//! Primitive checked shifts use exact bit-vector results and reject oversized shifts.
+//! sort_unstable, dedup and strictly-sorted binary_search, each requiring vstd's
+//! `obeys_cmp`/`obeys_eq` laws (a total order, an equivalence) of the element type.
 //!
 //! Reservations preserve logical contents on success and failure. Cache contracts
 //! permit eviction, never a fabricated entry. Event coordinates and bindings are
@@ -20,30 +20,45 @@
 //! implicit destructor invocation is outside the Verus model.
 //! Native allocator Send/Sync markers rely on exclusive chunk ownership,
 //! immutable shared access, and the corresponding element-type bounds outside SMT.
-//! The history owner isolates borrowed UTF-8 BTree operations and mutex-protected
-//! allocator freshness/provenance in narrow native adapters. Mutex linearization
-//! and the global counter invariant are trusted; allocation arithmetic, interner
-//! insertion/rollback, and locked history append/truncate carry executable contracts.
-//! Storage and KernelStore trait contracts are implemented by verified bodies,
-//! not trusted implementations. No compiler, normalizer, derivative, interpreter,
-//! matcher, replay, or evaluator may be external_body or assume_specification.
+//! History owners isolate borrowed UTF-8 operations, const/static installation and
+//! reference identity, mutex callbacks, and Arc/record mechanics in native leaves.
+//! Coordinate, history-key and store-ID transitions check successor arithmetic,
+//! key absence, exact authority insertion, and consumed-ID failure behavior.
+//! Retained persistent receipts prove issuer and independent-owner separation;
+//! exclusive registry births and receipt agreement prove foreign checkpoint rejection.
+//! Byte interner insertion/rollback and typed history mutation have checked bodies.
+//! Full byte-record mutation/read refinement remains a native boundary.
+//! Ordered policy/validator construction, selection and transactions are checked;
+//! field unpacking and context/diagnostic invocation remain native callback leaves.
+//! ArenaStorage inherent operation and KernelStore trait contracts are implemented
+//! by verified bodies, not trusted implementations. No compiler, normalizer, derivative,
+//! interpreter, matcher, replay, or evaluator may be external_body or assume_specification.
 
-use crate::kernel::verify::{
-    Graph, RegexNode, graph_extends, graph_wf, regex_node_wf, tables_wf, test_node_wf,
-    transition_node_wf,
-};
-use crate::kernel::{
-    Constants, KernelResult, RegexId, RegexKindView, RegexView, TestId, TestView, TransitionId,
-    TransitionView,
-};
+use crate::kernel::verify::Graph;
 use crate::observation::{ObservationWorld, SmallVecSpecFns};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::{alloc::Allocator, ops::Deref};
 use smallvec::SmallVec;
+use vstd::laws_cmp::obeys_cmp;
+use vstd::laws_eq::obeys_eq;
 use vstd::prelude::*;
 use vstd::std_specs::cmp::{OrdSpec, PartialEqSpec};
 
 verus! {
+// Identity fidelity. Verus erases `Arc<T>` and `&T` to `T` in spec (vstd's `Arc::new` ensures
+// `*v == t`; `*a == *b` proves `a == b`), so both functions below depend only on the pointee's
+// value: two distinct allocations with equal contents would have equal identities while
+// `Arc::ptr_eq`/`core::ptr::eq` say they differ. The external_body wrappers that equate the two
+// (`share_store`, `borrow_store`, `share_numeric_owner`, `borrow_numeric_owner`,
+// `same_numeric_reference`, `CompiledRule::same_owner`) are faithful because every compared type
+// has a unique-per-allocation value: `HistoryStore` is constructed only by `HistoryStore::new`,
+// one static singleton per arity, and stores of different arity differ in `domains@.len()`;
+// `Store<E>` is constructed only by `Store::new`, whose `id` comes from the verified never-recycled
+// store-id allocator, and neither type is `Clone`. Keep both facts when adding constructors.
+pub uninterp spec fn arc_identity<T>(arc: Arc<T>) -> vstd::resource::Loc;
+pub uninterp spec fn reference_identity<T>(value: &T) -> vstd::resource::Loc;
+
 
 pub assume_specification[ alloc::string::String::try_reserve ](
     value: &mut alloc::string::String, additional: usize,
@@ -130,7 +145,7 @@ pub assume_specification<A: smallvec::Array>[ SmallVec::<A>::try_reserve_exact ]
 pub assume_specification<A: smallvec::Array>[ <SmallVec<A> as Deref>::deref ](
     v: &SmallVec<A>,
 ) -> (s: &[A::Item])
-    ensures s@ == v.view();
+    ensures s@ == v.view(), v.view().len() <= usize::MAX;
 
 // Mutable autoderef triggers the pinned verifier's anyhow dyn-target importer bug.
 // The native slice accessor is the same borrow, without importing DerefMut.
@@ -146,8 +161,9 @@ pub open spec fn strictly_sorted<T: Ord>(s: Seq<T>) -> bool {
     forall|i: int, j: int| 0 <= i < j < s.len() ==> s[i].cmp_spec(&s[j]) is Less
 }
 
+// Rust's `Ord` contract: a total order; without one, `sort_unstable` may panic.
 pub assume_specification<T: Ord>[ <[T]>::sort_unstable ](s: &mut [T])
-    requires T::obeys_cmp_spec(),
+    requires obeys_cmp::<T>(),
     ensures
         final(s)@.to_multiset() == old(s)@.to_multiset(),
         forall|i: int, j: int| 0 <= i < j < final(s)@.len()
@@ -165,21 +181,18 @@ pub open spec fn dedup_spec<T: PartialEq>(s: Seq<T>) -> Seq<T>
     }
 }
 
+// std compares each element with the last one kept; for an equivalence that is the
+// same as comparing neighbours, which `dedup_spec` does.
 pub assume_specification<T: PartialEq, A: Allocator>[ Vec::<T, A>::dedup ](v: &mut Vec<T, A>)
-    requires T::obeys_eq_spec(),
+    requires obeys_eq::<T>(),
     ensures final(v)@ == dedup_spec(old(v)@);
 
 pub assume_specification<T: Ord>[ <[T]>::binary_search ](s: &[T], value: &T)
     -> (r: Result<usize, usize>)
-    requires T::obeys_cmp_spec(), strictly_sorted(s@),
+    requires obeys_cmp::<T>(), strictly_sorted(s@),
     ensures
         r matches Ok(i) ==> i < s@.len() && s@[i as int].cmp_spec(value) is Equal,
         r is Err ==> forall|i: int| 0 <= i < s@.len() ==> !(s@[i].cmp_spec(value) is Equal);
-
-pub assume_specification<T>[ <[T]>::rotate_right ](s: &mut [T], k: usize)
-    requires k <= old(s)@.len(),
-    ensures final(s)@ == old(s)@.subrange(old(s)@.len() - k, old(s)@.len() as int)
-        + old(s)@.subrange(0, old(s)@.len() - k);
 
 // Used by kernel slice comparisons; pinned vstd specifies cloned, not copied.
 pub assume_specification<'a, T: Copy>[ Option::<&'a T>::copied ](v: Option<&'a T>)
@@ -195,86 +208,20 @@ pub assume_specification<T, A: Allocator>[ Vec::<T, A>::into_boxed_slice ](
 pub assume_specification<T>[ core::mem::drop ](value: T);
 
 
-#[verifier::external_trait_specification]
-#[verifier::external_trait_extension(KernelStoreSpec via KernelStoreSpecImpl)]
-pub trait ExKernelStore {
-    type ExternalTraitSpecificationFor: crate::kernel::KernelStore;
-
+/// Proof observations for checked kernel stores. Error exclusions are opt-in;
+/// custom stores that omit a capability retain arbitrary errors in that class.
+pub trait KernelStoreSpec {
     spec fn graph(&self) -> Graph;
     spec fn valid_store(&self) -> bool;
+    open spec fn errors_are_non_owner(&self) -> bool { false }
+    open spec fn errors_are_non_invariant(&self) -> bool { false }
+    open spec fn errors_are_non_invalid_policy(&self) -> bool { false }
+    /// Valid operations report only graph, allocation, exhaustion, or host-limit errors.
+    open spec fn errors_are_resource(&self) -> bool { false }
 
     // Preserve the abstract store restored when a nested mutable borrow ends.
     #[verifier::prophetic]
     spec fn restoration(&self) -> (Graph, bool);
-
-    fn checkpoint(&mut self) -> (r: KernelResult<()>)
-        ensures final(self).graph() == old(self).graph(),
-            final(self).valid_store() == old(self).valid_store(), final(self).restoration() == old(self).restoration();
-    fn charge_aux(&mut self, bytes: usize) -> (r: KernelResult<()>)
-        ensures final(self).graph() == old(self).graph(),
-            old(self).valid_store() ==> final(self).valid_store(), final(self).restoration() == old(self).restoration();
-    fn reserve_derivatives(&mut self, values: &mut Vec<Option<TransitionId>>, additional: usize)
-        -> (r: KernelResult<()>)
-        ensures final(self).graph() == old(self).graph(), final(values)@ == old(values)@,
-            final(self).valid_store() == old(self).valid_store(), final(self).restoration() == old(self).restoration();
-    fn reserve_atoms(&mut self, values: &mut Vec<TestId>, additional: usize)
-        -> (r: KernelResult<()>)
-        ensures final(self).graph() == old(self).graph(), final(values)@ == old(values)@,
-            final(self).valid_store() == old(self).valid_store(), final(self).restoration() == old(self).restoration();
-    fn constants(&self) -> (r: Constants)
-        ensures r@ == self.graph().constants;
-    fn test(&self, id: TestId) -> (r: KernelResult<TestView<'_>>)
-        ensures r matches Ok(v) ==> id@ < self.graph().tests.len()
-            && v@ == self.graph().tests[id@ as int];
-    fn regex(&self, id: RegexId) -> (r: KernelResult<RegexView<'_>>)
-        ensures r matches Ok(v) ==> id@ < self.graph().regexes.len()
-            && v@ == self.graph().regexes[id@ as int];
-    fn transition(&self, id: TransitionId) -> (r: KernelResult<TransitionView<'_>>)
-        ensures r matches Ok(v) ==> id@ < self.graph().transitions.len()
-            && v@ == self.graph().transitions[id@ as int];
-
-    fn intern_test(&mut self, node: TestView<'_>) -> (r: KernelResult<TestId>)
-        requires old(self).valid_store(), test_node_wf(old(self).graph(), node@),
-        ensures
-            final(self).restoration() == old(self).restoration(),
-            final(self).valid_store(),
-            graph_extends(old(self).graph(), final(self).graph()),
-            tables_wf(old(self).graph()) ==> tables_wf(final(self).graph()),
-            graph_wf(old(self).graph()) ==> graph_wf(final(self).graph()),
-            r matches Ok(id) ==> id@ < final(self).graph().tests.len()
-                && final(self).graph().tests[id@ as int] == node@;
-    fn intern_regex(&mut self, kind: RegexKindView<'_>, nullable: bool)
-        -> (r: KernelResult<RegexId>)
-        requires old(self).valid_store(), regex_node_wf(old(self).graph(), RegexNode { kind: kind@, nullable }),
-        ensures
-            final(self).restoration() == old(self).restoration(),
-            final(self).valid_store(),
-            graph_extends(old(self).graph(), final(self).graph()),
-            tables_wf(old(self).graph()) ==> tables_wf(final(self).graph()),
-            graph_wf(old(self).graph()) ==> graph_wf(final(self).graph()),
-            r matches Ok(id) ==> id@ < final(self).graph().regexes.len()
-                && final(self).graph().regexes[id@ as int] == (RegexNode { kind: kind@, nullable });
-    fn intern_transition(&mut self, node: TransitionView<'_>) -> (r: KernelResult<TransitionId>)
-        requires old(self).valid_store(), transition_node_wf(old(self).graph(), node@),
-        ensures
-            final(self).restoration() == old(self).restoration(),
-            final(self).valid_store(),
-            graph_extends(old(self).graph(), final(self).graph()),
-            tables_wf(old(self).graph()) ==> tables_wf(final(self).graph()),
-            graph_wf(old(self).graph()) ==> graph_wf(final(self).graph()),
-            r matches Ok(id) ==> id@ < final(self).graph().transitions.len()
-                && final(self).graph().transitions[id@ as int] == node@;
 }
-
-// The pinned vstd release does not specify this primitive integer method.
-pub assume_specification[ u64::checked_shr ](value: u64, shift: u32) -> (r: Option<u64>)
-    ensures r == if shift < 64 { Some(value >> shift) } else { None };
-
-pub assume_specification[ u64::checked_shl ](value: u64, shift: u32) -> (r: Option<u64>)
-    ensures r == if shift < 64 { Some(value << shift) } else { None };
-
-// Moving an owned key out of an indexed vector does not clone or allocate.
-pub assume_specification<T>[ core::mem::replace ](destination: &mut T, replacement: T) -> (previous: T)
-    ensures previous == *old(destination), *final(destination) == replacement;
 
 } // verus!

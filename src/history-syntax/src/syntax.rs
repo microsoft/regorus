@@ -1,9 +1,9 @@
 //! Owned source language for declarative policy rules over one [`Event`] type.
 //!
-//! Constants retain the event's concrete associated component types. Variables are local names;
+//! Constants retain the event's tagged component type. Variables are local names;
 //! source expressions contain no arena references, compiler identities or store backreferences.
 
-use crate::event::Event;
+use crate::event::{Event, MAX_ARITY};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -52,65 +52,50 @@ impl<T> ComponentPattern<T, String> {
     }
 }
 
-/// Candidate-only pattern over the capability product.
+/// Candidate-only pattern over the event coordinates.
 /// Variables declared here may be resolved only in the same tail coordinate.
+/// The compiler checks that the number of slots equals the event type's arity.
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Head<E: Event> {
-    /// Principal constant or variable.
-    pub principal: ComponentPattern<E::Principal>,
-    /// Action constant or variable.
-    pub action: ComponentPattern<E::Action>,
-    /// Resource constant or variable.
-    pub resource: ComponentPattern<E::Resource>,
-}
+pub struct Head<E: Event>(pub Vec<ComponentPattern<E::Component>>);
 
 #[verus_verify]
 impl<E: Event> Head<E> {
-    /// Creates a typed `(principal, action, resource)` head.
-    #[verus_spec(result => ensures result.principal == principal,
-        result.action == action, result.resource == resource)]
-    pub fn new(
-        principal: ComponentPattern<E::Principal>,
-        action: ComponentPattern<E::Action>,
-        resource: ComponentPattern<E::Resource>,
-    ) -> Self {
-        Self {
-            principal,
-            action,
-            resource,
-        }
+    /// Creates a head in coordinate order.
+    #[verus_spec(result => ensures result.0@ == into_iter_remaining(slots))]
+    pub fn new<I: IntoIterator<Item = ComponentPattern<E::Component>>>(slots: I) -> Self {
+        Self(Vec::from_iter(slots))
+    }
+
+    /// Patterns in coordinate order.
+    #[verus_spec(result => ensures result@ == self.0@)]
+    pub fn slots(&self) -> &[ComponentPattern<E::Component>] {
+        self.0.as_slice()
     }
 }
 
-/// Coordinate of the capability product; order is part of the portable format.
+/// Coordinate of the event tuple; order is part of the portable format.
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[cfg_attr(verus_keep_ghost, derive(Structural))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Component {
-    /// Principal coordinate.
-    Principal,
-    /// Action coordinate.
-    Action,
-    /// Resource coordinate.
-    Resource,
-}
+pub struct Component(pub u8);
 
 #[verus_verify]
 impl Component {
     /// Returns the coordinate's position in a portable head.
-    #[verus_spec(result => ensures result == match self {
-        Self::Principal => 0usize, Self::Action => 1usize, Self::Resource => 2usize,
-    })]
+    #[verus_spec(result => ensures result == self.0 as usize)]
     pub const fn index(self) -> usize {
-        match self {
-            Self::Principal => 0,
-            Self::Action => 1,
-            Self::Resource => 2,
-        }
+        self.0 as usize
+    }
+
+    /// Creates a coordinate index, panicking if it exceeds the supported arity.
+    #[verus_spec(result => requires index < MAX_ARITY, ensures result.0 == index)]
+    pub const fn new(index: usize) -> Self {
+        assert!(index < MAX_ARITY);
+        Self(index as u8)
     }
 }
 
@@ -145,29 +130,25 @@ impl core::ops::Not for Comparison {
 #[verus_verify]
 #[verus_verify(external_derive)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum AtomPattern<E: Event> {
-    /// Test the event principal.
-    Principal(ComponentPattern<E::Principal>),
-    /// Test the event action.
-    Action(ComponentPattern<E::Action>),
-    /// Test the event resource.
-    Resource(ComponentPattern<E::Resource>),
+pub struct AtomPattern<E: Event> {
+    /// Coordinate selected by this atom.
+    pub component: Component,
+    /// Constant or head-bound variable to compare.
+    pub pattern: ComponentPattern<E::Component>,
 }
 
 #[verus_verify]
 impl<E: Event> AtomPattern<E> {
-    /// Returns the product coordinate selected by this atom.
-    #[verus_spec(result => ensures result == match self {
-        Self::Principal(_) => Component::Principal,
-        Self::Action(_) => Component::Action,
-        Self::Resource(_) => Component::Resource,
-    })]
+    /// Creates a pattern over a selected coordinate.
+    #[verus_spec(result => ensures result.component == component, result.pattern == pattern)]
+    pub fn new(component: Component, pattern: ComponentPattern<E::Component>) -> Self {
+        Self { component, pattern }
+    }
+
+    /// Returns the coordinate selected by this atom.
+    #[verus_spec(result => ensures result == self.component)]
     pub fn component(&self) -> Component {
-        match self {
-            Self::Principal(_) => Component::Principal,
-            Self::Action(_) => Component::Action,
-            Self::Resource(_) => Component::Resource,
-        }
+        self.component
     }
 }
 

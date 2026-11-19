@@ -1,16 +1,20 @@
 //! Ordered declarative trace policies over externally owned histories.
 //!
-//! Rule evaluation uses the shared compiled-rule backend. Native diagnostic callbacks and their
-//! packaging are a consumer boundary, not a claim about arbitrary callback implementations.
+//! Checked construction preserves source/diagnostic order; checked selection uses the
+//! shared compiled-rule contracts. Field unpacking and context/diagnostic invocation
+//! are native leaves. Arbitrary callbacks need not be pure, deterministic, or terminating.
 
 mod atoms;
 mod decision;
-mod evaluate;
+pub mod evaluate;
 mod language;
-mod rule;
-mod trace;
+pub mod rule;
+pub mod trace;
 
-pub use atoms::{action_is, principal_is, resource_is};
+pub use atoms::{
+    PRINCIPAL_VAR, RESOURCE_VAR, action_is, component_equals, component_is, principal_is,
+    resource_is,
+};
 pub use decision::PolicyDecision;
 pub use evaluate::CompiledPolicy;
 pub use language::last_state_change;

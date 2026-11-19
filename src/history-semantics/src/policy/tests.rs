@@ -21,7 +21,7 @@ use super::decision::PolicyDecision;
 use super::language::last_state_change;
 use super::rule::{PolicyRule, forbid};
 use history_store::{History, Store};
-use history_syntax::{Comparison, Event, TestExpr};
+use history_syntax::{Comparison, Component, Event, N3, TestExpr};
 
 /// Principals of the miniature policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -64,21 +64,38 @@ struct DocEvent {
     resource: SrcX,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DocComponent {
+    Principal(Editor),
+    Action(DocAction),
+    Resource(SrcX),
+}
+
+// Unverified glue: `hash_respects_eq` is a hypothesis for this type (as `event_laws` already is).
+impl history_syntax::KeyHash for DocComponent {
+    fn key_hash(&self) -> u64 {
+        history_syntax::key_hash::hash_via_std(self)
+    }
+}
+
 impl Event for DocEvent {
-    type Principal = Editor;
-    type Action = DocAction;
-    type Resource = SrcX;
+    type Component = DocComponent;
+    type Arity = N3;
 
-    fn principal(self) -> Editor {
-        self.principal
+    fn component(self, index: usize) -> DocComponent {
+        match index {
+            0 => DocComponent::Principal(self.principal),
+            1 => DocComponent::Action(self.action),
+            _ => DocComponent::Resource(self.resource),
+        }
     }
 
-    fn action(self) -> DocAction {
-        self.action
-    }
-
-    fn resource(self) -> SrcX {
-        self.resource
+    fn coordinate(component: DocComponent) -> usize {
+        match component {
+            DocComponent::Principal(_) => 0,
+            DocComponent::Action(_) => 1,
+            DocComponent::Resource(_) => 2,
+        }
     }
 }
 
@@ -92,15 +109,15 @@ struct LastEditor {
 fn rules() -> Vec<PolicyRule<DocEvent, LastEditor>> {
     let setter = TestExpr::and([
         resource_is(Comparison::Eq),
-        action_is(DocAction::Edit, Comparison::Eq),
+        action_is(DocComponent::Action(DocAction::Edit), Comparison::Eq),
         principal_is(Comparison::Neq),
     ]);
     let stable = TestExpr::or([
         resource_is(Comparison::Neq),
-        action_is(DocAction::Read, Comparison::Eq),
+        action_is(DocComponent::Action(DocAction::Read), Comparison::Eq),
     ]);
     vec![forbid(
-        DocAction::Read,
+        DocComponent::Action(DocAction::Read),
         last_state_change(setter, stable),
         Box::new(|context| {
             let LastEditor { resource, editor } = context;
@@ -183,7 +200,7 @@ fn counted_rule(
     label: &'static str,
 ) -> PolicyRule<DocEvent, usize> {
     let mut rule = forbid(
-        DocAction::Read,
+        DocComponent::Action(DocAction::Read),
         tail,
         Box::new(move |context| {
             assert_eq!(*context, 7);
@@ -375,7 +392,7 @@ fn deep_rule() -> history_syntax::Rule<DocEvent> {
         tail = history_syntax::RegexExpr::star(tail);
     }
     forbid(
-        DocAction::Read,
+        DocComponent::Action(DocAction::Read),
         tail,
         Box::new(|_: &()| (String::new(), vec![])),
     )
@@ -384,12 +401,13 @@ fn deep_rule() -> history_syntax::Rule<DocEvent> {
 
 fn invalid_rule() -> history_syntax::Rule<DocEvent> {
     forbid(
-        DocAction::Read,
+        DocComponent::Action(DocAction::Read),
         history_syntax::RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            history_syntax::AtomPattern::Principal(history_syntax::ComponentPattern::variable(
-                "missing",
-            )),
+            history_syntax::AtomPattern::new(
+                Component(0),
+                history_syntax::ComponentPattern::variable("missing"),
+            ),
         )),
         Box::new(|_: &()| (String::new(), vec![])),
     )
@@ -454,7 +472,7 @@ fn trace_policy_uses_the_same_store_without_mutating_external_history() {
     let store = Arc::new(Store::new().unwrap());
     let history = History::new(Arc::clone(&store)).unwrap();
     let rule = forbid(
-        DocAction::Read,
+        DocComponent::Action(DocAction::Read),
         history_syntax::RegexExpr::all(),
         Box::new(|_: &()| (String::new(), vec![])),
     )

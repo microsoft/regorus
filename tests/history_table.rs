@@ -4,13 +4,13 @@
 
 use history_semantics::CompiledRule;
 use history_store::{History, Store};
-use history_syntax::Component;
+use history_syntax::Event as _;
 use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
 use junco_core::observation::fail_reservations_after;
 use regorus::languages::history_table::{
-    compile, AtomPattern, Comparison, CompileError, ComponentPattern, Event, Head, HistoryError,
-    HistoryHandle, HistoryStore, HistoryTableError, RegexExpr, Rule, RuleMode, SourceEvent,
-    TestExpr,
+    compile, AtomPattern, Comparison, CompileError, Component, ComponentPattern, Event, Head,
+    HistoryError, HistoryHandle, HistoryStore, HistoryTableError, RegexExpr, Rule, RuleMode,
+    SourceComponent, SourceEvent, TestExpr, ACTION, PRINCIPAL, RESOURCE,
 };
 use regorus::rvm::program::{DeserializationResult, Program};
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, RegoVM, SuspendReason, VmError};
@@ -27,11 +27,13 @@ const READ: [&str; 2] = ["read", "remove"];
 type Sample = (usize, &'static str, usize);
 
 fn event(store: &HistoryStore, principal: &str, action: &str, resource: &str) -> Event {
-    Event {
-        principal: store.intern_principal(principal).unwrap(),
-        action: store.intern_action(action).unwrap(),
-        resource: store.intern_resource(resource).unwrap(),
-    }
+    store
+        .event(&[
+            store.intern(PRINCIPAL, principal).unwrap(),
+            store.intern(ACTION, action).unwrap(),
+            store.intern(RESOURCE, resource).unwrap(),
+        ])
+        .unwrap()
 }
 
 struct Fixture {
@@ -74,11 +76,11 @@ fn table(rules: Vec<Rule<SourceEvent<'_>>>, batch_size: u32) -> Arc<Program> {
 }
 
 fn any_head() -> Head<SourceEvent<'static>> {
-    Head::new(
+    Head::new([
         ComponentPattern::variable("_principal"),
         ComponentPattern::variable("_action"),
         ComponentPattern::variable("_resource"),
-    )
+    ])
 }
 
 fn expected(index: Option<usize>) -> Value {
@@ -88,25 +90,28 @@ fn expected(index: Option<usize>) -> Value {
 fn prior_edit_rule<'a>(release: &'a str, edit: &'a str) -> Rule<SourceEvent<'a>> {
     Rule::new(
         RuleMode::Require,
-        Head::new(
+        Head::new([
             ComponentPattern::variable("actor"),
-            ComponentPattern::constant(release),
+            ComponentPattern::constant(SourceComponent::Action(release)),
             ComponentPattern::variable("resource"),
-        ),
+        ]),
         RegexExpr::concat([
             RegexExpr::All,
             RegexExpr::test(TestExpr::and([
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                    AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor")),
                 ),
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(ComponentPattern::constant(edit)),
+                    AtomPattern::new(
+                        ACTION,
+                        ComponentPattern::constant(SourceComponent::Action(edit)),
+                    ),
                 ),
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Resource(ComponentPattern::variable("resource")),
+                    AtomPattern::new(RESOURCE, ComponentPattern::variable("resource")),
                 ),
             ])),
             RegexExpr::All,
@@ -235,36 +240,42 @@ fn wrappers_share_histories_without_sharing_residuals() {
 fn approval_rule() -> Rule<SourceEvent<'static>> {
     let same_resource = TestExpr::atom(
         Comparison::Eq,
-        AtomPattern::Resource(ComponentPattern::variable("resource")),
+        AtomPattern::new(RESOURCE, ComponentPattern::variable("resource")),
     );
     let no_edit = RegexExpr::star(RegexExpr::test(TestExpr::or([
         TestExpr::atom(
             Comparison::Neq,
-            AtomPattern::Resource(ComponentPattern::variable("resource")),
+            AtomPattern::new(RESOURCE, ComponentPattern::variable("resource")),
         ),
         TestExpr::atom(
             Comparison::Neq,
-            AtomPattern::Action(ComponentPattern::constant("edit")),
+            AtomPattern::new(
+                ACTION,
+                ComponentPattern::constant(SourceComponent::Action("edit")),
+            ),
         ),
     ])));
     Rule::new(
         RuleMode::Require,
-        Head::new(
+        Head::new([
             ComponentPattern::variable("actor"),
-            ComponentPattern::constant("release"),
+            ComponentPattern::constant(SourceComponent::Action("release")),
             ComponentPattern::variable("resource"),
-        ),
+        ]),
         RegexExpr::concat([
             RegexExpr::All,
             RegexExpr::test(TestExpr::and([
                 same_resource.clone(),
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(ComponentPattern::constant("edit")),
+                    AtomPattern::new(
+                        ACTION,
+                        ComponentPattern::constant(SourceComponent::Action("edit")),
+                    ),
                 ),
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                    AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor")),
                 ),
             ])),
             no_edit.clone(),
@@ -272,11 +283,14 @@ fn approval_rule() -> Rule<SourceEvent<'static>> {
                 same_resource,
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(ComponentPattern::constant("approve")),
+                    AtomPattern::new(
+                        ACTION,
+                        ComponentPattern::constant(SourceComponent::Action("approve")),
+                    ),
                 ),
                 TestExpr::atom(
                     Comparison::Neq,
-                    AtomPattern::Principal(ComponentPattern::variable("actor")),
+                    AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor")),
                 ),
             ])),
             no_edit,
@@ -324,36 +338,42 @@ fn lock_rule<'a>(action: &'a str, setter: &'a str, changes: &[&'a str]) -> Rule<
     let unchanged = TestExpr::and(changes.iter().map(|&change| {
         TestExpr::atom(
             Comparison::Neq,
-            AtomPattern::Action(ComponentPattern::constant(change)),
+            AtomPattern::new(
+                ACTION,
+                ComponentPattern::constant(SourceComponent::Action(change)),
+            ),
         )
     }));
     Rule::new(
         RuleMode::Forbid,
-        Head::new(
+        Head::new([
             ComponentPattern::variable("p"),
-            ComponentPattern::constant(action),
+            ComponentPattern::constant(SourceComponent::Action(action)),
             ComponentPattern::variable("r"),
-        ),
+        ]),
         RegexExpr::concat([
             RegexExpr::All,
             RegexExpr::test(TestExpr::and([
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                    AtomPattern::new(RESOURCE, ComponentPattern::variable("r")),
                 ),
                 TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(ComponentPattern::constant(setter)),
+                    AtomPattern::new(
+                        ACTION,
+                        ComponentPattern::constant(SourceComponent::Action(setter)),
+                    ),
                 ),
                 TestExpr::atom(
                     Comparison::Neq,
-                    AtomPattern::Principal(ComponentPattern::variable("p")),
+                    AtomPattern::new(PRINCIPAL, ComponentPattern::variable("p")),
                 ),
             ])),
             RegexExpr::star(RegexExpr::test(TestExpr::or([
                 TestExpr::atom(
                     Comparison::Neq,
-                    AtomPattern::Resource(ComponentPattern::variable("r")),
+                    AtomPattern::new(RESOURCE, ComponentPattern::variable("r")),
                 ),
                 unchanged,
             ]))),
@@ -488,11 +508,11 @@ fn require_forbid_order_returns_first_violated_rule() {
             vec![
                 Rule::new(
                     RuleMode::Forbid,
-                    Head::new(
+                    Head::new([
                         ComponentPattern::variable("_principal"),
-                        ComponentPattern::constant("skip"),
+                        ComponentPattern::constant(SourceComponent::Action("skip")),
                         ComponentPattern::variable("_resource"),
-                    ),
+                    ]),
                     RegexExpr::All,
                 ),
                 Rule::new(RuleMode::Require, any_head(), RegexExpr::Empty),
@@ -559,10 +579,11 @@ impl Test {
                 variable,
                 literal,
             } => {
-                let component = if *variable {
+                let pattern = if *variable {
                     ComponentPattern::variable(VARIABLES[*field])
                 } else {
-                    ComponentPattern::constant(IDS[*literal])
+                    // Tag the constant with this coordinate through the authoring event.
+                    ComponentPattern::constant(source_event([*literal; 3]).component(*field))
                 };
                 TestExpr::Atom {
                     comparison: if *unequal {
@@ -570,12 +591,7 @@ impl Test {
                     } else {
                         Comparison::Eq
                     },
-                    pattern: match field {
-                        0 => AtomPattern::Principal(component),
-                        1 => AtomPattern::Action(component),
-                        2 => AtomPattern::Resource(component),
-                        _ => unreachable!("oracle has three coordinates"),
-                    },
+                    pattern: AtomPattern::new(Component(u8::try_from(*field).unwrap()), pattern),
                 }
             }
             Self::And(children) => TestExpr::And(children.iter().map(Self::owned).collect()),
@@ -789,11 +805,11 @@ fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
             let program = table(
                 vec![Rule::new(
                     RuleMode::Require,
-                    Head::new(
+                    Head::new([
                         ComponentPattern::variable("p"),
                         ComponentPattern::variable("a"),
                         ComponentPattern::variable("r"),
-                    ),
+                    ]),
                     regex.owned(),
                 )],
                 batch_size,
@@ -884,11 +900,11 @@ fn dsl_semantics_and_history_table_rvm_agree() {
                 let program = table(
                     vec![Rule::new(
                         rule_mode,
-                        Head::new(
+                        Head::new([
                             ComponentPattern::variable("p"),
                             ComponentPattern::variable("a"),
                             ComponentPattern::variable("r"),
-                        ),
+                        ]),
                         regex.owned(),
                     )],
                     batch_size,
@@ -900,11 +916,11 @@ fn dsl_semantics_and_history_table_rvm_agree() {
                         store.clone(),
                         Rule::new(
                             rule_mode,
-                            Head::new(
+                            Head::new([
                                 ComponentPattern::variable("p"),
                                 ComponentPattern::variable("a"),
                                 ComponentPattern::variable("r"),
-                            ),
+                            ]),
                             regex.owned(),
                         ),
                     )
@@ -1005,11 +1021,11 @@ fn dsl_semantics_and_history_table_rvm_agree() {
             let program = table(
                 vec![Rule::new(
                     rule_mode,
-                    Head::new(
+                    Head::new([
                         ComponentPattern::variable("p"),
-                        ComponentPattern::constant(IDS[1]),
+                        ComponentPattern::constant(SourceComponent::Action(IDS[1])),
                         ComponentPattern::variable("r"),
-                    ),
+                    ]),
                     regex.owned(),
                 )],
                 batch_size,
@@ -1021,11 +1037,11 @@ fn dsl_semantics_and_history_table_rvm_agree() {
                     store.clone(),
                     Rule::new(
                         rule_mode,
-                        Head::new(
+                        Head::new([
                             ComponentPattern::variable("p"),
-                            ComponentPattern::constant(IDS[1]),
+                            ComponentPattern::constant(SourceComponent::Action(IDS[1])),
                             ComponentPattern::variable("r"),
-                        ),
+                        ]),
                         regex.owned(),
                     ),
                 )
@@ -1119,7 +1135,7 @@ fn flat_shared_dag_roundtrips_and_executes_without_unfolding() {
     }
     assert_flat_epsilon_language(
         FlatPair {
-            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            head: vec![FlatHead::Any, FlatHead::Any, FlatHead::Any],
             tests: vec![],
             regexes,
             root: 4095,
@@ -1137,7 +1153,7 @@ fn flat_deep_unary_and_non_last_root_preserve_topology() {
     }
     assert_flat_epsilon_language(
         FlatPair {
-            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            head: vec![FlatHead::Any, FlatHead::Any, FlatHead::Any],
             tests: vec![],
             regexes,
             root: 4095,
@@ -1147,7 +1163,7 @@ fn flat_deep_unary_and_non_last_root_preserve_topology() {
     );
     assert_flat_epsilon_language(
         FlatPair {
-            head: [FlatHead::Any, FlatHead::Any, FlatHead::Any],
+            head: vec![FlatHead::Any, FlatHead::Any, FlatHead::Any],
             tests: vec![FlatTest::Bool(false)],
             regexes: vec![
                 FlatRegex::Epsilon,
@@ -1196,7 +1212,10 @@ fn read_star(batch_size: u32) -> Arc<Program> {
             any_head(),
             RegexExpr::star(RegexExpr::test(TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Action(ComponentPattern::constant("read")),
+                AtomPattern::new(
+                    ACTION,
+                    ComponentPattern::constant(SourceComponent::Action("read")),
+                ),
             ))),
         )],
         batch_size,
@@ -1314,7 +1333,10 @@ fn newer_shared_cache_prefix_cannot_seed_an_older_decision_target() {
                 any_head(),
                 RegexExpr::star(RegexExpr::test(TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Action(ComponentPattern::constant("read")),
+                    AtomPattern::new(
+                        ACTION,
+                        ComponentPattern::constant(SourceComponent::Action("read")),
+                    ),
                 ))),
             ),
         ],
@@ -1457,32 +1479,28 @@ fn staging_requires_attachment_and_each_domain_membership() {
     vm.attach_history(store.clone()).unwrap();
     // Wrappers share one process-wide store, so a peer's handle and identities stage.
     vm.set_history_input(history.clone(), own).unwrap();
-    for (request, domain) in [
-        (
-            Event {
-                principal: other.principal,
-                ..own
-            },
-            "principal",
-        ),
-        (
-            Event {
-                action: other.action,
-                ..own
-            },
-            "action",
-        ),
-        (
-            Event {
-                resource: other.resource,
-                ..own
-            },
-            "resource",
-        ),
-    ] {
-        assert!(matches!(vm.set_history_input(history.clone(), request),
-            Err(VmError::History { source: HistoryError::UnknownId { domain: actual, .. }, .. }) if actual == domain));
+    // Event fields are private: each typed-only coordinate is rejected while building.
+    for index in 0..3 {
+        let mut slots = [own.component(0), own.component(1), own.component(2)];
+        slots[index] = other.component(index);
+        assert!(matches!(
+            peer.event(&slots),
+            Err(HistoryError::UnknownId {
+                domain: "component",
+                ..
+            })
+        ));
     }
+    assert!(matches!(
+        vm.set_history_input(history.clone(), other),
+        Err(VmError::History {
+            source: HistoryError::UnknownId {
+                domain: "component",
+                ..
+            },
+            ..
+        })
+    ));
     // Failed requests leave the previously staged input intact.
     assert_eq!(
         vm.execute_entry_point_by_name("decide").unwrap(),
@@ -1547,7 +1565,7 @@ fn zero_batch_is_rejected_before_empty_or_head_mismatch_shortcuts() {
         any_head(),
         RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Principal(ComponentPattern::variable("missing")),
+            AtomPattern::new(PRINCIPAL, ComponentPattern::variable("missing")),
         )),
     );
     assert!(matches!(
@@ -1559,11 +1577,15 @@ fn zero_batch_is_rejected_before_empty_or_head_mismatch_shortcuts() {
             let mut program = (*table(
                 vec![Rule::new(
                     RuleMode::Require,
-                    Head::new(
+                    Head::new([
                         ComponentPattern::variable("_principal"),
-                        ComponentPattern::constant(if matching { "read" } else { "release" }),
+                        ComponentPattern::constant(SourceComponent::Action(if matching {
+                            "read"
+                        } else {
+                            "release"
+                        })),
                         ComponentPattern::variable("_resource"),
-                    ),
+                    ]),
                     RegexExpr::All,
                 )],
                 256,
@@ -1656,15 +1678,15 @@ fn malformed_source_nodes_variables_and_indexes_are_rejected() {
     invalid.push(p);
     let mut p = base.clone();
     p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
-        field: Component::Principal,
-        term: FlatTerm::Variable(Component::Resource),
+        field: PRINCIPAL,
+        term: FlatTerm::Variable(RESOURCE),
         positive: true,
     }];
     invalid.push(p);
     let mut p = base.clone();
     p.history_tables[0].rules[0].source.tests = vec![FlatTest::Atom {
-        field: Component::Action,
-        term: FlatTerm::Variable(Component::Action),
+        field: ACTION,
+        term: FlatTerm::Variable(ACTION),
         positive: true,
     }];
     invalid.push(p); // Action is Constant in the head, not Bind.
@@ -1723,21 +1745,21 @@ fn malformed_source_nodes_variables_and_indexes_are_rejected() {
 #[test]
 fn dsl_compile_reports_scope_errors_at_rule_index() {
     let tail_head = || {
-        Head::new(
+        Head::new([
             ComponentPattern::variable("p"),
             ComponentPattern::variable("_action"),
             ComponentPattern::variable("_resource"),
-        )
+        ])
     };
     let cases = [
         (
             Rule::new(
                 RuleMode::Require,
-                Head::new(
+                Head::new([
                     ComponentPattern::variable("x"),
                     ComponentPattern::variable("_action"),
                     ComponentPattern::variable("x"),
-                ),
+                ]),
                 RegexExpr::All,
             ),
             CompileError::VariableComponentConflict { name: "x".into() },
@@ -1748,7 +1770,7 @@ fn dsl_compile_reports_scope_errors_at_rule_index() {
                 tail_head(),
                 RegexExpr::test(TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Principal(ComponentPattern::variable("missing")),
+                    AtomPattern::new(PRINCIPAL, ComponentPattern::variable("missing")),
                 )),
             ),
             CompileError::UnboundVariable {
@@ -1761,10 +1783,43 @@ fn dsl_compile_reports_scope_errors_at_rule_index() {
                 tail_head(),
                 RegexExpr::test(TestExpr::atom(
                     Comparison::Eq,
-                    AtomPattern::Resource(ComponentPattern::variable("p")),
+                    AtomPattern::new(RESOURCE, ComponentPattern::variable("p")),
                 )),
             ),
             CompileError::VariableComponentConflict { name: "p".into() },
+        ),
+        // Constants carry their coordinate; the slot or atom field must agree.
+        (
+            Rule::new(
+                RuleMode::Require,
+                Head::new([
+                    ComponentPattern::variable("p"),
+                    ComponentPattern::constant(SourceComponent::Principal("x")),
+                    ComponentPattern::variable("r"),
+                ]),
+                RegexExpr::All,
+            ),
+            CompileError::ComponentCoordinate {
+                component: 1,
+                coordinate: 0,
+            },
+        ),
+        (
+            Rule::new(
+                RuleMode::Require,
+                tail_head(),
+                RegexExpr::test(TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::new(
+                        PRINCIPAL,
+                        ComponentPattern::constant(SourceComponent::Action("x")),
+                    ),
+                )),
+            ),
+            CompileError::ComponentCoordinate {
+                component: 0,
+                coordinate: 1,
+            },
         ),
     ];
     for (invalid, source) in cases {
@@ -1829,14 +1884,14 @@ fn concurrent_vms_share_identities_and_fixed_prefix_without_sharing_candidates()
     let program = table(
         vec![Rule::new(
             RuleMode::Require,
-            Head::new(
+            Head::new([
                 ComponentPattern::variable("p"),
                 ComponentPattern::variable("_action"),
                 ComponentPattern::variable("_resource"),
-            ),
+            ]),
             RegexExpr::star(RegexExpr::test(TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Principal(ComponentPattern::variable("p")),
+                AtomPattern::new(PRINCIPAL, ComponentPattern::variable("p")),
             ))),
         )],
         1,
@@ -1962,11 +2017,11 @@ fn fixed_head_compares_all_three_exact_byte_identities() {
     let program = table(
         vec![Rule::new(
             RuleMode::Require,
-            Head::new(
-                ComponentPattern::constant("alice/\0é"),
-                ComponentPattern::constant("edit"),
-                ComponentPattern::constant("doc/é"),
-            ),
+            Head::new([
+                ComponentPattern::constant(SourceComponent::Principal("alice/\0é")),
+                ComponentPattern::constant(SourceComponent::Action("edit")),
+                ComponentPattern::constant(SourceComponent::Resource("doc/é")),
+            ]),
             RegexExpr::Empty,
         )],
         256,

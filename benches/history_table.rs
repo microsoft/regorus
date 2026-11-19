@@ -3,8 +3,8 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use regorus::languages::history_table::{
-    compile, AtomPattern, Comparison, ComponentPattern, Event, Head, HistoryStore, RegexExpr, Rule,
-    RuleMode, SourceEvent, TestExpr,
+    compile, AtomPattern, Comparison, ComponentPattern, Head, HistoryStore, RegexExpr, Rule,
+    RuleMode, SourceComponent, SourceEvent, TestExpr, ACTION, PRINCIPAL, RESOURCE,
 };
 use regorus::rvm::vm::RegoVM;
 use regorus::Value;
@@ -14,20 +14,12 @@ use std::sync::Arc;
 fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_>>) {
     let program = compile(core::slice::from_ref(&source), 256).unwrap();
     let store = Arc::new(HistoryStore::new());
-    let principal = store.intern_principal("alice").unwrap();
-    let resource = store.intern_resource("document").unwrap();
-    let edit = store.intern_action("edit").unwrap();
-    let release = store.intern_action("release").unwrap();
-    let event = Event {
-        principal,
-        action: edit,
-        resource,
-    };
-    let request = Event {
-        principal,
-        action: release,
-        resource,
-    };
+    let principal = store.intern(PRINCIPAL, "alice").unwrap();
+    let resource = store.intern(RESOURCE, "document").unwrap();
+    let edit = store.intern(ACTION, "edit").unwrap();
+    let release = store.intern(ACTION, "release").unwrap();
+    let event = store.event(&[principal, edit, resource]).unwrap();
+    let request = store.event(&[principal, release, resource]).unwrap();
     let mut group = c.benchmark_group(name);
     for length in [16, 256, 4096] {
         let history = store.new_history().unwrap();
@@ -91,16 +83,19 @@ fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_
 
 fn history_table(c: &mut Criterion) {
     let release_head = || {
-        Head::new(
+        Head::new([
             ComponentPattern::variable("p"),
-            ComponentPattern::constant("release"),
+            ComponentPattern::constant(SourceComponent::Action("release")),
             ComponentPattern::variable("r"),
-        )
+        ])
     };
     let edit = || {
         TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Action(ComponentPattern::constant("edit")),
+            AtomPattern::new(
+                ACTION,
+                ComponentPattern::constant(SourceComponent::Action("edit")),
+            ),
         )
     };
     history_table_case(
@@ -114,12 +109,12 @@ fn history_table(c: &mut Criterion) {
                 RegexExpr::test(TestExpr::and([
                     TestExpr::atom(
                         Comparison::Eq,
-                        AtomPattern::Principal(ComponentPattern::variable("p")),
+                        AtomPattern::new(PRINCIPAL, ComponentPattern::variable("p")),
                     ),
                     edit(),
                     TestExpr::atom(
                         Comparison::Eq,
-                        AtomPattern::Resource(ComponentPattern::variable("r")),
+                        AtomPattern::new(RESOURCE, ComponentPattern::variable("r")),
                     ),
                 ])),
                 RegexExpr::All,

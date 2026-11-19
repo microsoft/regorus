@@ -34,16 +34,16 @@
             "tests": [
               {
                 "Atom": {
-                  "field": "Principal",
+                  "field": 0,
                   "positive": true,
                   "term": {
-                    "Variable": "Principal"
+                    "Variable": 0
                   }
                 }
               },
               {
                 "Atom": {
-                  "field": "Action",
+                  "field": 1,
                   "positive": true,
                   "term": {
                     "Constant": "edit"
@@ -52,10 +52,10 @@
               },
               {
                 "Atom": {
-                  "field": "Resource",
+                  "field": 2,
                   "positive": true,
                   "term": {
-                    "Variable": "Resource"
+                    "Variable": 2
                   }
                 }
               },

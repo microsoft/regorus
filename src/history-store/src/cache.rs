@@ -4,7 +4,7 @@
 use crate::graph::allocation;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
-use junco_core::error::HistoryError;
+use junco_core::errors::HistoryError;
 use junco_core::kernel::{AtomSet, RegexId, TransitionId};
 use junco_core::limits::Limits;
 use junco_core::observation::ObservationWorld;
@@ -65,9 +65,12 @@ impl GraphCaches {
             successors: None,
         }
     }
-    // Concrete LRU leaves expose semantic keys and membership, not policy semantics.
+    // Concrete LRU leaves expose semantic keys and membership, not policy semantics. The lookup
+    // contracts below assume that the derived `Hash`/`Eq` of `EventClass` (a `TransitionId` and a
+    // `SmallVec<[u64; 2]>`) agree with equality of its `class_key`; this is trusted (TRUST.md).
     #[verus_verify(external_body)]
-    #[verus_spec(result => ensures result matches Some(cache) ==> successor_cache_view(cache) == Map::<ClassKey, RegexId>::empty())]
+    #[verus_spec(result => ensures result is Some,
+        result matches Some(cache) ==> successor_cache_view(cache) == Map::<ClassKey, RegexId>::empty())]
     pub fn successor_cache() -> Option<LruCache<EventClass, RegexId>> {
         usize::try_from(SUCCESSOR_CAPACITY)
             .ok()
@@ -147,8 +150,14 @@ pub struct CursorCache {
 }
 #[verus_verify]
 impl CursorCache {
-    #[verus_spec(result => ensures result matches Ok(cache) ==> cache@ == Seq::<HistoryCursor>::empty()
-        && cursor_cache_wf(cache@))]
+    /// Construction can fail only during reservation or host memory enforcement;
+    /// publishing cursors uses the reserved storage and has no fallible result.
+    #[verus_spec(result => ensures
+        result != Err(HistoryError::WrongHistoryOwner),
+        junco_core::verify::history_specs::no_invariant_failure(result),
+        result matches Err(error) ==> error is AllocationFailed || error is Limit,
+        result matches Err(error) ==> junco_core::spec::semantics::resource_error(error),
+        result matches Ok(cache) ==> cache@ == Seq::<HistoryCursor>::empty() && cursor_cache_wf(cache@))]
     pub fn new<L: Limits>(
         limits: &mut L,
         world: &mut ObservationWorld,
@@ -164,11 +173,6 @@ impl CursorCache {
     pub fn entries(&self) -> &[HistoryCursor] {
         proof! { reveal(<CursorCache as View>::view); }
         &self.entries
-    }
-
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn clear(&mut self) {
-        self.entries.clear();
     }
 
     #[expect(
@@ -322,22 +326,22 @@ pub mod verify {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{ArenaStorage, CanonicalStore};
+    use crate::graph::CanonicalStore;
     use crate::store::HistoryStore;
     use junco_core::kernel::Bindings;
     use junco_core::limits::Unmetered;
 
     #[test]
     fn publication_evicts_replaces_and_retains_longer_prefix() -> Result<(), HistoryError> {
-        let store = HistoryStore::global();
-        let graph = CanonicalStore::new(ArenaStorage::new()?, &mut ObservationWorld)?;
+        let store = HistoryStore::new(3);
+        let graph = CanonicalStore::new()?;
         let mut cache = CursorCache::new(&mut Unmetered, &mut ObservationWorld)?;
         let mut handles = Vec::new();
         for _ in 0..=HISTORY_CACHE_CAPACITY {
             let history = store.new_history(&mut Unmetered, &mut ObservationWorld)?;
             cache.publish(HistoryCursor {
                 history: history.index(),
-                bindings: Bindings::new([0; 3]),
+                bindings: Bindings::new(&[0; 3]),
                 revision: 0,
                 consumed: 3,
                 residual: graph.constants().all,
@@ -353,7 +357,7 @@ mod tests {
         );
         let replacement = HistoryCursor {
             history: handles[8].index(),
-            bindings: Bindings::new([0; 3]),
+            bindings: Bindings::new(&[0; 3]),
             revision: 0,
             consumed: 5,
             residual: graph.constants().epsilon,

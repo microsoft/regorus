@@ -1,6 +1,6 @@
 use history_syntax::{
-    AtomPattern, Comparison, Component, ComponentPattern, Event, Head, RegexExpr, Rule, RuleMode,
-    TestExpr,
+    AtomPattern, Comparison, Component, Component3, ComponentPattern, Event, Head, N3, RegexExpr,
+    Rule, RuleMode, TestExpr,
 };
 use junco_core::scope::VariableScope;
 use junco_core::{CompileError, Grant, Request};
@@ -14,69 +14,67 @@ struct DocumentEvent {
 }
 
 impl Event for DocumentEvent {
-    type Principal = u8;
-    type Action = u8;
-    type Resource = u8;
-    fn principal(self) -> u8 {
-        self.principal
+    type Component = Component3<u8, u8, u8>;
+    type Arity = N3;
+    fn component(self, index: usize) -> Self::Component {
+        match index {
+            0 => Component3::C0(self.principal),
+            1 => Component3::C1(self.action),
+            _ => Component3::C2(self.resource),
+        }
     }
-    fn action(self) -> u8 {
-        self.action
-    }
-    fn resource(self) -> u8 {
-        self.resource
+    fn coordinate(component: Self::Component) -> usize {
+        match component {
+            Component3::C0(_) => 0,
+            Component3::C1(_) => 1,
+            Component3::C2(_) => 2,
+        }
     }
 }
 
 fn head() -> Head<DocumentEvent> {
-    Head::new(
+    Head::new([
         ComponentPattern::variable("actor"),
-        ComponentPattern::constant(2_u8),
+        ComponentPattern::constant(Component3::C1(2_u8)),
         ComponentPattern::variable("document"),
-    )
+    ])
 }
 
 fn action(value: u8) -> RegexExpr<DocumentEvent> {
     RegexExpr::test(TestExpr::atom(
         Comparison::Eq,
-        AtomPattern::Action(ComponentPattern::constant(value)),
+        AtomPattern::new(
+            Component(1),
+            ComponentPattern::constant(Component3::C1(value)),
+        ),
     ))
 }
 
 #[test]
 fn borrowed_scope_binds_same_coordinate_and_rejects_cross_domain_reuse() {
-    let mut scope = VariableScope::new();
-    scope.bind(Component::Principal, "actor").unwrap();
-    scope.bind(Component::Action, "operation").unwrap();
-    scope.bind(Component::Resource, "document").unwrap();
-    scope.bind(Component::Principal, "actor").unwrap();
+    let mut scope = VariableScope::new(3);
+    scope.bind(Component(0), "actor").unwrap();
+    scope.bind(Component(1), "operation").unwrap();
+    scope.bind(Component(2), "document").unwrap();
+    scope.bind(Component(0), "actor").unwrap();
+    assert_eq!(scope.resolve(Component(0), "actor"), Ok(Component(0)));
+    assert_eq!(scope.resolve(Component(1), "operation"), Ok(Component(1)));
+    assert_eq!(scope.resolve(Component(2), "document"), Ok(Component(2)));
     assert_eq!(
-        scope.resolve(Component::Principal, "actor"),
-        Ok(Component::Principal)
-    );
-    assert_eq!(
-        scope.resolve(Component::Action, "operation"),
-        Ok(Component::Action)
-    );
-    assert_eq!(
-        scope.resolve(Component::Resource, "document"),
-        Ok(Component::Resource)
-    );
-    assert_eq!(
-        scope.bind(Component::Resource, "actor"),
+        scope.bind(Component(2), "actor"),
         Err(CompileError::VariableComponentConflict {
             name: "actor".into(),
         })
     );
-    assert_eq!(scope.name(Component::Resource), Some("document"));
+    assert_eq!(scope.name(Component(2)), Some("document"));
     assert_eq!(
-        scope.resolve(Component::Resource, "actor"),
+        scope.resolve(Component(2), "actor"),
         Err(CompileError::VariableComponentConflict {
             name: "actor".into(),
         })
     );
     assert_eq!(
-        scope.resolve(Component::Principal, "missing"),
+        scope.resolve(Component(0), "missing"),
         Err(CompileError::UnboundVariable {
             name: "missing".into(),
         })
@@ -103,7 +101,7 @@ fn request_and_grant_preserve_event_and_opaque_metadata() {
 
 fn flatten(
     rule: &Rule<DocumentEvent>,
-) -> Result<junco_core::flat::FlatRule<junco_core::ComponentValue<DocumentEvent>>, CompileError> {
+) -> Result<junco_core::flat::FlatRule<Component3<u8, u8, u8>>, CompileError> {
     junco_core::flatten_rule(
         rule,
         &mut junco_core::limits::Unmetered,
@@ -113,7 +111,6 @@ fn flatten(
 
 #[test]
 fn flattening_resolves_names_and_retains_concrete_component_tags() {
-    use junco_core::ComponentValue;
     use junco_core::flat::{FlatHead, FlatRegex, FlatTerm, FlatTest};
     let rule = Rule::new(
         RuleMode::Forbid,
@@ -121,15 +118,18 @@ fn flattening_resolves_names_and_retains_concrete_component_tags() {
         RegexExpr::test(TestExpr::and([
             TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Principal(ComponentPattern::variable("actor")),
+                AtomPattern::new(Component(0), ComponentPattern::variable("actor")),
             ),
             TestExpr::atom(
                 Comparison::Neq,
-                AtomPattern::Resource(ComponentPattern::variable("document")),
+                AtomPattern::new(Component(2), ComponentPattern::variable("document")),
             ),
             TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Action(ComponentPattern::constant(1_u8)),
+                AtomPattern::new(
+                    Component(1),
+                    ComponentPattern::constant(Component3::C1(1_u8)),
+                ),
             ),
         ])),
     );
@@ -137,9 +137,9 @@ fn flattening_resolves_names_and_retains_concrete_component_tags() {
     assert_eq!(flat.mode, RuleMode::Forbid);
     assert_eq!(
         flat.source.head,
-        [
+        vec![
             FlatHead::Bind,
-            FlatHead::Constant(ComponentValue::Action(2)),
+            FlatHead::Constant(Component3::C1(2)),
             FlatHead::Bind
         ]
     );
@@ -147,18 +147,18 @@ fn flattening_resolves_names_and_retains_concrete_component_tags() {
         flat.source.tests,
         vec![
             FlatTest::Atom {
-                field: Component::Principal,
-                term: FlatTerm::Variable(Component::Principal),
+                field: Component(0),
+                term: FlatTerm::Variable(Component(0)),
                 positive: true
             },
             FlatTest::Atom {
-                field: Component::Resource,
-                term: FlatTerm::Variable(Component::Resource),
+                field: Component(2),
+                term: FlatTerm::Variable(Component(2)),
                 positive: false
             },
             FlatTest::Atom {
-                field: Component::Action,
-                term: FlatTerm::Constant(ComponentValue::Action(1)),
+                field: Component(1),
+                term: FlatTerm::Constant(Component3::C1(1)),
                 positive: true
             },
             FlatTest::And(vec![0, 1, 2]),
@@ -172,15 +172,18 @@ fn flattening_resolves_names_and_retains_concrete_component_tags() {
         RegexExpr::test(TestExpr::and([
             TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Principal(ComponentPattern::variable("actor"))
+                AtomPattern::new(Component(0), ComponentPattern::variable("actor"))
             ),
             TestExpr::atom(
                 Comparison::Neq,
-                AtomPattern::Resource(ComponentPattern::variable("document"))
+                AtomPattern::new(Component(2), ComponentPattern::variable("document"))
             ),
             TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Action(ComponentPattern::constant(1_u8))
+                AtomPattern::new(
+                    Component(1),
+                    ComponentPattern::constant(Component3::C1(1_u8))
+                )
             ),
         ]))
     );
@@ -193,7 +196,7 @@ fn flattening_reports_scope_errors_without_consuming_the_rule() {
         head(),
         RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Principal(ComponentPattern::variable("missing")),
+            AtomPattern::new(Component(0), ComponentPattern::variable("missing")),
         )),
     );
     assert_eq!(
@@ -207,7 +210,7 @@ fn flattening_reports_scope_errors_without_consuming_the_rule() {
         head(),
         RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Resource(ComponentPattern::variable("actor")),
+            AtomPattern::new(Component(2), ComponentPattern::variable("actor")),
         )),
     );
     assert_eq!(
@@ -218,11 +221,11 @@ fn flattening_reports_scope_errors_without_consuming_the_rule() {
     );
     let conflicting_head = Rule::<DocumentEvent>::new(
         RuleMode::Require,
-        Head::new(
+        Head::new([
             ComponentPattern::variable("same"),
             ComponentPattern::variable("same"),
             ComponentPattern::variable("same"),
-        ),
+        ]),
         RegexExpr::empty(),
     );
     assert_eq!(
@@ -310,38 +313,43 @@ fn component_equality_uses_native_identity_not_representation() {
             0_u8.hash(state);
         }
     }
+    impl history_syntax::KeyHash for Identity {
+        fn key_hash(&self) -> u64 {
+            history_syntax::key_hash::hash_via_std(self)
+        }
+    }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     struct IdentityEvent(Identity);
     impl Event for IdentityEvent {
-        type Principal = Identity;
-        type Action = Identity;
-        type Resource = Identity;
-        fn principal(self) -> Identity {
-            self.0
+        type Component = Component3<Identity, Identity, Identity>;
+        type Arity = N3;
+        fn component(self, index: usize) -> Self::Component {
+            match index {
+                0 => Component3::C0(self.0),
+                1 => Component3::C1(self.0),
+                _ => Component3::C2(self.0),
+            }
         }
-        fn action(self) -> Identity {
-            self.0
-        }
-        fn resource(self) -> Identity {
-            self.0
+        fn coordinate(component: Self::Component) -> usize {
+            match component {
+                Component3::C0(_) => 0,
+                Component3::C1(_) => 1,
+                Component3::C2(_) => 2,
+            }
         }
     }
-    use junco_core::ComponentValue;
     let original = Identity { key: 7, payload: 1 };
     let equal = Identity { key: 7, payload: 2 };
     let unequal = Identity { key: 8, payload: 1 };
     assert_ne!(original.payload, equal.payload);
-    assert_eq!(
-        ComponentValue::<IdentityEvent>::Principal(original),
-        ComponentValue::Principal(equal)
+    assert_eq!(IdentityEvent(original).component(0), Component3::C0(equal));
+    assert_ne!(
+        IdentityEvent(original).component(0),
+        Component3::C0(unequal)
     );
     assert_ne!(
-        ComponentValue::<IdentityEvent>::Principal(original),
-        ComponentValue::Principal(unequal)
-    );
-    assert_ne!(
-        ComponentValue::<IdentityEvent>::Principal(original),
-        ComponentValue::Resource(original)
+        IdentityEvent(original).component(0),
+        Component3::C2(original)
     );
 }
 
@@ -350,7 +358,7 @@ fn deep_borrowed_lowering_keeps_success_and_failure_teardown_iterative() {
     let mut valid = RegexExpr::epsilon();
     let mut invalid = RegexExpr::test(TestExpr::atom(
         Comparison::Eq,
-        AtomPattern::Principal(ComponentPattern::variable("missing")),
+        AtomPattern::new(Component(0), ComponentPattern::variable("missing")),
     ));
     for _ in 0..4096 {
         valid = RegexExpr::complement(valid);
@@ -427,4 +435,45 @@ fn flattening_boolean_leaves_and_nested_operands_keep_postorder() {
     );
     assert_eq!(flat.source.regexes, vec![FlatRegex::Test(4)]);
     assert_eq!(flat.source.validate(), Ok(()));
+}
+
+#[test]
+fn flattening_rejects_a_head_with_the_wrong_arity() {
+    let rule = Rule::<DocumentEvent>::new(
+        RuleMode::Require,
+        Head::new([
+            ComponentPattern::variable("actor"),
+            ComponentPattern::variable("document"),
+        ]),
+        RegexExpr::epsilon(),
+    );
+    assert_eq!(
+        flatten(&rule),
+        Err(CompileError::HeadArity {
+            expected: 3,
+            found: 2
+        })
+    );
+    rule.dispose();
+}
+
+#[test]
+fn flattening_rejects_a_head_constant_from_another_coordinate() {
+    let rule = Rule::<DocumentEvent>::new(
+        RuleMode::Require,
+        Head::new([
+            ComponentPattern::constant(Component3::C1(2)),
+            ComponentPattern::variable("operation"),
+            ComponentPattern::variable("document"),
+        ]),
+        RegexExpr::epsilon(),
+    );
+    assert_eq!(
+        flatten(&rule),
+        Err(CompileError::ComponentCoordinate {
+            component: 0,
+            coordinate: 1
+        })
+    );
+    rule.dispose();
 }

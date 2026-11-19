@@ -2,14 +2,14 @@
 
 use crate::runtime::RuleRuntime;
 use alloc::sync::Arc;
-use history_store::history::{History, StoredHistory};
+use history_store::history::History;
+#[cfg(verus_keep_ghost)]
+use history_store::history::StoredHistory;
 use history_store::typed::Store;
 use history_syntax::Event;
 use history_syntax::syntax::{Rule, RuleMode};
-use junco_core::error::{CompileError, HistoryError};
+use junco_core::errors::{CompileError, HistoryError};
 use junco_core::flat::FlatPair;
-#[cfg(verus_keep_ghost)]
-use junco_core::flatten::ComponentValue;
 use junco_core::flatten::flatten_rule;
 use junco_core::limits::{Limits, Unmetered};
 use junco_core::observation::ObservationWorld;
@@ -22,7 +22,12 @@ use history_store::history::verify as raw;
 #[cfg(verus_keep_ghost)]
 use history_store::typed::verify as books;
 #[cfg(verus_keep_ghost)]
-use junco_core::verify::{encoding, flatten as source};
+use junco_core::spec::semantics as dsl;
+#[cfg(verus_keep_ghost)]
+use junco_core::verify::{
+    encoding, flatten as source,
+    history_specs::{no_invariant_compile_failure, no_invariant_failure},
+};
 #[cfg(verus_keep_ghost)]
 use verify::*;
 
@@ -33,10 +38,10 @@ broadcast use {vstd::std_specs::vec::group_vec_axioms, vstd::seq::group_seq_lemm
 /// The result retains a structural witness, not an assumed language equivalence.
 pub(crate) open spec fn compiled_source<E: Event>(
     rule: Rule<E>, mode: RuleMode, numeric: FlatPair<u64>,
-    maps: encoding::Codebook<ComponentValue<E>>, eq: encoding::Equality<ComponentValue<E>>,
-    domain: encoding::Domain<ComponentValue<E>>,
+    maps: encoding::Codebook<E::Component>, eq: encoding::Equality<E::Component>,
+    domain: encoding::Domain<E::Component>,
 ) -> bool {
-    mode == rule.mode && exists|flat: junco_core::flat::FlatRule<ComponentValue<E>>|
+    mode == rule.mode && exists|flat: junco_core::flat::FlatRule<E::Component>|
         source::flattened::<E>(rule, flat)
             && encoding::lowering(flat.source, numeric, maps, eq)
             && encoding::constants_in_domain(flat.source, domain)
@@ -44,7 +49,7 @@ pub(crate) open spec fn compiled_source<E: Event>(
 }
 
 #[cfg(verus_keep_ghost)]
-pub(crate) mod verify {
+pub mod verify {
     use super::*;
     verus! {
     broadcast use {vstd::std_specs::vec::group_vec_axioms, vstd::seq::group_seq_lemmas,
@@ -57,6 +62,21 @@ pub(crate) mod verify {
 
     pub open(crate) spec fn source_rule<E: Event>(compiled: CompiledRule<E>) -> Rule<E> {
         compiled.source@
+    }
+
+    /// Native store owner retained by this compiled rule.
+    pub open(crate) spec fn compiled_store<E: Event>(compiled: CompiledRule<E>) -> Arc<Store<E>> {
+        compiled.store
+    }
+
+    /// Encoding witnesses are retained without exposing their representation.
+    pub closed spec fn compiled_maps_frame<E: Event>(before: CompiledRule<E>, after: CompiledRule<E>) -> bool {
+        after.maps@ == before.maps@
+    }
+
+    /// A failed decision retains the committed numeric cursor cache.
+    pub closed spec fn compiled_cursor_frame<E: Event>(before: CompiledRule<E>, after: CompiledRule<E>) -> bool {
+        after.runtime.cursors@ == before.runtime.cursors@
     }
 
     pub open(crate) spec fn observation_matches(registry: vstd::resource::Loc, key: (usize, u64),
@@ -75,12 +95,14 @@ pub(crate) mod verify {
                 observation_matches(registry, key, snapshots[key], observations[key])
     }
 
+    /// Publishing an exact lifecycle observation also introduces closed snapshot compatibility.
     pub(crate) proof fn lemma_observations_insert(registry: vstd::resource::Loc,
         snapshots: crate::runtime::verify::HistorySnapshots, observations: Map<(usize, u64), ObservedHistory>,
         key: (usize, u64), events: Seq<junco_core::verify::history_specs::EventView>, observation: ObservedHistory)
         requires observations_wf(registry, snapshots, observations),
             observation_matches(registry, key, events, observation),
         ensures observations_wf(registry, snapshots.insert(key, events), observations.insert(key, observation)),
+            crate::runtime::verify::snapshot_compatible(snapshots.insert(key, events), key.0, key.1, events),
     {
         assert forall|k: (usize, u64)| observations.insert(key, observation).contains_key(k) implies
             observation_matches(registry, k, snapshots.insert(key, events)[k], observations.insert(key, observation)[k]) by {
@@ -89,6 +111,7 @@ pub(crate) mod verify {
                 assert(observation_matches(registry, k, snapshots[k], observations[k]));
             }
         }
+        crate::runtime::verify::lemma_snapshot_compatible_intro(snapshots.insert(key, events), key.0, key.1, events);
     }
 
     pub open(crate) spec fn compiled_wf<E: Event>(compiled: CompiledRule<E>) -> bool {
@@ -97,7 +120,7 @@ pub(crate) mod verify {
             && decision::runtime_represents(compiled.template, compiled.runtime)
             && observations_wf(books::registry_id(&compiled.store),
                 compiled.runtime.snapshots@, compiled.observations@)
-            && (books::native_obligations::<E>() ==> books::maps_wf::<E>(compiled.maps@)
+            && (junco_core::spec::hypotheses::event_obligations::<E>() ==> books::maps_wf::<E>(compiled.maps@)
                 && books::snapshot_published::<E>(books::registry_id(&compiled.store), compiled.maps@)
                 && compiled_source::<E>(compiled.source@, compiled.mode, compiled.template,
                     compiled.maps@, source::component_equality::<E>(), books::domain::<E>()))
@@ -109,15 +132,24 @@ pub(crate) mod verify {
             && compiled.runtime.snapshots@ == Map::<(usize, u64), Seq<junco_core::verify::history_specs::EventView>>::empty()
     }
 
-    pub(crate) proof fn lemma_constructed_decision<E: Event>(compiled: CompiledRule<E>, rule: Rule<E>,
+    /// Introduces decision readiness from actual rule and history constructors.
+    pub proof fn lemma_constructed_decision<E: Event>(compiled: CompiledRule<E>, rule: Rule<E>,
         store: Arc<Store<E>>, history: History<E>)
         requires constructed(compiled, rule, store), raw::history_wf(history),
-        ensures decision_requires(compiled, history),
+        ensures decision_requires(compiled, history), compiled_wf(compiled),
+            source_rule(compiled) == rule, compiled_store(compiled) == store,
+            books::store_wf(*store),
     {}
 
     pub open(crate) spec fn decision_requires<E: Event>(compiled: CompiledRule<E>, history: History<E>) -> bool {
         compiled_wf(compiled) && raw::history_wf(history)
     }
+
+    /// Readiness is preserved when a well-formed history is paired with a retained rule.
+    pub proof fn lemma_decision_requires<E: Event>(compiled: CompiledRule<E>, history: History<E>)
+        requires compiled_wf(compiled), raw::history_wf(history),
+        ensures decision_requires(compiled, history),
+    {}
 
     /// Persistent observations agree with the history's body-maintained transition ledger.
     pub(crate) proof fn lemma_history_compatible(registry: vstd::resource::Loc,
@@ -143,25 +175,117 @@ pub(crate) mod verify {
             assert(observation.snapshot.value().events.is_prefix_of(
                 history_store::store::verify::events_view(raw::stored_events(&stored))));
         }
+        crate::runtime::verify::lemma_snapshot_compatible_intro(snapshots, history, stored.revision(),
+            history_store::store::verify::events_view(raw::stored_events(&stored)));
     }
 
-    pub open(crate) spec fn dsl_result<E: Event>(rule: Rule<E>, history: History<E>, candidate: E,
+    pub open spec fn dsl_result<E: Event>(rule: Rule<E>, history: History<E>, candidate: E,
         result: Result<Option<bool>, HistoryError>) -> bool {
-        result matches Ok(answer) ==> match answer {
-            None => !junco_core::verify::dsl::head_matches(rule.head@, books::projection(candidate)),
-            Some(accepted) => junco_core::verify::dsl::head_matches(rule.head@, books::projection(candidate))
-                && accepted == junco_core::verify::dsl::lang(rule.tail@, rule.head@,
-                    books::projection(candidate), raw::raw_word(history)),
+        result matches Ok(answer) ==> answer == dsl::rule_evaluation(
+            rule@, candidate, raw::raw_events(history))
+    }
+
+    /// Outcome of the ordered scan: the first violated source (`least_violation` in the semantics) or none
+    /// (`policy_permits`), under the event laws.
+    pub open spec fn ordered_result<E: Event>(sources: Seq<Rule<E>>, history: History<E>, candidate: E,
+        result: Result<Option<usize>, HistoryError>) -> bool {
+        junco_core::spec::hypotheses::event_obligations::<E>() ==> match result {
+            Ok(Some(index)) => dsl::least_violation(dsl::rule_views(sources), candidate, raw::raw_events(history), index as int),
+            Ok(None) => dsl::policy_permits(dsl::rule_views(sources), candidate, raw::raw_events(history)),
+            Err(_) => true,
         }
+    }
+
+    /// A scan that violated no source permits the candidate (`policy_permits` over the views).
+    pub proof fn lemma_no_violation_permits<E: Event>(sources: Seq<Rule<E>>, candidate: E, history: Seq<E>)
+        requires forall|j: int| 0 <= j < sources.len() ==> !dsl::rule_violated(sources[j]@, candidate, history),
+        ensures dsl::policy_permits(dsl::rule_views(sources), candidate, history),
+    {
+        assert forall|i: int| 0 <= i < dsl::rule_views(sources).len() implies
+            !dsl::rule_violated(dsl::rule_views(sources)[i], candidate, history) by {
+            assert(dsl::rule_views(sources)[i] == sources[i]@);
+        }
+    }
+
+    pub open spec fn compiled_sources<E: Event>(rules: Seq<CompiledRule<E>>) -> Seq<Rule<E>> {
+        rules.map(|i: int, rule: CompiledRule<E>| source_rule(rule))
+    }
+
+    pub open(crate) spec fn compiled_table_wf<E: Event>(rules: Seq<CompiledRule<E>>, store: Arc<Store<E>>) -> bool {
+        books::store_wf(*store) && forall|i: int| 0 <= i < rules.len() ==>
+            compiled_wf(rules[i]) && rules[i].store == store
+    }
+
+    pub open(crate) spec fn compiled_structure_frame<E: Event>(before: CompiledRule<E>, after: CompiledRule<E>) -> bool {
+        compiled_wf(after) && source_rule(after) == source_rule(before)
+            && after.store == before.store && after.mode == before.mode
+            && after.template == before.template
+    }
+
+    pub open(crate) spec fn compiled_table_frame<E: Event>(before: Seq<CompiledRule<E>>, after: Seq<CompiledRule<E>>) -> bool {
+        before.len() == after.len() && forall|i: int| 0 <= i < before.len() ==>
+            compiled_structure_frame(before[i], after[i])
+    }
+
+    pub(crate) proof fn lemma_compiled_sources_frame<E: Event>(before: Seq<CompiledRule<E>>, after: Seq<CompiledRule<E>>)
+        requires compiled_table_frame(before, after),
+        ensures compiled_sources(before) == compiled_sources(after),
+    {
+        assert(compiled_sources(before) =~= compiled_sources(after));
+    }
+
+    pub(crate) proof fn lemma_compiled_mode_frame<E: Event>(before: Seq<CompiledRule<E>>, after: Seq<CompiledRule<E>>, index: int)
+        requires compiled_table_frame(before, after), 0 <= index < before.len(),
+        ensures after[index].mode_spec() == before[index].mode_spec(),
+    { reveal(CompiledRule::mode_spec); }
+
+    pub proof fn lemma_compiled_source_mode<E: Event>(compiled: CompiledRule<E>, mode: RuleMode)
+        requires compiled_wf(compiled), junco_core::spec::hypotheses::event_obligations::<E>(), mode == compiled.mode_spec(),
+        ensures mode == source_rule(compiled).mode,
+    { reveal(CompiledRule::mode_spec); }
+
+    pub proof fn lemma_dsl_violation<E: Event>(compiled: CompiledRule<E>, history: History<E>, candidate: E,
+        result: Result<Option<bool>, HistoryError>, mode: RuleMode)
+        requires compiled_wf(compiled), junco_core::spec::hypotheses::event_obligations::<E>(),
+            dsl_result(source_rule(compiled), history, candidate, result), mode == compiled.mode_spec(),
+        ensures result matches Ok(answer) ==> dsl::rule_violated(source_rule(compiled)@, candidate, raw::raw_events(history))
+            == match answer { None => false, Some(accepted) => match mode {
+                RuleMode::Require => !accepted, RuleMode::Forbid => accepted,
+            } },
+    {
+        reveal(CompiledRule::mode_spec);
     }
 
     pub open(crate) spec fn decision_result<E: Event>(before: CompiledRule<E>, after: CompiledRule<E>,
         history: History<E>, candidate: E, result: Result<Option<bool>, HistoryError>) -> bool {
-        compiled_wf(after) && after.template == before.template && after.mode == before.mode
-            && after.store == before.store && after.source@ == before.source@ && after.maps@ == before.maps@
+        compiled_structure_frame(before, after) && after.maps@ == before.maps@
+            && no_invariant_failure(result)
             && (result is Err ==> after.runtime.cursors@ == before.runtime.cursors@)
-            && (books::native_obligations::<E>() ==> dsl_result(before.source@, history, candidate, result))
+            && (junco_core::spec::hypotheses::event_obligations::<E>() ==> dsl_result(before.source@, history, candidate, result))
+            && ((result == Err(HistoryError::WrongHistoryOwner))
+                == !books::same_store_owner(before.store, raw::store_of(history)))
     }
+
+    /// Eliminates a checked decision without revealing graphs, maps, or cursors.
+    pub proof fn lemma_decision_result_facts<E: Event>(
+        before: CompiledRule<E>, after: CompiledRule<E>, history: History<E>,
+        candidate: E, result: Result<Option<bool>, HistoryError>)
+        requires decision_result(before, after, history, candidate, result),
+        ensures compiled_wf(after), compiled_structure_frame(before, after),
+            source_rule(after) == source_rule(before), compiled_store(after) == compiled_store(before),
+            compiled_maps_frame(before, after),
+            no_invariant_failure(result),
+            result is Err ==> compiled_cursor_frame(before, after),
+            raw::history_wf(history) ==> decision_requires(after, history),
+            (result == Err(HistoryError::WrongHistoryOwner))
+                == !books::same_store_owner(compiled_store(before), raw::store_of(history)),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> dsl_result(source_rule(before), history, candidate, result),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> match result {
+                Ok(answer) => answer == dsl::rule_evaluation(
+                    source_rule(before)@, candidate, raw::raw_events(history)),
+                Err(_) => true,
+            },
+    {}
 
     pub open(crate) spec fn numeric_result(template: FlatPair<u64>, request: history_store::store::Event,
         stored: StoredHistory, result: Result<Option<bool>, HistoryError>) -> bool {
@@ -169,7 +293,7 @@ pub(crate) mod verify {
             None => crate::compile::verify::head_rejects(template, request),
             Some(accepted) => exists|bindings: junco_core::kernel::Bindings|
                 crate::compile::verify::bindings_match(template, request, bindings)
-                    && junco_core::verify::history_specs::event_wf(bindings@)
+                    && junco_core::verify::history_specs::event_wf(bindings@, bindings@.len())
                     && accepted == crate::compile::verify::source_regex(template, template.root as nat,
                         bindings@, history_store::store::verify::events_view(raw::stored_events(&stored))),
         }
@@ -177,28 +301,38 @@ pub(crate) mod verify {
 
     pub(crate) proof fn lemma_typed_result<E: Event>(compiled: CompiledRule<E>, history: History<E>, candidate: E,
         request: history_store::store::Event, maps: books::ComponentMaps<E>, result: Result<Option<bool>, HistoryError>)
-        requires compiled_wf(compiled), raw::history_wf(history), books::native_obligations::<E>(),
+        requires compiled_wf(compiled), raw::history_wf(history), junco_core::spec::hypotheses::event_obligations::<E>(),
             books::maps_wf::<E>(maps), books::maps_extend::<E>(compiled.maps@, maps),
             books::maps_extend::<E>(raw::history_maps(history), maps), books::event_encoded::<E>(maps, candidate, request),
             numeric_result(compiled.template, request, *history.numeric(), result),
         ensures dsl_result(compiled.source@, history, candidate, result),
     {
         raw::lemma_history_wf(history);
-        let flat = choose|flat: junco_core::flat::FlatRule<ComponentValue<E>>|
+        assert(raw::raw_word(history) =~= raw::raw_events(history).map(
+            |i: int, event: E| history_syntax::spec::events::event_view(event)));
+        let flat = choose|flat: junco_core::flat::FlatRule<E::Component>|
             source::flattened::<E>(compiled.source@, flat)
                 && encoding::lowering(flat.source, compiled.template, compiled.maps@, source::component_equality::<E>())
                 && encoding::constants_in_domain(flat.source, books::domain::<E>());
+        assert(compiled.source@.head@.len() == history_syntax::spec::events::arity::<E>());
+        assert(compiled.template.head@.len() == compiled.source@.head@.len());
+        assert(history_syntax::spec::events::event_view(candidate).len() == compiled.source@.head@.len());
         let numeric_word = raw::stored_events(history.numeric()).map(|i: int, event: history_store::store::Event| books::numeric_values(event));
         assert forall|i: int| 0 <= i < raw::raw_events(history).len() implies
             books::event_encoded::<E>(maps, raw::raw_events(history)[i], raw::stored_events(history.numeric())[i]) by {
             books::lemma_event_extension::<E>(raw::history_maps(history), maps, raw::raw_events(history)[i], raw::stored_events(history.numeric())[i]);
         }
+        assert forall|i: int| 0 <= i < numeric_word.len() implies
+            numeric_word[i].len() == books::numeric_values(request).len() by {
+            assert(books::event_encoded::<E>(maps, raw::raw_events(history)[i],
+                raw::stored_events(history.numeric())[i]));
+        }
         assert(encoding::word_encoded(maps, source::component_equality::<E>(), books::domain::<E>(),
-            source::word_values::<E>(raw::raw_word(history)), numeric_word));
+            raw::raw_word(history), numeric_word));
         assert(junco_core::verify::encoding::word_representation(numeric_word,
             history_store::store::verify::events_view(raw::stored_events(history.numeric()))));
         encoding::lemma_dsl_later_maps_preservation::<E>(compiled.source@, flat, compiled.template,
-            compiled.maps@, maps, books::domain::<E>(), books::projection(candidate), raw::raw_word(history),
+            compiled.maps@, maps, books::domain::<E>(), history_syntax::spec::events::event_view(candidate), raw::raw_word(history),
             books::numeric_values(request), numeric_word);
         crate::compile::verify::lemma_flat_head(compiled.template, books::numeric_values(request), request@);
         if let Ok(answer) = result {
@@ -207,7 +341,7 @@ pub(crate) mod verify {
                 Some(accepted) => {
                     let bindings = choose|bindings: junco_core::kernel::Bindings|
                         crate::compile::verify::bindings_match(compiled.template, request, bindings)
-                            && junco_core::verify::history_specs::event_wf(bindings@)
+                            && junco_core::verify::history_specs::event_wf(bindings@, bindings@.len())
                             && accepted == crate::compile::verify::source_regex(compiled.template,
                                 compiled.template.root as nat, bindings@,
                                 history_store::store::verify::events_view(raw::stored_events(history.numeric())));
@@ -222,46 +356,54 @@ pub(crate) mod verify {
     }
 }
 
-// Arc identity is a native ownership leaf; it supplies no encoding or language theorem.
-#[verus_verify]
-#[verus_verify(external_body)]
-#[verus_spec(result => ensures result ==> *left == *right)]
-fn same_owner<E: Event>(left: &Arc<Store<E>>, right: &Arc<Store<E>>) -> bool {
-    Arc::ptr_eq(left, right)
-}
-
 verus! {
 pub(crate) type LoweredRule<E> = (RuleMode, FlatPair<u64>, Ghost<history_store::typed::ComponentMaps<E>>);
 
-/// Flatten before locking; publish one finite snapshot after encoding constants.
-pub(crate) fn lower_rule<E: Event, L: Limits>(
-    store: &Store<E>, rule: &Rule<E>, limits: &mut L, world: &mut ObservationWorld,
-) -> (result: Result<LoweredRule<E>, CompileError>)
-    requires books::store_wf(*store),
-    ensures result matches Ok((mode, numeric, maps)) ==> mode == rule.mode
-        && junco_core::flat::verify::structural_wf(numeric)
-        && books::snapshot_published::<E>(books::registry_id(store), maps@)
-        && (books::native_obligations::<E>() ==> books::maps_wf::<E>(maps@)
-            && compiled_source::<E>(*rule, mode, numeric, maps@,
-                source::component_equality::<E>(), books::domain::<E>())),
-{
-    let flat = flatten_rule(rule, limits, world)?;
-    proof_decl! { let ghost flattened = flat; }
-    proof! {
-        books::lemma_empty_snapshot::<E>(store);
-        if books::native_obligations::<E>() { books::lemma_empty_maps_wf::<E>(); }
-    }
-    let (result, maps) = store.lower_with_snapshot(&flat.source, limits, world,
-        verus_exec_expr! { Ghost(books::empty_maps::<E>()) });
-    let numeric = result?;
-    proof! {
-        if books::native_obligations::<E>() {
-            assert(source::flattened::<E>(*rule, flattened));
-            assert(compiled_source::<E>(*rule, flat.mode, numeric, maps@,
-                source::component_equality::<E>(), books::domain::<E>()));
+impl<E: Event> CompiledRule<E> {
+    /// Flatten before locking; publish one finite snapshot after encoding constants.
+    fn lower<L: Limits>(
+        store: &Store<E>, rule: &Rule<E>, limits: &mut L, world: &mut ObservationWorld,
+    ) -> (result: Result<LoweredRule<E>, CompileError>)
+        requires books::store_wf(*store),
+        ensures result matches Ok((mode, numeric, maps)) ==> mode == rule.mode
+            && junco_core::flat::verify::structural_wf(numeric)
+            && books::snapshot_published::<E>(books::registry_id(store), maps@)
+            && (junco_core::spec::hypotheses::event_obligations::<E>() ==> books::maps_wf::<E>(maps@)
+                && compiled_source::<E>(*rule, mode, numeric, maps@,
+                    source::component_equality::<E>(), books::domain::<E>())),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> no_invariant_compile_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::head_scoped(rule.head@)
+                && dsl::regex_scoped(rule.tail@, rule.head@)
+                ==> !(result matches Err(CompileError::VariableComponentConflict { .. }))
+                    && !(result matches Err(CompileError::UnboundVariable { .. }))
+                    && !(result matches Err(CompileError::Runtime(HistoryError::InvalidPolicy { .. }))),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::rule_wf(rule@)
+                && rule@.head.len() == history_syntax::spec::events::arity::<E>()
+                && dsl::rule_constants_tagged::<E>(rule@)
+                ==> (result is Ok || (result matches Err(CompileError::Runtime(error)) && dsl::resource_error(error))),
+    {
+        let flat = flatten_rule(rule, limits, world)?;
+        proof_decl! { let ghost flattened = flat; }
+        proof! {
+            books::lemma_empty_snapshot::<E>(store);
+            if junco_core::spec::hypotheses::event_obligations::<E>() {
+                books::lemma_native_obligations_projection::<E>();
+                books::lemma_empty_maps_wf::<E>();
+                assert(encoding::constants_in_domain(flat.source, books::domain::<E>()));
+            }
         }
+        let (result, maps) = store.lower_with_snapshot(&flat.source, limits, world,
+            verus_exec_expr! { Ghost(books::empty_maps::<E>()) });
+        let numeric = result?;
+        proof! {
+            if junco_core::spec::hypotheses::event_obligations::<E>() {
+                assert(source::flattened::<E>(*rule, flattened));
+                assert(compiled_source::<E>(*rule, flat.mode, numeric, maps@,
+                    source::component_equality::<E>(), books::domain::<E>()));
+            }
+        }
+        Ok((flat.mode, numeric, maps))
     }
-    Ok((flat.mode, numeric, maps))
 }
 }
 
@@ -289,15 +431,49 @@ impl<E: Event> CompiledRule<E> {
 
 #[verus_verify]
 impl<E: Event> CompiledRule<E> {
+    // Pointer comparison relates native identity to contents, never registry equality to identity.
+    #[doc(hidden)]
+    #[verus_verify]
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures
+        result == (junco_core::verify::history_assumptions::arc_identity(*left)
+            == junco_core::verify::history_assumptions::arc_identity(*right)),
+        result == books::same_store_owner(*left, *right),
+        result ==> *left == *right && **left == **right)]
+    pub fn same_owner(left: &Arc<Store<E>>, right: &Arc<Store<E>>) -> bool {
+        Arc::ptr_eq(left, right)
+    }
+
     /// Consume the source on every outcome using its iterative disposal path.
+    /// Native event laws exclude internal failures; scoped sources also exclude scope/validation diagnostics.
     #[verus_spec(result => requires books::store_wf(*store),
-        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store))]
+        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> no_invariant_compile_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::head_scoped(rule.head@)
+                && dsl::regex_scoped(rule.tail@, rule.head@)
+                ==> !(result matches Err(CompileError::VariableComponentConflict { .. }))
+                    && !(result matches Err(CompileError::UnboundVariable { .. }))
+                    && !(result matches Err(CompileError::Runtime(HistoryError::InvalidPolicy { .. }))),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::rule_wf(rule@)
+                && rule@.head.len() == history_syntax::spec::events::arity::<E>()
+                && dsl::rule_constants_tagged::<E>(rule@)
+                ==> (result is Ok || (result matches Err(CompileError::Runtime(error)) && dsl::resource_error(error))))]
     pub fn new(store: Arc<Store<E>>, rule: Rule<E>) -> Result<Self, CompileError> {
         Self::new_with_limits(store, rule, &mut Unmetered, &mut ObservationWorld)
     }
 
     #[verus_spec(result => requires books::store_wf(*store),
-        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store))]
+        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> no_invariant_compile_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::head_scoped(rule.head@)
+                && dsl::regex_scoped(rule.tail@, rule.head@)
+                ==> !(result matches Err(CompileError::VariableComponentConflict { .. }))
+                    && !(result matches Err(CompileError::UnboundVariable { .. }))
+                    && !(result matches Err(CompileError::Runtime(HistoryError::InvalidPolicy { .. }))),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::rule_wf(rule@)
+                && rule@.head.len() == history_syntax::spec::events::arity::<E>()
+                && dsl::rule_constants_tagged::<E>(rule@)
+                ==> (result is Ok || (result matches Err(CompileError::Runtime(error)) && dsl::resource_error(error))))]
     pub(crate) fn new_with_limits<L: Limits>(
         store: Arc<Store<E>>,
         rule: Rule<E>,
@@ -308,7 +484,17 @@ impl<E: Event> CompiledRule<E> {
     }
 
     #[verus_spec(result => requires books::store_wf(*store),
-        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store))]
+        ensures result matches Ok(compiled) ==> constructed(compiled, rule, store),
+            junco_core::spec::hypotheses::event_obligations::<E>() ==> no_invariant_compile_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::head_scoped(rule.head@)
+                && dsl::regex_scoped(rule.tail@, rule.head@)
+                ==> !(result matches Err(CompileError::VariableComponentConflict { .. }))
+                    && !(result matches Err(CompileError::UnboundVariable { .. }))
+                    && !(result matches Err(CompileError::Runtime(HistoryError::InvalidPolicy { .. }))),
+            junco_core::spec::hypotheses::event_obligations::<E>() && dsl::rule_wf(rule@)
+                && rule@.head.len() == history_syntax::spec::events::arity::<E>()
+                && dsl::rule_constants_tagged::<E>(rule@)
+                ==> (result is Ok || (result matches Err(CompileError::Runtime(error)) && dsl::resource_error(error))))]
     fn construct<L: Limits>(
         store: Arc<Store<E>>,
         rule: Rule<E>,
@@ -318,12 +504,12 @@ impl<E: Event> CompiledRule<E> {
     ) -> Result<Self, CompileError> {
         proof_decl! { let ghost source = rule; }
         // No `?` may bypass disposal of the caller's recursive owned source.
-        let lowered = lower_rule(&store, &rule, limits, world);
+        let owner = history_store::typed::borrow_store(&store);
+        let lowered = Self::lower(owner, &rule, limits, world);
         rule.dispose();
         let (mode, template, _maps) = lowered?;
         let runtime =
             RuleRuntime::new(store.numeric_store(), &template, precompile, limits, world)?;
-        proof! { reveal(crate::runtime::verify::constructor_result); }
         proof_decl! { let tracked observations = Map::<(usize, u64), ObservedHistory>::tracked_empty(); }
         Ok(Self {
             template,
@@ -346,8 +532,14 @@ impl<E: Event> CompiledRule<E> {
     }
 
     /// `None` is only a head mismatch; operational errors never become verdicts.
+    /// Foreign native store owners yield `WrongHistoryOwner`; matching owners never do.
+    /// Readiness excludes internal invariant failures on both matching and foreign-owner paths.
     #[verus_spec(result => requires decision_requires(*old(self), *history),
-        ensures decision_result(*old(self), *final(self), *history, *candidate, result))]
+        ensures decision_result(*old(self), *final(self), *history, *candidate, result),
+            no_invariant_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>()
+                && compiled_store(*old(self)) == raw::store_of(*history)
+                ==> (result matches Err(error) ==> dsl::resource_error(error)))]
     pub fn accepts_history(
         &mut self,
         history: &History<E>,
@@ -357,7 +549,11 @@ impl<E: Event> CompiledRule<E> {
     }
 
     #[verus_spec(result => requires decision_requires(*old(self), *history),
-        ensures decision_result(*old(self), *final(self), *history, *candidate, result))]
+        ensures decision_result(*old(self), *final(self), *history, *candidate, result),
+            no_invariant_failure(result),
+            junco_core::spec::hypotheses::event_obligations::<E>()
+                && compiled_store(*old(self)) == raw::store_of(*history)
+                ==> (result matches Err(error) ==> dsl::resource_error(error)))]
     pub(crate) fn accepts_history_with_limits<L: Limits>(
         &mut self,
         history: &History<E>,
@@ -367,18 +563,18 @@ impl<E: Event> CompiledRule<E> {
     ) -> Result<Option<bool>, HistoryError> {
         proof_decl! { let ghost entry = *self; }
         // Check before projections, codebook publication, or any residual lookup.
-        if !same_owner(&self.store, history.store()) {
+        if !Self::same_owner(&self.store, history.store()) {
             return Err(HistoryError::WrongHistoryOwner);
         }
         proof! {
             raw::lemma_history_wf(*history);
+            assert(history.id() == history.numeric().id());
             history_store::history::lemma_stored_history_view(*history.numeric());
             let ghost registry = books::registry_id(&self.store);
             lemma_history_compatible(registry, history.id(), *history.numeric(),
                 self.runtime.snapshots@, self.observations.borrow(), history.registration_ref(), history.lifecycle_ref());
             let key = (history.id(), history.numeric().revision());
             let events = history_store::store::verify::events_view(raw::stored_events(history.numeric()));
-            reveal(crate::runtime::verify::runtime_wf);
             crate::runtime::verify::lemma_cursor_cache_observe(self.runtime.pair,
                 self.runtime.cursors@, self.runtime.snapshots@, history.id(), history.numeric().revision(), events);
             let tracked observation = ObservedHistory {
@@ -390,21 +586,17 @@ impl<E: Event> CompiledRule<E> {
             *self.runtime.snapshots = self.runtime.snapshots@.insert(key, events);
             assert(compiled_wf(*self));
         }
-        let (encoded, _maps) = self.store.encode_event_with_snapshot(
+        let owner = history_store::typed::borrow_store(&self.store);
+        let (encoded, _maps) = owner.encode_event_with_snapshot(
             candidate,
             verus_exec_expr! { Ghost(self.maps@) },
             verus_exec_expr! { Ghost(raw::history_maps(*history)) },
         );
         let request = encoded?;
         proof_decl! { let ghost observed = self.runtime.snapshots@; }
-        let first = decide_template(
-            &mut self.runtime,
-            &self.template,
-            &request,
-            history.numeric(),
-            limits,
-            world,
-        );
+        let first =
+            self.runtime
+                .accepts(&self.template, &request, history.numeric(), limits, world);
         proof! {
             let key = (history.id(), history.numeric().revision());
             let events = history_store::store::verify::events_view(raw::stored_events(history.numeric()));
@@ -413,7 +605,7 @@ impl<E: Event> CompiledRule<E> {
             assert(compiled_wf(*self));
         }
         let result = match first {
-            Err(HistoryError::GraphLimit { .. }) => {
+            Err(HistoryError::GraphBudget { .. } | HistoryError::GraphIndex) => {
                 // A failed replacement must not discard the old committed cursor cache.
                 let mut replacement = RuleRuntime::new(
                     self.store.numeric_store(),
@@ -422,7 +614,6 @@ impl<E: Event> CompiledRule<E> {
                     limits,
                     world,
                 )?;
-                proof! { reveal(crate::runtime::verify::constructor_result); }
                 proof_decl! { let tracked mut replacement_observations = Map::<(usize, u64), ObservedHistory>::tracked_empty(); }
                 proof! {
                     history_store::history::lemma_stored_history_view(*history.numeric());
@@ -439,8 +630,7 @@ impl<E: Event> CompiledRule<E> {
                     assert(decision::runtime_represents(self.template, replacement));
                 }
                 proof_decl! { let ghost new_snapshots = replacement.snapshots@; }
-                let answer = decide_template(
-                    &mut replacement,
+                let answer = replacement.accepts(
                     &self.template,
                     &request,
                     history.numeric(),
@@ -465,138 +655,11 @@ impl<E: Event> CompiledRule<E> {
             other => other,
         };
         proof! {
-            if books::native_obligations::<E>() {
+            if junco_core::spec::hypotheses::event_obligations::<E>() {
                 lemma_typed_result(entry, *history, *candidate, request, _maps@, result);
             }
         }
         result
-    }
-}
-
-/// Bind the candidate and evaluate against the retained graph generation.
-#[verus_verify]
-#[verus_spec(result =>
-    requires decision::runtime_represents(*template, *old(runtime)),
-        junco_core::flat::verify::structural_wf(*template),
-        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, stored.id(),
-            stored.revision(), history_store::store::verify::events_view(raw::stored_events(&stored))),
-    ensures decision::runtime_represents(*template, *final(runtime)),
-        crate::progress::verify::pair_frame(old(runtime).pair, final(runtime).pair),
-        final(runtime).spec_store() == old(runtime).spec_store(),
-        result is Err ==> final(runtime).cursors@ == old(runtime).cursors@,
-        final(runtime).snapshots@ == old(runtime).snapshots@
-            || final(runtime).snapshots@ == old(runtime).snapshots@.insert((stored.id(), stored.revision()),
-                history_store::store::verify::events_view(raw::stored_events(&stored))),
-        numeric_result(*template, *request, *stored, result),
-)]
-pub(crate) fn decide_template<L: Limits>(
-    runtime: &mut RuleRuntime,
-    template: &FlatPair<u64>,
-    request: &history_store::store::Event,
-    stored: &StoredHistory,
-    limits: &mut L,
-    world: &mut ObservationWorld,
-) -> Result<Option<bool>, HistoryError> {
-    proof_decl! { let ghost entry = *runtime; }
-    let bindings = match crate::compile::bindings(template, request) {
-        Some(bindings) => bindings,
-        None => return Ok(None),
-    };
-    proof! {
-        crate::compile::verify::lemma_bindings_match(*template, *request, bindings);
-        reveal(crate::runtime::verify::resume_requires);
-        reveal(crate::runtime::verify::runtime_wf);
-    }
-    let result = decide_numeric(runtime, &bindings, stored, limits, world);
-    proof! {
-        decision::lemma_runtime_frame(*template, entry, *runtime);
-    }
-    match result {
-        Err(error) => Err(error),
-        Ok(answer) => {
-            proof! {
-                assert(exists|witness: junco_core::kernel::Bindings|
-                    crate::compile::verify::bindings_match(*template, *request, witness)
-                        && junco_core::verify::history_specs::event_wf(witness@)
-                        && answer == crate::compile::verify::source_regex(*template,
-                            template.root as nat, witness@,
-                            history_store::store::verify::events_view(raw::stored_events(&stored)))) by {
-                    assert(crate::compile::verify::bindings_match(*template, *request, bindings));
-                }
-            }
-            Ok(Some(answer))
-        }
-    }
-}
-
-/// One full-prefix batch makes answer/publication failures atomic for the whole call.
-#[verus_verify]
-#[verus_spec(result =>
-    requires crate::runtime::verify::runtime_wf(*old(runtime)),
-        crate::runtime::verify::snapshot_compatible(old(runtime).snapshots@, stored.id(), stored.revision(),
-            history_store::store::verify::events_view(raw::stored_events(&stored))),
-        junco_core::verify::history_specs::event_wf(bindings@),
-    ensures crate::runtime::verify::runtime_wf(*final(runtime)),
-        crate::progress::verify::pair_frame(old(runtime).pair, final(runtime).pair),
-        final(runtime).spec_store() == old(runtime).spec_store(),
-        result is Err ==> final(runtime).cursors@ == old(runtime).cursors@,
-        final(runtime).snapshots@ == old(runtime).snapshots@.insert((stored.id(), stored.revision()),
-            history_store::store::verify::events_view(raw::stored_events(&stored))),
-        result matches Ok(answer) ==> answer == junco_core::kernel::verify::regex_lang(
-            old(runtime).pair.store.graph(), bindings@, old(runtime).pair.root@,
-            history_store::store::verify::events_view(raw::stored_events(&stored))),
-)]
-pub(crate) fn decide_numeric<L: Limits>(
-    runtime: &mut RuleRuntime,
-    bindings: &junco_core::kernel::Bindings,
-    stored: &StoredHistory,
-    limits: &mut L,
-    world: &mut ObservationWorld,
-) -> Result<bool, HistoryError> {
-    proof! {
-        history_store::history::lemma_stored_history_view(*stored);
-        reveal(crate::runtime::verify::runtime_wf);
-        reveal(crate::runtime::verify::resume_requires);
-        reveal(crate::runtime::verify::resume_ensures);
-        reveal(crate::runtime::verify::advance_requires);
-        reveal(crate::runtime::verify::advance_ensures);
-    }
-    proof_decl! { let ghost initial_snapshots = runtime.snapshots@; }
-    let target = stored.len();
-    let mut cursor = runtime.resume_cursor(bindings, stored, target);
-    proof! {
-        assert(runtime.snapshots@ == initial_snapshots.insert((stored.id(), stored.revision()),
-            history_store::store::verify::events_view(raw::stored_events(&stored))));
-    }
-    proof_decl! { let ghost start = cursor; }
-    let result = runtime.advance_cursor(
-        &mut cursor,
-        bindings,
-        stored,
-        target,
-        usize::MAX,
-        limits,
-        world,
-    );
-    proof! {
-        let key = (stored.id(), stored.revision());
-        let events = history_store::store::verify::events_view(raw::stored_events(&stored));
-        assert(runtime.snapshots@ == initial_snapshots.insert(key, events).insert(key, events));
-        assert(initial_snapshots.insert(key, events).insert(key, events) =~= initial_snapshots.insert(key, events));
-        junco_core::verify::history_specs::lemma_selected_end(
-            start.consumed as nat, target as nat, usize::MAX as nat);
-        assert(history_store::store::verify::events_view(raw::stored_events(&stored)).take(target as int)
-            =~= history_store::store::verify::events_view(raw::stored_events(&stored)));
-    }
-    match result {
-        Err(error) => Err(error),
-        Ok(Some(answer)) => Ok(answer),
-        Ok(None) => {
-            proof! { assert(false); }
-            Err(HistoryError::invariant(
-                "complete history batch returned no answer",
-            ))
-        }
     }
 }
 
@@ -611,20 +674,12 @@ impl<E: Event> CompiledRule<E> {
         self.runtime.work_counters()
     }
 
-    pub fn reset_work_counters(&mut self) {
-        self.runtime.reset_work_counters();
-    }
-
     pub fn work_events(&self) -> usize {
         self.runtime.work_events()
     }
 
     pub fn reset_work_events(&mut self) {
         self.runtime.reset_work_events();
-    }
-
-    pub fn clear_cursors(&mut self) {
-        self.runtime.clear_cursors();
     }
 
     pub fn cursor_positions(
@@ -648,34 +703,39 @@ mod tests {
 
     use super::*;
     use history_syntax::syntax::{
-        AtomPattern, Comparison, ComponentPattern, Head, RegexExpr, TestExpr,
+        AtomPattern, Comparison, Component, ComponentPattern, Head, RegexExpr, TestExpr,
     };
+    use history_syntax::{Component3, N3};
     use junco_core::limits::LimitError;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     struct Probe(u8, u8, u8);
 
     impl Event for Probe {
-        type Principal = u8;
-        type Action = u8;
-        type Resource = u8;
-        fn principal(self) -> u8 {
-            self.0
+        type Component = Component3<u8, u8, u8>;
+        type Arity = N3;
+        fn component(self, index: usize) -> Self::Component {
+            match index {
+                0 => Component3::C0(self.0),
+                1 => Component3::C1(self.1),
+                _ => Component3::C2(self.2),
+            }
         }
-        fn action(self) -> u8 {
-            self.1
-        }
-        fn resource(self) -> u8 {
-            self.2
+        fn coordinate(component: Self::Component) -> usize {
+            match component {
+                Component3::C0(_) => 0,
+                Component3::C1(_) => 1,
+                Component3::C2(_) => 2,
+            }
         }
     }
 
     fn head() -> Head<Probe> {
-        Head::new(
+        Head::new([
             ComponentPattern::variable("actor"),
-            ComponentPattern::constant(2),
+            ComponentPattern::constant(Component3::C1(2)),
             ComponentPattern::variable("resource"),
-        )
+        ])
     }
 
     fn reads() -> Rule<Probe> {
@@ -684,7 +744,7 @@ mod tests {
             head(),
             RegexExpr::star(RegexExpr::test(TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Action(ComponentPattern::constant(1)),
+                AtomPattern::new(Component(1), ComponentPattern::constant(Component3::C1(1))),
             ))),
         )
     }
@@ -695,7 +755,7 @@ mod tests {
         let mut valid = RegexExpr::epsilon();
         let mut invalid = RegexExpr::test(TestExpr::atom(
             Comparison::Eq,
-            AtomPattern::Principal(ComponentPattern::variable("missing")),
+            AtomPattern::new(Component(0), ComponentPattern::variable("missing")),
         ));
         for _ in 0..4096 {
             valid = RegexExpr::star(valid);
@@ -778,7 +838,7 @@ mod tests {
         let read = || {
             RegexExpr::test(TestExpr::atom(
                 Comparison::Eq,
-                AtomPattern::Action(ComponentPattern::constant(1)),
+                AtomPattern::new(Component(1), ComponentPattern::constant(Component3::C1(1))),
             ))
         };
         let rule = Rule::new(
@@ -802,15 +862,14 @@ mod tests {
             .0
             .unwrap();
         assert!(matches!(
-            decide_template(
-                &mut compiled.runtime,
+            compiled.runtime.accepts(
                 &compiled.template,
                 &request,
                 history.numeric(),
                 &mut Unmetered,
                 &mut ObservationWorld
             ),
-            Err(HistoryError::GraphLimit { .. })
+            Err(HistoryError::GraphBudget { .. })
         ));
         assert!(matches!(
             compiled.accepts_history_with_limits(
@@ -873,31 +932,25 @@ mod tests {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         struct Counted(Probe);
         impl Event for Counted {
-            type Principal = u8;
-            type Action = u8;
-            type Resource = u8;
-            fn principal(self) -> u8 {
+            type Component = <Probe as Event>::Component;
+            type Arity = N3;
+            fn component(self, index: usize) -> Self::Component {
                 PROJECTIONS.fetch_add(1, Ordering::SeqCst);
-                self.0.0
+                self.0.component(index)
             }
-            fn action(self) -> u8 {
-                PROJECTIONS.fetch_add(1, Ordering::SeqCst);
-                self.0.1
-            }
-            fn resource(self) -> u8 {
-                PROJECTIONS.fetch_add(1, Ordering::SeqCst);
-                self.0.2
+            fn coordinate(component: Self::Component) -> usize {
+                Probe::coordinate(component)
             }
         }
         let store = Arc::new(Store::new().unwrap());
         let foreign = Arc::new(Store::new().unwrap());
         let rule = Rule::<Counted>::new(
             RuleMode::Require,
-            Head::new(
+            Head::new([
                 ComponentPattern::variable("actor"),
-                ComponentPattern::constant(2),
+                ComponentPattern::constant(Component3::C1(2)),
                 ComponentPattern::variable("resource"),
-            ),
+            ]),
             RegexExpr::epsilon(),
         );
         let mut compiled = CompiledRule::new(store, rule).unwrap();
@@ -908,5 +961,61 @@ mod tests {
         );
         assert_eq!(PROJECTIONS.load(Ordering::SeqCst), 0);
         assert!(compiled.cursor_positions().is_empty());
+    }
+
+    #[test]
+    fn four_coordinate_decisions_bind_and_retain_the_whole_candidate() {
+        use history_syntax::Component4;
+        type Four = (u8, u8, u8, u8);
+
+        let variable = |index, name| {
+            TestExpr::<Four>::atom(
+                Comparison::Eq,
+                AtomPattern::new(Component(index), ComponentPattern::variable(name)),
+            )
+        };
+        let rule = Rule::<Four>::new(
+            RuleMode::Require,
+            Head::new([
+                ComponentPattern::variable("principal"),
+                ComponentPattern::variable("handle"),
+                ComponentPattern::constant(Component4::C2(3)),
+                ComponentPattern::variable("label"),
+            ]),
+            RegexExpr::star(RegexExpr::test(TestExpr::and([
+                variable(0, "principal"),
+                variable(1, "handle"),
+                TestExpr::atom(
+                    Comparison::Eq,
+                    AtomPattern::new(Component(2), ComponentPattern::constant(Component4::C2(1))),
+                ),
+                variable(3, "label"),
+            ]))),
+        );
+        let store = Arc::new(Store::<Four>::new().unwrap());
+        let mut history = History::from_events(Arc::clone(&store), [(7, 11, 1, 9); 2]).unwrap();
+        let mut compiled = CompiledRule::new(store, rule).unwrap();
+        let matching = (7, 11, 3, 9);
+        assert_eq!(
+            compiled.accepts_history(&history, &matching),
+            Ok(Some(true))
+        );
+        for different in [(8, 11, 3, 9), (7, 12, 3, 9), (7, 11, 3, 8)] {
+            assert_eq!(
+                compiled.accepts_history(&history, &different),
+                Ok(Some(false))
+            );
+        }
+        assert_eq!(compiled.accepts_history(&history, &(7, 11, 4, 9)), Ok(None));
+        history.push((7, 11, 1, 8)).unwrap();
+        assert_eq!(
+            compiled.accepts_history(&history, &matching),
+            Ok(Some(false))
+        );
+        history.truncate(2).unwrap();
+        assert_eq!(
+            compiled.accepts_history(&history, &matching),
+            Ok(Some(true))
+        );
     }
 }

@@ -14,7 +14,7 @@ use history_semantics::runtime::{verify as runtime, BatchCursor, RuleRuntime};
 use history_store::history::StoredHistory;
 use history_store::store::HistoryStore as CoreHistoryStore;
 use junco_core::{
-    error::HistoryError, flat::FlatPair, kernel::Bindings, observation::ObservationWorld,
+    errors::HistoryError, flat::FlatPair, kernel::Bindings, observation::ObservationWorld,
 };
 use vstd::prelude::*;
 

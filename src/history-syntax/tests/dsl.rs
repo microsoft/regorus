@@ -1,6 +1,6 @@
 use history_syntax::{
-    AtomPattern, CNil, Comparison, Component, ComponentPattern, Coproduct, Event, Head, RegexExpr,
-    Rule, RuleMode, TestExpr,
+    AtomPattern, CNil, Comparison, Component, Component3, ComponentPattern, Coproduct, Event, Head,
+    N3, RegexExpr, Rule, RuleMode, TestExpr,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,32 +12,41 @@ struct DocumentEvent {
 }
 
 impl Event for DocumentEvent {
-    type Principal = u8;
-    type Action = u8;
-    type Resource = u8;
-    fn principal(self) -> u8 {
-        self.principal
+    type Component = Component3<u8, u8, u8>;
+    type Arity = N3;
+
+    fn component(self, index: usize) -> Self::Component {
+        match index {
+            0 => Component3::C0(self.principal),
+            1 => Component3::C1(self.action),
+            _ => Component3::C2(self.resource),
+        }
     }
-    fn action(self) -> u8 {
-        self.action
-    }
-    fn resource(self) -> u8 {
-        self.resource
+
+    fn coordinate(component: Self::Component) -> usize {
+        match component {
+            Component3::C0(_) => 0,
+            Component3::C1(_) => 1,
+            Component3::C2(_) => 2,
+        }
     }
 }
 
 fn head() -> Head<DocumentEvent> {
-    Head::new(
+    Head::new([
         ComponentPattern::variable("actor"),
-        ComponentPattern::constant(2_u8),
+        ComponentPattern::constant(Component3::C1(2)),
         ComponentPattern::variable("document"),
-    )
+    ])
 }
 
 fn action(value: u8) -> RegexExpr<DocumentEvent> {
     RegexExpr::test(TestExpr::atom(
         Comparison::Eq,
-        AtomPattern::Action(ComponentPattern::constant(value)),
+        AtomPattern::new(
+            Component(1),
+            ComponentPattern::constant(Component3::C1(value)),
+        ),
     ))
 }
 
@@ -54,12 +63,15 @@ fn typed_constructors_keep_values_names_and_field_order() {
     let rule = Rule::new(RuleMode::Require, head(), action(1));
     assert_eq!(rule.mode, RuleMode::Require);
     assert_eq!(
-        rule.head.principal,
+        rule.head.slots()[0],
         ComponentPattern::Variable("actor".into())
     );
-    assert_eq!(rule.head.action, ComponentPattern::Constant(2));
     assert_eq!(
-        rule.head.resource,
+        rule.head.slots()[1],
+        ComponentPattern::Constant(Component3::C1(2))
+    );
+    assert_eq!(
+        rule.head.slots()[2],
         ComponentPattern::Variable("document".into())
     );
     assert_eq!(rule.tail, action(1));
@@ -70,13 +82,14 @@ fn comparisons_and_atoms_preserve_the_selected_domain() {
     assert_eq!(!Comparison::Eq, Comparison::Neq);
     assert_eq!(!Comparison::Neq, Comparison::Eq);
     let principal: AtomPattern<DocumentEvent> =
-        AtomPattern::Principal(ComponentPattern::constant(1_u8));
-    let action: AtomPattern<DocumentEvent> = AtomPattern::Action(ComponentPattern::constant(1_u8));
+        AtomPattern::new(Component(0), ComponentPattern::constant(Component3::C0(1)));
+    let action: AtomPattern<DocumentEvent> =
+        AtomPattern::new(Component(1), ComponentPattern::constant(Component3::C1(1)));
     let resource: AtomPattern<DocumentEvent> =
-        AtomPattern::Resource(ComponentPattern::constant(1_u8));
-    assert_eq!(principal.component(), Component::Principal);
-    assert_eq!(action.component(), Component::Action);
-    assert_eq!(resource.component(), Component::Resource);
+        AtomPattern::new(Component(2), ComponentPattern::constant(Component3::C2(1)));
+    assert_eq!(principal.component(), Component(0));
+    assert_eq!(action.component(), Component(1));
+    assert_eq!(resource.component(), Component(2));
     assert_ne!(principal, action);
     assert_ne!(action, resource);
 }
@@ -155,14 +168,14 @@ fn coproducts_forward_projections_without_changing_event_identity() {
     };
     let left: Events = Coproduct::Inl(event);
     let right: Events = Coproduct::Inr(Coproduct::Inl(event));
-    assert_eq!(
-        (left.principal(), left.action(), left.resource()),
-        (1, 2, 3)
-    );
-    assert_eq!(
-        (right.principal(), right.action(), right.resource()),
-        (1, 2, 3)
-    );
+    for (index, expected) in [Component3::C0(1), Component3::C1(2), Component3::C2(3)]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(left.component(index), expected);
+        assert_eq!(right.component(index), expected);
+        assert_eq!(Events::coordinate(expected), index);
+    }
     assert_ne!(left, right);
 }
 
