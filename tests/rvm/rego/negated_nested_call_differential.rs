@@ -573,3 +573,21 @@ fn negated_nested_call_fails_some_in_iteration() -> Result<()> {
     Ok(())
 }
 
+/// The parameter patterns of a function in another module are evaluated in
+/// the callee's module, where an operator they contain is looked up.
+#[test]
+fn operator_in_parameter_pattern_of_other_module() -> Result<()> {
+    let mut lib = String::from("package lib\n");
+    for i in 0..50 {
+        lib.push_str(&format!("g{i} := [{i}, {i} + 1, {i} * 2]\n"));
+    }
+    lib.push_str("f((1 + 1)) := true\n");
+    let mut engine = Engine::new();
+    engine.add_policy("lib.rego".to_string(), lib)?;
+    engine.add_policy(
+        "test.rego".to_string(),
+        "package test\ny if { data.lib.f(2); not data.lib.f(3) }".to_string(),
+    )?;
+    assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, Value::from(true));
+    Ok(())
+}

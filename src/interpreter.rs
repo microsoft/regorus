@@ -3119,9 +3119,13 @@ impl Interpreter {
                     .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
                     .cloned()
                 {
-                    // Execute the destructuring plan with the parameter value
-                    self.execute_destructuring_plan(&destructuring_plan, param_value)?
-                        == Value::from(true)
+                    // Execute the destructuring plan with the parameter value.
+                    // Its expressions belong to the callee's module.
+                    let caller_module_idx =
+                        core::mem::replace(&mut self.current_module_index, callee_module_idx);
+                    let bound = self.execute_destructuring_plan(&destructuring_plan, param_value);
+                    self.current_module_index = caller_module_idx;
+                    bound? == Value::from(true)
                 } else {
                     // Raise error if binding plan is not found
                     return Err(span.error(&format!(
