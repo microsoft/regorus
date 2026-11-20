@@ -179,7 +179,7 @@ impl Serialize for ExplanationReport {
 /// "with_overrides": ...}`; `rule` and `call_instance` are omitted when
 /// absent. Optional `calls` and `scopes` describe evaluation outside any
 /// rule invocation, including arbitrary query expressions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct QueryTarget {
     /// The query or entry point as the caller gave it, for example
@@ -625,8 +625,12 @@ pub struct AttemptExplanation {
     ///
     /// Captured parameter bindings can use [`ConditionKind::Binding`] at
     /// the parameter's source site: `binding` names the parameter and `left`
-    /// holds the actual argument, including its concrete path or causal
-    /// origins. The owner is the callee attempt. This records a real binding,
+    /// holds its matched value. [`Operand::parameter_origins`] links both
+    /// binding and body operands to incoming [`CallUse::arguments`].
+    /// Caller-specific paths/origins belong on those incoming arguments,
+    /// never on shared callee evidence; parameter projections specialize
+    /// that evidence for each use, including cached equal-valued arguments.
+    /// The owner is the callee attempt. This records a real binding,
     /// not a fabricated body predicate: binding a defined `false` succeeds.
     /// It also works for a value-only function with no body checks.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -686,7 +690,7 @@ pub struct ScopeExplanation {
 /// it does not determine how an inner check logically influences the result.
 /// A fresh call and each cached reuse have separate edges to the same
 /// callee invocation. Equal returned values do not identify invocations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct CallUse {
     /// Report-local use identifier, unique across query and rule use lists.
@@ -701,6 +705,14 @@ pub struct CallUse {
     /// Innermost caller scope, absent at its local root or when not captured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<u64>,
+    /// Actual arguments in parameter order, before callee pattern matching.
+    /// Operand use paths start in this use's caller (query or invocation),
+    /// not the callee, even for cached reuse. They describe supplied arguments,
+    /// not necessarily contributors to the returned value. `None` is uncaptured;
+    /// `Some([])` certifies no arguments. Callee binding checks name the index
+    /// with [`Operand::parameter_origins`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<Operand>>,
 }
 
 /// One evaluation of a condition, referencing text/semantics stored once
@@ -771,7 +783,8 @@ pub enum ConditionKind {
     /// A variable binding, `x := ...`, or captured parameter-binding evidence.
     Binding,
     /// A standalone array, set or object comprehension construct site.
-    /// Its enclosing scope's [`ScopeKind`] identifies the collection kind.
+    /// The captured rule or query scope whose `site_id` matches this site
+    /// supplies its [`ScopeKind`], not the enclosing scope.
     Comprehension,
 }
 
@@ -866,6 +879,17 @@ pub struct Operand {
     /// Distinguishes equal-valued sibling operands without parsing text.
     /// `None` means uncaptured; `Some([])` means no callee use contributed.
     pub call_uses: Option<Vec<Vec<u64>>>,
+    /// Contributing parameter projections in this operand's evaluating
+    /// invocation (the physical check owner, or caller for call arguments).
+    /// Resolve against the incoming use being explained, not outgoing calls.
+    /// Computed operands may list several; their values need not equal the
+    /// operand. `None` is uncaptured; `Some([])` means none contributed.
+    /// Aggregate contributor lists do not identify an element's contributors;
+    /// projecting a constructed argument cannot distribute that list among
+    /// elements. Keep element provenance unknown unless independently captured.
+    /// Capture/redaction follows concrete paths; omit a sensitive projection
+    /// path in its entirety, never replace its keys with fabricated strings.
+    pub parameter_origins: Option<Vec<ParameterOrigin>>,
 }
 
 impl Serialize for Operand {
@@ -876,6 +900,7 @@ impl Serialize for Operand {
             is_reported(Some(&self.value)),
             self.origins.is_some(),
             self.call_uses.is_some(),
+            self.parameter_origins.is_some(),
         ]);
         let mut state = serializer.serialize_struct("Operand", len)?;
         match self.path {
@@ -892,8 +917,25 @@ impl Serialize for Operand {
             Some(ref paths) => state.serialize_field("call_uses", paths)?,
             None => state.skip_field("call_uses")?,
         }
+        match self.parameter_origins {
+            Some(ref origins) => state.serialize_field("parameter_origins", origins)?,
+            None => state.skip_field("parameter_origins")?,
+        }
         state.end()
     }
+}
+
+/// An input projection of a function parameter, resolved per incoming use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ParameterOrigin {
+    /// Zero-based position in [`CallUse::arguments`].
+    pub argument: usize,
+    /// Typed path within that argument; empty means the whole argument.
+    /// Same key/index semantics as concrete paths. `None` means the projection
+    /// is uncaptured, withheld or unrepresentable, not the whole argument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<PathSegment>>,
 }
 
 /// Bounded causal input identities for a computed operand, not direct reads
@@ -1297,6 +1339,13 @@ impl Serialize for ResultExplanation {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct LoopWitness {
+    /// Variable bound to the iteration key, absent if unnamed or uncaptured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_binding: Option<String>,
+    /// Variable bound to the iteration value, absent if unnamed or uncaptured.
+    /// These roles apply to every iteration, not just the retained sample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_binding: Option<String>,
     /// Number of iterations executed, saturating at `u32::MAX`.
     pub iterations: u32,
     /// Number of iterations whose body succeeded, saturating at `u32::MAX`.

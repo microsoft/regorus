@@ -92,6 +92,8 @@ pub fn partial_set_report() -> ExplanationReport {
         left: None,
         right: None,
         witness: Some(LoopWitness {
+            key_binding: None,
+            value_binding: None,
             iterations: 2,
             successes: 1,
             sample_key: Some(known(Value::from(1_u64), None)),
@@ -142,6 +144,8 @@ pub fn partial_object_report() -> ExplanationReport {
         left: None,
         right: None,
         witness: Some(LoopWitness {
+            key_binding: None,
+            value_binding: None,
             iterations: 1,
             successes: 1,
             sample_key: Some(known(Value::from("env"), None)),
@@ -581,6 +585,7 @@ pub fn partial_eval_unsupported_result() -> PartialEvalResult {
 
 pub fn known(value: Value, path: Option<&str>) -> Operand {
     Operand {
+        parameter_origins: None,
         call_uses: None,
         value: ReportedValue::Known(value),
         path: path.map(String::from),
@@ -591,6 +596,7 @@ pub fn known(value: Value, path: Option<&str>) -> Operand {
 
 pub fn redacted(path: &str) -> Operand {
     Operand {
+        parameter_origins: None,
         call_uses: None,
         value: ReportedValue::Redacted,
         path: Some(String::from(path)),

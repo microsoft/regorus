@@ -487,6 +487,7 @@ fn every_reported_value_variant_has_a_json_form() -> Result<(), serde_json::Erro
         ReportedValue::Elided,
     ] {
         let operand = Operand {
+            parameter_origins: None,
             call_uses: None,
             value: value.clone(),
             path: None,
@@ -1106,6 +1107,7 @@ fn concrete_path_states_and_typed_segments_are_distinct() -> Result<(), serde_js
 fn sensitive_concrete_path_can_be_withheld_independently_of_source_template(
 ) -> Result<(), serde_json::Error> {
     let operand = Operand {
+        parameter_origins: None,
         call_uses: None,
         value: ReportedValue::Redacted,
         path: Some(String::from("data.tokens[input.user.token]")),
@@ -1610,12 +1612,14 @@ fn attempts_scopes_and_cached_uses_keep_ownership() -> anyhow::Result<()> {
     ]);
     rule.calls = Some(alloc::vec![
         CallUse {
+            arguments: None,
             use_id: 1,
             call_instance: 2,
             attempt: Some(2),
             scope: None
         },
         CallUse {
+            arguments: None,
             use_id: 2,
             call_instance: 2,
             attempt: Some(2),
@@ -1842,12 +1846,14 @@ fn arbitrary_queries_own_cached_uses_and_negation_scopes() -> anyhow::Result<()>
     });
     report.query.calls = Some(vec![
         CallUse {
+            arguments: None,
             use_id: 1,
             call_instance: 1,
             attempt: None,
             scope: None,
         },
         CallUse {
+            arguments: None,
             use_id: 2,
             call_instance: 1,
             attempt: None,
@@ -1969,6 +1975,8 @@ fn query_iterations_and_bindings_keep_their_evidence() -> anyhow::Result<()> {
             call_uses: Some(Vec::new()),
             binding: Some(String::from("x")),
             witness: Some(LoopWitness {
+                key_binding: None,
+                value_binding: None,
                 iterations: 1,
                 successes: 1,
                 sample_key: Some(known(Value::from(0), None)),
@@ -2025,6 +2033,434 @@ fn query_iterations_and_bindings_keep_their_evidence() -> anyhow::Result<()> {
     assert!(serde_json::to_value(&report)?
         .pointer("/query_conditions/0/binding")
         .is_none());
+    Ok(())
+}
+
+#[test]
+fn two_variable_query_witness_names_key_and_value_roles() -> anyhow::Result<()> {
+    let mut report = complete_rule_report();
+    report.rules.clear();
+    report.query.rule = None;
+    report.query.call_instance = None;
+    report.query.entry_point = String::from("some k, v in input.tags");
+    report.query_result = Value::from(true);
+    report.checks = vec![ConditionSite {
+        site_id: 0,
+        text: report.query.entry_point.clone(),
+        kind: ConditionKind::Iteration,
+        location: None,
+        operator: None,
+    }];
+    report.query_conditions = Some(vec![QueryConditionExplanation {
+        site_id: 0,
+        scope: None,
+        completed_scope: None,
+        outcome: Outcome::Success,
+        left: Some(known(
+            Value::from(vec![Value::from(false)]),
+            Some("input.tags"),
+        )),
+        right: None,
+        call_uses: Some(Vec::new()),
+        binding: None,
+        witness: Some(LoopWitness {
+            key_binding: Some(String::from("k")),
+            value_binding: Some(String::from("v")),
+            iterations: 1,
+            successes: 1,
+            sample_key: Some(known(Value::from(0), None)),
+            sample_value: Some(known(Value::from(false), Some("input.tags"))),
+        }),
+    }]);
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(
+        json.pointer("/query_conditions/0/witness"),
+        Some(&serde_json::json!({
+            "key_binding":"k","value_binding":"v","iterations":1,"successes":1,
+            "sample_key":{"concrete_path":{"status":"not_captured"},"value":0},
+            "sample_value":{"path":"input.tags","concrete_path":{"status":"not_captured"},"value":false}
+        }))
+    );
+    assert!(json.pointer("/query_conditions/0/binding").is_none());
+    let witness = report
+        .query_conditions
+        .as_mut()
+        .and_then(|checks| checks.first_mut())
+        .and_then(|check| check.witness.as_mut())
+        .context("query witness")?;
+    witness.key_binding = None;
+    witness.value_binding = None;
+    let uncaptured = serde_json::to_value(&report)?;
+    assert!(uncaptured
+        .pointer("/query_conditions/0/witness/key_binding")
+        .is_none());
+    assert!(uncaptured
+        .pointer("/query_conditions/0/witness/value_binding")
+        .is_none());
+    Ok(())
+}
+
+#[test]
+fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow::Result<()> {
+    for query_owned in [false, true] {
+        let mut report = complete_rule_report();
+        let mut template = report.rules.first().context("rule template")?.clone();
+        template.definitions.clear();
+        template.emissions.clear();
+        template.results = None;
+        template.attempts = None;
+        template.scopes = Some(Vec::new());
+        template.calls = Some(Vec::new());
+        report.rules.clear();
+        report.checks = ["x", "y", "x == y"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| {
+                Ok(ConditionSite {
+                    site_id: u32::try_from(index)?,
+                    text: String::from(text),
+                    kind: if index == 2 {
+                        ConditionKind::Comparison
+                    } else {
+                        ConditionKind::Binding
+                    },
+                    operator: (index == 2).then_some(Operator::Eq),
+                    location: None,
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+        report.query_result = Value::from(true);
+        report.query.rule = None;
+        report.query.call_instance = None;
+        report.query.entry_point =
+            String::from("same(f(input.a), g(input.b)); same(g(input.b), f(input.a))");
+        let argument = |use_id| {
+            let mut operand = known(Value::from(false), None);
+            operand.call_uses = Some(vec![vec![use_id]]);
+            operand
+        };
+        let mut calls = vec![
+            CallUse {
+                use_id: 1,
+                call_instance: 2,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![known(Value::from(false), Some("input.a"))]),
+            },
+            CallUse {
+                use_id: 2,
+                call_instance: 3,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![known(Value::from(false), Some("input.b"))]),
+            },
+            CallUse {
+                use_id: 3,
+                call_instance: 4,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![argument(1), argument(2)]),
+            },
+            CallUse {
+                use_id: 4,
+                call_instance: 3,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![known(Value::from(false), Some("input.b"))]),
+            },
+            CallUse {
+                use_id: 5,
+                call_instance: 2,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![known(Value::from(false), Some("input.a"))]),
+            },
+            CallUse {
+                use_id: 6,
+                call_instance: 4,
+                attempt: None,
+                scope: None,
+                arguments: Some(vec![argument(4), argument(5)]),
+            },
+        ];
+        if query_owned {
+            report.query.calls = Some(calls);
+        } else {
+            report.query.entry_point = String::from("data.test.allow");
+            report.query.rule = Some(String::from("data.test.allow"));
+            report.query.call_instance = Some(1);
+            for call in &mut calls {
+                call.attempt = Some(1);
+            }
+            let mut caller = template.clone();
+            caller.name = String::from("data.test.allow");
+            caller.call_instance = 1;
+            caller.result = ReportedValue::Known(Value::from(true));
+            caller.definitions = vec![DefinitionExplanation {
+                index: 0,
+                body: 0,
+                outcome: Outcome::Success,
+                location: None,
+                conditions: Vec::new(),
+            }];
+            caller.attempts = Some(vec![AttemptExplanation {
+                attempt: 1,
+                definition: 0,
+                body: 0,
+                outcome: Some(Outcome::Success),
+                conditions: Some(Vec::new()),
+            }]);
+            caller.calls = Some(calls);
+            report.rules.push(caller);
+        }
+        for (call_instance, helper_name) in [(2, "f"), (3, "g"), (4, "same")] {
+            let mut helper = template.clone();
+            helper.name = format!("data.test.{helper_name}");
+            helper.call_instance = call_instance;
+            helper.kind = RuleKind::Function;
+            helper.result = ReportedValue::Known(Value::from(call_instance == 4));
+            if call_instance == 4 {
+                let parameter = |index| {
+                    let mut operand = known(Value::from(false), None);
+                    operand.parameter_origins = Some(vec![ParameterOrigin {
+                        argument: index,
+                        path: Some(Vec::new()),
+                    }]);
+                    operand
+                };
+                let mut conditions = ["x", "y"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        Ok(ConditionExplanation {
+                            site_id: u32::try_from(index)?,
+                            owner: ConditionOwner {
+                                rule: helper.name.clone(),
+                                call_instance,
+                                attempt: Some(4),
+                                scope: None,
+                            },
+                            call_uses: Some(Vec::new()),
+                            completed_scope: None,
+                            outcome: Outcome::Success,
+                            left: Some(parameter(index)),
+                            right: None,
+                            witness: None,
+                            binding: Some(String::from(name)),
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let comparison = ConditionExplanation {
+                    site_id: 2,
+                    owner: ConditionOwner {
+                        rule: helper.name.clone(),
+                        call_instance,
+                        attempt: Some(4),
+                        scope: None,
+                    },
+                    call_uses: Some(Vec::new()),
+                    completed_scope: None,
+                    outcome: Outcome::Success,
+                    left: Some(parameter(0)),
+                    right: Some(parameter(1)),
+                    witness: None,
+                    binding: None,
+                };
+                conditions.push(comparison.clone());
+                helper.definitions = vec![DefinitionExplanation {
+                    index: 0,
+                    body: 0,
+                    outcome: Outcome::Success,
+                    location: None,
+                    conditions: vec![comparison],
+                }];
+                helper.attempts = Some(vec![AttemptExplanation {
+                    attempt: 4,
+                    definition: 0,
+                    body: 0,
+                    outcome: Some(Outcome::Success),
+                    conditions: Some(conditions.clone()),
+                }]);
+                helper.results = Some(vec![ResultExplanation::new(
+                    None,
+                    ReportedValue::Known(Value::from(true)),
+                    Count::Exact(1),
+                    Vec::new(),
+                    vec![Derivation {
+                        definition: 0,
+                        body: 0,
+                        attempt: Some(4),
+                        conditionality: None,
+                        call_uses: Some(Vec::new()),
+                        conditions,
+                        bindings: Some(Vec::new()),
+                    }],
+                )
+                .context("callee proof")?]);
+            }
+            report.rules.push(helper);
+        }
+        let json = serde_json::to_value(&report)?;
+        let caller_uses = if query_owned {
+            json.pointer("/query/calls")
+        } else {
+            json.pointer("/rules/0/calls")
+        }
+        .and_then(serde_json::Value::as_array)
+        .context("caller uses")?;
+        let helpers = json
+            .get("rules")
+            .and_then(serde_json::Value::as_array)
+            .context("rules")?;
+        let same = helpers.last().context("same")?;
+        for (use_index, expected) in [
+            (2, ["data.test.f", "data.test.g"]),
+            (5, ["data.test.g", "data.test.f"]),
+        ] {
+            for (position, name) in expected.into_iter().enumerate() {
+                assert_eq!(
+                    same.pointer(&format!(
+                        "/attempts/0/conditions/{position}/left/parameter_origins/0/argument"
+                    )),
+                    Some(&serde_json::json!(position))
+                );
+                assert_eq!(
+                    same.pointer(&format!(
+                        "/attempts/0/conditions/2/{}/parameter_origins",
+                        if position == 0 { "left" } else { "right" }
+                    )),
+                    Some(&serde_json::json!([{"argument":position,"path":[]}]))
+                );
+                let actual = caller_uses
+                    .get(use_index)
+                    .and_then(|call| call.pointer(&format!("/arguments/{position}")))
+                    .context("argument")?;
+                assert_eq!(actual.get("value"), Some(&serde_json::json!(false)));
+                let use_id = actual.pointer("/call_uses/0/0").context("producer use")?;
+                assert_eq!(
+                    use_id,
+                    &serde_json::json!(if use_index == 2 {
+                        position + 1
+                    } else {
+                        position + 4
+                    })
+                );
+                let edge = caller_uses
+                    .iter()
+                    .find(|call| call.get("use_id") == Some(use_id))
+                    .context("caller-owned producer")?;
+                let producer = helpers
+                    .iter()
+                    .find(|rule| rule.get("call_instance") == edge.get("call_instance"))
+                    .context("producer")?;
+                assert_eq!(producer.get("name"), Some(&serde_json::json!(name)));
+            }
+        }
+        assert_eq!(same.get("calls"), Some(&serde_json::json!([])));
+        assert_eq!(
+            same.pointer("/results/0/proofs/0/call_uses"),
+            Some(&serde_json::json!([]))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn destructured_parameter_origins_preserve_typed_projections() -> anyhow::Result<()> {
+    // same([x, {"y": y}]) := x == y with argument [false, {"y": false}].
+    let mut call = CallUse {
+        use_id: 1,
+        call_instance: 2,
+        attempt: None,
+        scope: None,
+        arguments: Some(vec![known(
+            Value::from(vec![
+                Value::from(false),
+                Value::from_json_str(r#"{"y":false}"#)?,
+            ]),
+            None,
+        )]),
+    };
+    let incoming = serde_json::to_value(&call)?;
+    for (path, expected) in [
+        (
+            vec![PathSegment::Index(0)],
+            serde_json::json!([{"index":0}]),
+        ),
+        (
+            vec![PathSegment::Index(1), PathSegment::Key(String::from("y"))],
+            serde_json::json!([{"index":1},{"key":"y"}]),
+        ),
+    ] {
+        let mut operand = known(Value::from(false), None);
+        operand.parameter_origins = Some(vec![ParameterOrigin {
+            argument: 0,
+            path: Some(path),
+        }]);
+        let json = serde_json::to_value(&operand)?;
+        assert_eq!(
+            json.get("parameter_origins"),
+            Some(&serde_json::json!([{"argument":0,"path":expected}]))
+        );
+        let origin = json
+            .pointer("/parameter_origins/0")
+            .context("parameter origin")?;
+        let argument = usize::try_from(
+            origin
+                .get("argument")
+                .and_then(serde_json::Value::as_u64)
+                .context("argument index")?,
+        )?;
+        let mut value = incoming
+            .pointer(&format!("/arguments/{argument}/value"))
+            .context("incoming value")?;
+        for segment in origin
+            .get("path")
+            .and_then(serde_json::Value::as_array)
+            .context("typed projection")?
+        {
+            value = if let Some(index) = segment.get("index").and_then(serde_json::Value::as_u64) {
+                value
+                    .get(usize::try_from(index)?)
+                    .context("array element")?
+            } else {
+                value
+                    .get(
+                        segment
+                            .get("key")
+                            .and_then(serde_json::Value::as_str)
+                            .context("object key")?,
+                    )
+                    .context("object element")?
+            };
+        }
+        assert_eq!(json.get("value"), Some(value));
+    }
+    let mut operand = known(Value::from(false), None);
+    operand.parameter_origins = Some(Vec::new());
+    assert_eq!(
+        serde_json::to_value(&operand)?.get("parameter_origins"),
+        Some(&serde_json::json!([]))
+    );
+    operand.parameter_origins = None;
+    assert!(serde_json::to_value(&operand)?
+        .get("parameter_origins")
+        .is_none());
+    call.arguments = Some(Vec::new());
+    assert_eq!(
+        serde_json::to_value(&call)?.get("arguments"),
+        Some(&serde_json::json!([]))
+    );
+    call.arguments = None;
+    assert!(serde_json::to_value(&call)?.get("arguments").is_none());
+    let projection = ParameterOrigin {
+        argument: 0,
+        path: None,
+    };
+    assert_eq!(
+        serde_json::to_value(projection)?,
+        serde_json::json!({"argument":0})
+    );
     Ok(())
 }
 
@@ -2112,6 +2548,7 @@ fn caller_checks_keep_separate_sibling_dependency_paths() -> anyhow::Result<()> 
     rule.calls = Some(
         (1..=4)
             .map(|use_id| CallUse {
+                arguments: None,
                 use_id,
                 call_instance: use_id + 1,
                 attempt: Some(1),
@@ -2227,12 +2664,14 @@ fn nested_use_paths_resolve_in_caller_to_callee_order() -> anyhow::Result<()> {
     report.query.entry_point = String::from("data.test.deny; not data.test.deny == set()");
     report.query.calls = Some(vec![
         CallUse {
+            arguments: None,
             use_id: 1,
             call_instance: 2,
             attempt: None,
             scope: None,
         },
         CallUse {
+            arguments: None,
             use_id: 4,
             call_instance: 2,
             attempt: None,
@@ -2249,6 +2688,7 @@ fn nested_use_paths_resolve_in_caller_to_callee_order() -> anyhow::Result<()> {
     let root = report.rules.first_mut().context("caller")?;
     root.call_instance = 2;
     root.calls = Some(vec![CallUse {
+        arguments: None,
         use_id: 2,
         call_instance: 3,
         attempt: Some(1),
@@ -2262,6 +2702,7 @@ fn nested_use_paths_resolve_in_caller_to_callee_order() -> anyhow::Result<()> {
     middle.definitions.clear();
     middle.emissions.clear();
     middle.calls = Some(vec![CallUse {
+        arguments: None,
         use_id: 3,
         call_instance: 4,
         attempt: Some(1),
@@ -2553,6 +2994,8 @@ fn nested_comprehension_conditions_do_not_replace_the_finding_subject() -> anyho
         left: None,
         right: None,
         witness: Some(LoopWitness {
+            key_binding: None,
+            value_binding: None,
             iterations: 1,
             successes: 1,
             sample_key: Some(known(Value::from(0), None)),
@@ -2748,12 +3191,14 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
     rule.scopes = Some(Vec::new());
     rule.calls = Some(vec![
         CallUse {
+            arguments: None,
             use_id: 1,
             call_instance: 2,
             attempt: Some(1),
             scope: None,
         },
         CallUse {
+            arguments: None,
             use_id: 2,
             call_instance: 3,
             attempt: Some(1),
@@ -2772,6 +3217,23 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
             }],
             complete: true,
         });
+        report
+            .rules
+            .first_mut()
+            .and_then(|caller| caller.calls.as_mut())
+            .and_then(|calls| {
+                calls
+                    .iter_mut()
+                    .find(|call| call.call_instance == call_instance)
+            })
+            .context("incoming identity use")?
+            .arguments = Some(vec![argument]);
+        let mut parameter = known(Value::from(false), None);
+        parameter.concrete_path = ConcretePath::NoPath;
+        parameter.parameter_origins = Some(vec![ParameterOrigin {
+            argument: 0,
+            path: Some(Vec::new()),
+        }]);
         let binding = ConditionExplanation {
             completed_scope: None,
             call_uses: None,
@@ -2783,7 +3245,7 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
                 scope: None,
             },
             outcome: Outcome::Success,
-            left: Some(argument),
+            left: Some(parameter),
             right: None,
             witness: None,
             binding: Some(String::from("x")),
@@ -2835,8 +3297,15 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
                 "owner":{"rule":"data.test.identity","call_instance":call_instance,"attempt":call_instance},
                 "outcome":"success","binding":"x",
                 "left":{"concrete_path":{"status":"no_path"},"value":false,
-                    "origins":{"paths":[{"status":"captured","root":"input","segments":[{"key":key}]}],"complete":true}}
+                    "parameter_origins":[{"argument":0,"path":[]}]}
             }]))
+        );
+        assert_eq!(
+            json.pointer(&format!("/rules/0/calls/{}/arguments/0", index - 1)),
+            Some(&serde_json::json!({
+                "concrete_path":{"status":"no_path"},"value":false,
+                "origins":{"paths":[{"status":"captured","root":"input","segments":[{"key":key}]}],"complete":true}
+            }))
         );
         assert_eq!(
             json.pointer(&format!(
@@ -2846,13 +3315,12 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
             helper.pointer("/attempts/0/conditions/0"),
         );
     }
-    assert_eq!(
-        json.pointer("/rules/0/calls"),
-        Some(&serde_json::json!([
-            {"use_id":1,"call_instance":2,"attempt":1},
-            {"use_id":2,"call_instance":3,"attempt":1}
-        ]))
-    );
+    for (index, call_instance) in [(0, 2), (1, 3)] {
+        assert_eq!(
+            json.pointer(&format!("/rules/0/calls/{index}/call_instance")),
+            Some(&serde_json::json!(call_instance))
+        );
+    }
     Ok(())
 }
 
