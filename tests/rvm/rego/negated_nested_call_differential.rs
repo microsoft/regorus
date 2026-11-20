@@ -681,6 +681,22 @@ fn operators_of_other_module_after_nested_rule_evaluation() -> Result<()> {
     Ok(())
 }
 
+/// A constant composite default value of a function in another module,
+/// evaluated without switching to that module, gives the same result.
+#[test]
+fn constant_default_of_other_module_function() -> Result<()> {
+    let lib = large_lib("h(1) := 10\ndefault h(_) := [1, {\"a\": -1}, {\"b\": [true, null]}]\n");
+    let mut engine = Engine::new();
+    engine.add_policy("lib.rego".to_string(), lib)?;
+    engine.add_policy(
+        "test.rego".to_string(),
+        "package test\ny := [data.lib.h(1), data.lib.h(2)]".to_string(),
+    )?;
+    let want = r#"[10, [1, {"a": -1}, {"b": [true, null]}]]"#;
+    assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, want_value(want)?);
+    Ok(())
+}
+
 /// A query that evaluates all of `data` keeps looking up its own expressions
 /// after the last rule, a default rule of a small module, is skipped.
 #[test]
@@ -802,6 +818,33 @@ fn negated_imported_print_lifts_arguments() -> Result<()> {
             want_value(want)?,
             "input {input}"
         );
+    }
+    Ok(())
+}
+
+/// OPA ignores a `with` replacement of `print` on the expression itself, so
+/// calls in its arguments are still not lifted out of `not`. The interpreter applies the replacement, but
+/// with a value or a function, as below, `y` matches OPA.
+#[test]
+fn negated_print_with_replacement_does_not_lift_arguments() -> Result<()> {
+    for rules in [
+        "y if not print(count(input.v)) with print as false",
+        "f(_) := false\ny if not print(count(input.v)) with print as f",
+    ] {
+        let module = format!("package test\n{rules}\n");
+        for (input, strict, want) in [
+            (r#"{"v": 5}"#, false, Some("true")),
+            (r#"{"v": 5}"#, true, None),
+            (r#"{"v": [1]}"#, false, Some("true")),
+        ] {
+            let mut engine = new_engine(&module, strict)?;
+            engine.set_input(Value::from_json_str(input)?);
+            let got = engine.eval_rule(ENTRYPOINT.to_string());
+            match want {
+                Some(want) => assert_eq!(got?, want_value(want)?, "{rules}: {input}"),
+                None => assert!(got.is_err(), "{rules}: {input}: {got:?}"),
+            }
+        }
     }
     Ok(())
 }

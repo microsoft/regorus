@@ -1908,6 +1908,32 @@ impl Interpreter {
         ))
     }
 
+    // Scalars, `-` over a number, and arrays, sets and objects built only from
+    // these. Evaluating such an expression never reads module state.
+    fn is_constant_literal(expr: &Ref<Expr>) -> bool {
+        let mut pending = vec![expr];
+        while let Some(item) = pending.pop() {
+            match item.as_ref() {
+                Expr::String { .. }
+                | Expr::RawString { .. }
+                | Expr::Number { .. }
+                | Expr::Bool { .. }
+                | Expr::Null { .. } => {}
+                Expr::UnaryExpr { expr: operand, .. }
+                    if matches!(operand.as_ref(), Expr::Number { .. }) => {}
+                Expr::Array { items, .. } | Expr::Set { items, .. } => pending.extend(items),
+                Expr::Object { fields, .. } => {
+                    for (_, key, value) in fields {
+                        pending.push(key);
+                        pending.push(value);
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
     // A rule's output expression is constant if it does not contain local variables.
     // For now, we restrict output expressions to those that contain only simple literals.
     fn is_constant_output(key_expr: &Option<Ref<Expr>>, output_expr: &Ref<Expr>) -> Result<bool> {
@@ -3251,11 +3277,17 @@ impl Interpreter {
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
                         if let Rule::Default { value, .. } = rule.as_ref() {
-                            // The value belongs to the default rule's module.
-                            let module = self.get_rule_module(rule)?;
-                            let prev_module = self.set_current_module(Some(module))?;
-                            let value = self.eval_expr(value);
-                            self.set_current_module(prev_module)?;
+                            // The value belongs to the default rule's module;
+                            // a constant literal does not depend on it.
+                            let value = if Self::is_constant_literal(value) {
+                                self.eval_expr(value)
+                            } else {
+                                let module = self.get_rule_module(rule)?;
+                                let prev_module = self.set_current_module(Some(module))?;
+                                let value = self.eval_expr(value);
+                                self.set_current_module(prev_module)?;
+                                value
+                            };
                             match value {
                                 Ok(v) => results.push(v),
                                 Err(e) if is_evaluation_limit_error(&e) => {
