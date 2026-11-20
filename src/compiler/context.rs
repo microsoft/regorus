@@ -175,16 +175,19 @@ impl ScopeContext {
             return true;
         }
 
-        if self
+        let is_global = self
             .module_globals
             .as_ref()
-            .is_some_and(|globals| globals.contains(var_name))
-        {
-            return false;
+            .is_some_and(|globals| globals.contains(var_name));
+
+        // A `some` declaration shadows a rule or import of the same name, but
+        // `input` and `data` keep referring to the root documents.
+        if self.is_unbound(var_name) && !(is_global && matches!(var_name, "input" | "data")) {
+            return true;
         }
 
-        if self.is_unbound(var_name) {
-            return true;
+        if is_global {
+            return false;
         }
 
         if self.has_scheduler_scope {
