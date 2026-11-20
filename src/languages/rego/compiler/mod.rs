@@ -12,6 +12,8 @@ mod destructuring;
 mod error;
 mod expressions;
 mod function_calls;
+#[cfg(feature = "history")]
+mod history;
 mod loops;
 mod program;
 mod queries;
@@ -19,6 +21,8 @@ mod references;
 mod rules;
 
 pub use error::{CompilerError, Result, SpannedCompilerError};
+#[cfg(feature = "history")]
+pub use history::HISTORY_BATCH_SIZE;
 
 use crate::ast::ExprRef;
 use crate::lexer::Span;

@@ -284,6 +284,8 @@ pub struct HistoryStepParams {
     pub rule: u16,
     /// Maximum number of history events consumed by this dispatch.
     pub batch_size: u32,
+    /// Register receiving the Boolean outcome.
+    pub dest: u8,
 }
 
 /// Instruction data container for complex instruction parameters

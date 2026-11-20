@@ -15,14 +15,6 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    #[cfg(not(feature = "history"))]
-    fn begin_history_execution(&self) -> Result<()> {
-        if self.program.metadata.language == "history_table" {
-            return Err(VmError::HistoryFeatureDisabled { pc: self.pc });
-        }
-        Ok(())
-    }
-
     pub fn execute(&mut self) -> Result<Value> {
         self.ensure_memory_budget_execution_mode()?;
         match self.execution_mode {
@@ -155,7 +147,6 @@ impl RegoVM {
         let program = self.program.clone();
         let target = self.convert_pc(target, "jump target")?;
         self.pc = target;
-        self.begin_history_execution()?;
         while self.pc < program.instructions.len() {
             // Per-instruction sanity check: every iteration of the dispatch
             // loop must re-enter with the VM in a Running/Ready state and the
@@ -324,7 +315,6 @@ impl RegoVM {
         self.execution_stack.clear();
         self.execution_stack.push(ExecutionFrame::main(start_pc, 0));
         self.pc = start_pc;
-        self.begin_history_execution()?;
 
         let mut last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
 
@@ -517,6 +507,13 @@ impl RegoVM {
                     }
                 }
                 Ok(InstructionOutcome::Suspend { reason }) => {
+                    // Only an explicit suspension leaves the frame on its own instruction;
+                    // Continue already advanced it, and a pushed callee frame owns its pc.
+                    if let Some(frame) = self.execution_stack.last_mut() {
+                        if !self.frame_pc_overridden && frame.pc <= self.pc {
+                            frame.pc = self.pc.saturating_add(1);
+                        }
+                    }
                     self.handle_instruction_suspend(reason, last_result);
                     return Ok(());
                 }
@@ -537,12 +534,6 @@ impl RegoVM {
     }
 
     fn handle_instruction_suspend(&mut self, reason: SuspendReason, last_result: &Value) {
-        if let Some(frame) = self.execution_stack.last_mut() {
-            if !self.frame_pc_overridden && frame.pc <= self.pc {
-                frame.pc = self.pc.saturating_add(1);
-            }
-        }
-
         self.snapshot_execution_timer_on_suspend();
         self.execution_state = ExecutionState::Suspended {
             reason,
@@ -736,37 +727,6 @@ mod tests {
     use super::super::errors::VmError;
     use super::{ExecutionMode, ExecutionState, Instruction, Program, RegoVM, Value};
     use alloc::sync::Arc;
-
-    #[cfg(not(feature = "history"))]
-    #[test]
-    fn history_disabled_empty_table_rejects_both_runners() {
-        let mut producer = Program::new();
-        producer.metadata.language = "history_table".into();
-        producer.add_history_table(crate::rvm::program::HistoryTable {
-            rules: alloc::vec![],
-        });
-        producer.instructions = alloc::vec![
-            Instruction::LoadNull { dest: 0 },
-            Instruction::Return { value: 0 },
-        ];
-        producer.dispatch_window_size = 1;
-        producer.add_entry_point("decide".into(), 0);
-        let bytes = producer.serialize_binary().unwrap();
-        let crate::rvm::program::DeserializationResult::Complete(consumer) =
-            Program::deserialize_binary(&bytes).unwrap()
-        else {
-            panic!("current program must deserialize completely");
-        };
-        for mode in [ExecutionMode::RunToCompletion, ExecutionMode::Suspendable] {
-            let mut vm = RegoVM::new();
-            vm.load_program(Arc::new(consumer.clone()));
-            vm.set_execution_mode(mode);
-            assert_eq!(
-                vm.execute_entry_point_by_name("decide"),
-                Err(VmError::HistoryFeatureDisabled { pc: 0 }),
-            );
-        }
-    }
 
     fn two_instruction_program() -> Arc<Program> {
         let mut program = Program::new();

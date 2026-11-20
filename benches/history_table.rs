@@ -2,17 +2,26 @@
 // Licensed under the MIT License.
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use regorus::languages::history_table::{
-    compile, AtomPattern, Comparison, ComponentPattern, Head, HistoryStore, RegexExpr, Rule,
-    RuleMode, SourceComponent, SourceEvent, TestExpr, ACTION, PRINCIPAL, RESOURCE,
-};
+use regorus::languages::history_table::{HistoryStore, ACTION, PRINCIPAL, RESOURCE};
+use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::vm::RegoVM;
-use regorus::Value;
+use regorus::{Engine, Value};
 use std::hint::black_box;
 use std::sync::Arc;
 
-fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_>>) {
-    let program = compile(core::slice::from_ref(&source), 256).unwrap();
+fn history_table_case(c: &mut Criterion, name: &str, language: &str) {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "bench.rego".into(),
+            format!(
+                "package t\nimport rego.v1\n\
+                 r0 := history.require({{\"action\": \"release\", \"principal\": p, \"resource\": r}}, {language})\n"
+            ),
+        )
+        .unwrap();
+    let policy = engine.compile_with_entrypoint(&"data.t.r0".into()).unwrap();
+    let program = Compiler::compile_from_policy(&policy, &["data.t.r0"]).unwrap();
     let store = Arc::new(HistoryStore::new());
     let principal = store.intern(PRINCIPAL, "alice").unwrap();
     let resource = store.intern(RESOURCE, "document").unwrap();
@@ -30,14 +39,14 @@ fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_
         vm.attach_history(store.clone()).unwrap();
         vm.set_history_input(history.clone(), request).unwrap();
         assert_eq!(
-            vm.execute_entry_point_by_name("decide").unwrap(),
-            Value::Null
+            vm.execute_entry_point_by_name("data.t.r0").unwrap(),
+            Value::Bool(true)
         );
         group.bench_with_input(
             BenchmarkId::new("unchanged_prefix_warm", length),
             &length,
             |b, _| {
-                b.iter(|| black_box(vm.execute_entry_point_by_name("decide").unwrap()));
+                b.iter(|| black_box(vm.execute_entry_point_by_name("data.t.r0").unwrap()));
             },
         );
         // Truncation invalidates the cursor; graph/successor caches remain warm.
@@ -50,7 +59,7 @@ fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_
                         store.truncate(&history, 0).unwrap();
                         store.append(&history, &events).unwrap();
                     },
-                    |()| black_box(vm.execute_entry_point_by_name("decide").unwrap()),
+                    |()| black_box(vm.execute_entry_point_by_name("data.t.r0").unwrap()),
                     BatchSize::PerIteration,
                 );
             },
@@ -67,12 +76,12 @@ fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_
                     || {
                         store.truncate(&history, length).unwrap();
                         assert_eq!(
-                            primer.execute_entry_point_by_name("decide").unwrap(),
-                            Value::Null,
+                            primer.execute_entry_point_by_name("data.t.r0").unwrap(),
+                            Value::Bool(true),
                         );
                         store.append(&history, &[event]).unwrap();
                     },
-                    |()| black_box(vm.execute_entry_point_by_name("decide").unwrap()),
+                    |()| black_box(vm.execute_entry_point_by_name("data.t.r0").unwrap()),
                     BatchSize::PerIteration,
                 );
             },
@@ -82,53 +91,15 @@ fn history_table_case(c: &mut Criterion, name: &str, source: Rule<SourceEvent<'_
 }
 
 fn history_table(c: &mut Criterion) {
-    let release_head = || {
-        Head::new([
-            ComponentPattern::variable("p"),
-            ComponentPattern::constant(SourceComponent::Action("release")),
-            ComponentPattern::variable("r"),
-        ])
-    };
-    let edit = || {
-        TestExpr::atom(
-            Comparison::Eq,
-            AtomPattern::new(
-                ACTION,
-                ComponentPattern::constant(SourceComponent::Action("edit")),
-            ),
-        )
-    };
     history_table_case(
         c,
         "history_table_batch_256",
-        Rule::new(
-            RuleMode::Require,
-            release_head(),
-            RegexExpr::concat([
-                RegexExpr::All,
-                RegexExpr::test(TestExpr::and([
-                    TestExpr::atom(
-                        Comparison::Eq,
-                        AtomPattern::new(PRINCIPAL, ComponentPattern::variable("p")),
-                    ),
-                    edit(),
-                    TestExpr::atom(
-                        Comparison::Eq,
-                        AtomPattern::new(RESOURCE, ComponentPattern::variable("r")),
-                    ),
-                ])),
-                RegexExpr::All,
-            ]),
-        ),
+        r#"[any, {principal == p, action == "edit", resource == r}, any]"#,
     );
     history_table_case(
         c,
         "history_table_full_scan_batch_256",
-        Rule::new(
-            RuleMode::Require,
-            release_head(),
-            RegexExpr::star(RegexExpr::test(edit())),
-        ),
+        r#"star({action == "edit"})"#,
     );
 }
 

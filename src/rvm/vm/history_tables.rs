@@ -150,14 +150,6 @@ impl RegoVM {
         self.history_active_rule = None;
     }
 
-    /// Common execution preflight also covers empty tables with no HistoryStep.
-    pub(super) fn begin_history_execution(&mut self) -> Result<()> {
-        if self.program.metadata.language == "history_table" {
-            self.capture_history_decision()?;
-        }
-        Ok(())
-    }
-
     fn capture_history_decision(&mut self) -> Result<()> {
         if self.history_decision.is_some() {
             return Ok(());
@@ -294,6 +286,7 @@ impl RegoVM {
         let mut limits = RegorusLimits {
             timer: &mut self.execution_timer,
         };
+        let mut unmatched = false;
         if self.history_active_rule.is_none() {
             let instance = Arc::clone(&slot.current.lock());
             // Lock graph before history consistently; retain both guards through validation.
@@ -302,21 +295,27 @@ impl RegoVM {
             decision
                 .check(&stored, &mut limits)
                 .map_err(|error| VmError::from_history(error, pc))?;
-            let Some(bindings) = RuleRuntime::bindings(&slot.template, &decision.request) else {
-                return Ok(InstructionOutcome::Continue);
-            };
-            // Native provenance: this locked record is the staged history, and
-            // same-revision observations extend its previously recorded word.
-            let cursor = graph.resume_cursor(&bindings, &stored, decision.target_len);
-            drop(stored);
-            drop(graph);
-            self.history_active_rule = Some(ActiveHistoryRule {
-                pc,
-                bindings,
-                instance,
-                cursor,
-                retried: false,
-            });
+            if let Some(bindings) = RuleRuntime::bindings(&slot.template, &decision.request) {
+                // Native provenance: this locked record is the staged history, and
+                // same-revision observations extend its previously recorded word.
+                let cursor = graph.resume_cursor(&bindings, &stored, decision.target_len);
+                drop(stored);
+                drop(graph);
+                self.history_active_rule = Some(ActiveHistoryRule {
+                    pc,
+                    bindings,
+                    instance,
+                    cursor,
+                    retried: false,
+                });
+            } else {
+                unmatched = true;
+            }
+        }
+        if unmatched {
+            // A request outside the head leaves the rule vacuously honored.
+            self.set_register(params.dest, Value::Bool(true))?;
+            return Ok(InstructionOutcome::Continue);
         }
         let active = self
             .history_active_rule
@@ -349,13 +348,8 @@ impl RegoVM {
                             RuleMode::Require => !answer,
                             RuleMode::Forbid => answer,
                         };
-                        if violated {
-                            Ok(InstructionOutcome::Return(Value::from(usize::from(
-                                params.rule,
-                            ))))
-                        } else {
-                            Ok(InstructionOutcome::Continue)
-                        }
+                        self.set_register(params.dest, Value::Bool(!violated))?;
+                        Ok(InstructionOutcome::Continue)
                     }
                 }
             }
@@ -393,29 +387,36 @@ mod tests {
     )]
 
     use super::*;
-    use crate::languages::history_table::{
-        compile, AtomPattern, Comparison, ComponentPattern, Head, RegexExpr, Rule, RuleMode,
-        SourceComponent, SourceEvent, TestExpr, ACTION, PRINCIPAL, RESOURCE,
-    };
+    use crate::languages::history_table::{ACTION, PRINCIPAL, RESOURCE};
+    use crate::languages::rego::compiler::Compiler;
     use crate::rvm::program::Program;
     use crate::rvm::vm::ExecutionMode;
     use crate::utils::limits::ExecutionTimer;
     use junco_core::limits::MAX_GRAPH_BYTES;
 
-    fn program<'a>(
-        head: Head<SourceEvent<'a>>,
-        tail: RegexExpr<SourceEvent<'a>>,
-        batch: u32,
-    ) -> Arc<Program> {
-        compile(&[Rule::new(RuleMode::Require, head, tail)], batch).unwrap()
-    }
+    const ANY: &str = "{}";
+    const ACTOR: &str = r#"{"principal": actor}"#;
+    const EQUALITY: &str = "{principal == actor}";
+    const THREE_ACTIONS: &str = r#"[{action == "a"}, {action == "b"}, {action == "c"}]"#;
 
-    fn any_head<'a>() -> Head<SourceEvent<'a>> {
-        Head::new([
-            ComponentPattern::variable("_principal"),
-            ComponentPattern::variable("_action"),
-            ComponentPattern::variable("_resource"),
-        ])
+    /// One-rule `require` program `data.t.r0` with every step patched to `batch`.
+    fn program(request: &str, language: &str, batch: u32) -> Arc<Program> {
+        let mut engine = crate::Engine::new();
+        engine
+            .add_policy(
+                "t.rego".into(),
+                alloc::format!(
+                    "package t\nimport rego.v1\nr0 := history.require({request}, {language})\n"
+                ),
+            )
+            .unwrap();
+        let policy = engine.compile_with_entrypoint(&"data.t.r0".into()).unwrap();
+        let mut program =
+            (*Compiler::compile_from_policy(&policy, &["data.t.r0"]).unwrap()).clone();
+        for params in &mut program.instruction_data.history_step_params {
+            params.batch_size = batch;
+        }
+        Arc::new(program)
     }
 
     fn event(store: &HistoryStore, principal: &str, action: &str) -> Event {
@@ -456,12 +457,9 @@ mod tests {
         instance
     }
 
-    fn actor_head<'a>() -> Head<SourceEvent<'a>> {
-        Head::new([
-            ComponentPattern::variable("actor"),
-            ComponentPattern::variable("_action"),
-            ComponentPattern::variable("_resource"),
-        ])
+    fn atoms_or(atoms: impl Iterator<Item = alloc::string::String>) -> alloc::string::String {
+        // One alternative per line: the lexer caps lines at 1024 columns.
+        atoms.collect::<Vec<_>>().join(" |\n")
     }
 
     fn decide(
@@ -474,31 +472,14 @@ mod tests {
         store.truncate(history, 0).unwrap();
         store.append(history, events).unwrap();
         vm.set_history_input(history.clone(), request).unwrap();
-        vm.execute_entry_point_by_name("decide").unwrap()
-    }
-
-    fn equality<'a>() -> RegexExpr<SourceEvent<'a>> {
-        RegexExpr::test(TestExpr::atom(
-            Comparison::Eq,
-            AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor")),
-        ))
+        vm.execute_entry_point_by_name("data.t.r0").unwrap()
     }
 
     #[test]
     fn negative_tests_cache_one_positive_equality_without_presence_atoms() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let program = program(
-            actor_head(),
-            RegexExpr::test(TestExpr::atom(
-                Comparison::Neq,
-                AtomPattern::new(
-                    PRINCIPAL,
-                    ComponentPattern::constant(SourceComponent::Principal("alice")),
-                ),
-            )),
-            256,
-        );
+        let program = program(ACTOR, r#"{principal != "alice"}"#, 256);
         let mut vm = vm(&store, &history, &program);
         vm.set_execution_mode(ExecutionMode::RunToCompletion);
         let instance = lazy_instance(&vm);
@@ -506,11 +487,11 @@ mod tests {
         let bob = event(&store, "bob", "read");
         assert_eq!(
             decide(&mut vm, &store, &history, &[bob], alice),
-            Value::Null
+            Value::Bool(true)
         );
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice], alice),
-            Value::from(0_usize)
+            Value::Bool(false)
         );
         assert_eq!(instance.lock().work_counters().successor_misses, 2);
     }
@@ -518,13 +499,13 @@ mod tests {
     #[test]
     fn absorbing_states_skip_event_caches() {
         for (regex, expected, visits, count) in [
-            (RegexExpr::test(TestExpr::True), Value::Null, 1, 1),
-            (RegexExpr::All, Value::Null, 0, 2),
-            (RegexExpr::Empty, Value::from(0_usize), 0, 2),
+            ("true", Value::Bool(true), 1, 1),
+            ("any", Value::Bool(true), 0, 2),
+            ("false", Value::Bool(false), 0, 2),
         ] {
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
-            let program = program(actor_head(), regex, 256);
+            let program = program(ACTOR, regex, 256);
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(ExecutionMode::RunToCompletion);
             let instance = lazy_instance(&vm);
@@ -545,16 +526,8 @@ mod tests {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
         let program = program(
-            actor_head(),
-            RegexExpr::star(RegexExpr::concat(["alice", "bob"].map(|principal| {
-                RegexExpr::test(TestExpr::atom(
-                    Comparison::Eq,
-                    AtomPattern::new(
-                        PRINCIPAL,
-                        ComponentPattern::constant(SourceComponent::Principal(principal)),
-                    ),
-                ))
-            }))),
+            ACTOR,
+            r#"star([{principal == "alice"}, {principal == "bob"}])"#,
             256,
         );
         let mut vm = vm(&store, &history, &program);
@@ -564,7 +537,7 @@ mod tests {
         let bob = event(&store, "bob", "read");
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice, bob], alice),
-            Value::Null
+            Value::Bool(true)
         );
         let before = {
             let runtime = instance.lock();
@@ -573,7 +546,7 @@ mod tests {
         for _ in 0..64 {
             assert_eq!(
                 decide(&mut vm, &store, &history, &[alice, bob], alice),
-                Value::Null
+                Value::Bool(true)
             );
         }
         {
@@ -582,15 +555,15 @@ mod tests {
         }
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice], alice),
-            Value::from(0_usize)
+            Value::Bool(false)
         );
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice, alice], alice),
-            Value::from(0_usize)
+            Value::Bool(false)
         );
         assert_eq!(
             decide(&mut vm, &store, &history, &[alice, bob, alice, bob], alice),
-            Value::Null
+            Value::Bool(true)
         );
     }
 
@@ -600,8 +573,8 @@ mod tests {
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
             let program = program(
-                actor_head(),
-                RegexExpr::concat([equality(), equality(), equality()]),
+                ACTOR,
+                &alloc::format!("[{EQUALITY}, {EQUALITY}, {EQUALITY}]"),
                 batch,
             );
             let mut vm = vm(&store, &history, &program);
@@ -613,9 +586,9 @@ mod tests {
                 assert_eq!(
                     whole,
                     if events[1] == alice {
-                        Value::Null
+                        Value::Bool(true)
                     } else {
-                        Value::from(0_usize)
+                        Value::Bool(false)
                     }
                 );
                 for split in 0..=events.len() {
@@ -625,25 +598,25 @@ mod tests {
                         if split == 3 {
                             whole.clone()
                         } else {
-                            Value::from(0_usize)
+                            Value::Bool(false)
                         }
                     );
                     store.append(&history, &events[split..]).unwrap();
                     vm.set_history_input(history.clone(), alice).unwrap();
-                    assert_eq!(vm.execute_entry_point_by_name("decide").unwrap(), whole);
+                    assert_eq!(vm.execute_entry_point_by_name("data.t.r0").unwrap(), whole);
                 }
             }
             let star_program =
-                super::tests::program(actor_head(), RegexExpr::star(equality()), batch);
+                super::tests::program(ACTOR, &alloc::format!("star({EQUALITY})"), batch);
             let mut star_vm = super::tests::vm(&store, &history, &star_program);
             star_vm.set_execution_mode(ExecutionMode::RunToCompletion);
             assert_eq!(
                 decide(&mut star_vm, &store, &history, &[alice], alice),
-                Value::Null
+                Value::Bool(true)
             );
             assert_eq!(
                 decide(&mut star_vm, &store, &history, &[alice, bob], alice),
-                Value::from(0_usize)
+                Value::Bool(false)
             );
         }
     }
@@ -656,23 +629,13 @@ mod tests {
             let matching = event(&store, "alice", "edit");
             let rejecting = event(&store, "alice", "read");
             store.append(&history, &[matching; 256]).unwrap();
-            let program = program(
-                any_head(),
-                RegexExpr::star(RegexExpr::test(TestExpr::atom(
-                    Comparison::Eq,
-                    AtomPattern::new(
-                        ACTION,
-                        ComponentPattern::constant(SourceComponent::Action("edit")),
-                    ),
-                ))),
-                64,
-            );
+            let program = program(ANY, r#"star({action == "edit"})"#, 64);
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(mode);
             let mut instance = lazy_instance(&vm);
             assert_eq!(
-                vm.execute_entry_point_by_name("decide").unwrap(),
-                Value::Null
+                vm.execute_entry_point_by_name("data.t.r0").unwrap(),
+                Value::Bool(true)
             );
 
             let mut compare = |length, reused_events, expected: Value| {
@@ -682,18 +645,21 @@ mod tests {
                         instance = lazy_instance(&vm);
                     }
                     instance.lock().reset_work_events();
-                    assert_eq!(vm.execute_entry_point_by_name("decide").unwrap(), expected);
+                    assert_eq!(
+                        vm.execute_entry_point_by_name("data.t.r0").unwrap(),
+                        expected
+                    );
                     assert_eq!(
                         instance.lock().work_counters().events,
                         if retain { reused_events } else { length },
                     );
                 }
             };
-            compare(256, 0, Value::Null);
+            compare(256, 0, Value::Bool(true));
             store.append(&history, &[matching]).unwrap();
-            compare(257, 1, Value::Null);
+            compare(257, 1, Value::Bool(true));
             store.append(&history, &[rejecting]).unwrap();
-            compare(258, 1, Value::from(0_usize));
+            compare(258, 1, Value::Bool(false));
         }
     }
 
@@ -702,9 +668,9 @@ mod tests {
     fn precompile_keeps_the_typed_lazy_language() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let regex = RegexExpr::concat([RegexExpr::All, equality(), RegexExpr::star(equality())]);
-        let eager_program = program(actor_head(), regex.clone(), 256);
-        let lazy_program = program(actor_head(), regex, 256);
+        let regex = alloc::format!("[any, {EQUALITY}, star({EQUALITY})]");
+        let eager_program = program(ACTOR, &regex, 256);
+        let lazy_program = program(ACTOR, &regex, 256);
         let mut eager = vm(&store, &history, &eager_program);
         let mut lazy = vm(&store, &history, &lazy_program);
         eager.set_execution_mode(ExecutionMode::RunToCompletion);
@@ -724,10 +690,10 @@ mod tests {
         let alice = event(&store, "alice", "read");
         let bob = event(&store, "bob", "read");
         for (events, expected) in [
-            (&[][..], Value::from(0_usize)),
-            (&[alice][..], Value::Null),
-            (&[bob, alice, alice][..], Value::Null),
-            (&[alice, bob][..], Value::from(0_usize)),
+            (&[][..], Value::Bool(false)),
+            (&[alice][..], Value::Bool(true)),
+            (&[bob, alice, alice][..], Value::Bool(true)),
+            (&[alice, bob][..], Value::Bool(false)),
         ] {
             assert_eq!(
                 decide(&mut eager, &store, &history, events, alice),
@@ -742,28 +708,15 @@ mod tests {
 
     #[test]
     fn event_class_lru_keeps_its_256_entry_ceiling() {
-        let identities: Vec<_> = (0..17).map(|id| alloc::format!("identity-{id}")).collect();
-        let tests = identities.iter().flat_map(|id| {
+        let tests = atoms_or((0..17).flat_map(|id| {
             [
-                TestExpr::atom(
-                    Comparison::Eq,
-                    AtomPattern::new(
-                        PRINCIPAL,
-                        ComponentPattern::constant(SourceComponent::Principal(id.as_str())),
-                    ),
-                ),
-                TestExpr::atom(
-                    Comparison::Eq,
-                    AtomPattern::new(
-                        ACTION,
-                        ComponentPattern::constant(SourceComponent::Action(id.as_str())),
-                    ),
-                ),
+                alloc::format!(r#"{{principal == "identity-{id}"}}"#),
+                alloc::format!(r#"{{action == "identity-{id}"}}"#),
             ]
-        });
+        }));
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let program = program(actor_head(), RegexExpr::test(TestExpr::or(tests)), 256);
+        let program = program(ACTOR, &tests, 256);
         let mut vm = vm(&store, &history, &program);
         vm.set_execution_mode(ExecutionMode::RunToCompletion);
         let instance = lazy_instance(&vm);
@@ -778,7 +731,7 @@ mod tests {
                 first.get_or_insert(event);
                 assert_eq!(
                     decide(&mut vm, &store, &history, &[event], event),
-                    Value::Null
+                    Value::Bool(true)
                 );
             }
         }
@@ -789,7 +742,7 @@ mod tests {
         let first = first.unwrap();
         assert_eq!(
             decide(&mut vm, &store, &history, &[first], first),
-            Value::Null
+            Value::Bool(true)
         );
         let runtime = instance.lock();
         assert_eq!(runtime.work_counters().successor_misses, 290);
@@ -799,21 +752,12 @@ mod tests {
     #[test]
     fn precompile_leaves_wide_typed_transitions_lazy() {
         for count in [9, 8] {
-            let identities: Vec<_> = (0..count)
-                .map(|id| alloc::format!("identity-{id}"))
-                .collect();
-            let tests = identities.iter().map(|id| {
-                TestExpr::atom(
-                    Comparison::Eq,
-                    AtomPattern::new(
-                        PRINCIPAL,
-                        ComponentPattern::constant(SourceComponent::Principal(id.as_str())),
-                    ),
-                )
-            });
+            let tests = atoms_or(
+                (0..count).map(|id| alloc::format!(r#"{{principal == "identity-{id}"}}"#)),
+            );
             let store = Arc::new(HistoryStore::new());
             let history = store.new_history().unwrap();
-            let program = program(actor_head(), RegexExpr::test(TestExpr::or(tests)), 256);
+            let program = program(ACTOR, &tests, 256);
             let mut vm = vm(&store, &history, &program);
             vm.set_execution_mode(ExecutionMode::RunToCompletion);
             let instance = Arc::clone(
@@ -826,11 +770,11 @@ mod tests {
             let nonmatching = event(&store, "outside", "read");
             assert_eq!(
                 decide(&mut vm, &store, &history, &[matching], matching),
-                Value::Null
+                Value::Bool(true)
             );
             assert_eq!(
                 decide(&mut vm, &store, &history, &[nonmatching], nonmatching),
-                Value::from(0_usize)
+                Value::Bool(false)
             );
             assert_eq!(
                 instance.lock().work_counters().successor_misses == before,
@@ -851,7 +795,7 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 7]).unwrap();
-        let program = program(any_head(), RegexExpr::All, 3);
+        let program = program(ANY, "any", 3);
         let mut first = vm(&store, &history, &program);
         let instance = lazy_instance(&first);
         assert!(matches!(
@@ -914,11 +858,7 @@ mod tests {
     fn failed_batch_and_final_answer_never_publish() {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
-        let mut empty_vm = vm(
-            &store,
-            &history,
-            &program(any_head(), RegexExpr::Epsilon, 3),
-        );
+        let mut empty_vm = vm(&store, &history, &program(ANY, "[]", 3));
         let empty_instance = lazy_instance(&empty_vm);
         empty_instance.lock().set_answer_checkpoint_failure(true);
         let pc = empty_vm.pc;
@@ -944,7 +884,7 @@ mod tests {
 
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 2]).unwrap();
-        let mut final_vm = vm(&store, &history, &program(any_head(), RegexExpr::All, 1));
+        let mut final_vm = vm(&store, &history, &program(ANY, "any", 1));
         let final_instance = lazy_instance(&final_vm);
         assert!(matches!(
             final_vm.execute_history_step(0).unwrap(),
@@ -968,18 +908,6 @@ mod tests {
         assert_eq!(final_instance.lock().cursor_positions()[0].3, 2);
     }
 
-    fn three_actions<'a>() -> RegexExpr<SourceEvent<'a>> {
-        RegexExpr::concat(["a", "b", "c"].map(|action| {
-            RegexExpr::test(TestExpr::atom(
-                Comparison::Eq,
-                AtomPattern::new(
-                    ACTION,
-                    ComponentPattern::constant(SourceComponent::Action(action)),
-                ),
-            ))
-        }))
-    }
-
     #[test]
     fn graph_replacement_keeps_two_old_continuations_valid() {
         let store = Arc::new(HistoryStore::new());
@@ -994,7 +922,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let program = program(any_head(), three_actions(), 1);
+        let program = program(ANY, THREE_ACTIONS, 1);
         let mut first = vm(&store, &history, &program);
         let old = lazy_instance(&first);
         let mut second = vm(&store, &history, &program);
@@ -1100,7 +1028,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let program = program(any_head(), three_actions(), 1);
+        let program = program(ANY, THREE_ACTIONS, 1);
         let mut vm = vm(&store, &history, &program);
         let old = lazy_instance(&vm);
         old.lock().replace_graph_byte_pressure(MAX_GRAPH_BYTES);
@@ -1149,17 +1077,13 @@ mod tests {
         let store = Arc::new(HistoryStore::new());
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
-        let first = store
-            .table_runtime(&program(any_head(), RegexExpr::All, 1), 0)
-            .unwrap();
+        let first = store.table_runtime(&program(ANY, "any", 1), 0).unwrap();
         let weak = Arc::downgrade(&first);
         let pinned = Arc::clone(&first.rules[0].current.lock());
         let pinned_weak = Arc::downgrade(&pinned);
         drop(first);
         for _ in 0..17 {
-            store
-                .table_runtime(&program(any_head(), RegexExpr::All, 1), 0)
-                .unwrap();
+            store.table_runtime(&program(ANY, "any", 1), 0).unwrap();
         }
         assert!(weak.upgrade().is_none());
         assert!(pinned_weak.upgrade().is_some());
@@ -1176,7 +1100,7 @@ mod tests {
         let history = store.new_history().unwrap();
         let event = event(&store, "alice", "edit");
         store.append(&history, &[event; 2]).unwrap();
-        let mut vm = vm(&store, &history, &program(any_head(), RegexExpr::All, 1));
+        let mut vm = vm(&store, &history, &program(ANY, "any", 1));
         let instance = lazy_instance(&vm);
         assert!(matches!(
             vm.execute_history_step(0).unwrap(),
@@ -1208,7 +1132,7 @@ mod tests {
     #[test]
     fn retained_cursor_lru_is_bounded_and_keeps_recent_histories() {
         let store = Arc::new(HistoryStore::new());
-        let program = program(any_head(), RegexExpr::All, 3);
+        let program = program(ANY, "any", 3);
         let first = store.new_history().unwrap();
         let initial = vm(&store, &first, &program);
         let instance = lazy_instance(&initial);

@@ -81,8 +81,9 @@ Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
 inspection tooling to populate and render the program.
 
-History policies use the owned Rust DSL in in-tree `src/history-syntax` and shared
-representations/contracts in `junco-core`: the DSL lowers to canonical
+History policies are Rego `history.require`/`history.forbid` calls that the RVM
+compiler lowers to the owned DSL in in-tree `src/history-syntax`; shared
+representations/contracts live in `junco-core`: the DSL lowers to canonical
 `FlatPair<C>`, constants are encoded once into `FlatPair<u64>`, and
 `history-semantics` supplies the numeric compiler/evaluator for Junco and Regorus.
 Regorus lowers borrowed `Rule<SourceEvent<'_>>` values through core and copies
@@ -91,10 +92,11 @@ never unfolded. Program tables retain
 the `HistoryTable`/`HistoryTableRule` envelope but import `Component` and `RuleMode`
 from `history-syntax`, and `FlatHead`, `FlatTerm`, `FlatTest`, `FlatRegex`, and
 `FlatPair` from core.
-The v8 source schema, variant/field order, and `HistoryStepParams` are unchanged.
+The v8 source schema and variant/field order are unchanged; `HistoryStepParams`
+gained a `dest` register for the rule's Boolean.
 `Program::validate_limits` uses core's base validation even without `history`.
 
-Regorus owns only the borrowed-string compiler adapter, `HistoryStep` dispatch and host-limit
+Regorus owns only the Rego lowering, the borrowed-string compiler adapter, `HistoryStep` dispatch and host-limit
 translation, and the Program-keyed shared table cache retaining `Arc<Program>`.
 The native history store adapter delegates interning and record mutation to
 `history-store`; its public API and cross-VM cache sharing remain unchanged.

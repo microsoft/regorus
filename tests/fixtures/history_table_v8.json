@@ -1,7 +1,7 @@
 {
   "builtin_info_table": [],
   "entry_points": {
-    "decide": 0
+    "data.t.r0": 0
   },
   "history_tables": [
     {
@@ -81,6 +81,7 @@
     "history_step_params": [
       {
         "batch_size": 1,
+        "dest": 1,
         "rule": 0,
         "table": 0
       }
@@ -91,25 +92,74 @@
     "virtual_data_document_lookup_params": []
   },
   "instruction_spans": [
-    null,
-    null,
-    null
+    {
+      "column": 0,
+      "length": 0,
+      "line": 0,
+      "source_index": 0
+    },
+    {
+      "column": 0,
+      "length": 0,
+      "line": 0,
+      "source_index": 0
+    },
+    {
+      "column": 22,
+      "length": 144,
+      "line": 3,
+      "source_index": 0
+    },
+    {
+      "column": 22,
+      "length": 144,
+      "line": 3,
+      "source_index": 0
+    },
+    {
+      "column": 22,
+      "length": 144,
+      "line": 3,
+      "source_index": 0
+    },
+    {
+      "column": 22,
+      "length": 144,
+      "line": 3,
+      "source_index": 0
+    }
   ],
   "instructions": [
+    {
+      "CallRule": {
+        "dest": 1,
+        "rule_index": 0
+      }
+    },
+    {
+      "Return": {
+        "value": 1
+      }
+    },
+    {
+      "RuleInit": {
+        "result_reg": 0,
+        "rule_index": 0
+      }
+    },
     {
       "HistoryStep": {
         "params_index": 0
       }
     },
     {
-      "LoadNull": {
-        "dest": 0
+      "Move": {
+        "dest": 0,
+        "src": 1
       }
     },
     {
-      "Return": {
-        "value": 0
-      }
+      "RuleReturn": {}
     }
   ],
   "literals": [],
@@ -118,7 +168,7 @@
     "compiled_at": "unknown",
     "compiler_version": "0.13.0",
     "has_host_await": false,
-    "language": "history_table",
+    "language": "",
     "needs_recompilation": false,
     "needs_runtime_recursion_check": false,
     "optimization_level": 0,
@@ -126,11 +176,43 @@
     "source_info": "unknown"
   },
   "program_structure": {
-    "dispatch_window_size": 1,
+    "dispatch_window_size": 2,
     "main_entry_point": 0,
-    "max_rule_window_size": 1
+    "max_rule_window_size": 2
   },
-  "rule_infos": [],
-  "rule_tree": {},
-  "sources": []
+  "rule_infos": [
+    {
+      "default_literal_index": null,
+      "definitions": [
+        [
+          2
+        ]
+      ],
+      "destructuring_blocks": [
+        null
+      ],
+      "early_exit_on_first_success": false,
+      "else_bodies": [
+        []
+      ],
+      "function_info": null,
+      "name": "data.t.r0",
+      "num_registers": 2,
+      "result_reg": 0,
+      "rule_type": "Complete"
+    }
+  ],
+  "rule_tree": {
+    "data": {
+      "t": {
+        "r0": 0
+      }
+    }
+  },
+  "sources": [
+    {
+      "content": "package t\nimport rego.v1\nr0 := history.require({\"action\": \"release\", \"principal\": actor, \"resource\": doc}, [any, {principal == actor, action == \"edit\", resource == doc}, any])\n",
+      "name": "t.rego"
+    }
+  ]
 }

@@ -7,7 +7,9 @@ use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
 use regorus::rvm::program::{DeserializationResult, Program};
 use serde_json::{json, Value as Json};
 
-// Produced by `history_table::compile` from `prior_edit_rule("release", "edit")` with batch size 1.
+// Rego compiler output for `r0 := history.require({"action": "release", "principal": actor,
+// "resource": doc}, [any, {principal == actor, action == "edit", resource == doc}, any])`,
+// entry point `data.t.r0`, with batch size 1.
 const BINARY: &[u8] = include_bytes!("fixtures/history_table_v8.bin");
 const JSON: &str = include_str!("fixtures/history_table_v8.json");
 
@@ -25,8 +27,8 @@ fn fixture() -> Program {
 #[test]
 fn v8_fixtures_preserve_bytes_schema_and_topology() {
     assert_eq!(Program::SERIALIZATION_VERSION, 8);
-    assert_eq!(BINARY.len(), 164);
-    assert_eq!(JSON.len(), 2755);
+    assert_eq!(BINARY.len(), 421);
+    assert_eq!(JSON.len(), 4222);
     assert_eq!(&BINARY[4..8], &8u32.to_le_bytes());
     let expected = FlatPair {
         head: vec![
@@ -67,7 +69,10 @@ fn v8_fixtures_preserve_bytes_schema_and_topology() {
         assert_eq!(rule.mode, RuleMode::Require);
         assert_eq!(rule.source, expected);
         let step = &program.instruction_data.history_step_params[0];
-        assert_eq!((step.table, step.rule, step.batch_size), (0, 0, 1));
+        assert_eq!(
+            (step.table, step.rule, step.batch_size, step.dest),
+            (0, 0, 1, 1)
+        );
         assert_eq!(program.serialize_binary().unwrap(), BINARY);
         assert_eq!(program.serialize_json().unwrap(), JSON);
         let schema: Json = serde_json::from_str(&program.serialize_json().unwrap()).unwrap();

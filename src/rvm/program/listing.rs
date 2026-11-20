@@ -918,8 +918,8 @@ fn format_instruction_readable(
                 || format!("{}HistoryStep P({}) <invalid>", indent, params_index),
                 |p| {
                     format!(
-                        "{}HistoryStep table[{}].rule[{}] batch_size={}",
-                        indent, p.table, p.rule, p.batch_size
+                        "{}HistoryStep table[{}].rule[{}] batch_size={} dest=r{}",
+                        indent, p.table, p.rule, p.batch_size, p.dest
                     )
                 },
             ),

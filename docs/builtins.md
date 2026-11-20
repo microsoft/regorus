@@ -240,127 +240,119 @@ In future, each builtin will be associated with a feature (many builtins could b
    |----------------------------------------------------------------------------------------------|---------|
    | [trace](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-tracing-trace) | _       |
 
-## Typed history tables (native Rust, RVM only)
+## History rules (`history.require` / `history.forbid`, RVM only)
 
-The opt-in `history` feature enables typed history tables, not a Rego builtin.
+The opt-in `history` feature lets Rego policies constrain a typed event history.
 It implies `rvm` and `arc`, supports no_std, and is not included in the default
-features or `full-opa`. The former generic history builtin is removed; calls to
-it fail function resolution. Language bindings do not forward a `history` feature
-or expose the native owner/identity API.
+features or `full-opa`. Only the RVM compiler lowers these calls; the tree-walking
+interpreter, and the RVM compiler without `history`, report an unknown function.
+The former generic `history.match` builtin and the Rust rule DSL/`compile` entry
+point are removed. Language bindings do not forward a `history` feature or expose
+the native owner/identity API.
 
-The canonical owned DSL and Event trait belong to in-tree `src/history-syntax`;
+The canonical DSL and Event trait belong to in-tree `src/history-syntax`;
 `junco-core` owns flat source validation/lowering and shared contracts,
 `history-store` owns interning and history transactions, and `history-semantics`
-owns numeric compilation/evaluation and generic policies. Regorus retains the
-borrowed-string compiler adapter, VM dispatch/limit adapter, and shared Program-keyed table
-cache. Its public `HistoryStore::{new, intern, event, new_history, append,
-truncate, len}` API wraps one process-wide arity-3 numeric store
-(`history_store::store::HistoryStore::new(3)`). Store's
-generic typed `Store<E>`/`History<E>` APIs are separate, not replacement Regorus
-entrypoints. Native no_std + alloc remains supported. `std` and Semantics' `cache`
-do not imply `runtime`; Regorus `history` enables Store and Semantics runtime,
-while source validation depends only on core and Syntax. `test-util` supplies
-dev-only integration probes.
+owns numeric compilation/evaluation and generic policies. Regorus retains the Rego
+lowering, the borrowed-string constant adapter, VM dispatch/limit adapter, and the
+shared Program-keyed table cache. Its public `HistoryStore::{new, intern, event,
+new_history, append, truncate, len}` API wraps one process-wide arity-3 numeric
+store (`history_store::store::HistoryStore::new(3)`). Store's generic typed
+`Store<E>`/`History<E>` APIs are separate, not replacement Regorus entrypoints.
+`std` and Semantics' `cache` do not imply `runtime`; Regorus `history` enables
+Store and Semantics runtime, while source validation depends only on core and
+Syntax. `test-util` supplies dev-only integration probes.
+
+### Rego syntax
+
+```rego
+package approvals
+import rego.v1
+
+release_after_edit := history.require(
+    {"action": "release", "principal": actor, "resource": doc},
+    [any, {principal == actor, action == "edit", resource == doc}, any],
+)
+no_remove_after_lock := history.forbid(
+    {"action": "remove", "resource": doc},
+    [any, {action == "lock", resource == doc}, any],
+)
+
+allow if {
+    release_after_edit
+    no_remove_after_lock
+}
+```
+
+`history.require(request, language)` is `false` when the staged request matches
+`request` and the history is outside `language`; `history.forbid` is `false` when
+it is inside. Otherwise, including a nonmatching request, the call is `true`; it
+is never undefined. Compose the Boolean with ordinary Rego.
+
+The request pattern is an object literal keyed by `"principal"`, `"action"`,
+and `"resource"`. A string value matches those exact bytes; a variable binds the
+request's coordinate for use in the language; `_` or an omitted key matches
+anything. Variables may not be named `principal`, `action`, `resource`, or `any`,
+and each belongs to one coordinate.
+
+| Language | Complete histories |
+|---|---|
+| `any` | All finite histories |
+| `[]` | Empty history only |
+| `{c == t, ...}` | One event satisfying every comparison |
+| `true`, `set()` | One arbitrary event |
+| `false` | No histories |
+| `[a, b, ...]` | Chronological concatenation |
+| `a \| b` | Union |
+| `a & b` | Intersection |
+| `a - b` | Difference (`a` and not `b`) |
+| `star(a)` | Kleene star |
+
+A comparison is `principal`, `action`, or `resource` with `==` or `!=` against a
+string constant or a request variable of the same coordinate. `{}` is an empty
+object, not a test; use `set()`. Malformed shapes, unknown names, unbound or
+cross-coordinate variables fail RVM compilation with a spanned error.
+
+Paths are exact raw UTF-8: case, slashes, embedded NULs, and distinct Unicode
+encodings remain distinct; there is no normalization or ancestry match.
 
 ### Native boundary
 
 Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Each
 wrapper owns only its Program-keyed table cache; identities and histories live in
 one process-wide store, so wrappers accept each other's handles and IDs and are
-not a tenant isolation boundary. Intern exact raw UTF-8 paths per coordinate with
+not a tenant isolation boundary. Intern paths per coordinate with
 `intern(PRINCIPAL, path)`, `intern(ACTION, path)`, and `intern(RESOURCE, path)`,
 then build an `Event` from the three opaque `u64` IDs with
 `store.event(&[principal, action, resource])`, which validates arity and domain
-membership; `event.component(index)` reads one coordinate back. Case, slashes,
-embedded NULs, and distinct
-Unicode encodings remain distinct; there is no normalization or ancestry match.
-Interned paths live for the process; IDs are not recycled. IDs issued only by a
-typed `Store<E>` view are not byte-domain members and are rejected.
+membership; `event.component(index)` reads one coordinate back. Interned paths
+live for the process; IDs are not recycled. IDs issued only by a typed `Store<E>`
+view are not byte-domain members and are rejected.
 
 Use `store.new_history()`, then `store.append(&history, &events)`,
 `store.truncate(&history, len)`, and `store.len(&history)`. Cloned handles share
-events. Compile ordered Rust rules with `compile(&rules, batch_size)`; zero is an
-error. After `vm.load_program(program)`, call `vm.attach_history(store.clone())`
-and `vm.set_history_input(history, request)`, then
-`vm.execute_entry_point_by_name("decide")`. The result is `Value::Null` for grant
-or the zero-based first violated rule index. Decisions never append the candidate.
-Repeated executions retain staged input. Loading another program cancels an old
-execution and requires explicit reattachment and restaging.
-
-### Rust policy DSL
-
-Policies are authored only with the Rust DSL re-exported from
-`regorus::languages::history_table`: `Rule`, `RuleMode`, `Head`,
-`ComponentPattern`, `TestExpr`, `AtomPattern`, `Comparison`, `RegexExpr`,
-`Component`, the `PRINCIPAL`/`ACTION`/`RESOURCE` coordinates and
-`SourceComponent`. `compile` borrows `&[Rule<SourceEvent<'_>>]`; constants are
-`SourceComponent` values tagged with their coordinate whose `&str` payloads are
-copied exactly into the compiled program, so the source strings and rules may be
-dropped after compilation. There is no JSON policy grammar.
-
-```rust
-use regorus::languages::history_table::*;
-
-let rule = Rule::new(
-    RuleMode::Require,
-    Head::new([
-        ComponentPattern::variable("actor"),
-        ComponentPattern::constant(SourceComponent::Action("release")),
-        ComponentPattern::variable("doc"),
-    ]),
-    RegexExpr::concat([
-        RegexExpr::all(),
-        RegexExpr::test(TestExpr::and([
-            TestExpr::atom(Comparison::Eq, AtomPattern::new(PRINCIPAL, ComponentPattern::variable("actor"))),
-            TestExpr::atom(Comparison::Eq, AtomPattern::new(ACTION, ComponentPattern::constant(SourceComponent::Action("edit")))),
-            TestExpr::atom(Comparison::Eq, AtomPattern::new(RESOURCE, ComponentPattern::variable("doc"))),
-        ])),
-        RegexExpr::all(),
-    ]),
-);
-let program = compile(&[rule], 256)?;
-```
-
-Rules are ordered: require rejects a matching request when the history is outside
-its language; forbid rejects when it is inside. Nonmatching request heads skip the
-rule. Each head coordinate is a constant or a variable; use a distinct unused
-variable for a wildcard. Variables belong to one coordinate; reusing a name across
-coordinates or referencing an unbound name fails with
-`HistoryTableError::InvalidRule { index, source }` carrying a typed `CompileError`;
-so does a constant tagged with another coordinate (`ComponentCoordinate`).
-
-Tests are `TestExpr::{True, False, And, Or}` and component `Eq`/`Neq` atoms whose
-term is a constant or a head variable from the same coordinate. Empty conjunction
-is true; empty disjunction is false. Every runtime coordinate is present, so
-equality and disequality are complements.
-
-| `RegexExpr` | Complete-history language |
-|---|---|
-| `Empty` | No histories |
-| `All` | All finite histories |
-| `Epsilon` | Empty history only |
-| `Test(test)` | One event satisfying the test |
-| `Concat([...])` | Chronological concatenation; empty is epsilon |
-| `Union([...])` | Union; empty is empty language |
-| `Intersect([...])` | Intersection; empty is universal |
-| `Star(regex)` | Kleene star |
-| `Not(regex)` | Complement over complete finite histories |
-
-Compilation is iterative, but dropping a very deep owned rule is recursive; use
-`Rule::dispose()` for such trees.
+events. Compile the policy with `Compiler::compile_from_policy`. After
+`vm.load_program(program)`, call `vm.attach_history(store.clone())` and
+`vm.set_history_input(history, request)`, then execute any entry point. Decisions
+never append the candidate. Repeated executions retain staged input. Loading
+another program cancels an old execution and requires explicit reattachment and
+restaging. Executing a history rule without attachment or staged input reports
+`HistoryContextMissing`.
 
 ### Batching, sharing, and errors
 
-Compilation emits one `HistoryStep` instruction per ordered rule. Each dispatch
-consumes at most the explicit batch size and repeats at the same PC when more
-events remain. Intermediate nullable prefixes do not grant. The existing VM
-executor charges dispatch budgets and preserves continuations during suspension.
+Each `history.require`/`history.forbid` call compiles to one `HistoryStep`
+instruction with batch size 256 that writes the call's Boolean to its destination
+register. Each dispatch consumes at most the batch size and repeats at the same
+PC when more events remain. Intermediate nullable prefixes do not grant. The
+existing VM executor charges dispatch budgets and preserves continuations during
+suspension. Rule caching evaluates each history rule at most once per execution.
 
-A decision captures a revision and target length before execution, including an
-empty table. Concurrent appends are excluded until the next decision. Truncation
-that removes events changes the revision; resume or finalization reports typed
-`HistoryChanged`, rather than restarting or publishing a stale grant. Attachment
-or staged-input changes during an active/suspended execution fail.
+A decision captures a revision and target length at its first `HistoryStep`
+dispatch; later concurrent appends are excluded until the next decision.
+Truncation that removes events changes the revision; resume or completion reports
+typed `HistoryChanged`, rather than restarting or publishing a stale grant.
+Attachment or staged-input changes during an active/suspended execution fail.
 
 Each wrapper shares bounded table/graph and retained-prefix caches across VMs;
 retained prefixes are keyed by each record's immutable process-wide history ID;
@@ -393,7 +385,7 @@ and publication receipts. Native Eq/Hash coherence and stable user projections
 are conditional obligations; separating these crates is not a universal proof of
 external Event implementations, including root Junco's native `LockEvent` adapter.
 Narrow map/container leaves, synchronization, allocation, clocks, arena destruction,
-Regorus's borrowed-string constant ownership pass, and native facade/diagnostic callbacks remain explicit
+Regorus's Rego-to-DSL lowering and borrowed-string constant ownership pass, and native facade/diagnostic callbacks remain explicit
 trust boundaries. Regorus's byte encoder is a native adapter that delegates UTF-8
 interning to `history-store`, not a universally verified external component encoder.
 
@@ -402,9 +394,10 @@ The matched proof configuration uses Rust `1.98.1`, Verus
 These boundaries describe the implementation and contracts, not a claim that
 every configuration or external consumer has passed verification.
 
-`cargo bench --features history --bench history_table` measures native decisions
-with batch size 256 and 16/256/4096 events for both early-accepting `contains edit`
-and full-scan `edit*` policies. Cases cover unchanged-prefix reuse, one appended
+`cargo bench --features history --bench history_table` measures compiled Rego
+decisions with batch size 256 and 16/256/4096 events for both early-accepting
+`[any, {... action == "edit" ...}, any]` and full-scan `star({action == "edit"})`
+policies. Cases cover unchanged-prefix reuse, one appended
 event after priming the retained prefix, and revision-invalidated root replay
 with graph/successor caches warm. Compilation, interning, attachment, staging,
 truncation, append, and the priming decision occur outside timing. The replay
