@@ -591,3 +591,67 @@ fn operator_in_parameter_pattern_of_other_module() -> Result<()> {
     assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, Value::from(true));
     Ok(())
 }
+
+/// A module with many expressions, so that its expression indices exceed
+/// those of the small modules and queries that use it.
+fn large_lib(rules: &str) -> String {
+    let mut lib = String::from("package lib\n");
+    for i in 0..50 {
+        lib.push_str(&format!("g{i} := [{i}, {i} + 1, {i} * 2]\n"));
+    }
+    lib.push_str(rules);
+    lib
+}
+
+/// Operators owned by another module are looked up in that module, even when
+/// they are evaluated after a rule of a third module: in a parameter pattern
+/// after a reference to an unevaluated rule, or in the default value of a
+/// function.
+#[test]
+fn operators_of_other_module_after_nested_rule_evaluation() -> Result<()> {
+    let lib =
+        large_lib("c := 2\nf([data.lib.c, (1 + 1)]) := 1\nh(1) := 10\ndefault h(_) := (1 + 1)\n");
+    for (rules, want) in [
+        ("y := data.lib.f([2, 2])", "1"),
+        ("y := data.lib.h(2)", "2"),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_policy("lib.rego".to_string(), lib.clone())?;
+        engine.add_policy("test.rego".to_string(), format!("package test\n{rules}"))?;
+        assert_eq!(
+            engine.eval_rule(ENTRYPOINT.to_string())?,
+            want_value(want)?,
+            "{rules}"
+        );
+    }
+    Ok(())
+}
+
+/// A query that evaluates all of `data` keeps looking up its own expressions
+/// after the last rule, a default rule of a small module, is skipped.
+#[test]
+fn query_operator_after_evaluating_all_data() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_policy("lib.rego".to_string(), large_lib(""))?;
+    engine.add_policy(
+        "z.rego".to_string(),
+        "package z\ndefault d := false".to_string(),
+    )?;
+    for query in [
+        r#"object.get(data, ["lib", "g1", 1], 0) == 1 + 1"#,
+        "x := data; x.lib.g1[1] == 1 + 1",
+    ] {
+        let results = engine.eval_query(query.to_string(), false)?;
+        let [result] = results.result.as_slice() else {
+            bail!("{query}: want one result: {results:?}");
+        };
+        assert!(
+            result
+                .expressions
+                .iter()
+                .all(|e| e.value == Value::from(true)),
+            "{query}: {results:?}"
+        );
+    }
+    Ok(())
+}
