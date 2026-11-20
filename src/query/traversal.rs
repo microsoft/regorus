@@ -8,6 +8,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use anyhow::Result;
 
@@ -95,6 +96,43 @@ pub fn traverse(expr: &ExprRef, f: &mut dyn FnMut(&ExprRef) -> Result<bool>) -> 
     }
 
     Ok(())
+}
+
+/// The outermost calls (including operators) nested in the operands of the
+/// negated expression `expr`. OPA evaluates them before the negation, so an
+/// Undefined one fails the enclosing body instead of satisfying `not`.
+/// Comprehensions are evaluated as a whole and are not searched, and the key
+/// of `k, v in c` stays lazy: it is evaluated only when the value and the
+/// collection are defined. Subexpressions for which `is_bound` holds, such as
+/// loop values, already have a value and are not searched either.
+pub fn negation_lifted_calls(
+    expr: &ExprRef,
+    is_bound: &mut dyn FnMut(&ExprRef) -> Result<bool>,
+) -> Result<Vec<ExprRef>> {
+    let lazy_key = match expr.as_ref() {
+        Membership { key, .. } => key.as_ref(),
+        _ => None,
+    };
+    let mut calls = Vec::new();
+    traverse(expr, &mut |e| {
+        Ok(match e.as_ref() {
+            #[cfg(feature = "rego-extensions")]
+            OrExpr { .. } => false,
+            _ if is_bound(e)? => false,
+            _ if e == expr => true,
+            _ if lazy_key == Some(e) => false,
+            Call { .. }
+            | BinExpr { .. }
+            | BoolExpr { .. }
+            | ArithExpr { .. }
+            | Membership { .. } => {
+                calls.push(e.clone());
+                false
+            }
+            _ => true,
+        })
+    })?;
+    Ok(calls)
 }
 
 pub fn var_exists(var: &Span, parent_scopes: &[Scope]) -> bool {
