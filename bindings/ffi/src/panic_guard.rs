@@ -107,8 +107,9 @@ mod hook {
     }
 
     /// Marks the current thread as inside a guarded call for the scope's lifetime.
-    /// A nested scope (e.g. entered by a destructor while an outer panic unwinds)
-    /// saves the enclosing call's details and restores them on exit.
+    /// The outermost scope discards stale details on entry and clears them on
+    /// exit. A nested scope (e.g. entered by a destructor while an outer panic
+    /// unwinds) saves the enclosing call's details and restores them on exit.
     pub(super) struct GuardScope {
         enclosing: Option<String>,
     }
