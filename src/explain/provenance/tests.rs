@@ -1102,6 +1102,138 @@ fn operations_beside_names_of_the_same_length() -> anyhow::Result<()> {
 }
 
 #[test]
+fn operation_iteration_text_respects_root_boundaries() -> anyhow::Result<()> {
+    for (body, expected) in [
+        ("a|b&cccc", "a|b&cccc"),
+        ("a|b&cc", "a|b&cc"),
+        ("a&b|cccc", "a&b|cccc"),
+        ("(a|b&cccc)", "(a|b&cccc)"),
+        ("a|b&cccc; x == 1", "a|b&cccc"),
+        ("input.in|input.some", "input.in|input.some"),
+        ("a|{input.x in input.xs}", "a|{input.x in input.xs}"),
+    ] {
+        let provenance = allow(&alloc::format!(
+            "a := input.a\nb := input.b\ncc := input.cc\ncccc := input.cccc\n  some x in {body}\n"
+        ))?;
+        let loops: Vec<_> = provenance
+            .sites()
+            .iter()
+            .filter(|site| site.kind == ConditionKind::Iteration)
+            .map(|site| (site.text.as_str(), at(site)))
+            .collect();
+        assert_eq!(loops, vec![(expected, Some(("p.rego", 9, 13)))], "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_iteration_text_keeps_contains_identifiers() -> anyhow::Result<()> {
+    for expression in [
+        "contains|input.b",
+        "input.b|contains",
+        "input.a|contains&input.b",
+        "(contains|input.b)",
+        "input.contains|input.b",
+        "contains.values|input.b",
+        "contains[0]|input.b",
+        "input.b|contains[0]",
+    ] {
+        let provenance = allow(&alloc::format!(
+            "  contains := input.a\n  some x in {expression}\n"
+        ))?;
+        let loops: Vec<_> = provenance
+            .sites()
+            .iter()
+            .filter(|site| site.kind == ConditionKind::Iteration)
+            .map(|site| (site.text.as_str(), at(site)))
+            .collect();
+        assert_eq!(
+            loops,
+            vec![(expression, Some(("p.rego", 6, 13)))],
+            "{expression}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_iteration_text_keeps_contains_calls() -> anyhow::Result<()> {
+    let provenance = provenance(
+        "package test\nimport rego.v1\ncontains(x) := {x}\nallow if {\n  some x in contains(input.a)|input.b\n}\n",
+        &["data.test.allow"],
+    )?;
+    let loops: Vec<_> = provenance
+        .sites()
+        .iter()
+        .filter(|site| site.kind == ConditionKind::Iteration)
+        .map(|site| (site.text.as_str(), at(site)))
+        .collect();
+    assert_eq!(
+        loops,
+        vec![("contains(input.a)|input.b", Some(("p.rego", 5, 13)))]
+    );
+    Ok(())
+}
+
+#[test]
+fn operation_text_keeps_rego_v0_future_keyword_identifiers() -> anyhow::Result<()> {
+    for identifier in ["contains", "every", "if", "in"] {
+        for expression in [
+            alloc::format!("{identifier}|input.b"),
+            alloc::format!("input.a|{identifier}&input.b"),
+        ] {
+            let mut engine = Engine::new();
+            engine.set_rego_v0(true);
+            engine.add_policy(
+                "p.rego".into(),
+                alloc::format!(
+                    "package test\nallow {{\n  {identifier} := input.a\n  {expression}\n}}\n"
+                ),
+            )?;
+            let entry_points = ["data.test.allow"];
+            let compiled = engine.compile_with_entrypoint(&entry_points[0].into())?;
+            let program = Compiler::compile_from_policy(&compiled, &entry_points)?;
+            let provenance = Provenance::new(&program);
+            let sites: Vec<_> = provenance
+                .sites()
+                .iter()
+                .map(|site| (site.text.as_str(), at(site)))
+                .collect();
+            assert_eq!(
+                sites,
+                vec![(expression.as_str(), Some(("p.rego", 4, 3)))],
+                "{expression}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_text_does_not_end_before_a_binary_operator() -> anyhow::Result<()> {
+    // `aaa; a|b` has the same length as `a|b&cccc`, but stops before `&`.
+    for expression in ["a|b&cccc", "(a|b)&cccc"] {
+        let provenance = allow(&alloc::format!(
+            "a := input.a\nb := input.b\ncccc := input.cccc\naaa := input.aaa\n  aaa; {expression}\n"
+        ))?;
+        let sites: Vec<_> = provenance
+            .sites()
+            .iter()
+            .map(|site| (site.text.as_str(), at(site)))
+            .collect();
+        assert_eq!(
+            sites,
+            vec![
+                ("aaa", Some(("p.rego", 9, 3))),
+                (expression, Some(("p.rego", 9, 8))),
+            ],
+            "{expression}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn empty_sets_objects_and_spaced_calls() -> anyhow::Result<()> {
     let provenance = allow(
         "  input.s == set()\n  some {\"a\": 1, \"b\": x} in input.items\n  some y in sort (input.ys)\n  y == x\n",
