@@ -143,6 +143,13 @@ impl Compiler {
     // -- operator condition compilation ------------------------------------
 
     pub(super) fn compile_condition(&mut self, condition: &Condition) -> Result<u8> {
+        let previous = self.json_span.replace(condition.span.clone());
+        let result = self.compile_condition_inner(condition);
+        self.json_span = previous;
+        result
+    }
+
+    fn compile_condition_inner(&mut self, condition: &Condition) -> Result<u8> {
         self.record_resource_type_from_condition(condition);
 
         // Implicit allOf: field with [*] outside count -> every element must match.

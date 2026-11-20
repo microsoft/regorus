@@ -9,16 +9,22 @@
 //! from, and the rule or function that owns it. Explanation capture records
 //! only program counters; reports resolve them through this table.
 //!
-//! Only programs compiled from Rego are decoded, as identified by
+//! Programs compiled from Rego or Azure Policy are decoded, as identified by
 //! [`ProgramMetadata::language`](crate::rvm::program::ProgramMetadata::language)
-//! (`"rego"`, or empty for the Rego compiler's programs). Programs from any
-//! other language, such as Azure Policy, have no sites until that language
-//! has its own decoder, so their conditions and their reads of the `context`
-//! root are not described rather than misdescribed.
+//! (`"rego"` or empty for Rego, `"azure_policy"` for Azure Policy). Programs from any
+//! other language have no sites. Azure Policy sites retain JSON conditions,
+//! native operators and normalized input/context path templates. This is
+//! static metadata, not runtime capture or a report producer. Azure Policy
+//! includes collection-count operations and native checks within templates;
+//! sites do not assert that the VM currently delivers events for them.
+//! Recompile older Azure Policy programs to obtain JSON owners for template
+//! operations whose saved spans only identify a synthetic expression source.
+
+mod azure_policy;
 
 use super::report::{ConditionKind, Operator, RuleKind, SourceLocation};
 use crate::lexer::{Lexer, Source, Token, TokenKind};
-use crate::rvm::instructions::{GuardMode, Instruction};
+use crate::rvm::instructions::{GuardMode, Instruction, PolicyOp};
 use crate::rvm::program::{Program, SpanInfo};
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
@@ -32,7 +38,9 @@ use core::num::{NonZeroU32, NonZeroUsize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SiteId(pub u32);
 
-/// The rule body or function definition that a check belongs to.
+/// The rule body or function definition that a check belongs to. Azure
+/// Policy uses a synthetic `main` owner (rule/definition/body zero), not an
+/// index into its empty compiled rule table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SiteOwner {
@@ -80,10 +88,32 @@ pub struct CheckSite {
     /// Reference the left operand (or the checked value) was read from, as
     /// written, for example `input.user.role`. A value bound by iteration
     /// reads as the collection followed by `[_]`, for example
-    /// `input.items[_]`. `None` for literals and computed values.
+    /// `input.items[_]`. Azure Policy uses normalized input/context paths
+    /// with JSON-quoted key subscripts and unquoted numeric indices. These
+    /// remain static templates, not captured concrete element identities.
+    /// A coalesced field keeps its source path even if absent at runtime.
+    /// `None` for literals, computed values and unresolved dynamic keys.
     pub left_path: Option<String>,
     /// Reference the right operand was read from, as for `left_path`.
     pub right_path: Option<String>,
+    /// Azure Policy metadata, separate from Rego's operator semantics.
+    /// `None` for Rego sites.
+    pub azure_policy: Option<AzurePolicySite>,
+}
+
+/// Language-specific static metadata of an Azure Policy check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AzurePolicySite {
+    /// Native operator, including its Azure Policy casing and null semantics.
+    /// `None` for a collection loop or count. Internal value guards are not sites.
+    pub operator: Option<PolicyOp>,
+    /// Authored JSON operator, if source metadata is available. This can
+    /// differ from `operator` after count optimization or within a template.
+    pub source_operator: Option<PolicyOp>,
+    /// The enclosing JSON condition's declared `field`, preserving aliases
+    /// and dynamic selector expressions. Not a captured concrete input path.
+    pub field: Option<String>,
 }
 
 /// Static provenance of every check in a program. See the module docs.
@@ -102,6 +132,9 @@ fn is_rego(program: &Program) -> bool {
 impl Provenance {
     /// Decodes the checks of `program`.
     pub fn new(program: &Program) -> Self {
+        if program.metadata.language == "azure_policy" {
+            return azure_policy::decode(program);
+        }
         if !is_rego(program) || program.rule_infos.is_empty() {
             return Self::default();
         }
@@ -163,6 +196,7 @@ impl Provenance {
                     location,
                     left_path: path(shape.left),
                     right_path: path(shape.right),
+                    azure_policy: None,
                 });
                 ordinal = ordinal.saturating_add(1);
             }
