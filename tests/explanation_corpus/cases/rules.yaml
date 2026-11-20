@@ -197,10 +197,6 @@ cases:
       - note: different_values_conflict
         input: {a: true, c: true}
         want_error: "conflicts"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
       - note: none
         input: {}
         want_result: "#undefined"
@@ -290,6 +286,68 @@ cases:
           engines: [rvm]
           actual_result: {a: bob}
 
+  - note: complete_rule_in_body_conflict
+    description: One complete-rule definition whose body succeeds twice with different values.
+    constructs: [complete_rule, some_in, conflict, runtime_error]
+    modules:
+      - |
+        package test
+        p := x if { some x in input.xs }
+    query: data.test.p
+    examples:
+      - note: same_value_twice
+        input: {xs: [1, 1]}
+        want_result: 1
+      - note: different_values
+        input: {xs: [1, 2]}
+        want_error: "multiple outputs"
+        divergence:
+          reason: The RVM keeps the last value when one definition yields different values.
+          engines: [rvm]
+          actual_result: 2
+
+  - note: function_in_body_conflict
+    description: One function definition whose body succeeds twice with different values.
+    constructs: [function, some_in, conflict, runtime_error]
+    modules:
+      - |
+        package test
+        f(xs) := y if { some y in xs }
+        r := f(input.xs)
+    query: data.test.r
+    examples:
+      - note: same_value_twice
+        input: {xs: [1, 1]}
+        want_result: 1
+      - note: different_values
+        input: {xs: [1, 2]}
+        want_error: "multiple outputs"
+        divergence:
+          reason: The RVM keeps the last value when one function definition yields different values.
+          engines: [rvm]
+          actual_result: 2
+
+  - note: rego_v0_query_blocks_conflict
+    description: A Rego v0 rule whose two query blocks succeed with different values.
+    constructs: [multiple_bodies, complete_rule, conflict, runtime_error]
+    rego_v0: true
+    modules:
+      - |
+        package test
+        p = x { input.a; x := 1 } { input.b; x := 2 }
+    query: data.test.p
+    examples:
+      - note: first_block
+        input: {a: true}
+        want_result: 1
+      - note: both_blocks
+        input: {a: true, b: true}
+        want_error: "conflicts"
+        divergence:
+          reason: The interpreter and the RVM stop after the first successful query block of a definition.
+          engines: [interpreter, rvm]
+          actual_result: 1
+
   - note: function_multiple_definitions
     description: A function with two definitions selected by its argument.
     constructs: [function, multiple_bodies, helper_rule]
@@ -352,10 +410,6 @@ cases:
       - note: both_definitions
         input: {x: 10}
         want_error: "multiple outputs"
-        divergence:
-          reason: The RVM returns Undefined instead of a conflict error when definitions disagree.
-          engines: [rvm]
-          actual_result: "#undefined"
       - note: no_definition
         input: {x: -1}
         want_result: "#undefined"

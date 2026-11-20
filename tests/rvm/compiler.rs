@@ -103,7 +103,7 @@ fn run_interpreter_policy(module: &str, input: &str) -> anyhow::Result<Value> {
 }
 
 #[test]
-fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn complete_rule_conflict_errors_in_rvm_and_interpreter() {
     let module = r#"
         package test
         p := input.left if input.enabled
@@ -111,9 +111,19 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
+    let rvm_error = run_rvm_policy(module, conflict_input).unwrap_err();
+    assert!(
+        matches!(
+            rvm_error.downcast_ref::<VmError>(),
+            Some(VmError::RuleConflict { .. })
+        ),
+        "unexpected RVM error: {rvm_error}"
+    );
+    assert!(
+        rvm_error
+            .to_string()
+            .contains("conflicts: complete rules must not produce multiple outputs"),
+        "unexpected RVM error: {rvm_error}"
     );
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()
@@ -132,7 +142,7 @@ fn complete_rule_conflict_is_undefined_in_rvm_and_interpreter() {
 }
 
 #[test]
-fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
+fn function_rule_conflict_errors_in_rvm_and_interpreter() {
     let module = r#"
         package test
         f(x) := input.left if input.enabled
@@ -141,9 +151,19 @@ fn function_rule_conflict_is_undefined_in_rvm_and_interpreter() {
     "#;
 
     let conflict_input = r#"{"enabled":true,"left":1,"right":2}"#;
-    assert_eq!(
-        run_rvm_policy(module, conflict_input).unwrap(),
-        Value::Undefined
+    let rvm_error = run_rvm_policy(module, conflict_input).unwrap_err();
+    assert!(
+        matches!(
+            rvm_error.downcast_ref::<VmError>(),
+            Some(VmError::RuleConflict { .. })
+        ),
+        "unexpected RVM error: {rvm_error}"
+    );
+    assert!(
+        rvm_error
+            .to_string()
+            .contains("functions must not produce multiple outputs for same inputs"),
+        "unexpected RVM error: {rvm_error}"
     );
     let interpreter_error = run_interpreter_policy(module, conflict_input)
         .unwrap_err()

@@ -126,10 +126,8 @@ cases:
     query: data.test.p
     want_result: "non-positive"
 
-  # The interpreter's conflict error is checked in
-  # unary_rule_values_disable_early_exit_on_conflict.
+  # Conflicting values raise an error in both RVM modes and the interpreter.
   - note: unary_rule_values_conflict_run_to_completion
-    skip_interpreter: true
     execution_mode: run-to-completion
     modules: &unary_rule_values
       - |
@@ -138,15 +136,61 @@ cases:
         p := -2 if input.b
     input: {a: true, b: true}
     query: data.test.p
-    want_result: "#undefined"
+    want_error: "complete rules must not produce multiple outputs"
 
   - note: unary_rule_values_conflict_suspendable
-    skip_interpreter: true
     execution_mode: suspendable
     modules: *unary_rule_values
     input: {a: true, b: true}
     query: data.test.p
-    want_result: "#undefined"
+    want_error: "complete rules must not produce multiple outputs"
+
+  - note: unary_rule_values_one_definition_run_to_completion
+    execution_mode: run-to-completion
+    modules: *unary_rule_values
+    input: {a: true}
+    query: data.test.p
+    want_result: -1
+
+  - note: unary_rule_values_one_definition_suspendable
+    execution_mode: suspendable
+    modules: *unary_rule_values
+    input: {a: true}
+    query: data.test.p
+    want_result: -1
+
+  - note: function_values_conflict_run_to_completion
+    execution_mode: run-to-completion
+    modules: &function_values
+      - |
+        package test
+        size(x) := "big" if x > 5
+        size(x) := "positive" if x > 0
+        p := size(input.n)
+    input: {n: 10}
+    query: data.test.p
+    want_error: "functions must not produce multiple outputs for same inputs"
+
+  - note: function_values_conflict_suspendable
+    execution_mode: suspendable
+    modules: *function_values
+    input: {n: 10}
+    query: data.test.p
+    want_error: "functions must not produce multiple outputs for same inputs"
+
+  - note: function_values_one_definition_run_to_completion
+    execution_mode: run-to-completion
+    modules: *function_values
+    input: {n: 3}
+    query: data.test.p
+    want_result: "positive"
+
+  - note: function_values_one_definition_suspendable
+    execution_mode: suspendable
+    modules: *function_values
+    input: {n: 3}
+    query: data.test.p
+    want_result: "positive"
 
   # ── Else branches ──────────────────────────────────────────────────
 
