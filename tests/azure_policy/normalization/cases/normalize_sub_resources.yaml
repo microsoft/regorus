@@ -1279,3 +1279,88 @@ cases:
             other:
               - rawstate: t
     round_trip: true
+
+  - note: a renaming plain alias with a differently cased ARM key keeps the nested wrappers
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/x", "defaultPath": "properties.items", "paths": [] },
+                {
+                  "name": "Test/widgets/x[*].y[*].z",
+                  "defaultPath": "properties.items[*].y[*].properties.rawz",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        Items:
+          - y:
+              - name: one
+                properties:
+                  rawz: 1
+    round_trip: true
+    # The array base rename supplies `x`, and the key comes back with the
+    # casing of the plain alias's ARM path.
+    expected_round_trip:
+      type: "Test/widgets"
+      properties:
+        items:
+          - y:
+              - name: one
+                properties:
+                  rawz: 1
+
+  - note: a renaming plain alias with a differently cased ARM key keeps the wrappers under a mixed-case inner array
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/x", "defaultPath": "properties.Items", "paths": [] },
+                {
+                  "name": "Test/widgets/x[*].subNets[*].state",
+                  "defaultPath": "properties.Items[*].subNets[*].rawState",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/x[*].subNets[*].z",
+                  "defaultPath": "properties.Items[*].subNets[*].properties.z",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      properties:
+        ITEMS:
+          - subNets:
+              - rawState: s
+                properties:
+                  z: 1
+    round_trip: true
+    # The unwrapped `rawState` stays at the element root. The key comes back
+    # with the casing of the plain alias's ARM path.
+    expected_round_trip:
+      type: "Test/widgets"
+      properties:
+        Items:
+          - subNets:
+              - rawState: s
+                properties:
+                  z: 1

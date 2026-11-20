@@ -77,6 +77,20 @@ pub fn apply_alias_entries(
     for (source_lc, target_lc) in &agg.array_renames_normalize {
         if !obj_contains(result, target_lc.as_str()) {
             if let Some(val) = obj_remove(result, source_lc.as_str()) {
+                // A plain alias the loop above did not resolve (for example,
+                // its ARM key has different casing) gets its value here.
+                // Flatten it the same way, since the denormalizer re-wraps
+                // where the alias writes.
+                let is_plain_alias = entries.get(target_lc.as_str()).is_some_and(|entry| {
+                    !entry.is_wildcard
+                        && !sub_resource_set.contains(target_lc.as_str())
+                        && !is_root_field_collision(&entry.short_name, &entry.default_path)
+                });
+                let val = if is_plain_alias {
+                    normalize_value(&val, target_lc, Some(sub_resource_set))
+                } else {
+                    val
+                };
                 obj_insert(result, target_lc, val);
             }
         }
