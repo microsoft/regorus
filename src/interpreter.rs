@@ -3557,8 +3557,11 @@ impl Interpreter {
         expr: &ExprRef,
         lifted: &mut Vec<ExprRef>,
     ) -> Result<Option<Value>> {
-        let calls =
-            negation_lifted_calls(expr, &mut |e| Ok(self.get_loop_var_value(e)?.is_some()))?;
+        let calls = negation_lifted_calls(expr, &mut |e| {
+            self.check_execution_time()?;
+            Ok(self.get_loop_var_value(e)?.is_some())
+        })?;
+        self.memory_check()?;
         for call in calls {
             let value = self.eval_expr(&call)?;
             if value == Value::Undefined {
