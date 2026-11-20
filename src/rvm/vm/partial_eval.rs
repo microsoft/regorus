@@ -18,7 +18,7 @@
 //! See [`RegoVM::partial_eval`] for the limitation on input-dependent defaults.
 
 use super::dispatch::InstructionOutcome;
-use super::errors::Result;
+use super::errors::{Result, VmError};
 use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
 use crate::explain::{
@@ -47,19 +47,6 @@ pub(super) struct PeState {
     input_has_unknowns: bool,
     context_has_unknowns: bool,
     unsupported: Option<(Reason, usize)>,
-}
-
-impl PeState {
-    const fn has_unknowns(&self, root: UnknownRoot) -> bool {
-        match root {
-            UnknownRoot::Input => self.input_has_unknowns,
-            UnknownRoot::Context => self.context_has_unknowns,
-        }
-    }
-
-    fn flag(&mut self, reason: Reason, pc: usize) {
-        self.unsupported.get_or_insert((reason, pc));
-    }
 }
 
 const fn root_name(root: UnknownRoot) -> &'static str {
@@ -169,6 +156,7 @@ impl RegoVM {
     /// Dependencies read by a default are not recorded, so an input-dependent
     /// default can produce an `Exact` result even when it depends on an unknown.
     /// Memory limits cover validation, execution and report construction.
+    /// Memory failures release execution values and leave the VM in its error state.
     pub fn partial_eval(
         &mut self,
         entry: &str,
@@ -188,12 +176,19 @@ impl RegoVM {
                     super::machine::MemoryBudgetLifecycle::PartialEvaluation;
             }
             let evaluation = PartialEvaluation(self);
-            evaluation.0.check_initial_memory_limit()?;
-            let result = evaluation.0.partial_eval_inner(entry);
-            if let Err(error) = evaluation.0.check_initial_memory_limit() {
-                return Err(evaluation.0.fail_run_to_completion(error).into());
-            }
-            result
+            let result = (|| {
+                evaluation.0.check_initial_memory_limit()?;
+                let result = evaluation.0.partial_eval_inner(entry);
+                evaluation.0.check_initial_memory_limit()?;
+                result
+            })();
+            result.map_err(|error| match error {
+                ExplainError::Vm(
+                    error @ (VmError::MemoryLimitExceeded { .. }
+                    | VmError::MemoryBudgetExceeded { .. }),
+                ) => evaluation.0.fail_run_to_completion(error).into(),
+                error => error,
+            })
         })
     }
 
@@ -229,11 +224,10 @@ impl RegoVM {
                 warnings: alloc::vec![warning(&program, reason, pc)],
             });
         }
-        let result = run?;
         Ok(PartialEvalResult {
             kind,
             status: ResidualStatus::Exact,
-            result,
+            result: run?,
             residual_queries: Vec::new(),
             warnings: Vec::new(),
         })
@@ -308,8 +302,12 @@ impl RegoVM {
         };
         let pc = self.pc;
         if let Some(pe) = self.pe.as_deref_mut() {
-            if pe.has_unknowns(root) {
-                pe.flag(Reason::RootRead(root), pc);
+            let has_unknowns = match root {
+                UnknownRoot::Input => pe.input_has_unknowns,
+                UnknownRoot::Context => pe.context_has_unknowns,
+            };
+            if has_unknowns {
+                pe.unsupported.get_or_insert((Reason::RootRead(root), pc));
             }
         }
         Ok(None)
