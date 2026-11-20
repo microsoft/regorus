@@ -451,22 +451,18 @@ fn removal_root(map: &ObjMap, segments: &[Segment]) -> Option<(Rc<str>, Vec<Step
 /// `value`, and the steps to the slot it clears below `value`.
 fn removal_steps(value: &Value, segments: &[Segment]) -> Option<(bool, Vec<Step>)> {
     let (segment, rest) = segments.split_first()?;
-    let (step, child, others_empty) = match (value, segment) {
+    let (step, child) = match (value, segment) {
         (Value::Object(object), Segment::Key(key)) => {
             let actual = object_key(object, key)?;
             let child = object.get(&actual)?;
-            (Step::Key(actual), child, object.len() == 1)
+            (Step::Key(actual), child)
         }
         (Value::Array(array), Segment::Index(index)) => {
             let child = array.get(*index)?;
             if rest.is_empty() && matches!(child, Value::Null) {
                 return None;
             }
-            let others_null = array
-                .iter()
-                .enumerate()
-                .all(|(position, item)| position == *index || matches!(item, Value::Null));
-            (Step::Index(*index), child, others_null)
+            (Step::Index(*index), child)
         }
         _ => return None,
     };
@@ -478,6 +474,15 @@ fn removal_steps(value: &Value, segments: &[Segment]) -> Option<(bool, Vec<Step>
             return Some((false, steps));
         }
     }
+    // Only reached when the slot itself goes, so siblings are scanned only then.
+    let others_empty = match (value, segment) {
+        (Value::Object(object), _) => object.len() == 1,
+        (Value::Array(array), Segment::Index(index)) => array
+            .iter()
+            .enumerate()
+            .all(|(position, item)| position == *index || matches!(item, Value::Null)),
+        _ => false,
+    };
     Some((others_empty, steps))
 }
 
