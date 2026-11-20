@@ -2891,6 +2891,23 @@ impl Interpreter {
         Ok(())
     }
 
+    /// True if `expr` calls the builtin `print`: `eval_call` resolves a call
+    /// of `print` to an import, a function, a default function or an
+    /// extension of that name first.
+    fn is_builtin_print_call(&self, expr: &ExprRef) -> bool {
+        let Expr::Call { fcn, .. } = expr.as_ref() else {
+            return false;
+        };
+        if !matches!(fcn.as_ref(), Expr::Var { span, .. } if span.text() == "print") {
+            return false;
+        }
+        let path = format!("{}.print", self.current_module_path);
+        self.resolve_fcn_path_through_imports("print").is_none()
+            && !self.compiled_policy.functions.contains_key(&path)
+            && !self.is_default_function(&path)
+            && !self.extensions.contains_key("print")
+    }
+
     fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
         const MAX_ARGS: u8 = 100;
         if args.len() > usize::from(MAX_ARGS) {
@@ -3664,16 +3681,21 @@ impl Interpreter {
     /// operands (`negation_lifted_calls`) before the negation: an Undefined
     /// one fails the body (`None`) instead of satisfying `not`. The values of
     /// the others are cached for the negated expression; the caller removes
-    /// the `lifted` entries.
+    /// the `lifted` entries. The arguments of the builtin `print` are not
+    /// lifted, since it accepts Undefined arguments.
     fn eval_negated_expr(
         &mut self,
         expr: &ExprRef,
         lifted: &mut Vec<ExprRef>,
     ) -> Result<Option<Value>> {
-        let calls = negation_lifted_calls(expr, &mut |e| {
-            self.check_execution_time()?;
-            Ok(self.get_loop_var_value(e)?.is_some())
-        })?;
+        let calls = if self.is_builtin_print_call(expr) {
+            Vec::new()
+        } else {
+            negation_lifted_calls(expr, &mut |e| {
+                self.check_execution_time()?;
+                Ok(self.get_loop_var_value(e)?.is_some())
+            })?
+        };
         self.memory_check()?;
         for call in calls {
             let value = self.eval_expr(&call)?;

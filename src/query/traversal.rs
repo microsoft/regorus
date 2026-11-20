@@ -15,7 +15,6 @@ use anyhow::Result;
 use crate::ast::Expr::{self, *};
 use crate::ast::{AssignOp, ExprRef};
 use crate::lexer::{SourceStr, Span};
-use crate::utils::get_path_string;
 use crate::value::Value;
 
 #[derive(Clone, Default, Debug)]
@@ -105,8 +104,7 @@ pub fn traverse(expr: &ExprRef, f: &mut dyn FnMut(&ExprRef) -> Result<bool>) -> 
 /// Comprehensions are evaluated as a whole and are not searched, and the key
 /// of `k, v in c` stays lazy: it is evaluated only when the value and the
 /// collection are defined. Subexpressions for which `is_bound` holds, such as
-/// loop values, already have a value and are not searched either. Nor are
-/// the arguments of a negated `print`, which accepts Undefined arguments.
+/// loop values, already have a value and are not searched either.
 pub fn negation_lifted_calls(
     expr: &ExprRef,
     is_bound: &mut dyn FnMut(&ExprRef) -> Result<bool>,
@@ -121,7 +119,6 @@ pub fn negation_lifted_calls(
             #[cfg(feature = "rego-extensions")]
             OrExpr { .. } => false,
             _ if is_bound(e)? => false,
-            Call { fcn, .. } if e == expr && is_print(fcn) => false,
             _ if e == expr => true,
             _ if lazy_key == Some(e) => false,
             Call { .. }
@@ -136,10 +133,6 @@ pub fn negation_lifted_calls(
         })
     })?;
     Ok(calls)
-}
-
-fn is_print(fcn: &ExprRef) -> bool {
-    matches!(get_path_string(fcn, None).as_deref(), Ok("print"))
 }
 
 pub fn var_exists(var: &Span, parent_scopes: &[Scope]) -> bool {

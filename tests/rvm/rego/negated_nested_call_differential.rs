@@ -110,6 +110,7 @@ const NOT_IN_ITERATION: &str = "y := [x | some x in input.vs; not count(x) == 1]
 const NOT_IN_EVERY: &str = "y if every x in input.vs { not count(x) == 1 }";
 const NOT_LOOP: &str = "y if not count(input.vs[_]) == 1";
 const NOT_CLOSED_COMPREHENSION: &str = "y if not count([1 | input.v[_]]) == 1";
+const NOT_USER_PRINT: &str = "print(x) := false\ny if not print(count(input.v))";
 
 fn cases() -> Vec<Case> {
     use Expect::Value as V;
@@ -409,6 +410,16 @@ fn cases() -> Vec<Case> {
             r#"{"v": [1]}"#,
             UNDEFINED,
         ),
+        // A user function named `print` shadows the builtin, and calls in its
+        // arguments are lifted as usual.
+        case(
+            "user print",
+            NOT_USER_PRINT,
+            r#"{"v": 5}"#,
+            V(UNDEFINED),
+            error(COUNT_ERROR, UNDEFINED),
+        ),
+        same("user print twin", NOT_USER_PRINT, r#"{"v": [1]}"#, "true"),
     ]
 }
 
@@ -733,7 +744,7 @@ fn negated_nested_call_after_error_in_other_module() -> Result<()> {
 }
 
 /// `print` accepts Undefined arguments, so they are not lifted out of a
-/// negated `print`: it still prints `<undefined>`.
+/// negated builtin `print`: it still prints `<undefined>`.
 #[test]
 fn negated_print_prints_undefined_arguments() -> Result<()> {
     let mut engine = new_engine("package test\ny if not print(count(input.v))", false)?;
@@ -745,5 +756,30 @@ fn negated_print_prints_undefined_arguments() -> Result<()> {
         matches!(prints.as_slice(), [p] if p.ends_with("<undefined>")),
         "{prints:?}"
     );
+    Ok(())
+}
+
+/// An imported function named `print` shadows the builtin, so calls in its
+/// arguments are lifted out of `not` as usual (OPA: `y` is undefined).
+#[test]
+fn negated_imported_print_lifts_arguments() -> Result<()> {
+    for (input, want) in [(r#"{"v": 5}"#, UNDEFINED), (r#"{"v": [1]}"#, "true")] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(false);
+        engine.add_policy(
+            "lib.rego".to_string(),
+            "package lib\nprint(x) := false".to_string(),
+        )?;
+        engine.add_policy(
+            "test.rego".to_string(),
+            "package test\nimport data.lib.print\ny if not print(count(input.v))".to_string(),
+        )?;
+        engine.set_input(Value::from_json_str(input)?);
+        assert_eq!(
+            engine.eval_rule(ENTRYPOINT.to_string())?,
+            want_value(want)?,
+            "input {input}"
+        );
+    }
     Ok(())
 }
