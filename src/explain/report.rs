@@ -1384,14 +1384,19 @@ pub enum ResidualKind {
 /// The condition holds when the builtin returns `true`. An input path that
 /// is undefined makes the condition not hold, as the call is then
 /// undefined. An input path whose value is defined but not a string makes
-/// the call fail: the regorus interpreter, the RVM and OPA raise an error
-/// with strict builtin errors, and other engines and settings may instead
-/// make the call undefined or its body fail. Whether Rego evaluates the
-/// call at all also depends on the engine: a failed condition skips the
-/// rest of its body and a body that holds skips its `else` branches, and
-/// the regorus interpreter evaluates every definition of a rule, but when
-/// they all have the same constant value the RVM stops once a definition
-/// holds, and OPA may too, in an order that isn't the source order.
+/// the call fail: with strict builtin errors the regorus interpreter, the
+/// RVM and OPA raise an error, and otherwise the call may instead be
+/// undefined. The error need not reach the caller: in a rule body the RVM
+/// treats it as a failed body and goes on to the rule's other bodies, so if
+/// none of them holds a rule with a default evaluates to the default. In
+/// suspendable execution, an error inside a loop or comprehension reaches
+/// the caller instead. Whether Rego evaluates the call at all also depends
+/// on the engine: a failed condition skips the rest of its body and a body
+/// that holds skips its `else` branches, and the regorus interpreter
+/// evaluates every definition of a rule, but when all definitions of a
+/// complete rule or function have the same constant value the RVM stops
+/// once one holds, and OPA may too, in an order that isn't the source
+/// order. Partial set and object rules evaluate every definition.
 ///
 /// Alternatives record neither the evaluation order nor which
 /// definition each came from, so consumers check every call of every

@@ -263,3 +263,32 @@ cases:
         }
     query: data.test.value
     want_result: 42
+
+  # A strict builtin error in a rule body fails only that body, so the RVM
+  # falls back to the default. The interpreter raises the error instead.
+  - note: default_rule_strict_builtin_error_fails_body
+    skip_interpreter: true
+    strict_builtin_errors: true
+    data: {}
+    input: {"x": 5}
+    modules:
+      - |
+        package test
+        default allow := false
+        allow if startswith(input.x, "a")
+    query: data.test.allow
+    want_result: false
+
+  - note: default_rule_strict_builtin_error_other_body_holds
+    skip_interpreter: true
+    strict_builtin_errors: true
+    data: {}
+    input: {"x": 5}
+    modules:
+      - |
+        package test
+        default allow := false
+        allow if startswith(input.x, "a")
+        allow if input.x == 5
+    query: data.test.allow
+    want_result: true
