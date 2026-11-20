@@ -1203,13 +1203,10 @@ impl Interpreter {
                 }
             }
             Literal::NotExpr { span, expr, .. } => {
-                // Clear with the caller's module index, which an error in
-                // another module's rule can leave changed.
-                let module_idx = self.current_module_index;
                 let mut lifted = Vec::new();
                 let value = self.eval_negated_expr(expr, &mut lifted);
                 for call in &lifted {
-                    self.loop_var_values.clear(module_idx, call.eidx());
+                    self.remove_loop_var_value(call);
                 }
                 let Some(value) = value? else {
                     if let Some(ctx) = self.contexts.last_mut() {
