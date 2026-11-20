@@ -8,9 +8,9 @@
 
 use anyhow::{bail, Result};
 use regorus::explain::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, CheckSite, ConditionKind, EmissionEvent,
-    ExplanationRecorder, HookContext, NotCapturedEvent, Operator, Outcome, Provenance,
-    UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, CheckSite, ComprehensionElement,
+    ComprehensionEmissionEvent, ConditionKind, EmissionEvent, ExplanationRecorder, HookContext,
+    NotCapturedEvent, Operator, Outcome, Provenance, UncapturedConstruct,
 };
 use regorus::languages::rego::compiler::Compiler;
 use regorus::rvm::program::Program;
@@ -36,6 +36,12 @@ enum Event {
         result: Option<Value>,
     },
     Emission {
+        key: Option<Value>,
+        value: Value,
+    },
+    ComprehensionEmission {
+        begin_pc: usize,
+        kind: &'static str,
         key: Option<Value>,
         value: Value,
     },
@@ -114,6 +120,28 @@ impl ExplanationRecorder for Fixture {
                 name: event.name.to_string(),
                 message: event.message.to_string(),
                 raised: event.raised,
+            },
+        );
+    }
+
+    fn comprehension_emission(
+        &mut self,
+        context: &HookContext,
+        event: &ComprehensionEmissionEvent<'_>,
+    ) {
+        let (kind, key, value) = match event.element {
+            ComprehensionElement::Array(value) => ("array", None, value),
+            ComprehensionElement::Set(value) => ("set", None, value),
+            ComprehensionElement::Object { key, value } => ("object", Some(key.clone()), value),
+            _ => panic!("unexpected comprehension element: {:?}", event.element),
+        };
+        self.push(
+            Some(context),
+            Event::ComprehensionEmission {
+                begin_pc: event.begin_pc,
+                kind,
+                key,
+                value: value.clone(),
             },
         );
     }
@@ -622,6 +650,17 @@ fn comprehensions_are_not_captured() {
             (2, 3, true, truthy()),
             (2, 3, true, succeeded()),
             (1, 2, true, truthy()),
+            (
+                1,
+                2,
+                true,
+                Event::ComprehensionEmission {
+                    begin_pc: begin.pc,
+                    kind: "array",
+                    key: None,
+                    value: v("2"),
+                },
+            ),
             (1, 2, false, body_end(Success, Some("[2]"))),
             (0, 1, false, compare(Operator::Gt, "1", "0", Success)),
             (3, 3, false, compare(Operator::Gt, "5", "1", Success)),
@@ -632,6 +671,448 @@ fn comprehensions_are_not_captured() {
             (0, 1, false, succeeded()),
         ]
     );
+}
+
+#[test]
+fn comprehension_yields_report_typed_payloads_and_static_begin_sites() {
+    let cases = [
+        ("[y | some y in input.xs; y > 1]", "array", v("[2,2,3]")),
+        (
+            "{y | some y in input.xs; y > 1}",
+            "set",
+            Value::from(std::collections::BTreeSet::from([v("2"), v("3")])),
+        ),
+        (
+            r#"{"k": y | some y in input.xs; y > 1}"#,
+            "object",
+            v(r#"{"k":3}"#),
+        ),
+    ];
+    for (expression, kind, expected) in cases {
+        let policy = format!("package t\nc := {expression}\n");
+        let r = run(&policy, "data.t.c", r#"{"xs":[0,2,2,3]}"#);
+        assert_eq!(r.result.unwrap(), expected);
+        let emissions: Vec<_> = r
+            .events
+            .iter()
+            .filter_map(|recorded| match &recorded.event {
+                Event::ComprehensionEmission {
+                    begin_pc,
+                    kind,
+                    key,
+                    value,
+                } => Some((
+                    *begin_pc,
+                    *kind,
+                    key.clone(),
+                    value.clone(),
+                    recorded.context.unwrap(),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(emissions.len(), 3, "{expression}: {:?}", r.events);
+        let begin_pc = emissions[0].0;
+        assert!(matches!(
+            r.program.instructions[begin_pc],
+            Instruction::ComprehensionBegin { .. }
+        ));
+        for ((site, observed_kind, key, value, context), expected_value) in
+            emissions.into_iter().zip([2, 2, 3])
+        {
+            assert_eq!(site, begin_pc);
+            assert_eq!(observed_kind, kind);
+            assert_eq!(key, (kind == "object").then(|| v(r#""k""#)));
+            assert_eq!(value, Value::from(expected_value));
+            assert!(context.in_comprehension);
+            assert!(matches!(
+                r.program.instructions[context.pc],
+                Instruction::ComprehensionYield { .. }
+            ));
+        }
+        assert_eq!(
+            r.events
+                .iter()
+                .filter(|e| matches!(
+                    e.event,
+                    Event::NotCaptured(UncapturedConstruct::Comprehension)
+                ))
+                .count(),
+            1,
+        );
+    }
+}
+
+#[test]
+fn comprehension_yields_skip_empty_failed_and_undefined_values() {
+    for expression in [
+        "[input.m[k] | some k in input.ks]",
+        "{input.m[k] | some k in input.ks}",
+        "{input.m[k]: k | some k in input.ks}",
+        "{k: input.m[k] | some k in input.ks}",
+    ] {
+        let policy = format!("package t\nc := {expression}\n");
+        for input in [
+            r#"{"ks":[],"m":{}}"#,
+            r#"{"ks":["missing"],"m":{}}"#,
+            r#"{"ks":["a","missing"],"m":{"a":1}}"#,
+        ] {
+            let r = run(&policy, "data.t.c", input);
+            assert!(r.result.is_ok(), "{:?}", r.result);
+            let emissions: Vec<_> = r
+                .events
+                .iter()
+                .filter(|e| matches!(e.event, Event::ComprehensionEmission { .. }))
+                .collect();
+            assert_eq!(
+                emissions.len(),
+                usize::from(input.contains("\"a\"")),
+                "{expression}: {input}"
+            );
+        }
+    }
+    let r = run(
+        "package t\nc := [y | some y in input.xs; y > 9]\n",
+        "data.t.c",
+        r#"{"xs":[1,2]}"#,
+    );
+    assert_eq!(r.result.unwrap(), v("[]"));
+    assert!(!r
+        .events
+        .iter()
+        .any(|e| matches!(e.event, Event::ComprehensionEmission { .. })));
+}
+
+#[test]
+fn comprehension_yields_keep_nested_and_helper_sites_distinct() {
+    let policy = "package t\nh(y) := [z | some z in y; z > 1]\nc := [h(row) | some row in input.rows]\nafter := [c, h([5])]\n";
+    let r = run(policy, "data.t.after", r#"{"rows":[[1,2],[3]]}"#);
+    assert_eq!(r.result.unwrap(), v("[[[2],[3]],[5]]"));
+    let emissions: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ComprehensionEmission {
+                begin_pc, value, ..
+            } => Some((*begin_pc, value.clone(), e.context.unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(emissions.len(), 5);
+    let inner = emissions[0].0;
+    let outer = emissions[1].0;
+    assert_ne!(inner, outer);
+    assert_eq!(
+        emissions
+            .iter()
+            .map(|(site, value, _)| (*site, value.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (inner, v("2")),
+            (outer, v("[2]")),
+            (inner, v("3")),
+            (outer, v("[3]")),
+            (inner, v("5"))
+        ]
+    );
+    assert!(emissions.iter().all(|(_, _, c)| c.in_comprehension));
+    assert!(emissions[0].2.call_depth > emissions[1].2.call_depth);
+    assert!(r
+        .events
+        .iter()
+        .filter(|e| matches!(e.event, Event::BodyEnd { .. })
+            && e.context.unwrap().rule_index == Some(0))
+        .all(|e| !e.context.unwrap().in_comprehension));
+}
+
+#[test]
+fn comprehension_yields_handle_raw_undefined_keys_values_and_result_aliases() {
+    use regorus::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode};
+    for mode in [
+        ComprehensionMode::Array,
+        ComprehensionMode::Set,
+        ComprehensionMode::Object,
+    ] {
+        for (key, value, alias, key_override) in [
+            (v(r#""k""#), v("7"), false, None),
+            (Value::Undefined, v("7"), false, None),
+            (v(r#""k""#), Value::Undefined, false, None),
+            (v(r#""k""#), v("7"), true, None),
+            (v(r#""k""#), v("7"), false, Some(0)),
+            (Value::Undefined, v("7"), false, Some(2)),
+        ] {
+            let mut program = Program::new();
+            program.literals = vec![key.clone(), value.clone()];
+            let params_index = program.add_comprehension_begin_params(ComprehensionBeginParams {
+                mode: mode.clone(),
+                collection_reg: 0,
+                result_reg: 0,
+                key_reg: 1,
+                value_reg: 2,
+                body_start: 3,
+                comprehension_end: 5,
+            });
+            program.instructions = vec![
+                Instruction::Load {
+                    dest: 1,
+                    literal_idx: 0,
+                },
+                Instruction::Load {
+                    dest: 2,
+                    literal_idx: 1,
+                },
+                Instruction::ComprehensionBegin { params_index },
+                Instruction::ComprehensionYield {
+                    value_reg: if alias { 0 } else { 2 },
+                    key_reg: key_override,
+                },
+                Instruction::ComprehensionEnd {},
+                Instruction::Return { value: 0 },
+            ];
+            program.max_rule_window_size = 8;
+            program.dispatch_window_size = 8;
+            let empty = match mode {
+                ComprehensionMode::Array => v("[]"),
+                ComprehensionMode::Set => Value::new_set(),
+                ComprehensionMode::Object => v("{}"),
+            };
+            let yielded = if alias { empty.clone() } else { value.clone() };
+            let key = match key_override {
+                Some(0) => empty.clone(),
+                Some(2) => value.clone(),
+                _ => key,
+            };
+            let defined = yielded != Value::Undefined
+                && (!matches!(mode, ComprehensionMode::Object) || key != Value::Undefined);
+            let program = Arc::new(program);
+            for execution_mode in MODES {
+                let r = run_program(&program, "{}", execution_mode, false);
+                let result = r.result.as_ref().unwrap();
+                let emissions: Vec<_> = r
+                    .events
+                    .iter()
+                    .filter_map(|e| match &e.event {
+                        Event::ComprehensionEmission {
+                            begin_pc,
+                            key,
+                            value,
+                            ..
+                        } => Some((*begin_pc, key.clone(), value.clone())),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    emissions,
+                    if defined {
+                        vec![(
+                            2,
+                            matches!(mode, ComprehensionMode::Object).then(|| key.clone()),
+                            yielded.clone(),
+                        )]
+                    } else {
+                        vec![]
+                    },
+                    "{mode:?} key={key:?} value={value:?} alias={alias}",
+                );
+                let expected = if !defined {
+                    empty.clone()
+                } else {
+                    match mode {
+                        ComprehensionMode::Array => Value::from(vec![yielded.clone()]),
+                        ComprehensionMode::Set => {
+                            Value::from(std::collections::BTreeSet::from([yielded.clone()]))
+                        }
+                        ComprehensionMode::Object => Value::from(std::collections::BTreeMap::from(
+                            [(key.clone(), yielded.clone())],
+                        )),
+                    }
+                };
+                assert_eq!(result, &expected);
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(execution_mode);
+                assert_eq!(execute(&mut vm, execution_mode).unwrap(), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn comprehension_yields_follow_auto_iteration_and_skip_failed_writes() {
+    use regorus::rvm::instructions::{ComprehensionBeginParams, ComprehensionMode};
+    for mode in [
+        ComprehensionMode::Array,
+        ComprehensionMode::Set,
+        ComprehensionMode::Object,
+    ] {
+        for invalid_result in [false, true] {
+            let mut program = Program::new();
+            program.literals = vec![v("[10,20]"), v("7")];
+            let params_index = program.add_comprehension_begin_params(ComprehensionBeginParams {
+                mode: mode.clone(),
+                collection_reg: 3,
+                result_reg: 0,
+                key_reg: 1,
+                value_reg: 2,
+                body_start: 2,
+                comprehension_end: if invalid_result { 5 } else { 4 },
+            });
+            program.add_instruction(
+                Instruction::Load {
+                    dest: 3,
+                    literal_idx: 0,
+                },
+                None,
+            );
+            program.add_instruction(Instruction::ComprehensionBegin { params_index }, None);
+            if invalid_result {
+                program.add_instruction(
+                    Instruction::Load {
+                        dest: 0,
+                        literal_idx: 1,
+                    },
+                    None,
+                );
+            }
+            program.add_instruction(
+                Instruction::ComprehensionYield {
+                    value_reg: 2,
+                    key_reg: None,
+                },
+                None,
+            );
+            program.add_instruction(Instruction::ComprehensionEnd {}, None);
+            program.add_instruction(Instruction::Return { value: 0 }, None);
+            program.max_rule_window_size = 8;
+            program.dispatch_window_size = 8;
+            let program = Arc::new(program);
+            for execution_mode in MODES {
+                let r = run_program(&program, "{}", execution_mode, false);
+                let emissions: Vec<_> = r
+                    .events
+                    .iter()
+                    .filter_map(|e| match &e.event {
+                        Event::ComprehensionEmission {
+                            begin_pc,
+                            key,
+                            value,
+                            ..
+                        } => {
+                            assert!(e.context.unwrap().in_comprehension);
+                            Some((*begin_pc, key.clone(), value.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if invalid_result {
+                    assert!(r.result.is_err());
+                    assert!(emissions.is_empty());
+                } else {
+                    let is_object = matches!(mode, ComprehensionMode::Object);
+                    assert_eq!(
+                        emissions,
+                        [
+                            (1, is_object.then(|| v("0")), v("10")),
+                            (1, is_object.then(|| v("1")), v("20")),
+                        ]
+                    );
+                    let expected = match mode {
+                        ComprehensionMode::Array => v("[10,20]"),
+                        ComprehensionMode::Set => {
+                            Value::from(std::collections::BTreeSet::from([v("10"), v("20")]))
+                        }
+                        ComprehensionMode::Object => {
+                            Value::from(std::collections::BTreeMap::from([
+                                (v("0"), v("10")),
+                                (v("1"), v("20")),
+                            ]))
+                        }
+                    };
+                    assert_eq!(r.result.as_ref().unwrap(), &expected);
+                }
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(execution_mode);
+                assert_eq!(
+                    format!("{:?}", execute(&mut vm, execution_mode)),
+                    format!("{:?}", r.result),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn comprehension_yields_survive_suspension_without_replaying() {
+    let mut engine = Engine::new();
+    engine
+        .add_policy(
+            "test.rego".into(),
+            "package t\nh(y) := lookup(y)\nc := [h(y) | some y in input.xs]\nafter := [c, 9]\n"
+                .into(),
+        )
+        .unwrap();
+    let compiled = engine
+        .compile_with_entrypoint(&Rc::from("data.t.after"))
+        .unwrap();
+    let program = Compiler::compile_from_policy_with_host_await(
+        &compiled,
+        &["data.t.after"],
+        &[("lookup", 1)],
+    )
+    .unwrap();
+    let fixture = Fixture::default();
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.set_explanation_recorder(Box::new(fixture.clone()));
+    vm.set_input(v(r#"{"xs":[1,2]}"#));
+    vm.execute().unwrap();
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    let mut events = fixture.take();
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e.event, Event::ComprehensionEmission { .. })));
+    vm.resume(Some(v("10"))).unwrap();
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Suspended { .. }
+    ));
+    events.extend(fixture.take());
+    vm.resume(Some(v("20"))).unwrap();
+    assert!(
+        matches!(vm.execution_state(), ExecutionState::Completed { result } if result == &v("[[10,20],9]"))
+    );
+    events.extend(fixture.take());
+    let yields: Vec<_> = events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ComprehensionEmission {
+                begin_pc, value, ..
+            } => {
+                assert!(e.context.unwrap().in_comprehension);
+                Some((*begin_pc, value.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(yields.len(), 2);
+    assert_eq!(yields, [(yields[0].0, v("10")), (yields[0].0, v("20"))]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e.event, Event::Reset))
+            .count(),
+        1
+    );
+    assert!(events
+        .iter()
+        .filter(|e| matches!(e.event, Event::BodyEnd { .. })
+            && e.context.unwrap().rule_index == Some(0))
+        .all(|e| !e.context.unwrap().in_comprehension));
 }
 
 #[test]

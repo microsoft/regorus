@@ -83,8 +83,8 @@ mod tests;
 pub use error::ExplainError;
 pub use provenance::{CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
 pub use recorder::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, EmissionEvent, ExplanationRecorder, HookContext,
-    NotCapturedEvent, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent,
+    EmissionEvent, ExplanationRecorder, HookContext, NotCapturedEvent, UncapturedConstruct,
 };
 pub use report::{
     ConcretePath, ConditionExplanation, ConditionKind, ConditionOwner, ConditionSite, Count,

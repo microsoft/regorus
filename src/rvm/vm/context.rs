@@ -103,6 +103,8 @@ pub struct CallRuleContext {
 /// Context for tracking active comprehensions
 #[derive(Debug, Clone)]
 pub(super) struct ComprehensionContext {
+    #[cfg(feature = "explanations")]
+    pub(super) begin_pc: usize,
     /// Type of comprehension (Array, Set, Object)
     pub(super) mode: ComprehensionMode,
     /// Register storing the comprehension result collection
