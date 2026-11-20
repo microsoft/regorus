@@ -503,7 +503,8 @@ impl RegoVM {
     /// With strict builtin errors, an ordering comparison of values of
     /// different types raised an error instead of writing `dest`. Reported
     /// only when the comparison is checked, as decoded for guards: directly
-    /// (an undefined comparison) or under `not` (a failed negation).
+    /// (an undefined comparison, or undefined truthiness when the destination
+    /// aliases an operand) or under `not` (a failed negation).
     #[cold]
     #[inline(never)]
     pub(super) fn explain_comparison_error(

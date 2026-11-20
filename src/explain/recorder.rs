@@ -117,10 +117,11 @@ pub struct HookContext {
 ///   [`Undefined`](Value::Undefined), and the outcome is
 ///   [`Failure`](Outcome::Failure) when `v` and `xs` are defined.
 /// - [`Truthiness`](ConditionKind::Truthiness): `left` is the checked value.
-///   A directly guarded strict ordering comparison whose destination aliases an
-///   operand is reported this way, matching its static check site. If it
-///   errors before writing the destination, `left` is the undefined
-///   expression result, not the stale value still held by that register.
+///   A directly guarded equality, ordering or containment operation whose
+///   destination aliases an operand is reported this way, matching its static
+///   check site, regardless of strict builtin error handling. If a strict
+///   ordering comparison errors before writing the destination, `left` is the
+///   undefined expression result, not the stale value held by that register.
 /// - [`Negation`](ConditionKind::Negation): the operands describe the negated
 ///   expression: a comparison or membership as above, otherwise `left` is its
 ///   value. The outcome is that of the negation, which is never
