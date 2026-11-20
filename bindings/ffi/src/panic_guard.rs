@@ -332,6 +332,28 @@ mod tests {
     fn concurrent_guarded_panics_keep_their_messages_and_the_host_hook() {
         const THREADS: usize = 8;
         const ITERATIONS: usize = 40;
+        const CHILD_ENV: &str = "REGORUS_FFI_PANIC_HOOK_TEST_CHILD";
+
+        // Replacing the process hook would disturb concurrently running tests, so the
+        // checks run in a child process that executes only this test.
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "panic_guard::tests::concurrent_guarded_panics_keep_their_messages_and_the_host_hook",
+                    "--test-threads=1",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("failed to run the hook test in a child process");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "child process failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
 
         // `catch_panic` never touches the poison flag, so this test does not take the
         // poison test gate; it is the only test that replaces the process hook.
