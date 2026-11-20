@@ -731,3 +731,19 @@ fn negated_nested_call_after_error_in_other_module() -> Result<()> {
     }
     Ok(())
 }
+
+/// `print` accepts Undefined arguments, so they are not lifted out of a
+/// negated `print`: it still prints `<undefined>`.
+#[test]
+fn negated_print_prints_undefined_arguments() -> Result<()> {
+    let mut engine = new_engine("package test\ny if not print(count(input.v))", false)?;
+    engine.set_gather_prints(true);
+    engine.set_input(Value::from_json_str(r#"{"v": 5}"#)?);
+    assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, Value::Undefined);
+    let prints = engine.take_prints()?;
+    assert!(
+        matches!(prints.as_slice(), [p] if p.ends_with("<undefined>")),
+        "{prints:?}"
+    );
+    Ok(())
+}
