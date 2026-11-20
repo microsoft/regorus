@@ -9,7 +9,8 @@
 //! Undefined, for example because a builtin fails without strict mode or a
 //! function is undefined for its arguments, the enclosing body fails instead
 //! of `not` turning the Undefined into `true`. A failure of the negated call
-//! itself (`not count(x)`) still makes `not` succeed.
+//! itself (`not count(x)`) still makes `not` succeed. The arguments of a
+//! negated builtin `print`, which accepts Undefined arguments, are not lifted.
 //!
 //! Each case in `cases` runs in the interpreter and in both RVM execution
 //! modes, with and without strict builtin errors, and has a twin whose nested
@@ -744,13 +745,15 @@ fn negated_nested_call_after_error_in_other_module() -> Result<()> {
 }
 
 /// `print` accepts Undefined arguments, so they are not lifted out of a
-/// negated builtin `print`: it still prints `<undefined>`.
+/// negated builtin `print`: it still prints `<undefined>`. Only the prints
+/// are checked: OPA returns true for `y`, the interpreter Undefined (a
+/// divergence that predates lifting).
 #[test]
 fn negated_print_prints_undefined_arguments() -> Result<()> {
     let mut engine = new_engine("package test\ny if not print(count(input.v))", false)?;
     engine.set_gather_prints(true);
     engine.set_input(Value::from_json_str(r#"{"v": 5}"#)?);
-    assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, Value::Undefined);
+    engine.eval_rule(ENTRYPOINT.to_string())?;
     let prints = engine.take_prints()?;
     assert!(
         matches!(prints.as_slice(), [p] if p.ends_with("<undefined>")),
