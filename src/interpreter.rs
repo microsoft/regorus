@@ -2908,7 +2908,7 @@ impl Interpreter {
             && !self.extensions.contains_key("print")
     }
 
-    fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
+    fn eval_print(&mut self, span: &Span, args: Vec<Value>) -> Result<Value> {
         const MAX_ARGS: u8 = 100;
         if args.len() > usize::from(MAX_ARGS) {
             bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
@@ -2922,11 +2922,11 @@ impl Interpreter {
         }
 
         let mut msg = String::default();
-        for (i, p) in params.iter().enumerate() {
+        for (i, a) in args.into_iter().enumerate() {
             if i > 0 {
                 msg.push(' ');
             }
-            match self.eval_expr(p)? {
+            match a {
                 Value::Undefined => msg.push_str("<undefined>"),
                 // Do not print quotes for string values.
                 Value::String(s) => msg.push_str(&format!("{s}")),
@@ -3034,7 +3034,7 @@ impl Interpreter {
                     extension = Some(ext);
                     (&empty, None)
                 } else if selected_fcn_path == "print" {
-                    return self.eval_print(span, params, param_values);
+                    return self.eval_print(span, param_values);
                 }
                 // Look up builtin function.
                 else if let Some(builtin) = Self::lookup_builtin(span, &selected_fcn_path)? {

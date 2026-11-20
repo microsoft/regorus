@@ -759,6 +759,25 @@ fn negated_print_prints_undefined_arguments() -> Result<()> {
     Ok(())
 }
 
+/// `print` evaluates each argument once, negated or not, as OPA does: `h`
+/// prints once.
+#[test]
+fn print_evaluates_arguments_once() -> Result<()> {
+    let h = "package test\n\nh(x) := 0 if {\n  print(\"h\")\n  x == 0\n}\n\n";
+    for rule in ["y if print(h(input.v))", "y if not print(h(input.v))"] {
+        let mut engine = new_engine(&format!("{h}{rule}\n"), false)?;
+        engine.set_gather_prints(true);
+        engine.set_input(Value::from_json_str(r#"{"v": 0}"#)?);
+        engine.eval_rule(ENTRYPOINT.to_string())?;
+        let prints = engine.take_prints()?;
+        assert!(
+            matches!(prints.as_slice(), [h, p] if h.ends_with(" h") && p.ends_with(" 0")),
+            "{rule}: {prints:?}"
+        );
+    }
+    Ok(())
+}
+
 /// An imported function named `print` shadows the builtin, so calls in its
 /// arguments are lifted out of `not` as usual (OPA: `y` is undefined).
 #[test]
