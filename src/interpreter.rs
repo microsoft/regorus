@@ -3015,10 +3015,10 @@ impl Interpreter {
                 {
                     // Execute the destructuring plan with the parameter value.
                     // Its expressions belong to the callee's module.
-                    let caller_module_idx =
+                    let saved_module_index =
                         core::mem::replace(&mut self.current_module_index, callee_module_idx);
                     let bound = self.execute_destructuring_plan(&destructuring_plan, param_value);
-                    self.current_module_index = caller_module_idx;
+                    self.current_module_index = saved_module_index;
                     bound? == Value::from(true)
                 } else {
                     // Raise error if binding plan is not found
