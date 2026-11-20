@@ -597,6 +597,13 @@ impl RegoVM {
                     }
                 }
                 Ok(InstructionOutcome::Suspend { reason }) => {
+                    // Only an explicit suspension leaves the frame on its own instruction;
+                    // Continue already advanced it, and a pushed callee frame owns its pc.
+                    if let Some(frame) = self.execution_stack.last_mut() {
+                        if !self.frame_pc_overridden && frame.pc <= self.pc {
+                            frame.pc = self.pc.saturating_add(1);
+                        }
+                    }
                     self.handle_instruction_suspend(reason, last_result);
                     return Ok(());
                 }
@@ -617,12 +624,6 @@ impl RegoVM {
     }
 
     fn handle_instruction_suspend(&mut self, reason: SuspendReason, last_result: &Value) {
-        if let Some(frame) = self.execution_stack.last_mut() {
-            if !self.frame_pc_overridden && frame.pc <= self.pc {
-                frame.pc = self.pc.saturating_add(1);
-            }
-        }
-
         self.snapshot_execution_timer_on_suspend();
         self.execution_state = ExecutionState::Suspended {
             reason,
