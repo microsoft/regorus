@@ -697,3 +697,37 @@ fn query_operator_after_evaluating_all_data() -> Result<()> {
     }
     Ok(())
 }
+
+/// A strict error raised by the default rule of another module while a
+/// negated expression is evaluated does not leave its lifted calls cached:
+/// a reused engine returns what a fresh engine (and OPA) returns for later
+/// inputs.
+#[test]
+fn negated_nested_call_after_error_in_other_module() -> Result<()> {
+    let lib = large_lib("d := 1 if input.ok\ndefault d := [count(input.x) | true]\n");
+    let new_engine = || -> Result<Engine> {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(true);
+        engine.add_policy("lib.rego".to_string(), lib.clone())?;
+        engine.add_policy(
+            "test.rego".to_string(),
+            "package test\ny if not count(input.v) == data.lib.d".to_string(),
+        )?;
+        Ok(engine)
+    };
+    let mut engine = new_engine()?;
+    for (input, want) in [
+        (r#"{"v": [1, 2], "ok": false, "x": 5}"#, None),
+        (r#"{"v": [1], "ok": true, "x": []}"#, Some(UNDEFINED)),
+        (r#"{"v": 5, "ok": true, "x": []}"#, None),
+        (r#"{"v": [1, 2], "ok": true, "x": []}"#, Some("true")),
+    ] {
+        engine.set_input(Value::from_json_str(input)?);
+        let got = engine.eval_rule(ENTRYPOINT.to_string());
+        match want {
+            Some(want) => assert_eq!(got?, want_value(want)?, "input {input}"),
+            None => assert!(got.is_err(), "input {input}: {got:?}"),
+        }
+    }
+    Ok(())
+}
