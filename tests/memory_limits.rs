@@ -2576,3 +2576,204 @@ fn partial_eval_warning_after_vm_error_is_budgeted() {
         );
     }
 }
+
+#[cfg(feature = "explanations")]
+fn partial_eval_temporary_vm(filename: Option<String>) -> RegoVM {
+    use regorus::rvm::program::SpanInfo;
+
+    let mut program = Program::new();
+    let span = filename.map(|name| {
+        let source = program.add_source(name, "input".into());
+        SpanInfo::new(source, 1, 1, 5)
+    });
+    program.add_instruction(
+        if span.is_some() {
+            Instruction::LoadInput { dest: 0 }
+        } else {
+            Instruction::LoadTrue { dest: 0 }
+        },
+        span,
+    );
+    program.add_instruction(Instruction::Return { value: 0 }, None);
+    program.add_entry_point("entry".into(), 0);
+    let mut vm = RegoVM::new();
+    vm.load_program(Arc::new(program));
+    vm
+}
+
+#[cfg(feature = "explanations")]
+fn partial_eval_temporary_check(
+    vm: &mut RegoVM,
+    budget: u64,
+    guard: LimitGuard,
+) -> Result<regorus::explain::PartialEvalResult, regorus::explain::ExplainError> {
+    use regorus::explain::ExplainError;
+
+    vm.set_memory_budget_config(Some(memory_budget(budget)));
+    let before = mimalloc::current_thread_allocation_stats();
+    let result = vm.partial_eval("entry");
+    let after = mimalloc::current_thread_allocation_stats();
+    drop(guard);
+    assert!(
+        before.peak - before.allocated < budget as i64,
+        "setup must not hide the evaluation peak: {before:?}"
+    );
+    let memory_error = matches!(
+        result,
+        Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+    );
+    let peak = after.peak - before.allocated;
+    eprintln!("partial evaluation: budget={budget}, peak={peak}, memory_error={memory_error}");
+    // Eliminating a temporary is as valid as checking it while it is live.
+    assert!(
+        memory_error || peak <= budget as i64,
+        "transient allocation escaped the VM budget: budget={budget}, \
+         before={before:?}, after={after:?}"
+    );
+    result
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_temporary_lookup_peak_is_accounted() {
+    use regorus::explain::{PartialEvalSettings, ResidualStatus, UnknownPath, UnknownRoot};
+
+    for root in [UnknownRoot::Input, UnknownRoot::Context] {
+        for key_len in [8, 40 * 1024] {
+            std::thread::spawn(move || {
+                let guard = LimitGuard::lock();
+                let mut vm = partial_eval_temporary_vm(None);
+                vm.set_input(Value::new_object());
+                vm.set_context(Value::new_object());
+                let key = "x".repeat(key_len);
+                let mut settings = PartialEvalSettings::default();
+                settings.unknowns = vec![UnknownPath::new(
+                    root,
+                    vec![regorus::explain::PathSegment::Key(key)],
+                )];
+                vm.set_partial_eval_settings(settings);
+                let result = partial_eval_temporary_check(&mut vm, 64 * 1024, guard);
+                if key_len == 8 {
+                    assert!(result.is_ok(), "small absent key must fit: {result:?}");
+                }
+                if let Ok(report) = result {
+                    assert_eq!(report.status, ResidualStatus::Exact);
+                    assert_eq!(report.result, Value::Bool(true));
+                }
+                let guard = LimitGuard::lock();
+                vm.set_memory_budget_config(None);
+                let report = vm.partial_eval("entry");
+                vm.set_partial_eval_settings(PartialEvalSettings::default());
+                let reused = vm.partial_eval("entry");
+                drop(guard);
+                let report = report.unwrap();
+                assert_eq!(report.status, ResidualStatus::Exact);
+                assert_eq!(report.result, Value::Bool(true));
+                assert_eq!(reused.unwrap().result, Value::Bool(true));
+            })
+            .join()
+            .expect("lookup peak test thread");
+        }
+    }
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_temporary_path_rendering_peak_is_accounted() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, UnknownPath};
+
+    for key in ["λ\"\\\n".into(), "x".repeat(20 * 1024)] {
+        std::thread::spawn(move || {
+            let guard = LimitGuard::lock();
+            let mut vm = partial_eval_temporary_vm(None);
+            let input =
+                regorus::value::Object::from_iter([(Value::from(key.as_str()), Value::Bool(true))])
+                    .into();
+            vm.set_input(input);
+            let mut settings = PartialEvalSettings::default();
+            settings.unknowns = vec![UnknownPath::input_keys([key.as_str()])];
+            vm.set_partial_eval_settings(settings);
+            let result = partial_eval_temporary_check(&mut vm, 96 * 1024, guard);
+            if key.len() < 1024 {
+                assert!(matches!(
+                    result,
+                    Err(ExplainError::UnknownValueSupplied { .. })
+                ));
+            }
+            assert!(matches!(
+                result,
+                Err(ExplainError::UnknownValueSupplied { .. })
+                    | Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+            ));
+            let guard = LimitGuard::lock();
+            vm.set_memory_budget_config(None);
+            let expected = Value::from(key.as_str())
+                .to_json_str_compact()
+                .map(|quoted| format!("input[{quoted}]"));
+            let diagnostic = vm.partial_eval("entry");
+            vm.set_partial_eval_settings(PartialEvalSettings::default());
+            let reused = vm.partial_eval("entry");
+            drop(guard);
+            match diagnostic {
+                Err(ExplainError::UnknownValueSupplied { path }) => {
+                    assert_eq!(path, expected.unwrap());
+                }
+                other => panic!("expected supplied-value diagnostic, got {other:?}"),
+            }
+            assert_eq!(reused.unwrap().result, Value::Bool(true));
+        })
+        .join()
+        .expect("path rendering peak test thread");
+    }
+}
+
+#[cfg(feature = "explanations")]
+#[test]
+fn partial_eval_temporary_warning_peak_is_accounted() {
+    use regorus::explain::{PartialEvalSettings, ResidualStatus, UnknownPath};
+
+    for filename_len in [8, 40 * 1024] {
+        std::thread::spawn(move || {
+            let guard = LimitGuard::lock();
+            let mut vm = partial_eval_temporary_vm(Some("p".repeat(filename_len)));
+            vm.set_input(Value::new_object());
+            let mut settings = PartialEvalSettings::default();
+            settings.unknowns = vec![UnknownPath::input_keys(["foo"])];
+            vm.set_partial_eval_settings(settings);
+            let result = partial_eval_temporary_check(&mut vm, 64 * 1024, guard);
+            if filename_len == 8 {
+                assert!(result.is_ok(), "small warning must fit: {result:?}");
+            }
+            if let Ok(report) = result {
+                assert_eq!(report.status, ResidualStatus::Unsupported);
+                assert_eq!(report.warnings.len(), 1);
+            } else {
+                assert!(matches!(
+                    vm.execution_state(),
+                    ExecutionState::Error {
+                        error: VmError::MemoryBudgetExceeded { .. }
+                    }
+                ));
+                assert!(vm.get_registers().is_empty());
+            }
+            let guard = LimitGuard::lock();
+            vm.set_memory_budget_config(None);
+            let report = vm.partial_eval("entry");
+            vm.set_partial_eval_settings(PartialEvalSettings::default());
+            let reused = vm.partial_eval("entry");
+            drop(guard);
+            let report = report.unwrap();
+            assert_eq!(report.status, ResidualStatus::Unsupported);
+            assert_eq!(
+                report.warnings,
+                vec![format!(
+                    "partial evaluation unsupported: `input` has unknown paths and is read at {}:1:1",
+                    "p".repeat(filename_len)
+                )]
+            );
+            assert_eq!(reused.unwrap().status, ResidualStatus::Exact);
+        })
+        .join()
+        .expect("warning peak test thread");
+    }
+}

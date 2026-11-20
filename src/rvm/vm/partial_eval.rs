@@ -23,7 +23,7 @@ use super::execution_model::ExecutionMode;
 use super::machine::RegoVM;
 use crate::explain::{
     ExplainError, PartialEvalResult, PartialEvalSettings, PathSegment, ResidualStatus, RuleKind,
-    SourceLocation, UnknownRoot,
+    UnknownRoot,
 };
 use crate::rvm::instructions::Instruction;
 use crate::rvm::program::Program;
@@ -32,6 +32,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt::Write as _;
 
 type Path = (UnknownRoot, Vec<PathSegment>);
 
@@ -61,16 +62,6 @@ impl PeState {
     }
 }
 
-/// The value at `segment` of `value`, as Rego indexes it: a key also
-/// selects a set member and an index an object's number key, so any value a
-/// policy could read at an unknown path counts as supplied.
-fn index(value: &Value, segment: &PathSegment) -> Value {
-    match *segment {
-        PathSegment::Key(ref key) => value[&Value::from(key.as_str())].clone(),
-        PathSegment::Index(i) => value[&Value::from(i)].clone(),
-    }
-}
-
 const fn root_name(root: UnknownRoot) -> &'static str {
     match root {
         UnknownRoot::Input => "input",
@@ -90,13 +81,22 @@ fn render_path(
     for segment in segments {
         match *segment {
             PathSegment::Key(ref key) => {
-                let quoted = Value::from(key.as_str())
+                let key_value = Value::from(key.as_str());
+                checkpoint()?;
+                #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+                let quoted = key_value.to_json_str_with_checkpoint(checkpoint)?;
+                #[cfg(any(not(feature = "allocator-memory-limits"), miri))]
+                let quoted = key_value
                     .to_json_str_compact()
                     .map_err(super::VmError::from)?;
                 checkpoint()?;
-                text.push_str(&format!("[{quoted}]"));
+                drop(key_value);
+                let _ = write!(text, "[{quoted}]");
+                checkpoint()?;
             }
-            PathSegment::Index(i) => text.push_str(&format!("[{i}]")),
+            PathSegment::Index(i) => {
+                let _ = write!(text, "[{i}]");
+            }
         }
         checkpoint()?;
     }
@@ -263,7 +263,13 @@ impl RegoVM {
                 UnknownRoot::Context => self.context.clone(),
             };
             for segment in segments {
-                value = index(&value, segment);
+                // Rego keys also select set members, and indices select numeric object keys.
+                let key = match *segment {
+                    PathSegment::Key(ref key) => Value::from(key.as_str()),
+                    PathSegment::Index(index) => Value::from(index),
+                };
+                self.check_initial_memory_limit()?;
+                value = value[&key].clone();
                 self.check_initial_memory_limit()?;
             }
             // The VM's input is null until it is set; its context is undefined.
@@ -310,23 +316,18 @@ impl RegoVM {
     }
 }
 
-fn location(program: &Program, pc: usize) -> Option<SourceLocation> {
-    let span = program.get_instruction_span(pc)?;
-    Some(SourceLocation {
-        file: program.sources.get(span.source_index)?.name.clone(),
-        line: span.line,
-        column: span.column,
-    })
-}
-
 fn warning(program: &Program, reason: Reason, pc: usize) -> String {
-    let at = location(program, pc)
-        .map(|l| format!(" at {}:{}:{}", l.file, l.line, l.column))
-        .unwrap_or_default();
-    let text = match reason {
-        Reason::RootRead(root) => format!("`{}` has unknown paths and is read", root_name(root)),
-    };
-    format!("partial evaluation unsupported: {text}{at}")
+    let Reason::RootRead(root) = reason;
+    let mut text = format!(
+        "partial evaluation unsupported: `{}` has unknown paths and is read",
+        root_name(root)
+    );
+    if let Some(span) = program.get_instruction_span(pc) {
+        if let Some(source) = program.sources.get(span.source_index) {
+            let _ = write!(text, " at {}:{}:{}", source.name, span.line, span.column);
+        }
+    }
+    text
 }
 
 #[cfg(test)]
