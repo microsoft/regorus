@@ -28,8 +28,6 @@ use super::normalizer::{apply_element_remap, ElementRemap};
 use casing::{build_casing_map, default_casing_map, denormalize_value, restore_casing};
 use helpers::find_key_ci;
 
-use super::obj_map::remove_element_field;
-
 /// Denormalize a normalized resource back to ARM JSON structure.
 pub fn denormalize(
     normalized: &Value,
@@ -193,7 +191,6 @@ pub fn denormalize_with_aliases(
                     },
                 };
                 apply_element_remap(&mut properties, &remap, false);
-                remove_element_field(&mut properties, &rev.array_chain, &rev.cleanup_field);
             }
         }
     }
