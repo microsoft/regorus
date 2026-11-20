@@ -11,11 +11,13 @@
 //! of `not` turning the Undefined into `true`. A failure of the negated call
 //! itself (`not count(x)`) still makes `not` succeed.
 //!
-//! Each case runs in the interpreter and in both RVM execution modes, with and
-//! without strict builtin errors, and has a twin whose nested calls succeed.
-//! The expected values were checked against OPA 1.2.0 with and without
-//! `--strict-builtin-errors`, with operands read from input so that OPA's type
-//! checker cannot reject the policies at compile time.
+//! Each case in `cases` runs in the interpreter and in both RVM execution
+//! modes, with and without strict builtin errors, and has a twin whose nested
+//! calls succeed. The expected values were checked against OPA 1.2.0 with and
+//! without `--strict-builtin-errors`, with operands read from input so that
+//! OPA's type checker cannot reject the policies at compile time. The other
+//! tests cover interpreter-specific behavior (call counts, query results and
+//! per-module lookups) and run in the interpreter only.
 
 use anyhow::{bail, Result};
 use regorus::languages::rego::compiler::Compiler;
@@ -589,6 +591,46 @@ fn operator_in_parameter_pattern_of_other_module() -> Result<()> {
         "package test\ny if { data.lib.f(2); not data.lib.f(3) }".to_string(),
     )?;
     assert_eq!(engine.eval_rule(ENTRYPOINT.to_string())?, Value::from(true));
+    Ok(())
+}
+
+/// Every `some .. in` iteration starts from the query result before the loop,
+/// whether the previous iteration failed or succeeded. OPA returns one result
+/// with two expressions for each successful iteration of these queries.
+#[test]
+fn some_in_iterations_start_from_the_loop_result() -> Result<()> {
+    for (query, input, strict, want) in [
+        (
+            "some x in input.vs; not count(x) == 1",
+            r#"{"vs": [5, [1, 2], [3, 4], 7, [5, 6]]}"#,
+            false,
+            vec![r#"{"x": [1, 2]}"#, r#"{"x": [3, 4]}"#, r#"{"x": [5, 6]}"#],
+        ),
+        (
+            "some x in [[1, 2], [3, 4]]; count(x) == 2",
+            "{}",
+            true,
+            vec![r#"{"x": [1, 2]}"#, r#"{"x": [3, 4]}"#],
+        ),
+        ("some x in [1, 2]; x == 2", "{}", true, vec![r#"{"x": 2}"#]),
+    ] {
+        let mut engine = Engine::new();
+        engine.set_strict_builtin_errors(strict);
+        engine.set_input(Value::from_json_str(input)?);
+        let results = engine.eval_query(query.to_string(), false)?;
+        assert_eq!(results.result.len(), want.len(), "{query}: {results:?}");
+        for (result, bindings) in results.result.iter().zip(want) {
+            assert_eq!(result.bindings, Value::from_json_str(bindings)?);
+            assert_eq!(result.expressions.len(), 2, "{query}: {results:?}");
+            assert!(
+                result
+                    .expressions
+                    .iter()
+                    .all(|e| e.value == Value::from(true)),
+                "{query}: {results:?}"
+            );
+        }
+    }
     Ok(())
 }
 
