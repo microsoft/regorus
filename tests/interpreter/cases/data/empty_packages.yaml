@@ -1,0 +1,248 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: empty packages read via data
+    data:
+      b:
+        v: 1
+    modules:
+      - |
+        package e
+      - |
+        package e.f
+      - |
+        package p
+
+        x := 1
+      - |
+        package p.g
+    query: data
+    want_result:
+      b:
+        v: 1
+      e:
+        f: {}
+      p:
+        g: {}
+        x: 1
+
+  - note: empty packages listed first, read via data
+    data:
+      b:
+        v: 1
+    modules:
+      - |
+        package e.f
+      - |
+        package p.g
+      - |
+        package e
+      - |
+        package p
+
+        x := 1
+    query: data
+    want_result:
+      b:
+        v: 1
+      e:
+        f: {}
+      p:
+        g: {}
+        x: 1
+
+  - note: empty package read directly
+    modules:
+      - |
+        package e
+      - |
+        package e.f
+      - |
+        package p
+
+        x := 1
+    query: data.e
+    want_result:
+      f: {}
+
+  - note: nested empty package read directly
+    modules:
+      - |
+        package e.f
+      - |
+        package e
+      - |
+        package p
+
+        x := 1
+    query: data.e.f
+    want_result: {}
+
+  - note: empty package below a package with rules
+    modules:
+      - |
+        package p.g
+      - |
+        package p
+
+        x := 1
+    query: data.p
+    want_result:
+      g: {}
+      x: 1
+
+  - note: empty packages read from another package
+    modules:
+      - |
+        package q
+        import rego.v1
+
+        e := data.e
+        ef := data.e.f
+        p := data.p
+        pg := data.p.g
+        ce := count(data.e)
+        kp := sort(object.keys(data.p))
+        ek := sort({k | data.e[k]})
+        pk := sort({k | data.p[k]})
+      - |
+        package e
+      - |
+        package e.f
+      - |
+        package p
+
+        x := 1
+      - |
+        package p.g
+    query: data.q
+    want_result:
+      ce: 1
+      e:
+        f: {}
+      ef: {}
+      ek: [f]
+      kp: [g, x]
+      p:
+        g: {}
+        x: 1
+      pg: {}
+      pk: [g, x]
+
+  - note: empty packages read from another package listed last
+    modules:
+      - |
+        package e
+      - |
+        package e.f
+      - |
+        package p
+
+        x := 1
+      - |
+        package p.g
+      - |
+        package q
+        import rego.v1
+
+        e := data.e
+        ef := data.e.f
+        p := data.p
+        pg := data.p.g
+        ce := count(data.e)
+        kp := sort(object.keys(data.p))
+        ek := sort({k | data.e[k]})
+        pk := sort({k | data.p[k]})
+    query: data.q
+    want_result:
+      ce: 1
+      e:
+        f: {}
+      ef: {}
+      ek: [f]
+      kp: [g, x]
+      p:
+        g: {}
+        x: 1
+      pg: {}
+      pk: [g, x]
+
+  - note: empty package shadowed by base data
+    data:
+      e:
+        k: 1
+    modules:
+      - |
+        package e
+      - |
+        package e.f
+    query: data.e
+    want_result:
+      f: {}
+      k: 1
+
+  - note: nested empty package shadowed by base data
+    data:
+      e:
+        f:
+          z: 1
+    modules:
+      - |
+        package e
+      - |
+        package e.f
+    query: data
+    want_result:
+      e:
+        f:
+          z: 1
+
+  - note: empty packages shadowed by base data read from another package
+    data:
+      e:
+        k: 1
+        f:
+          z: 1
+      p:
+        y: 2
+    modules:
+      - |
+        package q
+        import rego.v1
+
+        e := data.e
+        ef := data.e.f
+        p := data.p
+        pg := data.p.g
+        ce := count(data.e)
+        kp := sort(object.keys(data.p))
+        ek := sort({k | data.e[k]})
+        pk := sort({k | data.p[k]})
+      - |
+        package e
+      - |
+        package e.f
+      - |
+        package p
+
+        x := 1
+      - |
+        package p.g
+    query: data.q
+    want_result:
+      ce: 2
+      e:
+        f:
+          z: 1
+        k: 1
+      ef:
+        z: 1
+      ek: [f, k]
+      kp: [g, x, y]
+      p:
+        g: {}
+        x: 1
+        y: 2
+      pg: {}
+      pk: [g, x, y]

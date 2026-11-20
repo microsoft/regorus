@@ -1,0 +1,244 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: package without rules below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+    query: data.q
+    want_result:
+      p: str
+      r: {}
+
+  - note: package without rules two levels below a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+        c := data.a.b.c
+    query: data.q
+    want_result:
+      p:
+        b: str
+      r: str
+      c: {}
+
+  - note: packages without rules below a string in base data merge when read
+    data:
+      a: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package a.b.d
+      - |
+        package q
+        import rego.v1
+
+        r := data.a.b
+        k := v if {
+          x := "b"
+          v := data.a[x]
+        }
+        w := v if {
+          v := data.a.b with data.a as "x"
+        }
+        n := data.a.b.c.e
+        wz := v if {
+          v := data.a.b with data.z as 1
+        }
+        ks := {key | some key; data.a.b[key]}
+    query: data.q
+    want_result:
+      r:
+        c: {}
+        d: {}
+      k:
+        c: {}
+        d: {}
+      wz:
+        c: {}
+        d: {}
+      ks:
+        set!: [c, d]
+
+  - note: package without rules below a string in base data, read via data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b.c
+    query: data
+    want_result:
+      a: str
+
+  - note: package without rules three levels below a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c.d
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+        c := data.a.b.c
+        d := data.a.b.c.d
+    query: data.q
+    want_result:
+      p:
+        b: str
+      r: str
+      c:
+        d: {}
+      d: {}
+
+  - note: package without rules below an array in base data, read from query
+    data:
+      a: [1]
+    modules:
+      - |
+        package a.b
+    query: data.a
+    want_result: [1]
+
+  - note: package without rules at a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b
+    query: data.a
+    want_result:
+      b: str
+
+  - note: package without rules below an object in base data
+    data:
+      a:
+        x: 1
+    modules:
+      - |
+        package a.b.c
+    query: data.a
+    want_result:
+      b:
+        c: {}
+      x: 1
+
+  - note: package without rules below missing base data
+    data: {}
+    modules:
+      - |
+        package a.b.c
+    query: data.a
+    want_result:
+      b:
+        c: {}
+
+  - note: package with rules below an object in base data
+    data:
+      a:
+        x: 1
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    want_result:
+      b:
+        x: 1
+      x: 1
+
+  - note: package with rules below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    error: not an object
+
+  - note: package with only functions below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+
+        f(v) := v
+    query: data.a
+    error: not an object
+
+  - note: package with rules at a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    error: not an object
+
+  - note: package without rules below a string produced by a rule
+    input:
+      x: str
+    modules:
+      - |
+        package a
+
+        b := input.x
+      - |
+        package a.b.c
+      - |
+        package q
+
+        x := data.a
+        y := data.a.b.c
+    query: data.q
+    want_result:
+      x:
+        b: str
+
+  - note: package without rules below a set produced by a rule
+    modules:
+      - |
+        package a
+        import rego.v1
+
+        s contains "x"
+      - |
+        package a.s.t
+      - |
+        package q
+
+        x := data.a
+        y := data.a.s.t
+    query: data.q
+    want_result:
+      x:
+        s:
+          set!: [x]
+
