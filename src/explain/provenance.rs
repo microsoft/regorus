@@ -562,6 +562,10 @@ fn writes(program: &Program, instruction: &Instruction) -> [Option<u8>; 3] {
             .map_or([None; 3], |p| {
                 [Some(p.key_reg), Some(p.value_reg), Some(p.result_reg)]
             }),
+        HistoryStep { params_index } => data
+            .history_step_params
+            .get(usize::from(params_index))
+            .map_or([None; 3], |p| [Some(p.dest), None, None]),
         Return { .. }
         | AssertEq { .. }
         | Guard { .. }
