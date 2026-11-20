@@ -581,6 +581,7 @@ pub fn partial_eval_unsupported_result() -> PartialEvalResult {
 
 pub fn known(value: Value, path: Option<&str>) -> Operand {
     Operand {
+        call_uses: None,
         value: ReportedValue::Known(value),
         path: path.map(String::from),
         concrete_path: ConcretePath::NotCaptured,
@@ -590,6 +591,7 @@ pub fn known(value: Value, path: Option<&str>) -> Operand {
 
 pub fn redacted(path: &str) -> Operand {
     Operand {
+        call_uses: None,
         value: ReportedValue::Redacted,
         path: Some(String::from(path)),
         concrete_path: ConcretePath::NotCaptured,

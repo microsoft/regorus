@@ -69,6 +69,12 @@
 //! not logical influence through intervening operations. Query-owned uses and
 //! scopes live in [`QueryTarget`]; conditions and proofs can identify their
 //! contributing use edges without changing the callee's evaluation owner.
+//! Query checks can retain binding names and loop witnesses. Standalone
+//! comprehension sites use [`ConditionKind::Comprehension`], not `Binding`.
+//! Use paths in rule proofs start at that proof's owning invocation, never
+//! with an external query/caller prefix; query-owned checks start at the query.
+//! [`Operand::call_uses`] distinguishes which calls contributed to each
+//! operand even when sibling calls return equal values.
 //! Per-result and per-proof [`Conditionality`] is unknown when not captured;
 //! bounded proofs cannot establish that omitted evidence was concrete.
 //! It describes producing contributions, not a guarantee that evaluation
@@ -88,6 +94,8 @@
 //! [`RuleOutcome::Conflict`] constructions now supply `key: None` when no
 //! object key was captured; exact variant patterns must account for `key`.
 //! These are source-breaking changes despite the outer `non_exhaustive`.
+//! Direct constructors also initialize optional query witness/binding and
+//! operand-use metadata, using `None` when uncaptured.
 //! JSON schema version 2 is retained: omitted bindings remain unknown, including
 //! older reports that omitted either empty or uncaptured bindings. Only an
 //! explicit empty array certifies that no contributing loop bindings exist.

@@ -254,6 +254,12 @@ pub struct QueryConditionExplanation {
     /// Contributing use paths; see [`ConditionExplanation::call_uses`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_uses: Option<Vec<Vec<u64>>>,
+    /// Iteration summary of a query-owned loop-backed check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<LoopWitness>,
+    /// Variable bound by this query check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
 }
 
 /// Explanation of one evaluation of a rule.
@@ -708,7 +714,11 @@ pub struct ConditionExplanation {
     /// Invocation that evaluated this check.
     pub owner: ConditionOwner,
     /// Contributing callee-use paths, each ordered from the containing
-    /// proof/query's caller toward a dependency. Sibling calls use separate
+    /// proof's owning invocation toward a dependency, or from the query for
+    /// query-owned checks. Outside a proof, start at this check's owner.
+    /// The first edge resolves in that root's `calls`; subsequent edges
+    /// resolve in the preceding callee's `calls`. Never embed an external
+    /// caller prefix in an invocation-owned proof. Sibling calls use separate
     /// paths, not one artificial chain. Each id resolves to [`CallUse::use_id`].
     /// For a copied callee check, a path identifies the use reaching its owner;
     /// for a caller-owned check, paths identify its contributing callee uses.
@@ -760,6 +770,9 @@ pub enum ConditionKind {
     Negation,
     /// A variable binding, `x := ...`, or captured parameter-binding evidence.
     Binding,
+    /// A standalone array, set or object comprehension construct site.
+    /// Its enclosing scope's [`ScopeKind`] identifies the collection kind.
+    Comprehension,
 }
 
 /// Operator of a comparison or membership condition.
@@ -848,6 +861,11 @@ pub struct Operand {
     /// concrete path capture and subject to its redaction rules. `None`
     /// means not captured, not no dependencies.
     pub origins: Option<CausalOrigins>,
+    /// Callee-use paths contributing to this operand, with the same root
+    /// and continuity rules as [`ConditionExplanation::call_uses`].
+    /// Distinguishes equal-valued sibling operands without parsing text.
+    /// `None` means uncaptured; `Some([])` means no callee use contributed.
+    pub call_uses: Option<Vec<Vec<u64>>>,
 }
 
 impl Serialize for Operand {
@@ -857,6 +875,7 @@ impl Serialize for Operand {
             true,
             is_reported(Some(&self.value)),
             self.origins.is_some(),
+            self.call_uses.is_some(),
         ]);
         let mut state = serializer.serialize_struct("Operand", len)?;
         match self.path {
@@ -868,6 +887,10 @@ impl Serialize for Operand {
         match self.origins {
             Some(ref origins) => state.serialize_field("origins", origins)?,
             None => state.skip_field("origins")?,
+        }
+        match self.call_uses {
+            Some(ref paths) => state.serialize_field("call_uses", paths)?,
+            None => state.skip_field("call_uses")?,
         }
         state.end()
     }
@@ -973,7 +996,8 @@ pub struct Derivation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditionality: Option<Conditionality>,
     /// Contributing callee-use ids, resolving to [`CallUse::use_id`] across
-    /// the report's query and rule lists. Includes nested uses, not failed
+    /// the owning invocation's calls and their descendants, never its
+    /// external caller/query prefixes. Includes nested uses, not failed
     /// alternatives. `None` means not captured; `Some([])` means none
     /// contributed. Individual checks retain their ordered use chains.
     #[serde(skip_serializing_if = "Option::is_none")]
