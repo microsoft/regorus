@@ -1591,10 +1591,10 @@ impl Interpreter {
             self.current_scope_mut()?.clone_from(scope);
         } else {
             Self::clear_scope(self.current_scope_mut()?);
-            self.get_current_context_mut()?
-                .result
-                .clone_from(&frame.query_result);
         }
+        self.get_current_context_mut()?
+            .result
+            .clone_from(&frame.query_result);
         Ok(())
     }
 
@@ -2134,6 +2134,7 @@ impl Interpreter {
                     .push(Self::make_expression_result(&stmt.span, &Value::Bool(true)));
             }
             let saved_scope = Some(self.current_scope()?.clone());
+            let query_result = self.get_current_context()?.result.clone();
             let module_idx = self.current_module_index;
             let Some(BindingPlan::SomeIn {
                 key_plan,
@@ -2168,7 +2169,7 @@ impl Interpreter {
                 target: None,
                 previous_loop_value: None,
                 saved_scope,
-                query_result: None,
+                query_result,
                 saved_state: None,
                 started: false,
                 success: false,

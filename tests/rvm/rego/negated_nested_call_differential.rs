@@ -552,3 +552,24 @@ fn negated_nested_call_fails_query() -> Result<()> {
     }
     Ok(())
 }
+
+/// A `some .. in` iteration that fails on an Undefined lifted call does not
+/// drop the expressions of the statements before it from later iterations.
+/// OPA returns one result, with both expressions, for
+/// `some x in input.vs; not count(x) == 1` with {"vs": [5, [1, 2]]}.
+#[test]
+fn negated_nested_call_fails_some_in_iteration() -> Result<()> {
+    let query = "some x in input.vs; not count(x) == 1";
+    let mut engine = Engine::new();
+    engine.set_strict_builtin_errors(false);
+    engine.set_input(Value::from_json_str(r#"{"vs": [5, [1, 2]]}"#)?);
+    let results = engine.eval_query(query.to_string(), false)?;
+    let [result] = results.result.as_slice() else {
+        bail!("want one result: {results:?}");
+    };
+    assert_eq!(result.expressions.len(), 2, "{results:?}");
+    assert_eq!(result.bindings, Value::from_json_str(r#"{"x": [1, 2]}"#)?);
+    assert!(!engine.eval_allow_query(query.to_string(), false));
+    Ok(())
+}
+
