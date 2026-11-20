@@ -260,10 +260,8 @@ fn check_shape(program: &Program, pc: usize, instruction: &Instruction) -> Optio
                         shape(ConditionKind::Negation, None, Some(operand), None)
                     })
                 }
-                // A loop's result guard: an `every` is checked at its
-                // `LoopStart` site. The VM doesn't yet report the guard that
-                // fails an `every` iteration when a `some ... in` or indexed
-                // loop in its body matches nothing, so it has no site either.
+                // Loop result guards (including `some` and indexed loops in
+                // an `every` body) report at the existing `LoopStart` site.
                 Some(Instruction::LoopNext {
                     body_start,
                     loop_end,
