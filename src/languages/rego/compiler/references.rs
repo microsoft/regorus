@@ -169,6 +169,10 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            if let Some(value) = self.compile_shadowed_default_call(&rule_candidate, span)? {
+                return self.compile_chain_access(value, &chain.components[i..], span);
+            }
+
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
                 // Found a rule match! Call the rule
                 let rule_result_reg = self.alloc_register()?;
@@ -292,6 +296,22 @@ impl<'a> Compiler<'a> {
         let current_pkg_prefix =
             append_path_component(&self.current_package, root).map_err(CompilerError::from)?;
 
+        // A name registered only through shadowed defaults (see
+        // `shadowed_default_prefixes`) is read as `data.<package>.<name>`.
+        let (inner, prefix) = (&self.policy.inner, &current_pkg_prefix);
+        if inner.shadowed_default_prefixes.contains(prefix) {
+            let path = inner.rule_path_components.get(prefix);
+            let fields = path.into_iter().flatten().skip(1).cloned();
+            let fields = fields.map(AccessComponent::Field);
+            let components = fields.chain(chain.components.iter().cloned()).collect();
+            let data = ReferenceRoot::Variable("data".to_string());
+            let data_chain = ReferenceChain {
+                root: data,
+                components,
+            };
+            return self.compile_data_chain(&data_chain, span);
+        }
+
         // Build static path for rule matching
         let mut static_fields = Vec::new();
         for component in &chain.components {
@@ -307,6 +327,10 @@ impl<'a> Compiler<'a> {
             for field in static_fields.iter().take(i) {
                 rule_candidate =
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
+            }
+
+            if let Some(value) = self.compile_shadowed_default_call(&rule_candidate, span)? {
+                return self.compile_chain_access(value, &chain.components[i..], span);
             }
 
             if let Ok(rule_index) = self.get_or_assign_rule_index(&rule_candidate) {
@@ -347,6 +371,31 @@ impl<'a> Compiler<'a> {
             name: root.to_string(),
         }
         .at(span))
+    }
+
+    /// Calls a shadowed default `path` (see `ShadowedDefault`), i.e. the rules
+    /// that can produce it, and selects the path in their value. Returns `None`
+    /// if those rules cannot be compiled as one rule, so that the path is
+    /// compiled as if it had no default.
+    fn compile_shadowed_default_call(
+        &mut self,
+        path: &str,
+        span: &Span,
+    ) -> Result<Option<Register>> {
+        let policy = self.policy;
+        let Some(shadowed) = policy.inner.shadowed_defaults.get(path) else {
+            return Ok(None);
+        };
+        let Ok(rule_index) = self.get_or_assign_rule_index(path) else {
+            return Ok(None);
+        };
+        let dest = self.alloc_register()?;
+        self.emit_instruction(Instruction::CallRule { dest, rule_index }, span);
+        Ok(Some(self.emit_index_literals(
+            dest,
+            &shadowed.keys,
+            Some(span),
+        )?))
     }
 
     /// Compile chain access using appropriate instructions based on chain length and complexity
