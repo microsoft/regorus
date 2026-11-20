@@ -107,20 +107,29 @@ mod hook {
     }
 
     /// Marks the current thread as inside a guarded call for the scope's lifetime.
-    pub(super) struct GuardScope(());
+    /// A nested scope (e.g. entered by a destructor while an outer panic unwinds)
+    /// saves the enclosing call's details and restores them on exit.
+    pub(super) struct GuardScope {
+        enclosing: Option<String>,
+    }
 
     impl GuardScope {
         pub(super) fn enter() -> Self {
             ensure_installed();
-            let _ = GUARD_DEPTH.try_with(|depth| depth.set(depth.get().saturating_add(1)));
-            store_details(None);
-            GuardScope(())
+            let nested = GUARD_DEPTH
+                .try_with(|depth| depth.replace(depth.get().saturating_add(1)) > 0)
+                .unwrap_or(false);
+            let previous = take_panic_backtrace();
+            GuardScope {
+                enclosing: previous.filter(|_| nested),
+            }
         }
     }
 
     impl Drop for GuardScope {
         fn drop(&mut self) {
             let _ = GUARD_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
+            store_details(self.enclosing.take());
         }
     }
 }
@@ -296,6 +305,7 @@ pub(crate) fn reset_poison() {
 mod tests {
     use super::{catch_panic, hook, with_unwind_guard, GuardResult};
     use crate::common::{regorus_result_drop, RegorusResult, RegorusStatus};
+    use core::cell::Cell;
     use std::panic;
     use std::sync::{mpsc, Mutex};
     use std::time::Duration;
@@ -463,6 +473,35 @@ mod tests {
             problems.len(),
             &problems[..problems.len().min(10)]
         );
+    }
+
+    #[test]
+    fn guarded_call_reentered_during_unwinding_keeps_outer_panic_details() {
+        // Asserting inside the destructor would abort, so it reports what the nested calls saw.
+        struct ReenterOnDrop<'a>(&'a Cell<bool>);
+        impl Drop for ReenterOnDrop<'_> {
+            fn drop(&mut self) {
+                if let GuardResult::Success(result) = catch_panic(RegorusResult::ok_void) {
+                    regorus_result_drop(result);
+                }
+                let inner = catch_panic(|| panic!("{TEST_PANIC_PREFIX} inner while unwinding"));
+                self.0.set(matches!(inner, GuardResult::Panic(m)
+                    if m.contains("panic hook observed: ") && !m.contains("outer unwinding")));
+            }
+        }
+        let inner_ok = Cell::new(false);
+        let outer = catch_panic(|| {
+            let _reenter = ReenterOnDrop(&inner_ok);
+            panic!("{TEST_PANIC_PREFIX} outer unwinding")
+        });
+        assert!(inner_ok.get(), "nested panic did not get its own details");
+        match outer {
+            GuardResult::Panic(message) => assert!(
+                message.contains("panic hook observed: ") && !message.contains("inner while"),
+                "outer panic lost its details: {message:?}"
+            ),
+            GuardResult::Success(_) => panic!("outer panic not caught"),
+        }
     }
 
     #[test]
