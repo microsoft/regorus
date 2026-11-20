@@ -154,11 +154,12 @@ pub fn denormalize_with_aliases(
             let arm_path = entry.select_path(api_version);
             let denorm_val = denormalize_value(val, &casing_map);
 
+            // A write refused by a non-object on the way leaves no value.
             if let Some(props_path) = arm_path.strip_prefix("properties.") {
-                set_nested_verbatim(&mut properties, props_path, denorm_val);
-                writes.record_alias(false, props_path, lc_key);
-            } else {
-                set_nested_verbatim(&mut result, arm_path, denorm_val);
+                if set_nested_verbatim(&mut properties, props_path, denorm_val) {
+                    writes.record_alias(false, props_path, lc_key);
+                }
+            } else if set_nested_verbatim(&mut result, arm_path, denorm_val) {
                 writes.record_alias(true, arm_path, lc_key);
             }
         }
