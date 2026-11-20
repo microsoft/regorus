@@ -3095,49 +3095,48 @@ impl Interpreter {
             let args_scope = Scope::new();
             self.scopes.push(args_scope);
 
-            // Determine the module index for the callee so we can fetch binding plans
-            let callee_module_idx = fcn_module
-                .as_ref()
-                .map(|module| self.find_module_index(module))
-                .unwrap_or(self.current_module_index);
+            // The parameter patterns and bodies belong to the callee's module.
+            let prev_module = self.set_current_module(fcn_module.clone())?;
+            let params_bound = (|| -> Result<bool> {
+                for (idx, a) in args.iter().enumerate() {
+                    // Fetch the binding plan for this function parameter
+                    let module_idx = self.current_module_index;
+                    let expr_idx = a.as_ref().eidx();
 
-            for (idx, a) in args.iter().enumerate() {
-                // Fetch the binding plan for this function parameter
-                let module_idx = callee_module_idx;
-                let expr_idx = a.as_ref().eidx();
+                    let param_value = param_values
+                        .get(idx)
+                        .ok_or_else(|| anyhow!("internal error: missing param value"))?;
 
-                let param_value = param_values
-                    .get(idx)
-                    .ok_or_else(|| anyhow!("internal error: missing param value"))?;
+                    let Some(BindingPlan::Parameter {
+                        destructuring_plan, ..
+                    }) = self
+                        .loop_hoisting_table(module_idx)
+                        .get_expr_binding_plan(module_idx, expr_idx)
+                        .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+                        .cloned()
+                    else {
+                        // Raise error if binding plan is not found
+                        return Err(span.error(&format!(
+                            "binding plan not found for parameter {}",
+                            a.span().text()
+                        )));
+                    };
 
-                let binding_success = if let Some(BindingPlan::Parameter {
-                    destructuring_plan,
-                    ..
-                }) = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
-                    .cloned()
-                {
-                    // Execute the destructuring plan with the parameter value.
-                    // Its expressions belong to the callee's module.
-                    let saved_module_index =
-                        core::mem::replace(&mut self.current_module_index, callee_module_idx);
-                    let bound = self.execute_destructuring_plan(&destructuring_plan, param_value);
-                    self.current_module_index = saved_module_index;
-                    bound? == Value::from(true)
-                } else {
-                    // Raise error if binding plan is not found
-                    return Err(span.error(&format!(
-                        "binding plan not found for parameter {}",
-                        a.span().text()
-                    )));
-                };
-
-                if !binding_success {
-                    self.scopes = scopes;
-                    continue 'outer;
+                    // Execute the destructuring plan with the parameter value
+                    if self.execute_destructuring_plan(&destructuring_plan, param_value)?
+                        != Value::from(true)
+                    {
+                        return Ok(false);
+                    }
                 }
+                Ok(true)
+            })();
+
+            if !matches!(params_bound, Ok(true)) {
+                self.set_current_module(prev_module)?;
+                self.scopes = scopes;
+                params_bound?;
+                continue 'outer;
             }
 
             let ctx = Context {
@@ -3146,7 +3145,6 @@ impl Interpreter {
                 ..Context::default()
             };
 
-            let prev_module = self.set_current_module(fcn_module.clone())?;
             let value = match self.eval_rule_bodies(ctx, span, bodies) {
                 Ok(v) => v,
                 Err(e) => {
@@ -3236,7 +3234,12 @@ impl Interpreter {
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
                         if let Rule::Default { value, .. } = rule.as_ref() {
-                            match self.eval_expr(value) {
+                            // The value belongs to the default rule's module.
+                            let module = self.get_rule_module(rule)?;
+                            let prev_module = self.set_current_module(Some(module))?;
+                            let value = self.eval_expr(value);
+                            self.set_current_module(prev_module)?;
+                            match value {
                                 Ok(v) => results.push(v),
                                 Err(e) if is_evaluation_limit_error(&e) => {
                                     self.scopes = scopes;
@@ -4491,8 +4494,6 @@ impl Interpreter {
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         self.check_execution_time()?;
-        // Set current module index
-        self.current_module_index = self.find_module_index(module);
 
         // Skip reprocessing rule
         if self.processed.contains(rule) {
