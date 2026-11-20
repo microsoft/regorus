@@ -74,6 +74,18 @@ impl RegoVM {
         Ok(())
     }
 
+    fn ensure_object_at(target: &mut Value, path: &[Value]) -> Result<()> {
+        let mut node = target;
+        for key in path {
+            // Base data that is not an object wins over a package without rules.
+            let Value::Object(ref mut map) = *node else {
+                return Ok(());
+            };
+            node = crate::Rc::make_mut(map).get_or_insert_with(key.clone(), Value::new_object);
+        }
+        Ok(())
+    }
+
     fn traverse_rule_tree_subobject(
         &mut self,
         rule_tree_node: &Value,
@@ -173,7 +185,14 @@ impl RegoVM {
                                 result
                             };
 
-                            Self::set_nested_value(result_subobject, &relative_path, rule_result)?;
+                            // An undefined rule contributes no key to its package's document.
+                            if rule_result != Value::Undefined {
+                                Self::set_nested_value(
+                                    result_subobject,
+                                    &relative_path,
+                                    rule_result,
+                                )?;
+                            }
                         } else {
                             return Err(VmError::InvalidRuleIndex {
                                 rule_index: Value::Number(rule_idx.clone()).into(),
@@ -182,6 +201,8 @@ impl RegoVM {
                         }
                     }
                     Value::Object(ref obj) => {
+                        // Subpackages are present even when all their rules are undefined.
+                        Self::ensure_object_at(result_subobject, &relative_path)?;
                         pending.push(Action::Children(obj.iter()));
                     }
                     _ => {}
