@@ -1384,14 +1384,14 @@ pub enum ResidualKind {
 /// The condition holds when the builtin returns `true`. An input path that
 /// is undefined makes the condition not hold, as the call is then
 /// undefined. An input path whose value is defined but not a string makes
-/// the call fail: the regorus interpreter and OPA raise an error with
-/// strict builtin errors, and other engines and settings may instead make
-/// the call undefined or its body fail. Whether Rego evaluates the call at
-/// all also depends on the engine: a failed condition skips the rest of its
-/// body and a body that holds skips its `else` branches, and the regorus
-/// interpreter evaluates every definition of a rule, but OPA may stop once
-/// a definition holds, in an order that isn't the source order, when they
-/// all have the same constant value.
+/// the call fail: the regorus interpreter, the RVM and OPA raise an error
+/// with strict builtin errors, and other engines and settings may instead
+/// make the call undefined or its body fail. Whether Rego evaluates the
+/// call at all also depends on the engine: a failed condition skips the
+/// rest of its body and a body that holds skips its `else` branches, and
+/// the regorus interpreter evaluates every definition of a rule, but when
+/// they all have the same constant value the RVM stops once a definition
+/// holds, and OPA may too, in an order that isn't the source order.
 ///
 /// Alternatives record neither the evaluation order nor which
 /// definition each came from, so consumers check every call of every
