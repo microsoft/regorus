@@ -1004,7 +1004,8 @@ pub struct SourceLocation {
 ///   - Complete rule or function: the alternatives are ordered, and the
 ///     first one whose conditions hold gives the value. A trailing
 ///     alternative with no conditions is the default. When none holds, the
-///     result is undefined.
+///     result is undefined. Consumers still check the calls of every
+///     alternative first; see [`ResidualCall`].
 ///   - Partial set: the result is the set of the values of every
 ///     alternative whose conditions hold, or an empty set when none holds.
 ///   - Partial object: the result is the object of the `key` and `value` of
@@ -1036,8 +1037,10 @@ pub struct SourceLocation {
 /// of a partial object have a `key`; an unresolved alternative omits a key
 /// or value it can't represent. Consumers reject a result that breaks this,
 /// and serializing fails for a result whose `status` breaks the first rule,
-/// a result of another status with alternatives, or an alternative whose
-/// `unresolved` doesn't match its `status`.
+/// a result of another status with alternatives, a defined `result` unless
+/// the status is `Exact` and there are no alternatives, an exact
+/// alternative without a `value`, or an alternative whose `unresolved`
+/// doesn't match its `status`.
 ///
 /// To keep the conditions of an unresolved alternative necessary, producers
 /// omit only whole top-level conditions they can't represent, never part
@@ -1088,7 +1091,9 @@ pub struct PartialEvalResult {
     /// Whether `result` and `residual_queries` describe the outcome.
     pub status: ResidualStatus,
     /// The query result when it does not depend on unknown input. Omitted
-    /// from JSON when undefined.
+    /// from JSON when undefined. Defined only when `status` is
+    /// [`ResidualStatus::Exact`] and there are no alternatives;
+    /// serialization fails otherwise.
     pub result: Value,
     /// Alternative residual queries.
     pub residual_queries: Vec<ResidualQuery>,
@@ -1118,6 +1123,11 @@ impl Serialize for PartialEvalResult {
             ));
         }
         let defined = !is_undefined(&self.result);
+        if defined && (self.status != ResidualStatus::Exact || !self.residual_queries.is_empty()) {
+            return Err(S::Error::custom(
+                "partial evaluation result is defined but is not exact or has alternatives",
+            ));
+        }
         let warned = !self.warnings.is_empty();
         let len = field_count(&[true, true, defined, true, warned]);
         let mut state = serializer.serialize_struct("PartialEvalResult", len)?;
@@ -1180,7 +1190,8 @@ pub struct ResidualQuery {
     pub key: Option<Value>,
     /// The value the query produces, for example `true`, the set member for
     /// a partial set, or the entry value for a partial object. Omitted from
-    /// JSON when undefined.
+    /// JSON when undefined, which only an unresolved alternative may be;
+    /// serialization fails otherwise.
     pub value: Value,
     /// Conditions that must all hold.
     pub conditions: Vec<ResidualCondition>,
@@ -1204,6 +1215,9 @@ impl Serialize for ResidualQuery {
         }
         let keyed = !is_absent(&self.key);
         let valued = !is_undefined(&self.value);
+        if !valued && !is_unresolved {
+            return Err(S::Error::custom("exact residual query has no value"));
+        }
         let len = field_count(&[keyed, valued, true, is_unresolved, is_unresolved]);
         let mut state = serializer.serialize_struct("ResidualQuery", len)?;
         match self.key {
@@ -1370,11 +1384,27 @@ pub enum ResidualKind {
 /// The condition holds when the builtin returns `true`. An input path that
 /// is undefined makes the condition not hold, as the call is then
 /// undefined. An input path whose value is defined but not a string makes
-/// the call fail: regorus raises an error with strict builtin errors and
-/// returns undefined without them, and consumers can't tell which applies.
-/// Consumers must therefore treat it as an evaluation error and reject the
-/// whole result, not just the condition or its alternative; this also
-/// applies inside `negated`. Consumers never coerce an argument to a
+/// the call fail: with strict builtin errors the regorus interpreter, the
+/// RVM and OPA raise an error, and otherwise the call may instead be
+/// undefined. The error need not reach the caller: in a rule body the RVM
+/// treats it as a failed body and goes on to the rule's other bodies, so if
+/// none of them holds a rule with a default evaluates to the default. In
+/// suspendable execution, an error inside a loop or comprehension reaches
+/// the caller instead. Whether Rego evaluates the call at all also depends
+/// on the engine: a failed condition skips the rest of its body and a body
+/// that holds skips its `else` branches, and the regorus interpreter
+/// evaluates every definition of a rule, but when all definitions of a
+/// complete rule or function have the same constant value the RVM stops
+/// once one holds, and OPA may too, in an order that isn't the source
+/// order. Partial set and object rules evaluate every definition.
+///
+/// Alternatives record neither the evaluation order nor which
+/// definition each came from, so consumers check every call of every
+/// alternative, including inside `negated`, before using any alternative,
+/// even when an earlier alternative holds or another condition of the same
+/// alternative doesn't. They treat a defined input path that is not a
+/// string as an evaluation error and reject the whole result, not just the
+/// condition or its alternative. Consumers never coerce an argument to a
 /// string.
 ///
 /// Strings are compared ordinally, as sequences of Unicode scalar values,
