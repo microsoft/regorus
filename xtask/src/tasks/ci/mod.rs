@@ -242,6 +242,37 @@ fn run_ci_suite(config: CiSuiteConfig) -> Result<()> {
         )?;
     }
 
+    run_ci_cargo_step(
+        &workspace,
+        "test",
+        config.release,
+        config.frozen,
+        None,
+        &["--features", "history"],
+        "cargo test --features history (ci)",
+    )?;
+
+    run_ci_cargo_step(
+        &workspace,
+        "test",
+        config.release,
+        config.frozen,
+        None,
+        &[
+            "-p",
+            "history-syntax",
+            "-p",
+            "junco-core",
+            "-p",
+            "history-store",
+            "-p",
+            "history-semantics",
+            "--features",
+            "history-semantics/test-util,history-store/test-util",
+        ],
+        "cargo test -p history-syntax -p junco-core -p history-store -p history-semantics (ci)",
+    )?;
+
     if config.include_azure_rbac {
         run_ci_cargo_step(
             &workspace,
@@ -342,7 +373,11 @@ fn run_example(
         .map(OsString::from),
     );
 
-    util_run_cargo_step(workspace, "cargo run --example regorus (ci)", args)
+    util_run_cargo_step(workspace, "cargo run --example regorus (ci)", args)?;
+
+    let mut args = base_cargo_args("run", release, frozen, Some("history"));
+    args.extend(["--example", "history"].into_iter().map(OsString::from));
+    util_run_cargo_step(workspace, "cargo run --example history (ci)", args)
 }
 
 fn run_opa_tests(workspace: &Path, release: bool, frozen: bool, features: &str) -> Result<()> {
@@ -408,6 +443,8 @@ fn check_feature_combinations(workspace: &Path, release: bool, frozen: bool) -> 
         "std,arc,rvm,coverage,cache,regex,time",
         // Default-off explanations (implies rvm) without full-opa.
         "std,arc,explanations",
+        // Default-off history rules (implies rvm) without full-opa.
+        "std,arc,history",
     ];
 
     for features in combos {

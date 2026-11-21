@@ -5,14 +5,13 @@
 
 #![allow(dead_code)]
 
-mod error;
 mod length;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 mod memory;
 mod time;
 
 #[allow(unused_imports)]
-pub use error::LimitError;
+pub use junco_core::limits::LimitError;
 
 #[allow(unused_imports)]
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]

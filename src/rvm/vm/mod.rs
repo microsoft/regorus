@@ -12,6 +12,8 @@ mod execution_model;
 #[cfg(feature = "explanations")]
 mod explain;
 mod functions;
+#[cfg(feature = "history")]
+pub(crate) mod history_tables;
 mod loops;
 mod machine;
 #[cfg(feature = "explanations")]

@@ -1,6 +1,10 @@
 [workspace]
 
 members = [
+    "src/history-semantics",
+    "src/history-store",
+    "src/history-syntax",
+    "src/junco-core",
     "tests/ensure_no_std",
   "xtask",
 ]
@@ -42,6 +46,7 @@ hex = ["dep:data-encoding"]
 http = []
 glob = ["dep:globset"]
 graph = []
+history = ["rvm", "arc", "dep:history-store", "dep:history-semantics", "history-store/runtime", "history-semantics/runtime"]
 jsonschema = ["dep:jsonschema"]
 jsonpatch = []
 mimalloc = ["dep:mimalloc"]
@@ -49,11 +54,11 @@ net = ["dep:ipnet"]
 no_std = ["lazy_static/spin_no_std"]
 opa-runtime = []
 regex = ["dep:regex"]
-cache = ["dep:lru"]
+cache = ["dep:lru", "history-semantics?/cache"]
 rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
-std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std" ]
+std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std", "junco-core/std", "history-syntax/std", "history-store?/std", "history-semantics?/std" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url", "dep:percent-encoding"]
@@ -108,6 +113,10 @@ opa-testutil = []
 rand = ["dep:rand"]
 
 [dependencies]
+junco-core = { path = "src/junco-core", version = "0.1.0", default-features = false, features = ["serde"] }
+history-syntax = { path = "src/history-syntax", version = "0.1.0", default-features = false, features = ["serde"] }
+history-store = { path = "src/history-store", version = "0.1.0", default-features = false, optional = true }
+history-semantics = { path = "src/history-semantics", version = "0.1.0", default-features = false, optional = true }
 anyhow = { version = "1.0.102", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
 serde_json = { version = "1.0.150", default-features = false, features = ["alloc", "raw_value"] }
@@ -119,7 +128,7 @@ data-encoding = { version = "2.8.0", optional = true, default-features=false, fe
 num-bigint = { version = "0.5", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 parking_lot = { version = "0.13", optional = true }
-spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex"] }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"] }
 
 globset = { version = "0.4.16", features = ["simd-accel"], default-features = false, optional = true }
 regex = {version = "1.12.3", optional = true, default-features = false }
@@ -151,9 +160,11 @@ postcard = { version = "1.1.3", default-features = false, features = ["alloc"], 
 # Keep vstd aligned with the Verus release pinned in .github/workflows/verus.yml.
 # In no_std builds only the `alloc` feature is used; the crate's `std` feature
 # additionally enables `vstd/std` (matching vstd's default features).
-vstd = { version = "=0.0.0-2026-09-06-0133", default-features = false, features = ["alloc"] }
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
+junco-core = { path = "src/junco-core", default-features = false, features = ["test-util"] }
+history-semantics = { path = "src/history-semantics", default-features = false, features = ["test-util"] }
 anyhow = "1.0.102"
 cfg-if = "1.0.0"
 clap = { version = "4.5.53", features = ["derive"] }
@@ -222,11 +233,20 @@ name = "normalization_benchmark"
 harness = false
 required-features = ["azure_policy"]
 
+[[bench]]
+name = "history_table"
+harness = false
+required-features = ["history"]
+
 [[example]]
 name="regorus"
 harness=false
 test=false
 doctest=false
+
+[[example]]
+name = "history"
+required-features = ["history"]
 
 [package.metadata.docs.rs]
 # To build locally:

@@ -23,5 +23,33 @@ publish = true
 changelog_update = false
 
 [[package]]
+name = "history-semantics"
+publish = true
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "history-store"
+publish = true
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "history-syntax"
+publish = true
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "junco-core"
+publish = true
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
 name = "xtask"
 release = false

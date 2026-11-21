@@ -147,12 +147,14 @@ fn trailing_data_is_rejected() {
 fn trailing_data_inside_each_section_is_rejected() {
     let blob = sample();
     let (entry_points, sources, literals, rule_tree) = sections(&blob);
+    let structure_end = rule_tree.end + 4 + u32_at(&blob, rule_tree.end);
     for (name, length_offset, end) in [
         ("Entry points", 8, entry_points.end),
         ("Sources", 12, sources.end),
         ("Literals", 16, literals.end),
         ("Rule tree", 20, rule_tree.end),
-        ("Program structure", rule_tree.end, blob.len()),
+        ("Program structure", rule_tree.end, structure_end),
+        ("History", structure_end, blob.len()),
     ] {
         let mut corrupt = blob.clone();
         corrupt.insert(end, 0x99);
