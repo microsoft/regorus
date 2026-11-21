@@ -66,6 +66,10 @@ impl<'a> Compiler<'a> {
             .map_err(|_| CompilerError::InvalidFunctionExpression.at(&span))?;
 
         let original_fcn_path = fcn_path.clone();
+        #[cfg(feature = "history")]
+        if let Some(mode) = super::history::history_mode(&original_fcn_path) {
+            return self.compile_history_rule(mode, params, &span);
+        }
         let full_fcn_path = if self.policy.inner.rules.contains_key(&fcn_path) {
             fcn_path
         } else if let Some(resolved) = self.resolve_fcn_path_through_imports(&original_fcn_path) {

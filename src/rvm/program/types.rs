@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 use alloc::string::String;
 use alloc::vec::Vec;
+use history_syntax::RuleMode;
+use junco_core::flat::FlatPair;
 use serde::{Deserialize, Serialize};
 
 /// Builtin function information stored in program's builtin info table
@@ -186,4 +188,17 @@ impl SourceFile {
     pub const fn new(name: String, content: String) -> Self {
         Self { name, content }
     }
+}
+
+/// One ordered history rule and its portable, store-independent source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryTableRule {
+    pub mode: RuleMode,
+    pub source: FlatPair<String>,
+}
+
+/// Ordered rules judged by `HistoryStep`; the first violated rule wins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryTable {
+    pub rules: Vec<HistoryTableRule>,
 }

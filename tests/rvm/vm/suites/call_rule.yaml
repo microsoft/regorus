@@ -115,3 +115,26 @@ cases:
       - "Load { dest: 1, literal_idx: 0 }"
       - "RuleReturn {}"
     want_result: 99
+
+  - note: call_rule_callee_laid_out_before_caller
+    description: Step mode keeps a pushed callee's entry pc when its code precedes the caller
+    literals:
+      - 1
+    rule_infos:
+      - rule_type: Complete
+        definitions:
+          - [5]
+      - rule_type: Complete
+        definitions:
+          - [2]
+    instructions:
+      - "CallRule { dest: 0, rule_index: 0 }"
+      - "Return { value: 0 }"
+      - "RuleInit { result_reg: 1, rule_index: 1 }"
+      - "Load { dest: 1, literal_idx: 0 }"
+      - "RuleReturn {}"
+      - "RuleInit { result_reg: 1, rule_index: 0 }"
+      - "CallRule { dest: 2, rule_index: 1 }"
+      - "Move { dest: 1, src: 2 }"
+      - "RuleReturn {}"
+    want_result: 1

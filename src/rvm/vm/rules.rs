@@ -17,21 +17,26 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Returns true if the error represents a resource-limit violation or a history
+    /// failure that must never be silently absorbed by rule evaluation.
     pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
-        self.builtin_limit_exceeded
-            || matches!(
-                err,
-                VmError::TimeLimitExceeded { .. }
-                    | VmError::RuleCallDepthExceeded { .. }
-                    | VmError::MemoryLimitExceeded { .. }
-                    | VmError::MemoryBudgetExceeded { .. }
-                    | VmError::RegexSizeLimitExceeded { .. }
-                    | VmError::SerializationDepthExceeded { .. }
-                    | VmError::InstructionLimitExceeded { .. }
-                    | VmError::NumericOverflow { .. }
-            )
+        if self.builtin_limit_exceeded {
+            return true;
+        }
+        match *err {
+            VmError::TimeLimitExceeded { .. }
+            | VmError::RuleCallDepthExceeded { .. }
+            | VmError::MemoryLimitExceeded { .. }
+            | VmError::MemoryBudgetExceeded { .. }
+            | VmError::RegexSizeLimitExceeded { .. }
+            | VmError::SerializationDepthExceeded { .. }
+            | VmError::InstructionLimitExceeded { .. }
+            | VmError::NumericOverflow { .. }
+            | VmError::HistoryFeatureDisabled { .. } => true,
+            #[cfg(feature = "history")]
+            VmError::HistoryUnimplemented { .. } => true,
+            _ => false,
+        }
     }
 
     /// Restore VM state that was swapped out for rule execution.

@@ -1,0 +1,15 @@
+[package]
+name = "history-syntax"
+description = "Rule syntax and event model for Regorus history rules"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/microsoft/regorus"
+
+[features]
+default = []
+serde = ["dep:serde"]
+std = []
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
