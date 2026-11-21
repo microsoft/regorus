@@ -5,6 +5,7 @@
 #![allow(clippy::as_conversions)]
 
 use alloc::vec::Vec;
+use bumpus::{AllocErr, CHUNK_ALIGN, SliceArena};
 use core::mem::{align_of, size_of};
 use hashconsius::BHConsign;
 #[cfg(verus_keep_ghost)]
@@ -20,7 +21,6 @@ use junco_core::verify::history_assumptions::KernelStoreSpec;
 #[cfg(verus_keep_ghost)]
 use junco_core::verify::history_specs::no_invariant_failure;
 use junco_core::{errors::HistoryError, kernel::*};
-use verus_bumpalo::{AllocErr, CHUNK_ALIGN, SliceArena};
 use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use vstd::std_specs::cmp::PartialEqSpec;

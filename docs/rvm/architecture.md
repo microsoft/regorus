@@ -104,7 +104,7 @@ All four libraries support native no_std + alloc. `std` and Semantics' `cache`
 do not imply `runtime`; only `history` enables Store/Semantics execution, leaving
 core/Syntax source validation available without it. `test-util` is enabled only
 for development probes. All four packages live under `src/`; `hashconsius` and
-`verus-bumpalo` are pinned git dependencies.
+`bumpus` are exact-pinned crates.io dependencies.
 
 Body proofs cover DSL lowering, encoding under later map extensions, numeric
 compilation/evaluation, raw/numeric typed histories, and cached lifecycle receipts.

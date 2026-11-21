@@ -161,6 +161,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "bumpus"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4c9b8b9784c2d50bdb1bd4b79f9ffdc6c0429a25ffe037256cd290163df76ab"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
 name = "bytecount"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -644,10 +653,11 @@ dependencies = [
 
 [[package]]
 name = "hashconsius"
-version = "0.1.0"
-source = "git+https://github.com/elefthei/hashconsius?rev=d7c17483a46b42a9e179cbfa0fdae9b7e8043dbf#d7c17483a46b42a9e179cbfa0fdae9b7e8043dbf"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21c73564712559671ce277a551b0d5259fdb883949525d6381a8e0e9a098701e"
 dependencies = [
- "verus-bumpalo",
+ "bumpus",
  "vstd",
 ]
 
@@ -679,6 +689,7 @@ dependencies = [
 name = "history-store"
 version = "0.1.0"
 dependencies = [
+ "bumpus",
  "hashconsius",
  "history-syntax",
  "junco-core",
@@ -686,7 +697,6 @@ dependencies = [
  "parking_lot",
  "smallvec",
  "spin 0.12.3",
- "verus-bumpalo",
  "vstd",
 ]
 
@@ -1940,14 +1950,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "verus-bumpalo"
-version = "0.1.0"
-source = "git+https://github.com/elefthei/bumpus?rev=888a6983370524cf1686d82e5814dd17a2dd14e5#888a6983370524cf1686d82e5814dd17a2dd14e5"
-dependencies = [
- "vstd",
-]
 
 [[package]]
 name = "verus_builtin"

@@ -13,9 +13,9 @@
 //! Reservations preserve logical contents on success and failure. Cache contracts
 //! permit eviction, never a fabricated entry. Event coordinates and bindings are
 //! fixed u64 identities; classification needs no Value or path-selection assumptions.
-//! hashconsius/verus-bumpalo pointer tables and hash buckets grow with infallible
+//! hashconsius/bumpus pointer tables and hash buckets grow with infallible
 //! alloc::vec::Vec (OOM aborts; bounded by MAX_GRAPH_BYTES per store); their
-//! contracts are verified in the pinned revisions. The native ArenaStorage Drop
+//! contracts are verified in the pinned versions. The native ArenaStorage Drop
 //! adapter takes its owned tables and calls verified ArenaTables::release;
 //! implicit destructor invocation is outside the Verus model.
 //! Native allocator Send/Sync markers rely on exclusive chunk ownership,
