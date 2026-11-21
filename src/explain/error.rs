@@ -26,6 +26,43 @@ pub enum ExplainError {
         available: usize,
     },
 
+    /// A declared unknown path is invalid, for example because it overlaps
+    /// another one.
+    #[error("invalid unknown path `{path}`: {reason}")]
+    InvalidUnknownPath {
+        /// The path, rendered as Rego.
+        path: String,
+        /// Why it is invalid.
+        reason: String,
+    },
+
+    /// A value was supplied at or under a declared unknown path.
+    #[error("a value is supplied for unknown path `{path}`")]
+    UnknownValueSupplied {
+        /// The path, rendered as Rego.
+        path: String,
+    },
+
+    /// Partial evaluation was requested while an explanation recorder is
+    /// installed. Run explanations and partial evaluation separately: take
+    /// the recorder first.
+    #[error("partial evaluation cannot run with an explanation recorder installed")]
+    PartialEvalWithRecorder,
+
+    /// Partial evaluation does not support suspendable execution yet.
+    #[error("partial evaluation does not support suspendable execution")]
+    PartialEvalSuspendable,
+
+    /// Partial evaluation cannot determine the kind of rule whose result
+    /// the entry point returns: the entry point does more than call a rule
+    /// and return its result, and the program has partial or function
+    /// rules.
+    #[error("partial evaluation cannot determine the rule kind returned by entry point `{entry}`")]
+    PartialEvalUnknownRuleKind {
+        /// The entry point name.
+        entry: String,
+    },
+
     /// The evaluation itself failed.
     #[error(transparent)]
     Vm(#[from] VmError),

@@ -101,3 +101,56 @@ impl Default for ExplanationSettings {
         }
     }
 }
+
+/// Root of an unknown path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum UnknownRoot {
+    /// Evaluation input.
+    Input,
+    /// The VM `context` value, which Azure Policy reads for
+    /// `resourceGroup()` and similar functions.
+    Context,
+}
+
+/// An exact path whose value is not available yet. Keys and array indices
+/// are distinct segments, so keys with dots, quotes or digits need no
+/// escaping. No value may be supplied at or under the path. A value counts
+/// as supplied wherever Rego would read one: a key also selects a set
+/// member and an index also selects an object's number key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnknownPath {
+    /// Root the path starts from.
+    pub root: UnknownRoot,
+    /// Segments below the root; empty when the whole root is unknown.
+    pub segments: alloc::vec::Vec<super::PathSegment>,
+}
+
+impl UnknownPath {
+    /// A path from `root` through `segments`.
+    pub fn new(root: UnknownRoot, segments: impl IntoIterator<Item = super::PathSegment>) -> Self {
+        Self {
+            root,
+            segments: segments.into_iter().collect(),
+        }
+    }
+
+    /// An `input` path made of object keys, such as `input.user.role`.
+    pub fn input_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Self {
+        Self::new(
+            UnknownRoot::Input,
+            keys.into_iter().map(|k| super::PathSegment::Key(k.into())),
+        )
+    }
+}
+
+/// Settings for partial evaluation.
+///
+/// Start from [`PartialEvalSettings::default`] and set the fields you need.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PartialEvalSettings {
+    /// Paths whose values are unknown. They must not overlap.
+    pub unknowns: alloc::vec::Vec<UnknownPath>,
+}

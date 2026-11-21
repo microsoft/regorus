@@ -13,11 +13,8 @@ impl RegoVM {
     pub(super) fn reset_run_to_completion_state(&mut self) -> Result<()> {
         self.release_previous_execution_state();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
-        if matches!(
-            self.memory_budget_lifecycle,
-            super::machine::MemoryBudgetLifecycle::FfiResultSerialization
-        ) {
-            // The internal FFI serialization window owns the baseline. Observe the
+        if self.memory_budget_lifecycle.extends_execution() {
+            // The surrounding result-production scope owns the baseline. Observe the
             // post-release trough before initialization so fresh state allocations are
             // charged to that execution.
             self.check_memory_budget()?;
@@ -45,7 +42,9 @@ impl RegoVM {
         self.release_previous_execution_state();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         {
-            self.finish_active_memory_budget_execution();
+            if !self.memory_budget_lifecycle.extends_execution() {
+                self.finish_active_memory_budget_execution();
+            }
         }
         self.execution_state = ExecutionState::Error {
             error: error.clone(),
