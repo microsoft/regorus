@@ -118,6 +118,10 @@ impl Serialize for ReportedEntries<'_> {
 pub struct ExplanationReport {
     /// What was queried; see [`QueryTarget`].
     pub query: QueryTarget,
+    /// Checks executed by the query itself, with no invented rule owner.
+    /// Callee checks retain their rule owners and are reached through use paths.
+    /// `None` means not captured; an empty list means no query check ran.
+    pub query_conditions: Option<Vec<QueryConditionExplanation>>,
     /// The value returned by the query. Omitted from JSON when undefined,
     /// and [`Value::Undefined`] when the evaluation failed and returned no
     /// value.
@@ -143,10 +147,21 @@ impl ExplanationReport {
 impl Serialize for ExplanationReport {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let defined = !is_undefined(&self.query_result);
-        let len = field_count(&[true, true, defined, true, true]);
+        let len = field_count(&[
+            true,
+            true,
+            self.query_conditions.is_some(),
+            defined,
+            true,
+            true,
+        ]);
         let mut state = serializer.serialize_struct("ExplanationReport", len)?;
         state.serialize_field("schema_version", &Self::SCHEMA_VERSION)?;
         state.serialize_field("query", &self.query)?;
+        match self.query_conditions {
+            Some(ref conditions) => state.serialize_field("query_conditions", conditions)?,
+            None => state.skip_field("query_conditions")?,
+        }
         if defined {
             state.serialize_field("query_result", &self.query_result)?;
         } else {
@@ -162,12 +177,14 @@ impl Serialize for ExplanationReport {
 ///
 /// Serializes as `{"entry_point": ..., "rule": ..., "call_instance": ...,
 /// "with_overrides": ...}`; `rule` and `call_instance` are omitted when
-/// absent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// absent. Optional `calls` and `scopes` describe evaluation outside any
+/// rule invocation, including arbitrary query expressions.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct QueryTarget {
     /// The query or entry point as the caller gave it, for example
-    /// `data.test.allow`. Policy source, never redacted.
+    /// `data.test.allow`. Copied verbatim, including caller-supplied literals;
+    /// never redacted. Callers must not put secrets in this string.
     pub entry_point: String,
     /// Fully qualified rule or function the query names. `None` when the
     /// query is not a rule reference, such as an expression over several
@@ -186,6 +203,63 @@ pub struct QueryTarget {
     /// the evaluation was given. `with` modifiers inside the policy are not
     /// counted here; they show up as separate rule evaluations.
     pub with_overrides: bool,
+    /// Callee uses made directly by the query, not by a rule invocation.
+    /// `None` means not captured; an empty list means no query-owned uses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls: Option<Vec<CallUse>>,
+    /// Scopes entered directly by the query. Parents resolve within this
+    /// list, and query-owned scopes have no body attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<QueryScopeExplanation>>,
+}
+
+/// One dynamic query-owned construct, separate from rule body attempts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct QueryScopeExplanation {
+    /// Evaluation-local scope identifier, using the same space as rule scopes.
+    pub scope: u64,
+    /// Construct entered by the query.
+    pub kind: ScopeKind,
+    /// Parent in [`QueryTarget::scopes`], absent at the query's local root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u64>,
+    /// Static construct site in [`ExplanationReport::checks`].
+    pub site_id: u32,
+    /// Construct outcome; absent if evaluation aborted before completion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<Outcome>,
+}
+
+/// A query-owned check, without a rule invocation or body attempt.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct QueryConditionExplanation {
+    /// Static check site in [`ExplanationReport::checks`].
+    pub site_id: u32,
+    /// Enclosing query scope, absent at its root or when not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<u64>,
+    /// Dynamic construct completed by this check, not its enclosing scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_scope: Option<u64>,
+    /// Outcome of this query check.
+    pub outcome: Outcome,
+    /// Left or unary operand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<Operand>,
+    /// Right operand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<Operand>,
+    /// Contributing use paths; see [`ConditionExplanation::call_uses`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_uses: Option<Vec<Vec<u64>>>,
+    /// Iteration summary of a query-owned loop-backed check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<LoopWitness>,
+    /// Variable bound by this query check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
 }
 
 /// Explanation of one evaluation of a rule.
@@ -234,6 +308,17 @@ pub struct RuleExplanation {
     /// means captured with no defined results. Helpers never consume the
     /// queried rule's proof budget. Legacy `emissions` remain per contribution.
     pub results: Option<Vec<ResultExplanation>>,
+    /// Body attempts, including failed parameter matches and failed bodies
+    /// before a successful `else`. `None` means not captured; an empty list
+    /// means no attempt ran, for example a default-only rule.
+    pub attempts: Option<Vec<AttemptExplanation>>,
+    /// Logical scopes entered within this invocation. `None` means not
+    /// captured, not that no nested scopes existed.
+    pub scopes: Option<Vec<ScopeExplanation>>,
+    /// Uses of callee results by this invocation, including cached results.
+    /// `None` means not captured. Each use retains its caller's scope:
+    /// a cached result can be used both positively and negatively.
+    pub calls: Option<Vec<CallUse>>,
 }
 
 impl Serialize for RuleExplanation {
@@ -247,6 +332,9 @@ impl Serialize for RuleExplanation {
             !self.emissions.is_empty(),
             !self.definitions.is_empty(),
             self.results.is_some(),
+            self.attempts.is_some(),
+            self.scopes.is_some(),
+            self.calls.is_some(),
         ]);
         let mut state = serializer.serialize_struct("RuleExplanation", len)?;
         state.serialize_field("name", &self.name)?;
@@ -273,6 +361,18 @@ impl Serialize for RuleExplanation {
         match self.results {
             Some(ref results) => state.serialize_field("results", results)?,
             None => state.skip_field("results")?,
+        }
+        match self.attempts {
+            Some(ref attempts) => state.serialize_field("attempts", attempts)?,
+            None => state.skip_field("attempts")?,
+        }
+        match self.scopes {
+            Some(ref scopes) => state.serialize_field("scopes", scopes)?,
+            None => state.skip_field("scopes")?,
+        }
+        match self.calls {
+            Some(ref calls) => state.serialize_field("calls", calls)?,
+            None => state.skip_field("calls")?,
         }
         state.end()
     }
@@ -303,23 +403,31 @@ pub enum RuleOutcome {
         /// other value, so it can be redacted or elided. Each serializes as
         /// `{"value": ...}`, `{"redacted": true}` or `{"elided": true}`.
         values: Vec<ReportedValue>,
+        /// Conflicting partial-object key, subject to value redaction and
+        /// elision. Absent for complete rules/functions, or when not captured;
+        /// absence never means that every object key conflicted.
+        key: Option<ReportedValue>,
     },
 }
 
 impl Serialize for RuleOutcome {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let (status, values) = match *self {
-            Self::Matched => ("matched", None),
-            Self::NoMatch => ("no_match", None),
-            Self::Conflict { ref values } => ("conflict", Some(values)),
+        let (status, values, key) = match *self {
+            Self::Matched => ("matched", None, None),
+            Self::NoMatch => ("no_match", None, None),
+            Self::Conflict {
+                ref values,
+                ref key,
+            } => ("conflict", Some(values), key.as_ref()),
         };
-        let len = field_count(&[true, values.is_some()]);
+        let len = field_count(&[true, values.is_some(), is_reported(key)]);
         let mut state = serializer.serialize_struct("RuleOutcome", len)?;
         state.serialize_field("status", status)?;
         match values {
             Some(values) => state.serialize_field("values", &ReportedEntries(values))?,
             None => state.skip_field("values")?,
         }
+        serialize_reported(&mut state, "key", "key_redacted", "key_elided", key)?;
         state.end()
     }
 }
@@ -480,6 +588,131 @@ pub struct ConditionOwner {
     /// Matches the owning [`RuleExplanation::call_instance`], not the
     /// caller's invocation even when they return equal values.
     pub call_instance: u64,
+    /// Dynamic body attempt in the owning invocation. Absent when not
+    /// captured or outside a body; inspect the invocation's `attempts`
+    /// capture state before concluding no attempt existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+    /// Innermost logical scope in that invocation, not the caller's scope.
+    /// Absent outside a scope or when scope capture was unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<u64>,
+}
+
+/// One dynamic try of a definition/body in a rule invocation.
+///
+/// Attempts start before parameter matching. A rejected match has outcome
+/// [`Outcome::Undefined`]; a body returning `false` successfully has outcome
+/// [`Outcome::Success`]. Failed attempts are context, never independent causes
+/// of a successful derivation. `else` bodies are separate attempts.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct AttemptExplanation {
+    /// Evaluation-local identifier, assigned sequentially by the VM.
+    pub attempt: u64,
+    /// Definition within the enclosing [`RuleExplanation`].
+    pub definition: usize,
+    /// Body within that definition, zero for the primary body.
+    pub body: usize,
+    /// Absent if evaluation aborted before this attempt completed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<Outcome>,
+    /// Checks evaluated in this attempt, including failed pre-`else` bodies
+    /// not retained by the deciding-body [`DefinitionExplanation`] summary.
+    /// Absent when not captured; captured empty can represent a parameter
+    /// match rejected before any body checks. These remain context unless
+    /// they belong to the successful producing path.
+    ///
+    /// Captured parameter bindings can use [`ConditionKind::Binding`] at
+    /// the parameter's source site: `binding` names the parameter and `left`
+    /// holds its matched value. [`Operand::parameter_origins`] links both
+    /// binding and body operands to incoming [`CallUse::arguments`].
+    /// Caller-specific paths/origins belong on those incoming arguments,
+    /// never on shared callee evidence; parameter projections specialize
+    /// that evidence for each use, including cached equal-valued arguments.
+    /// The owner is the callee attempt. This records a real binding,
+    /// not a fabricated body predicate: binding a defined `false` succeeds.
+    /// It also works for a value-only function with no body checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conditions: Option<Vec<ConditionExplanation>>,
+}
+
+/// Logical construct enclosing checks, emissions or nested scopes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ScopeKind {
+    /// A `not` operand, entered before its evaluation. The completed `not`
+    /// check belongs to the enclosing scope, not to its own operand scope.
+    Negation,
+    /// An `every` quantifier.
+    Every,
+    /// An array comprehension.
+    ArrayComprehension,
+    /// A set comprehension.
+    SetComprehension,
+    /// An object comprehension.
+    ObjectComprehension,
+}
+
+/// One dynamic entry into a logical construct within a rule invocation.
+///
+/// Scopes form call-local trees: a callee starts a new tree even when used
+/// inside a caller's negation. Follow [`CallUse`] edges to recover syntactic
+/// negation nesting for a particular use, not its logical influence through
+/// operations such as `count` or comparisons. Do not assign one inherited
+/// context to a cached callee used under several different scopes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ScopeExplanation {
+    /// Evaluation-local identifier, assigned sequentially by the VM.
+    pub scope: u64,
+    /// Construct that was entered.
+    pub kind: ScopeKind,
+    /// Parent scope in the same invocation, absent at its local root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u64>,
+    /// Attempt within the enclosing [`RuleExplanation`].
+    pub attempt: u64,
+    /// Static construct site in [`ExplanationReport::checks`].
+    pub site_id: u32,
+    /// Outcome of the enclosing construct, not of its inner checks.
+    /// Negation never has outcome `Undefined`; a comprehension succeeds
+    /// even when empty. Absent if evaluation aborted before the scope ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<Outcome>,
+}
+
+/// One use of a callee result by the enclosing rule invocation or query.
+///
+/// The callee's checks retain their own owners/scopes. Negation-scope parity
+/// describes syntactic nesting only, including caller scopes along use edges;
+/// it does not determine how an inner check logically influences the result.
+/// A fresh call and each cached reuse have separate edges to the same
+/// callee invocation. Equal returned values do not identify invocations.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct CallUse {
+    /// Report-local use identifier, unique across query and rule use lists.
+    /// Assigned sequentially below 2^53, independently of callee identity.
+    pub use_id: u64,
+    /// Callee [`RuleExplanation::call_instance`].
+    pub call_instance: u64,
+    /// Caller attempt, absent for query-owned uses, outside a body or when
+    /// not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+    /// Innermost caller scope, absent at its local root or when not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<u64>,
+    /// Actual arguments in parameter order, before callee pattern matching.
+    /// Operand use paths start in this use's caller (query or invocation),
+    /// not the callee, even for cached reuse. They describe supplied arguments,
+    /// not necessarily contributors to the returned value. `None` is uncaptured;
+    /// `Some([])` certifies no arguments. Callee binding checks name the index
+    /// with [`Operand::parameter_origins`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<Operand>>,
 }
 
 /// One evaluation of a condition, referencing text/semantics stored once
@@ -492,6 +725,25 @@ pub struct ConditionExplanation {
     pub site_id: u32,
     /// Invocation that evaluated this check.
     pub owner: ConditionOwner,
+    /// Contributing callee-use paths, each ordered from the containing
+    /// proof's owning invocation toward a dependency, or from the query for
+    /// query-owned checks. Outside a proof, start at this check's owner.
+    /// The first edge resolves in that root's `calls`; subsequent edges
+    /// resolve in the preceding callee's `calls`. Never embed an external
+    /// caller prefix in an invocation-owned proof. Sibling calls use separate
+    /// paths, not one artificial chain. Each id resolves to [`CallUse::use_id`].
+    /// For a copied callee check, a path identifies the use reaching its owner;
+    /// for a caller-owned check, paths identify its contributing callee uses.
+    /// Ownership is independent of the path endpoints. `None` means not
+    /// captured; an empty list means no callee use contributed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_uses: Option<Vec<Vec<u64>>>,
+    /// Dynamic scope of the construct this check completed. For example,
+    /// a completed `not` names its operand scope here but is owned by the
+    /// enclosing scope. Resolves in its owner's invocation; absent when not
+    /// captured or when this check completes no construct.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_scope: Option<u64>,
     /// Outcome of this evaluation, not an aggregate over other iterations.
     pub outcome: Outcome,
     /// Left operand, or the checked value of a unary condition.
@@ -503,7 +755,8 @@ pub struct ConditionExplanation {
     /// Iteration summary of a loop-backed condition.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub witness: Option<LoopWitness>,
-    /// Variable bound by a binding condition, such as `x` in `x := ...`.
+    /// Variable bound by a binding condition, such as `x` in `x := ...`,
+    /// or a parameter binding in [`AttemptExplanation::conditions`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binding: Option<String>,
 }
@@ -527,8 +780,12 @@ pub enum ConditionKind {
     Existence,
     /// A negated expression, `not ...`.
     Negation,
-    /// A variable binding, `x := ...`.
+    /// A variable binding, `x := ...`, or captured parameter-binding evidence.
     Binding,
+    /// A standalone array, set or object comprehension construct site.
+    /// The captured rule or query scope whose `site_id` matches this site
+    /// supplies its [`ScopeKind`], not the enclosing scope.
+    Comprehension,
 }
 
 /// Operator of a comparison or membership condition.
@@ -612,11 +869,39 @@ pub struct Operand {
     /// [`ExplanationSettings::capture_paths`](super::ExplanationSettings::capture_paths).
     /// A policy source template in `path` is not a captured concrete path.
     pub concrete_path: ConcretePath,
+    /// Inputs that influenced a computed operand; their values are not
+    /// asserted to equal this operand's value. Independently opt-in with
+    /// concrete path capture and subject to its redaction rules. `None`
+    /// means not captured, not no dependencies.
+    pub origins: Option<CausalOrigins>,
+    /// Callee-use paths contributing to this operand, with the same root
+    /// and continuity rules as [`ConditionExplanation::call_uses`].
+    /// Distinguishes equal-valued sibling operands without parsing text.
+    /// `None` means uncaptured; `Some([])` means no callee use contributed.
+    pub call_uses: Option<Vec<Vec<u64>>>,
+    /// Contributing parameter projections in this operand's evaluating
+    /// invocation (the physical check owner, or caller for call arguments).
+    /// Resolve against the incoming use being explained, not outgoing calls.
+    /// Computed operands may list several; their values need not equal the
+    /// operand. `None` is uncaptured; `Some([])` means none contributed.
+    /// Aggregate contributor lists do not identify an element's contributors;
+    /// projecting a constructed argument cannot distribute that list among
+    /// elements. Keep element provenance unknown unless independently captured.
+    /// Capture/redaction follows concrete paths; omit a sensitive projection
+    /// path in its entirety, never replace its keys with fabricated strings.
+    pub parameter_origins: Option<Vec<ParameterOrigin>>,
 }
 
 impl Serialize for Operand {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let len = field_count(&[self.path.is_some(), true, is_reported(Some(&self.value))]);
+        let len = field_count(&[
+            self.path.is_some(),
+            true,
+            is_reported(Some(&self.value)),
+            self.origins.is_some(),
+            self.call_uses.is_some(),
+            self.parameter_origins.is_some(),
+        ]);
         let mut state = serializer.serialize_struct("Operand", len)?;
         match self.path {
             Some(ref path) => state.serialize_field("path", path)?,
@@ -624,8 +909,47 @@ impl Serialize for Operand {
         }
         state.serialize_field("concrete_path", &self.concrete_path)?;
         serialize_reported(&mut state, "value", "redacted", "elided", Some(&self.value))?;
+        match self.origins {
+            Some(ref origins) => state.serialize_field("origins", origins)?,
+            None => state.skip_field("origins")?,
+        }
+        match self.call_uses {
+            Some(ref paths) => state.serialize_field("call_uses", paths)?,
+            None => state.skip_field("call_uses")?,
+        }
+        match self.parameter_origins {
+            Some(ref origins) => state.serialize_field("parameter_origins", origins)?,
+            None => state.skip_field("parameter_origins")?,
+        }
         state.end()
     }
+}
+
+/// An input projection of a function parameter, resolved per incoming use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ParameterOrigin {
+    /// Zero-based position in [`CallUse::arguments`].
+    pub argument: usize,
+    /// Typed path within that argument; empty means the whole argument.
+    /// Same key/index semantics as concrete paths. `None` means the projection
+    /// is uncaptured, withheld or unrepresentable, not the whole argument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<PathSegment>>,
+}
+
+/// Bounded causal input identities for a computed operand, not direct reads
+/// of the operand's returned value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct CausalOrigins {
+    /// Captured identities; sensitive paths are withheld in their entirety
+    /// using [`ConcretePath::Redacted`], never replaced by fabricated keys.
+    pub paths: Vec<ConcretePath>,
+    /// Whether every contributing origin is represented. `false` means
+    /// some origins were omitted; an empty incomplete list proves nothing
+    /// about whether inputs contributed.
+    pub complete: bool,
 }
 
 /// Whether a concrete operand path was captured.
@@ -673,6 +997,8 @@ pub enum PathRoot {
     Input,
     /// Policy data.
     Data,
+    /// Host-supplied ambient context, separate from evaluation input.
+    Context,
 }
 
 /// One path segment. Numeric-looking object keys remain keys, never indices.
@@ -694,7 +1020,8 @@ pub enum PathSegment {
 /// check's owner identifies the invocation that actually evaluated it.
 ///
 /// Serializes as `{"definition": ..., "body": ..., "conditions": [...],
-/// "bindings": [...]}`, with `bindings` omitted when empty.
+/// "bindings": [...]}`, with `bindings` omitted when not captured and an
+/// empty array when capture established that no loops contributed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct Derivation {
@@ -702,14 +1029,48 @@ pub struct Derivation {
     pub definition: usize,
     /// Producing body index (`0` is the primary body).
     pub body: usize,
+    /// Producing body attempt, resolving in the queried invocation's
+    /// [`RuleExplanation::attempts`]. Absent when not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+    /// Whether this derivation depends on unknown information. Absent when
+    /// not established, including when a helper's evidence was not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conditionality: Option<Conditionality>,
+    /// Contributing callee-use ids, resolving to [`CallUse::use_id`] across
+    /// the owning invocation's calls and their descendants, never its
+    /// external caller/query prefixes. Includes nested uses, not failed
+    /// alternatives. `None` means not captured; `Some([])` means none
+    /// contributed. Individual checks retain their ordered use chains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_uses: Option<Vec<u64>>,
     /// Evaluated checks on this producing path, in evaluation order.
+    /// Contributing parameter bindings may be copied from callee attempts,
+    /// retaining their callee owners. An argument's presence alone does not
+    /// establish that it contributed to the result.
     pub conditions: Vec<ConditionExplanation>,
     /// The loop iteration that produced this proof at each loop on its
     /// path, outermost first, unlike a condition's loop-wide
-    /// [`witness`](ConditionExplanation::witness). Empty when the path has
-    /// no loop or the producer did not capture its iterations.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub bindings: Vec<IterationBinding>,
+    /// [`witness`](ConditionExplanation::witness). `Some([])` means no loop
+    /// contributed; `None` means iteration bindings were not captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<Vec<IterationBinding>>,
+}
+
+/// Whether unknown information is necessary for a producing derivation or
+/// contribution to a result. This does not certify evaluation success:
+/// assumption-dependent conflicts or errors can still prevent a result.
+/// The evaluation outcome/error remains authoritative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Conditionality {
+    /// A derivation uses no assumption; a result has at least one such
+    /// derivation, even if other contributors remain conditional.
+    Concrete,
+    /// A derivation needs an assumption; all derivations of a result do.
+    /// Producers must establish this beyond retained evidence/capture caps.
+    Assumed,
 }
 
 /// The iteration of one loop that a [`Derivation`] went through.
@@ -872,6 +1233,14 @@ pub struct ResultExplanation {
     pub key: Option<ReportedValue>,
     /// Complete/function result or emitted partial-rule value.
     pub value: ReportedValue,
+    /// Whether producing contributions depend on assumptions. One concrete
+    /// derivation suffices for `Concrete`, but does not make an assumed
+    /// contributor concrete or rule out assumption-dependent conflicts/errors.
+    /// This field never guarantees successful evaluation or result existence.
+    /// `None` means unknown, never concrete by default.
+    /// Computed independently of retained proofs, so a cap cannot certify
+    /// concreteness or hide a concrete derivation.
+    pub conditionality: Option<Conditionality>,
     /// Successful derivations producing this result, as `{"exact": n}`, or
     /// `{"at_least": n}` when evaluation stopped early.
     pub derivations_total: Count,
@@ -896,6 +1265,7 @@ impl ResultExplanation {
         let result = Self {
             key,
             value,
+            conditionality: None,
             derivations_total,
             distinct_elements,
             proofs,
@@ -935,6 +1305,7 @@ impl Serialize for ResultExplanation {
             true,
             is_reported(self.key.as_ref()),
             is_reported(Some(&self.value)),
+            self.conditionality.is_some(),
         ]);
         let mut state = serializer.serialize_struct("ResultExplanation", len)?;
         serialize_reported(
@@ -951,6 +1322,10 @@ impl Serialize for ResultExplanation {
             "value_elided",
             Some(&self.value),
         )?;
+        match self.conditionality {
+            Some(conditionality) => state.serialize_field("conditionality", &conditionality)?,
+            None => state.skip_field("conditionality")?,
+        }
         state.serialize_field("derivations_total", &self.derivations_total)?;
         state.serialize_field("derivations_shown", &self.derivations_shown())?;
         state.serialize_field("derivations_dropped", &dropped)?;
@@ -964,6 +1339,13 @@ impl Serialize for ResultExplanation {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct LoopWitness {
+    /// Variable bound to the iteration key, absent if unnamed or uncaptured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_binding: Option<String>,
+    /// Variable bound to the iteration value, absent if unnamed or uncaptured.
+    /// These roles apply to every iteration, not just the retained sample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_binding: Option<String>,
     /// Number of iterations executed, saturating at `u32::MAX`.
     pub iterations: u32,
     /// Number of iterations whose body succeeded, saturating at `u32::MAX`.
