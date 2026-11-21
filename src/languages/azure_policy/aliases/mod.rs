@@ -565,6 +565,27 @@ fn compute_aggregates_for_version(
                     && path::renders_dotted(arm_leaf)
                     && !path::equivalent(short_leaf, arm_leaf)
                 {
+                    // The forward remap runs before base renames, so it
+                    // reaches root-level ARM arrays only along a chain with
+                    // the same names once sub-resource elements are flattened.
+                    let mut prefix = String::new();
+                    let at_root = short_parts.len() == arm_parts.len()
+                        && short_parts.iter().zip(&arm_parts).zip(&array_chain).all(
+                            |((short, arm), keys)| {
+                                let arm = if prefix.is_empty() {
+                                    (!arm.has_flattened_wrapper()).then_some(arm.segments)
+                                } else if sub_resource_arrays.contains(&prefix) {
+                                    Some(arm.without_flattened_wrapper())
+                                } else {
+                                    Some(arm.segments)
+                                };
+                                if !prefix.is_empty() {
+                                    prefix.push('.');
+                                }
+                                prefix.push_str(&keys.join("."));
+                                arm.is_some_and(|arm| path::equivalent(short, arm))
+                            },
+                        );
                     let arm_leaf = path::render(arm_leaf);
                     let source_lc = arm_leaf.to_ascii_lowercase();
                     let target_lc = path::render(short_leaf).to_ascii_lowercase();
@@ -579,6 +600,7 @@ fn compute_aggregates_for_version(
                         source_field: target_lc.clone(),
                         target_field: arm_leaf,
                         cleanup_field: target_lc,
+                        at_root,
                     });
                 }
             }
@@ -628,6 +650,8 @@ fn compute_aggregates_for_version(
 /// For nested sub-resource arrays like `X[*].Y[*].Z` mapping to
 /// `properties.X[*].properties.Y[*].properties.Z`, both `X` and `X.Y`
 /// (dotted path within the normalized structure) are sub-resource arrays.
+/// Unwrapped outer arrays still contribute to the name: `X[*].Y[*].Z` mapping
+/// to `properties.X[*].Y[*].properties.Z` records only `X.Y`.
 fn detect_sub_resource_array(
     short_name: &str,
     default_path: &str,
@@ -649,7 +673,7 @@ fn detect_sub_resource_array(
     // short_name: securityRules[*].protocol
     // default_path: properties.securityRules[*].properties.protocol
 
-    // Build up the chain of sub-resource array names.
+    // Accumulate the dotted name of every enclosing array level.
     let mut accumulated_name = String::new();
 
     for (i, array_part) in short_parts
@@ -674,18 +698,18 @@ fn detect_sub_resource_array(
             return;
         }
 
-        if let Some(next_part) = path_parts.get(i.saturating_add(1)) {
-            if next_part.has_wrapper() || next_part.has_slash_wrapper() {
-                // This is a sub-resource array!
-                let name = if accumulated_name.is_empty() {
-                    array_field
-                } else {
-                    alloc::format!("{}.{}", accumulated_name, array_field)
-                };
+        // The name covers every enclosing array level, wrapped or not, to
+        // match the dotted paths the normalizer and denormalizer navigate.
+        if !accumulated_name.is_empty() {
+            accumulated_name.push('.');
+        }
+        accumulated_name.push_str(&array_field);
 
-                sub_resource_arrays.insert(name.clone());
-                accumulated_name = name;
-            }
+        if path_parts
+            .get(i.saturating_add(1))
+            .is_some_and(|next_part| next_part.has_wrapper() || next_part.has_slash_wrapper())
+        {
+            sub_resource_arrays.insert(accumulated_name.clone());
         }
     }
 }
@@ -810,6 +834,32 @@ mod tests {
             "subnets.ipconfigurations".to_string(),
         ]);
         assert_eq!(subs, expected);
+    }
+
+    #[test]
+    fn test_detect_sub_resource_under_unwrapped_array() {
+        for (short, arm, expected) in [
+            (
+                "x[*].y[*].z",
+                "properties.x[*].y[*].properties.z",
+                vec!["x.y"],
+            ),
+            (
+                "x[*].y[*].w[*].z",
+                "properties.x[*].y[*].w[*].properties.z",
+                vec!["x.y.w"],
+            ),
+            (
+                "x[*].y[*].w[*].z",
+                "properties.x[*].properties.y[*].w[*].properties.z",
+                vec!["x", "x.y.w"],
+            ),
+        ] {
+            let mut subs = BTreeSet::new();
+            detect_sub_resource_array(short, arm, &mut subs);
+            let expected: BTreeSet<String> = expected.into_iter().map(String::from).collect();
+            assert_eq!(subs, expected, "{short}");
+        }
     }
 
     #[test]
