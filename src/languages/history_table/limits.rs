@@ -5,11 +5,14 @@ use crate::utils::limits::{
     check_memory_limit_if_needed, enforce_memory_limit, monotonic_now, ExecutionTimer, LimitError,
 };
 use junco_core::limits::Limits;
+use vstd::prelude::*;
 
+#[verus_verify]
 pub struct RegorusLimits<'a> {
     pub(crate) timer: &'a mut ExecutionTimer,
 }
 
+#[verus_verify]
 impl RegorusLimits<'_> {
     #[cold]
     #[inline(never)]
@@ -21,6 +24,7 @@ impl RegorusLimits<'_> {
     }
 }
 
+#[verus_verify]
 impl Limits for RegorusLimits<'_> {
     #[inline(always)]
     fn checkpoint(&mut self) -> Result<(), LimitError> {

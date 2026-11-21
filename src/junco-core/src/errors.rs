@@ -4,14 +4,17 @@
 use crate::limits::LimitError;
 use alloc::borrow::ToOwned;
 use alloc::string::String;
+use vstd::prelude::*;
 
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HistoryError {
     #[error("invalid history policy at {path}: {message}")]
     InvalidPolicy { path: String, message: &'static str },
     #[error("history variable {name:?} is not bound by request pattern")]
     UnboundVariable { name: String },
-    #[error("history graph exceeds its limit of {limit}")]
+    #[error("history symbolic graph payload exceeds {limit} bytes")]
     GraphBudget { limit: usize },
     #[error("history graph index or size computation overflowed")]
     GraphIndex,
@@ -39,30 +42,98 @@ pub enum HistoryError {
     Limit(LimitError),
 }
 
+#[verus_verify]
 impl From<LimitError> for HistoryError {
+    #[verus_spec(result => ensures result == Self::Limit(error))]
     fn from(error: LimitError) -> Self {
         Self::Limit(error)
     }
 }
 
+#[verus_verify]
 impl HistoryError {
+    #[verus_verify]
+    #[verus_spec(result => ensures match result {
+        Self::InvalidPolicy { path: owned, message: actual } => owned@ == path@ && actual == message,
+        _ => false,
+    })]
     pub fn invalid_policy(path: &str, message: &'static str) -> Self {
         Self::InvalidPolicy {
             path: path.to_owned(),
             message,
         }
     }
+    #[verus_verify]
+    #[verus_spec(result => ensures result == (HistoryError::Invariant { message }))]
     pub const fn invariant(message: &'static str) -> HistoryError {
         HistoryError::Invariant { message }
     }
 
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn normalization_invariant() -> HistoryError {
+        HistoryError::Invariant {
+            message: "invalid normalization work stack",
+        }
+    }
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn symbolic_invariant() -> HistoryError {
+        HistoryError::Invariant {
+            message: "invalid symbolic work stack",
+        }
+    }
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn invalid_truth_assignment() -> HistoryError {
+        HistoryError::Invariant {
+            message: "invalid truth assignment",
+        }
+    }
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn graph_id_overflow() -> HistoryError {
+        HistoryError::Invariant {
+            message: "graph ID does not fit usize",
+        }
+    }
+    #[verus_verify]
+    #[verus_spec(result => ensures result is GraphIndex)]
     #[inline]
     pub const fn graph_index_overflow() -> HistoryError {
         HistoryError::GraphIndex
     }
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn invalid_atom_set() -> HistoryError {
+        HistoryError::Invariant {
+            message: "invalid primitive atom set",
+        }
+    }
+    #[cfg(feature = "runtime")]
+    #[verus_verify]
+    #[verus_spec(result => ensures result is Invariant)]
+    #[inline]
+    pub const fn missing_transition_atom() -> HistoryError {
+        HistoryError::Invariant {
+            message: "transition primitive missing from atom set",
+        }
+    }
 }
 
 /// Rule-compilation failure detected before a validator can execute.
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompileError {
     /// The head must have exactly the event type's number of coordinates.
@@ -81,8 +152,24 @@ pub enum CompileError {
     Runtime(HistoryError),
 }
 
+#[verus_verify]
 impl From<HistoryError> for CompileError {
+    #[verus_spec(result => ensures result == Self::Runtime(error))]
     fn from(error: HistoryError) -> Self {
         Self::Runtime(error)
     }
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+impl vstd::std_specs::convert::FromSpecImpl<LimitError> for HistoryError {
+    open spec fn obeys_from_spec() -> bool { true }
+    open spec fn from_spec(error: LimitError) -> Self { Self::Limit(error) }
+}
+
+impl vstd::std_specs::convert::FromSpecImpl<HistoryError> for CompileError {
+    open spec fn obeys_from_spec() -> bool { true }
+    open spec fn from_spec(error: HistoryError) -> Self { Self::Runtime(error) }
+}
+
 }

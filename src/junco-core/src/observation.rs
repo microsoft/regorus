@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 use alloc::vec::Vec;
+#[cfg(feature = "runtime")]
+use smallvec::SmallVec;
+use vstd::prelude::*;
 
 #[cfg(any(test, feature = "test-util"))]
 std::thread_local! {
@@ -10,7 +13,6 @@ std::thread_local! {
     };
 }
 
-/// Restores the previous reservation-failure setting when dropped.
 #[cfg(any(test, feature = "test-util"))]
 pub struct ReservationFailureGuard(Option<usize>);
 
@@ -21,7 +23,6 @@ impl Drop for ReservationFailureGuard {
     }
 }
 
-/// Makes this thread's reservations fail after `successful` more succeed.
 #[cfg(any(test, feature = "test-util"))]
 pub fn fail_reservations_after(successful: usize) -> ReservationFailureGuard {
     ReservationFailureGuard(
@@ -46,11 +47,41 @@ pub fn reservation_checkpoint() -> Result<(), alloc::collections::TryReserveErro
     }
 }
 
+// Native SmallVec contents are an explicit container boundary, shared by its leaves.
+#[cfg(all(feature = "runtime", verus_keep_ghost))]
+verus! {
+    #[verifier::external_trait_specification]
+    pub trait ExSmallVecArray {
+        type ExternalTraitSpecificationFor: smallvec::Array;
+        type Item;
+    }
+
+    #[verifier::external_type_specification]
+    #[verifier::external_body]
+    #[verifier::accept_recursive_types(A)]
+    pub struct ExSmallVec<A: smallvec::Array>(SmallVec<A>);
+
+    #[verifier::external_type_specification]
+    #[verifier::external_body]
+    pub struct ExCollectionAllocErr(smallvec::CollectionAllocErr);
+
+    pub trait SmallVecSpecFns<T> {
+        spec fn view(&self) -> Seq<T>;
+    }
+
+    impl<A: smallvec::Array> SmallVecSpecFns<A::Item> for SmallVec<A> {
+        uninterp spec fn view(&self) -> Seq<A::Item>;
+    }
+}
+
 /// Capability for native reservation observations during one history operation.
+#[verus_verify]
 pub struct ObservationWorld;
 
 impl ObservationWorld {
     // Native reservation may fail but must preserve every existing element.
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures final(values)@ == old(values)@)]
     #[inline]
     pub fn try_reserve_vec<T>(
         &mut self,
@@ -63,6 +94,8 @@ impl ObservationWorld {
     }
 
     // Vec::try_reserve_exact is unsupported by Verus; reservation preserves elements.
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures final(values)@ == old(values)@)]
     #[inline]
     pub fn try_reserve_vec_exact<T>(
         &mut self,
@@ -71,6 +104,22 @@ impl ObservationWorld {
     ) -> Result<(), alloc::collections::TryReserveError> {
         #[cfg(any(test, feature = "test-util"))]
         reservation_checkpoint()?;
+        values.try_reserve_exact(additional)
+    }
+
+    #[cfg(feature = "runtime")]
+    #[verus_verify(external_body)]
+    #[verus_spec(result => ensures final(values).view() == old(values).view())]
+    #[inline]
+    pub fn try_reserve_words(
+        &mut self,
+        values: &mut SmallVec<[u64; 2]>,
+        additional: usize,
+    ) -> Result<(), smallvec::CollectionAllocErr> {
+        #[cfg(any(test, feature = "test-util"))]
+        if reservation_checkpoint().is_err() {
+            return values.try_reserve_exact(usize::MAX);
+        }
         values.try_reserve_exact(additional)
     }
 }

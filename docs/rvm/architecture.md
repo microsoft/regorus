@@ -101,6 +101,17 @@ Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
 inspection tooling to populate and render the program.
 
+History execution is layered over four in-tree, no_std + alloc crates.
+`history-syntax` owns the rule DSL and event model; `junco-core` owns flat
+sources, their validation and constant lowering, and the numeric kernel;
+`history-store` owns interning, committed histories and graph/cache containers;
+`history-semantics` owns normalization, symbolic derivatives and the
+cursor-batched `RuleRuntime`. Only `history` enables the store and semantics
+runtimes; source validation needs only `junco-core` and `history-syntax`.
+Regorus's `rvm::vm::history_tables` adapter keeps the VM continuation, the
+Program-keyed table cache (retaining `Arc<Program>`) and host clock/memory-limit
+translation.
+
 ### Serialization layout
 
 The module `src/rvm/program/serialization` writes `Program` instances into a

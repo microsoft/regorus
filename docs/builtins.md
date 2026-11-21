@@ -378,14 +378,38 @@ while an execution is suspended reports `HistoryExecutionActive`.
 
 A decision captures the history's revision and length at its first
 `HistoryStep`; later appends are excluded until the next decision. Each dispatch
-folds at most `batch_size` events of that prefix into the rule's Brzozowski
-derivative and repeats at the same PC while events remain, so budgets are
+advances the rule's symbolic-derivative automaton by at most `batch_size` events
+of that prefix and repeats at the same PC while events remain, so budgets are
 charged per dispatch and suspension keeps the continuation. Intermediate
 nullable prefixes do not grant. Truncation changes the revision: resume or
 completion reports `HistoryChanged` rather than publishing a stale result.
 Rule caching evaluates each history rule at most once per execution.
 
-The evaluator unfolds a source's shared subterms into a tree, bounded to depth
-256 and 65536 nodes per inflation or derivative; larger languages fail with
-`HistoryError::GraphBudget`. Native failures are fatal `VmError::History`
-errors, never rule failures; time and memory limits keep the VM's own variants.
+Sources are evaluated as DAGs: shared subterms, unused nodes and non-last roots
+are never unfolded. Each `HistoryStore` wrapper keeps bounded, Program-keyed
+caches of compiled rule graphs and of retained per-history prefixes (keyed by
+each history's immutable ID), shared by every VM attached to it. An active
+continuation pins its graph, so eviction or graph replacement cannot
+reinterpret it. A batch publishes its cursor only after its fallible work
+completes; an error keeps the batch-entry cursor. When a lazily built graph
+exceeds its 100 KiB payload budget (`HistoryError::GraphBudget`), the rule
+retries once per decision on a fresh graph, replayed through bounded
+dispatches. Native failures are fatal `VmError::History` errors, never rule
+failures; time and memory limits keep the VM's own variants.
+
+### Proof boundaries
+
+Verus checks the history crates and Regorus's host adapter
+(`cargo verus verify --features history`). Shared specifications live in
+`junco-core/src/verify/history_specs.rs` and the semantic algebra in
+`history-semantics/src/verify/history_algebra.rs`. Body proofs cover lowering of
+owned rules, constant encoding, the numeric compiler and evaluator, the
+typed/numeric history correspondence and the cached decision lifecycle: a
+successful answer equals the source language's acceptance of the pinned
+history prefix. Locking, allocation, clocks, arena destruction, Regorus's
+Rego-to-rule lowering and byte-interning adapter, the native facade and
+diagnostics, and Eq/Hash coherence of native event types are trusted, not
+proved.
+
+The CI proof configuration (`.github/workflows/verus.yml`) is Rust 1.98.1,
+Verus `0.2026.10.04.426d8b0`, Z3 4.16.0 and `vstd = 0.0.0-2026-10-04-0306`.

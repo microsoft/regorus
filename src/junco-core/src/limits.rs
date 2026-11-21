@@ -5,6 +5,7 @@
 
 use core::fmt;
 use core::time::Duration;
+use vstd::prelude::{verus_spec, verus_verify};
 
 /// Errors reported when execution resource ceilings are enforced.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,10 +92,19 @@ impl fmt::Display for LimitError {
 
 impl core::error::Error for LimitError {}
 
+#[cfg(verus_keep_ghost)]
+vstd::prelude::verus! {
+    #[verifier::external_type_specification]
+    #[verifier::external_body]
+    pub struct ExLimitError(LimitError);
+}
+
 /// Maximum retained symbolic graph payload in bytes.
+#[verus_verify]
 pub const MAX_GRAPH_BYTES: usize = 100 * 1024;
 
 /// Host resource observations used by the shared history engine.
+#[verus_verify]
 pub trait Limits {
     fn checkpoint(&mut self) -> Result<(), LimitError>;
     fn publication_checkpoint(&mut self) -> Result<(), LimitError>;
@@ -102,17 +112,22 @@ pub trait Limits {
 }
 
 /// No configured host budget; allocation and structural bounds still apply.
+#[verus_verify]
 pub struct Unmetered;
 
+#[verus_verify]
 impl Limits for Unmetered {
+    #[verus_spec(result => ensures result == Ok(()))]
     fn checkpoint(&mut self) -> Result<(), LimitError> {
         Ok(())
     }
 
+    #[verus_spec(result => ensures result == Ok(()))]
     fn publication_checkpoint(&mut self) -> Result<(), LimitError> {
         Ok(())
     }
 
+    #[verus_spec(result => ensures result == Ok(()))]
     fn enforce_memory(&mut self) -> Result<(), LimitError> {
         Ok(())
     }

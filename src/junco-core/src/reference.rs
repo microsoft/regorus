@@ -1,4 +1,5 @@
-//! Reference evaluator for numeric history sources by Brzozowski derivatives.
+//! Unverified reference evaluator for numeric history sources by Brzozowski derivatives,
+//! kept (`test-util`) as a differential oracle for the symbolic `history-semantics` runtime.
 //!
 //! A history is in a rule's language iff folding [`Lang::step`] over its events ends in a
 //! [`Lang::nullable`] language. Smart constructors apply similarity rules so residuals of the
@@ -180,8 +181,8 @@ impl Lang {
     }
 
     /// Builds the language of `pair`'s root regex.
-    // shortcut: expands the source DAG into a tree under depth/node caps; the symbolic checker
-    // replaces this evaluator when shared subterms matter.
+    // shortcut: expands the source DAG into a tree under depth/node caps; fine for small
+    // differential corpora, never used to decide production requests.
     pub fn inflate<L: Limits>(pair: &FlatPair<u64>, limits: &mut L) -> Result<Lang, HistoryError> {
         let mut budget = Budget { limits, nodes: 0 };
         Self::inflate_node(&pair.regexes, pair.root, 0, &mut budget)

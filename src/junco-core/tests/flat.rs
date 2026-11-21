@@ -436,7 +436,7 @@ fn serde_keeps_version_nine_names_variant_order_and_field_order() {
         serde_json::from_str::<FlatPair<String>>(json).unwrap(),
         source
     );
-    // Literal version-7 bytes, including the head length and numeric coordinate.
+    // Literal version-9 bytes, including the head length and numeric coordinate.
     let bytes = [
         3, 0, 1, 1, b'x', 2, 4, 0, 1, 1, 1, 0, 1, b'a', 0, 2, 2, 0, 1, 3, 0, 9, 0, 1, 2, 3, 1, 4,
         2, 2, 3, 5, 0, 6, 0, 7, 4, 8, 7, 3,

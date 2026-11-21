@@ -2,9 +2,17 @@
 // Licensed under the MIT License.
 #![cfg(all(feature = "rvm", feature = "history"))]
 
-use history_syntax::{Component, RuleMode};
+use history_semantics::CompiledRule;
+use history_store::{History, Store};
+use history_syntax::{
+    AtomPattern, Comparison, Component, ComponentPattern, Event as _, Head, RegexExpr, Rule,
+    RuleMode, TestExpr,
+};
 use junco_core::flat::{FlatHead, FlatPair, FlatRegex, FlatTerm, FlatTest};
-use junco_core::observation::fail_reservations_after;
+use junco_core::limits::Unmetered;
+use junco_core::observation::{fail_reservations_after, ObservationWorld};
+use junco_core::reference::{head_matches, Lang};
+use junco_core::{lower_flat, FlatEncoder};
 use regorus::languages::history_table::{
     Event, HistoryError, HistoryHandle, HistoryStore, ACTION, PRINCIPAL, RESOURCE,
 };
@@ -506,6 +514,57 @@ const VARIABLES: [&str; 3] = ["p", "a", "r"];
 const COORDINATES: [&str; 3] = ["principal", "action", "resource"];
 const ORACLE_REQUEST: &str = r#"{"principal": p, "action": a, "resource": r}"#;
 
+/// Borrowed-string event for the typed-semantics side of the oracle comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TestEvent<'a> {
+    principal: &'a str,
+    action: &'a str,
+    resource: &'a str,
+}
+
+/// Tagged coordinate of a [`TestEvent`]; constants in rules carry their coordinate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum TestComponent<'a> {
+    Principal(&'a str),
+    Action(&'a str),
+    Resource(&'a str),
+}
+
+impl history_syntax::KeyHash for TestComponent<'_> {
+    fn key_hash(&self) -> u64 {
+        history_syntax::key_hash::hash_via_std(self)
+    }
+}
+
+impl<'a> history_syntax::Event for TestEvent<'a> {
+    type Component = TestComponent<'a>;
+    type Arity = history_syntax::N3;
+
+    fn component(self, index: usize) -> TestComponent<'a> {
+        match index {
+            0 => TestComponent::Principal(self.principal),
+            1 => TestComponent::Action(self.action),
+            _ => TestComponent::Resource(self.resource),
+        }
+    }
+
+    fn coordinate(component: TestComponent<'a>) -> usize {
+        match component {
+            TestComponent::Principal(_) => 0,
+            TestComponent::Action(_) => 1,
+            TestComponent::Resource(_) => 2,
+        }
+    }
+}
+
+fn source_event(word: WordEvent) -> TestEvent<'static> {
+    TestEvent {
+        principal: IDS[word[0]],
+        action: IDS[word[1]],
+        resource: IDS[word[2]],
+    }
+}
+
 fn join<T>(children: &[T], separator: &str, render: impl Fn(&T) -> String) -> String {
     children
         .iter()
@@ -515,6 +574,36 @@ fn join<T>(children: &[T], separator: &str, render: impl Fn(&T) -> String) -> St
 }
 
 impl Test {
+    fn owned(&self) -> TestExpr<TestEvent<'static>> {
+        match self {
+            Self::Bool(true) => TestExpr::True,
+            Self::Bool(false) => TestExpr::False,
+            Self::Compare {
+                field,
+                unequal,
+                variable,
+                literal,
+            } => {
+                let pattern = if *variable {
+                    ComponentPattern::variable(VARIABLES[*field])
+                } else {
+                    // Tag the constant with this coordinate through the authoring event.
+                    ComponentPattern::constant(source_event([*literal; 3]).component(*field))
+                };
+                TestExpr::Atom {
+                    comparison: if *unequal {
+                        Comparison::Neq
+                    } else {
+                        Comparison::Eq
+                    },
+                    pattern: AtomPattern::new(Component(u8::try_from(*field).unwrap()), pattern),
+                }
+            }
+            Self::And(children) => TestExpr::And(children.iter().map(Self::owned).collect()),
+            Self::Or(children) => TestExpr::Or(children.iter().map(Self::owned).collect()),
+        }
+    }
+
     /// One-event tests become one-event languages: `∧` is `&`, `∨` is `|`.
     fn rego(&self) -> String {
         match self {
@@ -556,6 +645,20 @@ impl Test {
 }
 
 impl Regex {
+    fn owned(&self) -> RegexExpr<TestEvent<'static>> {
+        match self {
+            Self::Empty => RegexExpr::Empty,
+            Self::All => RegexExpr::All,
+            Self::Epsilon => RegexExpr::Epsilon,
+            Self::Test(test) => RegexExpr::Test(test.owned()),
+            Self::Union(children) => RegexExpr::union(children.iter().map(Self::owned)),
+            Self::Concat(children) => RegexExpr::concat(children.iter().map(Self::owned)),
+            Self::Intersect(children) => RegexExpr::intersect(children.iter().map(Self::owned)),
+            Self::Star(inner) => RegexExpr::star(inner.owned()),
+            Self::Not(inner) => RegexExpr::complement(inner.owned()),
+        }
+    }
+
     /// Rego history expression; binary operators are always parenthesized.
     fn rego(&self) -> String {
         match self {
@@ -741,11 +844,84 @@ fn oracle_corpus_and_words() -> (Vec<Regex>, [WordEvent; 3], Vec<Vec<WordEvent>>
     (corpus, alphabet, words)
 }
 
+fn mode_name(mode: RuleMode) -> &'static str {
+    match mode {
+        RuleMode::Require => "require",
+        RuleMode::Forbid => "forbid",
+    }
+}
+
+fn oracle_head(action: Option<&'static str>) -> Head<TestEvent<'static>> {
+    Head::new([
+        ComponentPattern::variable("p"),
+        action.map_or_else(
+            || ComponentPattern::variable("a"),
+            |action| ComponentPattern::constant(TestComponent::Action(action)),
+        ),
+        ComponentPattern::variable("r"),
+    ])
+}
+
+/// Interns portable constants exactly as `RegoVM::attach_history` does.
+struct StoreEncoder<'a>(&'a HistoryStore);
+
+impl FlatEncoder<String> for StoreEncoder<'_> {
+    fn encode(&mut self, field: Component, value: &String) -> Result<u64, HistoryError> {
+        self.0.intern(field, value)
+    }
+}
+
+/// Whether the rule holds according to the unverified `junco_core::reference` evaluator.
+fn reference_holds(
+    pair: &FlatPair<u64>,
+    mode: RuleMode,
+    request: &[u64],
+    events: &[[u64; 3]],
+) -> bool {
+    if !head_matches(&pair.head, request) {
+        return true;
+    }
+    let mut lang = Lang::inflate(pair, &mut Unmetered).unwrap();
+    for event in events {
+        lang = lang.step(pair, event, request, &mut Unmetered).unwrap();
+    }
+    lang.nullable() == (mode == RuleMode::Require)
+}
+
 #[test]
 fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
     let (corpus, alphabet, words) = oracle_corpus_and_words();
+    let store = HistoryStore::new();
+    let slots = [["id1"; 3], ["id2"; 3], ["id1", "id2", "id1"]].map(|[p, a, r]| {
+        [
+            store.intern(PRINCIPAL, p).unwrap(),
+            store.intern(ACTION, a).unwrap(),
+            store.intern(RESOURCE, r).unwrap(),
+        ]
+    });
     for regex in corpus {
         let base = table(&[rule("require", ORACLE_REQUEST, &regex.rego())], 256);
+        let source = &base.history_tables[0].rules[0];
+        let pair = lower_flat(
+            &source.source,
+            &mut StoreEncoder(&store),
+            &mut Unmetered,
+            &mut ObservationWorld,
+        )
+        .unwrap();
+        for binding in [[1, 1, 1], [2, 2, 2]] {
+            for word in &words {
+                let events: Vec<_> = word
+                    .iter()
+                    .map(|e| slots[alphabet.iter().position(|a| a == e).unwrap()])
+                    .collect();
+                assert_eq!(
+                    reference_holds(&pair, source.mode, &slots[binding[0] - 1], &events),
+                    regex.accepts(word, &binding),
+                    "reference evaluator: {regex:?} {word:?} {binding:?}"
+                );
+            }
+        }
         for batch_size in BATCHES {
             let program = with_batch(&base, batch_size);
             for mode in MODES {
@@ -787,12 +963,205 @@ fn exhaustive_typed_words_match_split_oracle_and_concrete_derivatives() {
     }
 }
 
-fn assert_flat_epsilon_language(
-    source: FlatPair<String>,
-    nodes: usize,
-    edges: usize,
-    fits_reference: bool,
+fn assert_shared_decision(
+    regex: &Regex,
+    mode: RuleMode,
+    fixture: &mut Fixture,
+    compiled: &mut CompiledRule<TestEvent<'static>>,
+    history: &History<TestEvent<'static>>,
+    word: &[WordEvent],
+    binding: WordEvent,
 ) {
+    let inside = regex.accepts(word, &binding);
+    let violation = match mode {
+        RuleMode::Require => !inside,
+        RuleMode::Forbid => inside,
+    };
+    let request = event(
+        &fixture.store,
+        &format!("id{}", binding[0]),
+        &format!("id{}", binding[1]),
+        &format!("id{}", binding[2]),
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            compiled
+                .accepts_history(history, &source_event(binding))
+                .unwrap(),
+            Some(inside),
+            "typed semantics: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(
+            fixture.decide(request).unwrap(),
+            Value::Bool(!violation),
+            "Rego history rule: {regex:?} {word:?} {binding:?} {mode:?}"
+        );
+        assert_eq!(fixture.store.len(&fixture.history).unwrap(), word.len());
+        assert_eq!(history.len(), word.len());
+    }
+}
+
+#[test]
+fn typed_semantics_and_rego_history_rules_agree() {
+    let (corpus, alphabet, words) = oracle_corpus_and_words();
+    for regex in corpus {
+        for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+            let base = table(
+                &[rule(mode_name(rule_mode), ORACLE_REQUEST, &regex.rego())],
+                256,
+            );
+            for batch_size in BATCHES {
+                let program = with_batch(&base, batch_size);
+                for execution_mode in MODES {
+                    // The rule's own Boolean: `first`/`allow` composition is covered elsewhere.
+                    let mut fixture =
+                        Fixture::new(&program, execution_mode).with_entry("data.t.r0");
+                    let store = Arc::new(Store::new().unwrap());
+                    let mut compiled = CompiledRule::new(
+                        store.clone(),
+                        Rule::new(rule_mode, oracle_head(None), regex.owned()),
+                    )
+                    .unwrap();
+                    let mut history = History::new(store).unwrap();
+                    let ids: Vec<_> = alphabet
+                        .iter()
+                        .map(|e| {
+                            event(
+                                &fixture.store,
+                                &format!("id{}", e[0]),
+                                &format!("id{}", e[1]),
+                                &format!("id{}", e[2]),
+                            )
+                        })
+                        .collect();
+                    for binding in [[1, 1, 1], [2, 2, 2]] {
+                        for word in &words {
+                            history.truncate(0).unwrap();
+                            fixture.replace(&[]);
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                &[],
+                                binding,
+                            );
+                            for e in word {
+                                history.push(source_event(*e)).unwrap();
+                                fixture
+                                    .store
+                                    .append(
+                                        &fixture.history,
+                                        &[ids[alphabet.iter().position(|a| a == e).unwrap()]],
+                                    )
+                                    .unwrap();
+                            }
+                            assert_shared_decision(
+                                &regex,
+                                rule_mode,
+                                &mut fixture,
+                                &mut compiled,
+                                &history,
+                                word,
+                                binding,
+                            );
+                            if let Some((last, prefix)) = word.split_last() {
+                                history.truncate(prefix.len()).unwrap();
+                                fixture
+                                    .store
+                                    .truncate(&fixture.history, prefix.len())
+                                    .unwrap();
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    prefix,
+                                    binding,
+                                );
+                                let replacement = alphabet.iter().position(|e| e != last).unwrap();
+                                history.push(source_event(alphabet[replacement])).unwrap();
+                                fixture
+                                    .store
+                                    .append(&fixture.history, &[ids[replacement]])
+                                    .unwrap();
+                                let mut replaced = prefix.to_vec();
+                                replaced.push(alphabet[replacement]);
+                                assert_shared_decision(
+                                    &regex,
+                                    rule_mode,
+                                    &mut fixture,
+                                    &mut compiled,
+                                    &history,
+                                    &replaced,
+                                    binding,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A constant action head does not fire, independently of the tail's answer or mode.
+    let regex = Regex::Test(Test::Compare {
+        field: 0,
+        unequal: false,
+        variable: true,
+        literal: 1,
+    });
+    for rule_mode in [RuleMode::Require, RuleMode::Forbid] {
+        let base = table(
+            &[rule(
+                mode_name(rule_mode),
+                &format!(
+                    r#"{{"principal": p, "action": "{}", "resource": r}}"#,
+                    IDS[1]
+                ),
+                &regex.rego(),
+            )],
+            256,
+        );
+        for batch_size in BATCHES {
+            let program = with_batch(&base, batch_size);
+            for execution_mode in MODES {
+                let mut fixture = Fixture::new(&program, execution_mode);
+                let store = Arc::new(Store::new().unwrap());
+                let mut compiled = CompiledRule::new(
+                    store.clone(),
+                    Rule::new(rule_mode, oracle_head(Some(IDS[1])), regex.owned()),
+                )
+                .unwrap();
+                let mut history = History::new(store).unwrap();
+                for word in [vec![], vec![[1, 1, 1]]] {
+                    fixture.replace(&[]);
+                    history.truncate(0).unwrap();
+                    for e in word {
+                        history.push(source_event(e)).unwrap();
+                        let recorded = event(&fixture.store, "id1", "id1", "id1");
+                        fixture.store.append(&fixture.history, &[recorded]).unwrap();
+                    }
+                    let mismatch = event(&fixture.store, "id1", "id2", "id1");
+                    for _ in 0..2 {
+                        assert_eq!(
+                            compiled
+                                .accepts_history(&history, &source_event([1, 2, 1]))
+                                .unwrap(),
+                            None
+                        );
+                        assert_eq!(fixture.decide(mismatch).unwrap(), Value::Undefined);
+                        assert_eq!(fixture.store.len(&fixture.history).unwrap(), history.len());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_flat_epsilon_language(source: FlatPair<String>, nodes: usize, edges: usize) {
     source.validate().unwrap();
     let assert_shape = |program: &Program| {
         let stored = &program.history_tables[0].rules[0].source;
@@ -830,21 +1199,6 @@ fn assert_flat_epsilon_language(
             for mode in MODES {
                 let mut fixture = Fixture::new(&restored, mode);
                 let probe = event(&fixture.store, "alice", "read", "doc");
-                if !fits_reference {
-                    // The reference evaluator unfolds shared subterms, so deep shapes hit its cap
-                    // with a typed error that leaves the VM reusable.
-                    for _ in 0..2 {
-                        assert!(matches!(
-                            fixture.decide(probe),
-                            Err(VmError::History {
-                                source: HistoryError::GraphBudget { .. },
-                                ..
-                            })
-                        ));
-                    }
-                    assert_shape(&restored);
-                    continue;
-                }
                 for _ in 0..2 {
                     assert_eq!(fixture.decide(probe).unwrap(), Value::Undefined);
                 }
@@ -860,7 +1214,7 @@ fn assert_flat_epsilon_language(
 }
 
 #[test]
-fn flat_shared_dag_roundtrips_and_reference_rejects_unfolding() {
+fn flat_shared_dag_roundtrips_and_executes_without_unfolding() {
     let mut regexes = vec![FlatRegex::Epsilon];
     for index in 1..4096 {
         regexes.push(FlatRegex::Concat(vec![index - 1, index - 1]));
@@ -874,7 +1228,6 @@ fn flat_shared_dag_roundtrips_and_reference_rejects_unfolding() {
         },
         4096,
         8190,
-        false,
     );
 }
 
@@ -893,7 +1246,6 @@ fn flat_deep_unary_and_non_last_root_preserve_topology() {
         },
         4096,
         4095,
-        false,
     );
     assert_flat_epsilon_language(
         FlatPair {
@@ -909,7 +1261,6 @@ fn flat_deep_unary_and_non_last_root_preserve_topology() {
         },
         4,
         1,
-        true,
     );
 }
 
@@ -1175,6 +1526,55 @@ fn load_program_cancels_suspension_and_drops_typed_context_not_shared_history() 
     assert_eq!(f.store.len(&f.history).unwrap(), 3);
     assert_eq!(
         peer.execute_entry_point_by_name("data.t.first").unwrap(),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn staging_requires_attachment_and_each_domain_membership() {
+    let program = read_star(256);
+    let store = Arc::new(HistoryStore::new());
+    let peer = Arc::new(HistoryStore::new());
+    let history = peer.new_history().unwrap();
+    let own = event(&peer, "alice", "read", "doc");
+    // Typed views encode through dictionaries the byte domains never contain.
+    let typed =
+        History::from_events(Arc::new(Store::new().unwrap()), [source_event([0; 3])]).unwrap();
+    let other = typed.numeric().as_slice()[0];
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    assert!(matches!(
+        vm.set_history_input(history.clone(), own),
+        Err(VmError::HistoryContextMissing { .. })
+    ));
+    vm.attach_history(store.clone()).unwrap();
+    // Wrappers share one process-wide store, so a peer's handle and identities stage.
+    vm.set_history_input(history.clone(), own).unwrap();
+    // Event fields are private: each typed-only coordinate is rejected while building.
+    for index in 0..3 {
+        let mut slots = [own.component(0), own.component(1), own.component(2)];
+        slots[index] = other.component(index);
+        assert!(matches!(
+            peer.event(&slots),
+            Err(HistoryError::UnknownId {
+                domain: "component",
+                ..
+            })
+        ));
+    }
+    assert!(matches!(
+        vm.set_history_input(history.clone(), other),
+        Err(VmError::History {
+            source: HistoryError::UnknownId {
+                domain: "component",
+                ..
+            },
+            ..
+        })
+    ));
+    // Failed requests leave the previously staged input intact.
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.t.first").unwrap(),
         Value::Undefined
     );
 }

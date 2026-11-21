@@ -6,10 +6,19 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/microsoft/regorus"
 
+[package.metadata.verus]
+verify = true
+
 [features]
 default = []
 serde = ["dep:serde"]
-std = []
+std = ["vstd/std"]
 
 [dependencies]
+# Keep aligned with the root crate's vstd pin (.github/workflows/verus.yml).
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
+frunk_core = { version = "=0.5.0", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
