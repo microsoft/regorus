@@ -1,6 +1,8 @@
 [workspace]
 
 members = [
+    "src/history-syntax",
+    "src/junco-core",
     "tests/ensure_no_std",
   "xtask",
 ]
@@ -42,6 +44,7 @@ hex = ["dep:data-encoding"]
 http = []
 glob = ["dep:globset"]
 graph = []
+history = ["rvm"]
 jsonschema = ["dep:jsonschema"]
 jsonpatch = []
 mimalloc = ["dep:mimalloc"]
@@ -53,7 +56,7 @@ cache = ["dep:lru"]
 rvm = ["dep:postcard", "dep:indexmap"]
 semver = ["dep:semver"]
 allocator-memory-limits = ["std", "mimalloc", "mimalloc/allocator-memory-limits"]
-std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std" ]
+std = ["rand/std", "rand/std_rng", "serde_json/std", "indexmap?/std", "msvc_spectre_libs", "dep:parking_lot", "vstd/std", "junco-core/std", "history-syntax/std" ]
 time = ["dep:chrono", "dep:chrono-tz"]
 uuid = ["dep:uuid"]
 urlquery = ["dep:url", "dep:percent-encoding"]
@@ -108,6 +111,8 @@ opa-testutil = []
 rand = ["dep:rand"]
 
 [dependencies]
+junco-core = { path = "src/junco-core", version = "0.1.0", default-features = false, features = ["serde"] }
+history-syntax = { path = "src/history-syntax", version = "0.1.0", default-features = false, features = ["serde"] }
 anyhow = { version = "1.0.102", default-features = false }
 serde = {version = "1.0.150", default-features = false, features = ["derive", "rc", "alloc"] }
 serde_json = { version = "1.0.150", default-features = false, features = ["alloc", "raw_value"] }

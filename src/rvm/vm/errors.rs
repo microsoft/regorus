@@ -45,6 +45,13 @@ pub enum VmError {
     #[error("Compiled regex exceeded size limit ({limit} bytes, pc={pc})")]
     RegexSizeLimitExceeded { limit: usize, pc: usize },
 
+    #[error("history_step requires the `history` feature (pc={pc})")]
+    HistoryFeatureDisabled { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history.require/forbid evaluation is not implemented yet (pc={pc})")]
+    HistoryUnimplemented { pc: usize },
+
     #[error("Value serialization exceeds {limit} nested containers (pc={pc})")]
     SerializationDepthExceeded { limit: usize, pc: usize },
 
@@ -353,6 +360,9 @@ impl core::fmt::Debug for VmError {
                 "MemoryBudgetUnsupportedInSuspendableExecution"
             }
             Self::RegexSizeLimitExceeded { .. } => "RegexSizeLimitExceeded",
+            Self::HistoryFeatureDisabled { .. } => "HistoryFeatureDisabled",
+            #[cfg(feature = "history")]
+            Self::HistoryUnimplemented { .. } => "HistoryUnimplemented",
             Self::SerializationDepthExceeded { .. } => "SerializationDepthExceeded",
             Self::LiteralIndexOutOfBounds { .. } => "LiteralIndexOutOfBounds",
             Self::RegisterNotObject { .. } => "RegisterNotObject",
