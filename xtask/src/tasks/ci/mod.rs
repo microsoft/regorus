@@ -373,7 +373,11 @@ fn run_example(
         .map(OsString::from),
     );
 
-    util_run_cargo_step(workspace, "cargo run --example regorus (ci)", args)
+    util_run_cargo_step(workspace, "cargo run --example regorus (ci)", args)?;
+
+    let mut args = base_cargo_args("run", release, frozen, Some("history"));
+    args.extend(["--example", "history"].into_iter().map(OsString::from));
+    util_run_cargo_step(workspace, "cargo run --example history (ci)", args)
 }
 
 fn run_opa_tests(workspace: &Path, release: bool, frozen: bool, features: &str) -> Result<()> {

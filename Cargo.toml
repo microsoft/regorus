@@ -233,11 +233,20 @@ name = "normalization_benchmark"
 harness = false
 required-features = ["azure_policy"]
 
+[[bench]]
+name = "history_table"
+harness = false
+required-features = ["history"]
+
 [[example]]
 name="regorus"
 harness=false
 test=false
 doctest=false
+
+[[example]]
+name = "history"
+required-features = ["history"]
 
 [package.metadata.docs.rs]
 # To build locally:

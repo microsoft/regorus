@@ -373,6 +373,8 @@ Loading another program cancels any suspended execution and clears attachment
 and input, not the application's histories. Executing a history rule without
 attachment or staged input reports `HistoryContextMissing`; changing either
 while an execution is suspended reports `HistoryExecutionActive`.
+[`examples/history`](../examples/history/main.rs) walks through this sequence
+(`cargo run --example history --features history`).
 
 ### Evaluation
 
@@ -413,3 +415,14 @@ proved.
 
 The CI proof configuration (`.github/workflows/verus.yml`) is Rust 1.98.1,
 Verus `0.2026.10.04.426d8b0`, Z3 4.16.0 and `vstd = 0.0.0-2026-10-04-0306`.
+
+### Benchmarks
+
+`cargo bench --features history --bench history_table` measures compiled Rego
+decisions with batch size 256 over histories of 16, 256 and 4096 events, for an
+early-accepting `[any, {... action == "edit" ...}, any]` policy and a full-scan
+`star({action == "edit"})` policy. Cases cover an unchanged prefix, one event
+appended after the prefix was retained, and a replay from the root after
+truncation invalidated the revision, with graph and successor caches warm.
+Compilation, interning, attachment, staging, truncation, appends and the priming
+decision run outside timing. These measure decisions, not ingestion.
