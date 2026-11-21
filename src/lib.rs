@@ -12,6 +12,7 @@
 // Verus needs to name it to give it a specification. Verification builds use the
 // Verus toolchain, so this gate never applies to shipped code.
 #![cfg_attr(verus_keep_ghost, feature(fmt_arguments_from_str))]
+#![cfg_attr(verus_keep_ghost, feature(allocator_api))]
 // Loop invariants are attached with `#[verus_spec(invariant ...)]` on the loop
 // statement itself. Applying a proc-macro attribute in statement position is
 // still unstable, so verification builds opt in. Shipped builds strip the
@@ -147,6 +148,10 @@ pub mod languages {
 
     #[cfg(feature = "azure-rbac")]
     pub mod azure_rbac;
+
+    #[cfg(all(feature = "rvm", feature = "history"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "rvm", feature = "history"))))]
+    pub mod history_table;
 
     #[cfg(feature = "rvm")]
     pub mod rego;

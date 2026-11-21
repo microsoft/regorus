@@ -12,6 +12,7 @@ use core::fmt;
 use core::ops;
 
 use crate::value::Value;
+use vstd::prelude::verus_verify;
 
 pub use iter::{ArrayIntoIter, ArrayIter, ArrayIterMut};
 
@@ -19,6 +20,8 @@ pub use iter::{ArrayIntoIter, ArrayIter, ArrayIterMut};
 ///
 /// The current backing storage is `Vec<Value>`. The inner field is private so
 /// the representation can change without touching call sites.
+#[verus_verify]
+#[verus_verify(external_derive)]
 #[derive(Default, Clone, Eq, PartialEq)]
 pub struct Array {
     inner: Vec<Value>,
@@ -222,5 +225,43 @@ impl From<Array> for Value {
     #[inline]
     fn from(a: Array) -> Self {
         a.into_value()
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+mod verify {
+    use super::*;
+    use vstd::prelude::*;
+
+    verus! {
+        impl View for Array {
+            type V = Seq<Value>;
+            closed spec fn view(&self) -> Seq<Value> { self.inner@ }
+        }
+
+        impl Array {
+            pub proof fn lemma_len_bound(&self)
+                ensures self@.len() <= usize::MAX,
+            {
+                reveal(<Array as View>::view);
+                vstd::std_specs::vec::axiom_spec_len(&self.inner);
+            }
+
+            pub proof fn lemma_elems_smaller(a: crate::Rc<Array>)
+                ensures forall|i: int| 0 <= i < a@.len()
+                    ==> is_smaller_than(a@[i], Value::Array(a)),
+            {
+                reveal(<Array as View>::view);
+                let bound = Value::Array(a);
+                let field: crate::Rc<Array> = get_variant_field(bound, "Array", "0");
+                assert(is_smaller_than(field, bound));
+                assert(is_smaller_than((*a).inner, a));
+                assert(is_smaller_than((*a).inner@, (*a).inner));
+                assert forall|i: int| 0 <= i < a@.len()
+                    implies is_smaller_than(a@[i], bound) by {
+                    assert(is_smaller_than(a@[i], (*a).inner@));
+                }
+            }
+        }
     }
 }

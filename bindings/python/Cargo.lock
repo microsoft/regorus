@@ -279,6 +279,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "frunk_core"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bd3c9ba2e323e8b19e77f15873f60974a7d82f89b80e50c53be44b8b92927c1"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -356,6 +362,36 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "history-semantics"
+version = "0.1.0"
+dependencies = [
+ "history-store",
+ "history-syntax",
+ "junco-core",
+ "thiserror",
+ "vstd",
+]
+
+[[package]]
+name = "history-store"
+version = "0.1.0"
+dependencies = [
+ "history-syntax",
+ "junco-core",
+ "parking_lot",
+ "vstd",
+]
+
+[[package]]
+name = "history-syntax"
+version = "0.1.0"
+dependencies = [
+ "frunk_core",
+ "serde",
+ "vstd",
+]
 
 [[package]]
 name = "iana-time-zone"
@@ -571,6 +607,16 @@ dependencies = [
  "num-traits",
  "serde_json",
  "zmij",
+]
+
+[[package]]
+name = "junco-core"
+version = "0.1.0"
+dependencies = [
+ "history-syntax",
+ "serde",
+ "thiserror",
+ "vstd",
 ]
 
 [[package]]
@@ -1057,9 +1103,14 @@ dependencies = [
  "chrono-tz",
  "data-encoding",
  "globset",
+ "hashbrown",
+ "history-semantics",
+ "history-store",
+ "history-syntax",
  "indexmap",
  "ipnet",
  "jsonschema",
+ "junco-core",
  "lazy_static",
  "lru",
  "msvc_spectre_libs",
@@ -1374,15 +1425,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "verus_builtin"
-version = "0.0.0-2026-09-06-0133"
+version = "0.0.0-2026-09-16-0054"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "856c9979b5ed3b75a2371d8667602da1839ab0cbb3720a2c1c8a182bcdb27cf7"
+checksum = "5e4a9e69d45ddbe303075756d3fc2fcc965eb9dc70c80651d0e4458a6af1ed83"
 
 [[package]]
 name = "verus_builtin_macros"
-version = "0.0.0-2026-09-06-0133"
+version = "0.0.0-2026-09-20-0158"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "466bb5ed102507ccbcd002410e73716c9eb27b602980d81bbd176860ace8a89b"
+checksum = "213ca3e8a80925aec251d3f1952a213d6090156b58ad81dccc3a2f1fed77c99f"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -1434,9 +1485,9 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "vstd"
-version = "0.0.0-2026-09-06-0133"
+version = "0.0.0-2026-10-04-0306"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5391d6f656ab9a485169f7e9fe87d3db1f0a6aa116fcb630dd0bef224170e7"
+checksum = "f22e1cad7b5f35642a5a020b25e9b49915066d836bab77f8431bbc80228290a7"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",

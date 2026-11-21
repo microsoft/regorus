@@ -239,3 +239,172 @@ In future, each builtin will be associated with a feature (many builtins could b
    | Builtin                                                                                      | Feature |
    |----------------------------------------------------------------------------------------------|---------|
    | [trace](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-tracing-trace) | _       |
+
+## History rules (`history.require` / `history.forbid`, RVM only)
+
+The opt-in `history` feature lets Rego policies constrain a typed event history.
+It implies `rvm` and `arc`, supports no_std, and is not included in the default
+features or `full-opa`. Only the RVM compiler lowers these calls; the tree-walking
+interpreter, and the RVM compiler without `history`, report an unknown function.
+The former generic `history.match` builtin and the Rust rule DSL/`compile` entry
+point are removed. Language bindings do not forward a `history` feature or expose
+the native owner/identity API.
+
+The canonical DSL and Event trait belong to in-tree `src/history-syntax`;
+`junco-core` owns flat source validation/lowering and shared contracts,
+`history-store` owns interning and history transactions, and `history-semantics`
+owns numeric compilation/evaluation and generic policies. Regorus retains the Rego
+lowering, the borrowed-string constant adapter, VM dispatch/limit adapter, and the
+shared Program-keyed table cache. Its public `HistoryStore::{new, intern, event,
+new_history, append, truncate, len}` API wraps one process-wide arity-3 numeric
+store (`history_store::store::HistoryStore::new(3)`). Store's generic typed
+`Store<E>`/`History<E>` APIs are separate, not replacement Regorus entrypoints.
+`std` and Semantics' `cache` do not imply `runtime`; Regorus `history` enables
+Store and Semantics runtime, while source validation depends only on core and
+Syntax. `test-util` supplies dev-only integration probes.
+
+### Rego syntax
+
+```rego
+package approvals
+import rego.v1
+
+release_after_edit := history.require(
+    {"action": "release", "principal": actor, "resource": doc},
+    [any, {principal == actor, action == "edit", resource == doc}, any],
+)
+no_remove_after_lock := history.forbid(
+    {"action": "remove", "resource": doc},
+    [any, {action == "lock", resource == doc}, any],
+)
+
+allow if {
+    release_after_edit
+    no_remove_after_lock
+}
+```
+
+`history.require(request, language)` is `false` when the staged request matches
+`request` and the history is outside `language`; `history.forbid` is `false` when
+it is inside. Otherwise, including a nonmatching request, the call is `true`; it
+is never undefined. Compose the Boolean with ordinary Rego.
+
+The request pattern is an object literal keyed by `"principal"`, `"action"`,
+and `"resource"`. A string value matches those exact bytes; a variable binds the
+request's coordinate for use in the language; `_` or an omitted key matches
+anything. Variables may not be named `principal`, `action`, `resource`, or `any`,
+and each belongs to one coordinate.
+
+| Language | Complete histories |
+|---|---|
+| `any` | All finite histories |
+| `[]` | Empty history only |
+| `{c == t, ...}` | One event satisfying every comparison |
+| `true`, `set()` | One arbitrary event |
+| `false` | No histories |
+| `[a, b, ...]` | Chronological concatenation |
+| `a \| b` | Union |
+| `a & b` | Intersection |
+| `a - b` | Difference (`a` and not `b`) |
+| `star(a)` | Kleene star |
+
+A comparison is `principal`, `action`, or `resource` with `==` or `!=` against a
+string constant or a request variable of the same coordinate. `{}` is an empty
+object, not a test; use `set()`. Malformed shapes, unknown names, unbound or
+cross-coordinate variables fail RVM compilation with a spanned error.
+
+Paths are exact raw UTF-8: case, slashes, embedded NULs, and distinct Unicode
+encodings remain distinct; there is no normalization or ancestry match.
+
+### Native boundary
+
+Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Each
+wrapper owns only its Program-keyed table cache; identities and histories live in
+one process-wide store, so wrappers accept each other's handles and IDs and are
+not a tenant isolation boundary. Intern paths per coordinate with
+`intern(PRINCIPAL, path)`, `intern(ACTION, path)`, and `intern(RESOURCE, path)`,
+then build an `Event` from the three opaque `u64` IDs with
+`store.event(&[principal, action, resource])`, which validates arity and domain
+membership; `event.component(index)` reads one coordinate back. Interned paths
+live for the process; IDs are not recycled. IDs issued only by a typed `Store<E>`
+view are not byte-domain members and are rejected.
+
+Use `store.new_history()`, then `store.append(&history, &events)`,
+`store.truncate(&history, len)`, and `store.len(&history)`. Cloned handles share
+events. Compile the policy with `Compiler::compile_from_policy`. After
+`vm.load_program(program)`, call `vm.attach_history(store.clone())` and
+`vm.set_history_input(history, request)`, then execute any entry point. Decisions
+never append the candidate. Repeated executions retain staged input. Loading
+another program cancels an old execution and requires explicit reattachment and
+restaging. Executing a history rule without attachment or staged input reports
+`HistoryContextMissing`.
+
+### Batching, sharing, and errors
+
+Each `history.require`/`history.forbid` call compiles to one `HistoryStep`
+instruction with batch size 256 that writes the call's Boolean to its destination
+register. Each dispatch consumes at most the batch size and repeats at the same
+PC when more events remain. Intermediate nullable prefixes do not grant. The
+existing VM executor charges dispatch budgets and preserves continuations during
+suspension. Rule caching evaluates each history rule at most once per execution.
+
+A decision captures a revision and target length at its first `HistoryStep`
+dispatch; later concurrent appends are excluded until the next decision.
+Truncation that removes events changes the revision; resume or completion reports
+typed `HistoryChanged`, rather than restarting or publishing a stale grant.
+Attachment or staged-input changes during an active/suspended execution fail.
+
+Each wrapper shares bounded table/graph and retained-prefix caches across VMs;
+retained prefixes are keyed by each record's immutable process-wide history ID;
+active continuations pin their graph instance. Eviction or graph replacement
+cannot reinterpret a pinned residual. Successful batches publish their cursor
+only after fallible batch work completes; errors preserve the batch-entry cursor.
+Graph exhaustion permits one fresh lazy-graph retry per rule per decision,
+replayed through bounded dispatches. Native errors remain typed in
+`VmError::History`; resource limits retain the VM's existing limit variants.
+
+Programs contain portable postorder source tables, not live IDs or store identity.
+`HistoryTableRule` retains its mode/source envelope, now using core `RuleMode`
+and `FlatPair<String>` with `Component`, `FlatHead`, `FlatTerm`, `FlatTest`, and
+`FlatRegex`. `head` is a length-prefixed sequence (validated arity 1..=8; attaching
+to the arity-3 store requires three slots) and `Component` serializes as its
+coordinate index.
+`Program::validate_limits` validates these sources even without `history`;
+repeated edges, unused nodes, and valid non-last roots remain supported without
+unfolding the DAG. Attachment interns constants in the supplied store outside
+decision execution. Serialization version 8 rejects older bytecode; recompile
+rather than translate.
+
+### Proof and measurement boundaries
+
+The shared specifications live in core's `src/verify/history_specs.rs`; semantic
+algebra lives in `history-semantics/src/verify/history_algebra.rs`. Body proofs cover
+owned DSL lowering, constant encoding under later map extensions, the numeric
+compiler/evaluator, raw/numeric typed-history correspondence, and cached lifecycle
+and publication receipts. Native Eq/Hash coherence and stable user projections
+are conditional obligations; separating these crates is not a universal proof of
+external Event implementations, including root Junco's native `LockEvent` adapter.
+Narrow map/container leaves, synchronization, allocation, clocks, arena destruction,
+Regorus's Rego-to-DSL lowering and borrowed-string constant ownership pass, and native facade/diagnostic callbacks remain explicit
+trust boundaries. Regorus's byte encoder is a native adapter that delegates UTF-8
+interning to `history-store`, not a universally verified external component encoder.
+
+The matched proof configuration uses Rust `1.98.1`, Verus
+`0.2026.10.04.426d8b0`, Z3 `4.16.0`, and `vstd = 0.0.0-2026-10-04-0306`.
+These boundaries describe the implementation and contracts, not a claim that
+every configuration or external consumer has passed verification.
+
+`cargo bench --features history --bench history_table` measures compiled Rego
+decisions with batch size 256 and 16/256/4096 events for both early-accepting
+`[any, {... action == "edit" ...}, any]` and full-scan `star({action == "edit"})`
+policies. Cases cover unchanged-prefix reuse, one appended
+event after priming the retained prefix, and revision-invalidated root replay
+with graph/successor caches warm. Compilation, interning, attachment, staging,
+truncation, append, and the priming decision occur outside timing. The replay
+control bypasses retained-prefix reuse without disabling symbolic graph caches;
+the `cache` Cargo feature is not a retained-prefix-cache switch.
+`retained_residuals_avoid_replay_without_changing_answers` also checks identical
+accept/reject answers and exact event work with retained cursors versus clearing
+only those cursors, in both execution modes. These are decision measurements,
+not ingestion or generic-builtin benchmarks.
+

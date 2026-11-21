@@ -250,7 +250,7 @@ impl<'a> Compiler<'a> {
             return Ok(var_reg);
         }
 
-        let rule_path = format!("{}.{}", &self.current_package, var_name);
+        let rule_path = format!("{}.{}", self.current_package, var_name);
         let rule_index = self.get_or_assign_rule_index(&rule_path)?;
         let dest = self.alloc_register();
 

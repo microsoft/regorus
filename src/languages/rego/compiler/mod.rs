@@ -12,6 +12,8 @@ mod destructuring;
 mod error;
 mod expressions;
 mod function_calls;
+#[cfg(feature = "history")]
+mod history;
 mod loops;
 mod program;
 mod queries;
@@ -19,6 +21,8 @@ mod references;
 mod rules;
 
 pub use error::{CompilerError, Result, SpannedCompilerError};
+#[cfg(feature = "history")]
+pub use history::HISTORY_BATCH_SIZE;
 
 use crate::ast::ExprRef;
 use crate::lexer::Span;
@@ -31,7 +35,10 @@ use alloc::string::String;
 use alloc::string::ToString as _;
 use alloc::vec;
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
 use indexmap::IndexMap;
+#[cfg(not(feature = "std"))]
+type IndexMap<K, V> = indexmap::IndexMap<K, V, hashbrown::DefaultHashBuilder>;
 
 pub type Register = u8;
 
@@ -180,7 +187,7 @@ impl<'a> Compiler<'a> {
             current_data_register: None,
             current_rule_path: String::new(),
             current_call_stack: Vec::new(),
-            entry_points: IndexMap::new(),
+            entry_points: IndexMap::default(),
             soft_assert_mode: false,
             host_await_builtins: BTreeMap::new(),
         }

@@ -1,5 +1,5 @@
 use core::num::{NonZeroU32, NonZeroUsize};
-use magnus::{Error, Ruby, exception::runtime_error, method, module, prelude::*};
+use magnus::{Error, Ruby, method, prelude::*};
 use regorus::Engine as RegorusEngine;
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -41,14 +41,17 @@ impl Engine {
         *self.engine.borrow_mut() = engine;
     }
 
-    fn compare(&self, other: &Self) -> Result<i32, Error> {
-        let self_ptr: *const _ = &*self.engine.borrow();
+    fn compare(ruby: &Ruby, rb_self: &Self, other: &Self) -> Result<i32, Error> {
+        let self_ptr: *const _ = &*rb_self.engine.borrow();
         let other_ptr: *const _ = &*other.engine.borrow();
         match self_ptr.partial_cmp(&other_ptr) {
             Some(Ordering::Less) => Ok(-1),
             Some(Ordering::Equal) => Ok(0),
             Some(Ordering::Greater) => Ok(1),
-            None => Err(Error::new(runtime_error(), "Comparison failed")),
+            None => Err(Error::new(
+                ruby.exception_runtime_error(),
+                "Comparison failed",
+            )),
         }
     }
 
@@ -57,25 +60,42 @@ impl Engine {
         Ok(())
     }
 
-    fn add_policy(&self, path: String, rego: String) -> Result<String, Error> {
-        self.engine
+    fn add_policy(
+        ruby: &Ruby,
+        rb_self: &Self,
+        path: String,
+        rego: String,
+    ) -> Result<String, Error> {
+        rb_self
+            .engine
             .borrow_mut()
             .add_policy(path, rego)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to add policy: {e}"),
+                )
+            })
     }
 
-    fn add_policy_from_file(&self, path: String) -> Result<String, Error> {
-        self.engine
+    fn add_policy_from_file(ruby: &Ruby, rb_self: &Self, path: String) -> Result<String, Error> {
+        rb_self
+            .engine
             .borrow_mut()
             .add_policy_from_file(path)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add policy: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to add policy: {e}"),
+                )
+            })
     }
 
     fn add_data(ruby: &Ruby, rb_self: &Self, ruby_hash: magnus::RHash) -> Result<(), Error> {
         let data_value: regorus::Value =
             serde_magnus::deserialize(ruby, ruby_hash).map_err(|e| {
                 Error::new(
-                    runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("Failed to deserialize Ruby value: {e}"),
                 )
             })?;
@@ -84,30 +104,45 @@ impl Engine {
             .engine
             .borrow_mut()
             .add_data(data_value)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to add data: {e}"),
+                )
+            })
     }
 
-    fn add_data_json(&self, json_string: String) -> Result<(), Error> {
-        self.engine
+    fn add_data_json(ruby: &Ruby, rb_self: &Self, json_string: String) -> Result<(), Error> {
+        rb_self
+            .engine
             .borrow_mut()
             .add_data_json(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to add data json: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to add data json: {e}"),
+                )
+            })
     }
 
-    fn add_data_from_json_file(&self, path: String) -> Result<(), Error> {
+    fn add_data_from_json_file(ruby: &Ruby, rb_self: &Self, path: String) -> Result<(), Error> {
         let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to parse JSON data file: {e}"),
             )
         })?;
 
-        self.engine.borrow_mut().add_data(json_data).map_err(|e| {
-            Error::new(
-                runtime_error(),
-                format!("Failed to add data from file: {e}"),
-            )
-        })
+        rb_self
+            .engine
+            .borrow_mut()
+            .add_data(json_data)
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to add data from file: {e}"),
+                )
+            })
     }
 
     fn clear_data(&self) -> Result<(), Error> {
@@ -115,25 +150,29 @@ impl Engine {
         Ok(())
     }
 
-    fn get_packages(&self) -> Result<Vec<String>, Error> {
-        self.engine
-            .borrow()
-            .get_packages()
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to get packages: {e}")))
+    fn get_packages(ruby: &Ruby, rb_self: &Self) -> Result<Vec<String>, Error> {
+        rb_self.engine.borrow().get_packages().map_err(|e| {
+            Error::new(
+                ruby.exception_runtime_error(),
+                format!("Failed to get packages: {e}"),
+            )
+        })
     }
 
-    fn get_policies(&self) -> Result<String, Error> {
-        self.engine
-            .borrow()
-            .get_policies_as_json()
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to get policies: {e}")))
+    fn get_policies(ruby: &Ruby, rb_self: &Self) -> Result<String, Error> {
+        rb_self.engine.borrow().get_policies_as_json().map_err(|e| {
+            Error::new(
+                ruby.exception_runtime_error(),
+                format!("Failed to get policies: {e}"),
+            )
+        })
     }
 
     fn set_input(ruby: &Ruby, rb_self: &Self, ruby_hash: magnus::RHash) -> Result<(), Error> {
         let input_value: regorus::Value =
             serde_magnus::deserialize(ruby, ruby_hash).map_err(|e| {
                 Error::new(
-                    runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("Failed to deserialize Ruby value: {e}"),
                 )
             })?;
@@ -142,22 +181,28 @@ impl Engine {
         Ok(())
     }
 
-    fn set_input_json(&self, json_string: String) -> Result<(), Error> {
-        self.engine
+    fn set_input_json(ruby: &Ruby, rb_self: &Self, json_string: String) -> Result<(), Error> {
+        rb_self
+            .engine
             .borrow_mut()
             .set_input_json(&json_string)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to set input JSON: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to set input JSON: {e}"),
+                )
+            })
     }
 
-    fn add_input_from_json_file(&self, path: String) -> Result<(), Error> {
+    fn add_input_from_json_file(ruby: &Ruby, rb_self: &Self, path: String) -> Result<(), Error> {
         let json_data = regorus::Value::from_json_file(path).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to parse JSON input file: {e}"),
             )
         })?;
 
-        self.engine.borrow_mut().set_input(json_data);
+        rb_self.engine.borrow_mut().set_input(json_data);
         Ok(())
     }
 
@@ -166,31 +211,36 @@ impl Engine {
             .engine
             .borrow_mut()
             .eval_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {e}")))?;
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to evaluate query: {e}"),
+                )
+            })?;
 
         serde_magnus::serialize(ruby, &results).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to serailzie query results: {e}"),
             )
         })
     }
 
-    fn eval_query_as_json(&self, query: String) -> Result<String, Error> {
-        let results = self
+    fn eval_query_as_json(ruby: &Ruby, rb_self: &Self, query: String) -> Result<String, Error> {
+        let results = rb_self
             .engine
             .borrow_mut()
             .eval_query(query, false)
             .map_err(|e| {
                 Error::new(
-                    runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("Failed to evaluate query as json: {e}"),
                 )
             })?;
 
         serde_json::to_string(&results).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to serialize query results: {e}"),
             )
         })
@@ -201,10 +251,12 @@ impl Engine {
         rb_self: &Self,
         query: String,
     ) -> Result<Option<magnus::Value>, Error> {
-        let result =
-            rb_self.engine.borrow_mut().eval_rule(query).map_err(|e| {
-                Error::new(runtime_error(), format!("Failed to evaluate rule: {e}"))
-            })?;
+        let result = rb_self.engine.borrow_mut().eval_rule(query).map_err(|e| {
+            Error::new(
+                ruby.exception_runtime_error(),
+                format!("Failed to evaluate rule: {e}"),
+            )
+        })?;
 
         match result {
             regorus::Value::Undefined => Ok(None),
@@ -212,18 +264,24 @@ impl Engine {
                 .map(Some)
                 .map_err(|e| {
                     magnus::Error::new(
-                        runtime_error(),
+                        ruby.exception_runtime_error(),
                         format!("Failed to serialize the rule evaluation result: {e}"),
                     )
                 }),
         }
     }
 
-    fn eval_bool_query(&self, query: String) -> Result<bool, Error> {
-        self.engine
+    fn eval_bool_query(ruby: &Ruby, rb_self: &Self, query: String) -> Result<bool, Error> {
+        rb_self
+            .engine
             .borrow_mut()
             .eval_bool_query(query, false)
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to evaluate query: {e}")))
+            .map_err(|e| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Failed to evaluate query: {e}"),
+                )
+            })
     }
 
     fn eval_allow_query(&self, query: String) -> Result<bool, Error> {
@@ -241,42 +299,42 @@ impl Engine {
     }
 
     #[cfg(feature = "coverage")]
-    fn get_coverage_report_as_json(&self) -> Result<String, Error> {
-        let report = self
+    fn get_coverage_report_as_json(ruby: &Ruby, rb_self: &Self) -> Result<String, Error> {
+        let report = rb_self
             .engine
             .borrow_mut()
             .get_coverage_report()
             .map_err(|e| {
                 Error::new(
-                    runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("Failed to get coverage report as json: {e}"),
                 )
             })?;
 
         serde_json::to_string(&report).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to serialize coverage report: {e}"),
             )
         })
     }
 
     #[cfg(feature = "coverage")]
-    fn get_coverage_report_pretty(&self) -> Result<String, Error> {
-        let report = self
+    fn get_coverage_report_pretty(ruby: &Ruby, rb_self: &Self) -> Result<String, Error> {
+        let report = rb_self
             .engine
             .borrow_mut()
             .get_coverage_report()
             .map_err(|e| {
                 Error::new(
-                    runtime_error(),
+                    ruby.exception_runtime_error(),
                     format!("Failed to get coverage report: {e}"),
                 )
             })?;
 
         report.to_string_pretty().map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to convert report to colored string: {e}"),
             )
         })
@@ -294,10 +352,10 @@ impl Engine {
         Ok(())
     }
 
-    fn take_prints(&self) -> Result<Vec<String>, Error> {
-        self.engine.borrow_mut().take_prints().map_err(|e| {
+    fn take_prints(ruby: &Ruby, rb_self: &Self) -> Result<Vec<String>, Error> {
+        rb_self.engine.borrow_mut().take_prints().map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to gather print statement: {e}"),
             )
         })
@@ -310,17 +368,23 @@ impl Engine {
     ) -> Result<(), Error> {
         let spec: PolicyLengthSpec = serde_magnus::deserialize(ruby, hash).map_err(|e| {
             Error::new(
-                runtime_error(),
+                ruby.exception_runtime_error(),
                 format!("Failed to deserialize policy length config: {e}"),
             )
         })?;
         let config = regorus::PolicyLengthConfig {
-            max_col: NonZeroU32::new(spec.max_col)
-                .ok_or_else(|| Error::new(runtime_error(), "max_col must be non-zero"))?,
-            max_file_bytes: NonZeroUsize::new(spec.max_file_bytes)
-                .ok_or_else(|| Error::new(runtime_error(), "max_file_bytes must be non-zero"))?,
-            max_lines: NonZeroUsize::new(spec.max_lines)
-                .ok_or_else(|| Error::new(runtime_error(), "max_lines must be non-zero"))?,
+            max_col: NonZeroU32::new(spec.max_col).ok_or_else(|| {
+                Error::new(ruby.exception_runtime_error(), "max_col must be non-zero")
+            })?,
+            max_file_bytes: NonZeroUsize::new(spec.max_file_bytes).ok_or_else(|| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    "max_file_bytes must be non-zero",
+                )
+            })?,
+            max_lines: NonZeroUsize::new(spec.max_lines).ok_or_else(|| {
+                Error::new(ruby.exception_runtime_error(), "max_lines must be non-zero")
+            })?,
         };
         rb_self.engine.borrow_mut().set_policy_length_config(config);
         Ok(())
@@ -332,11 +396,13 @@ impl Engine {
     }
 
     #[cfg(feature = "ast")]
-    fn get_ast_as_json(&self) -> Result<String, Error> {
-        self.engine
-            .borrow()
-            .get_ast_as_json()
-            .map_err(|e| Error::new(runtime_error(), format!("Failed to get ast: {e}")))
+    fn get_ast_as_json(ruby: &Ruby, rb_self: &Self) -> Result<String, Error> {
+        rb_self.engine.borrow().get_ast_as_json().map_err(|e| {
+            Error::new(
+                ruby.exception_runtime_error(),
+                format!("Failed to get ast: {e}"),
+            )
+        })
     }
 }
 
@@ -351,7 +417,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     engine_class.define_method("clone", method!(Engine::clone, 0))?;
     engine_class.define_method("<=>", method!(Engine::compare, 1))?;
     // defines <, <=, >, >=, and == based on <=>
-    engine_class.include_module(module::comparable())?;
+    engine_class.include_module(ruby.module_comparable())?;
 
     // rego language configuration
     engine_class.define_method("set_rego_v0", method!(Engine::set_rego_v0, 1))?;
@@ -440,7 +506,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 fn set_cache_config(ruby: &Ruby, hash: magnus::RHash) -> Result<(), Error> {
     let spec: CacheConfigSpec = serde_magnus::deserialize(ruby, hash).map_err(|e| {
         Error::new(
-            runtime_error(),
+            ruby.exception_runtime_error(),
             format!("Failed to deserialize cache config: {e}"),
         )
     })?;

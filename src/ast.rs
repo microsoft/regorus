@@ -374,6 +374,164 @@ impl Expr {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub enum Literal {
+    SomeVars {
+        span: Span,
+        vars: Vec<Span>,
+    },
+    SomeIn {
+        span: Span,
+        key: Option<Ref<Expr>>,
+        value: Ref<Expr>,
+        collection: Ref<Expr>,
+    },
+    Expr {
+        span: Span,
+        expr: Ref<Expr>,
+    },
+    NotExpr {
+        span: Span,
+        expr: Ref<Expr>,
+    },
+    Every {
+        span: Span,
+        key: Option<Span>,
+        value: Span,
+        domain: Ref<Expr>,
+        query: Ref<Query>,
+    },
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct WithModifier {
+    pub span: Span,
+    pub refr: Ref<Expr>,
+    pub r#as: Ref<Expr>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct LiteralStmt {
+    pub span: Span,
+    pub literal: Literal,
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub with_mods: Vec<WithModifier>,
+    pub sidx: u32,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct Query {
+    pub span: Span,
+    pub stmts: Vec<LiteralStmt>,
+    pub qidx: u32,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct RuleAssign {
+    pub span: Span,
+    pub op: AssignOp,
+    pub value: Ref<Expr>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct RuleBody {
+    pub span: Span,
+    pub assign: Option<RuleAssign>,
+    /// True when this body was introduced by an `else` clause. Unlike
+    /// independent legacy query blocks, else bodies are mutually exclusive.
+    pub is_else: bool,
+    pub query: Ref<Query>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub enum RuleHead {
+    Compr {
+        span: Span,
+        refr: Ref<Expr>,
+        assign: Option<RuleAssign>,
+    },
+    Set {
+        span: Span,
+        refr: Ref<Expr>,
+        key: Option<Ref<Expr>>,
+    },
+    Func {
+        span: Span,
+        refr: Ref<Expr>,
+        args: Vec<Ref<Expr>>,
+        assign: Option<RuleAssign>,
+    },
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub enum Rule {
+    Spec {
+        span: Span,
+        head: RuleHead,
+        bodies: Vec<RuleBody>,
+    },
+    Default {
+        span: Span,
+        refr: Ref<Expr>,
+        args: Vec<Ref<Expr>>,
+        op: AssignOp,
+        value: Ref<Expr>,
+    },
+}
+
+impl Rule {
+    pub const fn span(&self) -> &Span {
+        match *self {
+            Self::Spec { ref span, .. } | Self::Default { ref span, .. } => span,
+        }
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct Package {
+    pub span: Span,
+    pub refr: Ref<Expr>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct Import {
+    pub span: Span,
+    pub refr: Ref<Expr>,
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
+    pub r#as: Option<Span>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "ast", derive(serde::Serialize))]
+pub struct Module {
+    pub package: Package,
+    pub imports: Vec<Import>,
+    #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
+    pub policy: Vec<Ref<Rule>>,
+    pub rego_v1: bool,
+    // Target name if specified via __target__ rule
+    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
+    pub target: Option<String>,
+    // Number of expressions in the module.
+    pub num_expressions: u32,
+    // Number of statements in the module.
+    pub num_statements: u32,
+    // Number of queries in the module.
+    pub num_queries: u32,
+}
+
+pub type ExprRef = Ref<Expr>;
+
 #[cfg(test)]
 mod reference_ownership_tests {
     #![allow(clippy::panic_in_result_fn)]
@@ -538,161 +696,3 @@ mod reference_ownership_tests {
         Ok(())
     }
 }
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub enum Literal {
-    SomeVars {
-        span: Span,
-        vars: Vec<Span>,
-    },
-    SomeIn {
-        span: Span,
-        key: Option<Ref<Expr>>,
-        value: Ref<Expr>,
-        collection: Ref<Expr>,
-    },
-    Expr {
-        span: Span,
-        expr: Ref<Expr>,
-    },
-    NotExpr {
-        span: Span,
-        expr: Ref<Expr>,
-    },
-    Every {
-        span: Span,
-        key: Option<Span>,
-        value: Span,
-        domain: Ref<Expr>,
-        query: Ref<Query>,
-    },
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct WithModifier {
-    pub span: Span,
-    pub refr: Ref<Expr>,
-    pub r#as: Ref<Expr>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct LiteralStmt {
-    pub span: Span,
-    pub literal: Literal,
-    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Vec::is_empty"))]
-    pub with_mods: Vec<WithModifier>,
-    pub sidx: u32,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct Query {
-    pub span: Span,
-    pub stmts: Vec<LiteralStmt>,
-    pub qidx: u32,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct RuleAssign {
-    pub span: Span,
-    pub op: AssignOp,
-    pub value: Ref<Expr>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct RuleBody {
-    pub span: Span,
-    pub assign: Option<RuleAssign>,
-    /// True when this body was introduced by an `else` clause. Unlike
-    /// independent legacy query blocks, else bodies are mutually exclusive.
-    pub is_else: bool,
-    pub query: Ref<Query>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub enum RuleHead {
-    Compr {
-        span: Span,
-        refr: Ref<Expr>,
-        assign: Option<RuleAssign>,
-    },
-    Set {
-        span: Span,
-        refr: Ref<Expr>,
-        key: Option<Ref<Expr>>,
-    },
-    Func {
-        span: Span,
-        refr: Ref<Expr>,
-        args: Vec<Ref<Expr>>,
-        assign: Option<RuleAssign>,
-    },
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub enum Rule {
-    Spec {
-        span: Span,
-        head: RuleHead,
-        bodies: Vec<RuleBody>,
-    },
-    Default {
-        span: Span,
-        refr: Ref<Expr>,
-        args: Vec<Ref<Expr>>,
-        op: AssignOp,
-        value: Ref<Expr>,
-    },
-}
-
-impl Rule {
-    pub const fn span(&self) -> &Span {
-        match *self {
-            Self::Spec { ref span, .. } | Self::Default { ref span, .. } => span,
-        }
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct Package {
-    pub span: Span,
-    pub refr: Ref<Expr>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct Import {
-    pub span: Span,
-    pub refr: Ref<Expr>,
-    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
-    pub r#as: Option<Span>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "ast", derive(serde::Serialize))]
-pub struct Module {
-    pub package: Package,
-    pub imports: Vec<Import>,
-    #[cfg_attr(feature = "ast", serde(rename(serialize = "rules")))]
-    pub policy: Vec<Ref<Rule>>,
-    pub rego_v1: bool,
-    // Target name if specified via __target__ rule
-    #[cfg_attr(feature = "ast", serde(skip_serializing_if = "Option::is_none"))]
-    pub target: Option<String>,
-    // Number of expressions in the module.
-    pub num_expressions: u32,
-    // Number of statements in the module.
-    pub num_statements: u32,
-    // Number of queries in the module.
-    pub num_queries: u32,
-}
-
-pub type ExprRef = Ref<Expr>;

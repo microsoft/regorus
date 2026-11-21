@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use super::error::LimitError;
+use super::LimitError;
 use core::cell::Cell;
 use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicU64, Ordering};

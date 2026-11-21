@@ -5,16 +5,15 @@
 
 #![allow(dead_code)]
 
-mod error;
 mod length;
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
 mod memory;
 mod time;
 
 #[allow(unused_imports)]
-pub use error::LimitError;
+pub use junco_core::limits::LimitError;
 
-#[cfg(all(feature = "allocator-memory-limits", not(miri)))]
+#[cfg(all(feature = "allocator-memory-limits", feature = "rvm", not(miri)))]
 pub(crate) use memory::current_thread_live_bytes;
 #[allow(unused_imports)]
 #[cfg(all(feature = "allocator-memory-limits", not(miri)))]

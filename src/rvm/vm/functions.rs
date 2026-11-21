@@ -58,7 +58,13 @@ impl RegoVM {
         let mut args = core::mem::take(&mut self.cached_builtin_args);
         args.clear();
         for &arg_reg in params.arg_registers().iter() {
-            let arg_value = self.get_register(arg_reg)?.clone();
+            let arg_value = match self.get_register(arg_reg) {
+                Ok(value) => value.clone(),
+                Err(error) => {
+                    self.cached_builtin_args = args;
+                    return Err(error);
+                }
+            };
             args.push(arg_value);
         }
 
@@ -94,8 +100,17 @@ impl RegoVM {
         let cache_name = builtins::must_cache(builtin_info.name.as_str());
         drop(program);
 
-        self.ensure_dummy_exprs(args.len())?;
-        let dummy_span = self.get_dummy_span()?.clone();
+        if let Err(error) = self.ensure_dummy_exprs(args.len()) {
+            self.cached_builtin_args = args;
+            return Err(error);
+        }
+        let dummy_span = match self.get_dummy_span() {
+            Ok(span) => span.clone(),
+            Err(error) => {
+                self.cached_builtin_args = args;
+                return Err(error);
+            }
+        };
         // Take the dummy_exprs vec out of self so we can pass it to the builtin
         // while still calling &mut self methods afterwards.
         let dummy_exprs = core::mem::take(&mut self.dummy_exprs);
@@ -115,32 +130,23 @@ impl RegoVM {
             }
         }
 
-        let result = match builtin_fn(
+        let result = builtin_fn(
             &dummy_span,
             dummy_exprs.get(..args.len()).unwrap_or(&[]),
             &args,
             self.strict_builtin_errors,
-        ) {
+        );
+        self.dummy_exprs = dummy_exprs;
+        let result = match result {
             Ok(value) => value,
-            // Resource-limit errors must always propagate, even in non-strict
-            // mode, to prevent `not builtin(...)` from silently flipping to true.
-            Err(e) if !self.strict_builtin_errors => {
-                if e.downcast_ref::<crate::LimitError>().is_some() {
-                    self.dummy_exprs = dummy_exprs;
+            Err(error) => {
+                if self.strict_builtin_errors || builtins::is_fatal_builtin_error(&error) {
                     self.cached_builtin_args = args;
-                    return Err(e.into());
+                    return Err(error.into());
                 }
                 Value::Undefined
             }
-            Err(err) => {
-                self.dummy_exprs = dummy_exprs;
-                self.cached_builtin_args = args;
-                return Err(err.into());
-            }
         };
-
-        // Put dummy_exprs back for reuse.
-        self.dummy_exprs = dummy_exprs;
 
         if let Some(name) = cache_name {
             // Move args into the cache. The now-empty (zero-capacity) Vec is

@@ -62,6 +62,8 @@ impl RegoVM {
                         .jump_to(entry_point_pc_u32)
                         .map_err(|err| self.apply_memory_budget_precedence(err))?;
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(result)
                 })();
                 match result {
@@ -119,6 +121,8 @@ impl RegoVM {
                         .jump_to(entry_point_pc_u32)
                         .map_err(|err| self.apply_memory_budget_precedence(err))?;
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(result)
                 })();
                 match result {
@@ -171,6 +175,8 @@ impl RegoVM {
                 InstructionOutcome::Continue => {
                     self.pc = self.pc.saturating_add(1);
                 }
+                #[cfg(feature = "history")]
+                InstructionOutcome::Repeat => {}
                 InstructionOutcome::Return(value) => {
                     return Ok(value);
                 }
@@ -198,6 +204,8 @@ impl RegoVM {
                 .map_err(|err| self.apply_memory_budget_precedence(err))
                 .and_then(|value| {
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(value)
                 })
         })();
@@ -219,10 +227,7 @@ impl RegoVM {
         self.execution_state = ExecutionState::Running;
         match self.run_stackless_from(0) {
             Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
-            }
+            Err(err) => Err(self.fail_suspendable_execution(err)),
         }
     }
 
@@ -235,10 +240,7 @@ impl RegoVM {
         self.reset_execution_timer_state();
         match self.run_stackless_from(entry_point_pc) {
             Ok(result) => Ok(result),
-            Err(err) => {
-                self.execution_state = ExecutionState::Error { error: err.clone() };
-                Err(err)
-            }
+            Err(err) => Err(self.fail_suspendable_execution(err)),
         }
     }
 
@@ -301,17 +303,10 @@ impl RegoVM {
         self.restore_execution_timer_after_resume();
 
         let program = self.program.clone();
-        self.run_stackless_loop(&program, &mut last_result)?;
-
-        if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
+        if let Err(error) = self.run_stackless_loop(&program, &mut last_result) {
+            return Err(self.fail_suspendable_execution(error));
         }
+        self.finish_stackless_execution(last_result)
     }
 
     fn run_stackless_from(&mut self, start_pc: usize) -> Result<Value> {
@@ -319,20 +314,38 @@ impl RegoVM {
 
         self.execution_stack.clear();
         self.execution_stack.push(ExecutionFrame::main(start_pc, 0));
+        self.pc = start_pc;
 
         let mut last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
 
         self.run_stackless_loop(&program, &mut last_result)?;
 
+        self.finish_stackless_execution(last_result)
+    }
+
+    fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
+        self.execution_stack.clear();
+        self.execution_state = ExecutionState::Error {
+            error: error.clone(),
+        };
+        error
+    }
+
+    fn finish_stackless_execution(&mut self, result: Value) -> Result<Value> {
         if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
+            return Ok(result);
         }
+        #[cfg(feature = "history")]
+        if let Err(error) = self.finish_history_execution() {
+            return Err(self.fail_suspendable_execution(error));
+        }
+        self.execution_stack.clear();
+        self.execution_state = ExecutionState::Completed {
+            result: result.clone(),
+        };
+        Ok(result)
     }
 
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
@@ -472,6 +485,15 @@ impl RegoVM {
                         return Ok(());
                     }
                 }
+                #[cfg(feature = "history")]
+                Ok(InstructionOutcome::Repeat) => {
+                    // A repeated dispatch charges budgets normally but keeps the frame PC.
+                    self.frame_pc_overridden = true;
+                    if self.step_mode {
+                        self.handle_instruction_suspend(SuspendReason::Step, &*last_result);
+                        return Ok(());
+                    }
+                }
                 Ok(InstructionOutcome::Return(value)) => {
                     self.handle_instruction_return(value, last_result)?;
                     if self.execution_stack.is_empty() {
@@ -485,6 +507,13 @@ impl RegoVM {
                     }
                 }
                 Ok(InstructionOutcome::Suspend { reason }) => {
+                    // Only an explicit suspension leaves the frame on its own instruction;
+                    // Continue already advanced it, and a pushed callee frame owns its pc.
+                    if let Some(frame) = self.execution_stack.last_mut() {
+                        if !self.frame_pc_overridden && frame.pc <= self.pc {
+                            frame.pc = self.pc.saturating_add(1);
+                        }
+                    }
                     self.handle_instruction_suspend(reason, last_result);
                     return Ok(());
                 }
@@ -505,12 +534,6 @@ impl RegoVM {
     }
 
     fn handle_instruction_suspend(&mut self, reason: SuspendReason, last_result: &Value) {
-        if let Some(frame) = self.execution_stack.last_mut() {
-            if !self.frame_pc_overridden && frame.pc <= self.pc {
-                frame.pc = self.pc.saturating_add(1);
-            }
-        }
-
         self.snapshot_execution_timer_on_suspend();
         self.execution_state = ExecutionState::Suspended {
             reason,
@@ -623,8 +646,8 @@ impl RegoVM {
     }
 
     fn handle_instruction_error(&mut self, err: VmError, last_result: &mut Value) -> Result<bool> {
-        // Resource-limit errors must never be absorbed by rule evaluation.
-        // They represent engine-level constraints, not rule-level failures.
+        // Engine-level failures and scoped strict builtin errors must never be
+        // absorbed as ordinary rule failures.
         // Returning Ok(false) causes the caller to clear execution_stack and
         // propagate the error, terminating the evaluation entirely.
         if RegoVM::is_fatal_vm_error(&err) {
