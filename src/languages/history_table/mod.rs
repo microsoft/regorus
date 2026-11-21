@@ -2,13 +2,15 @@
 // Licensed under the MIT License.
 
 //! Rego history rules (`history.require`/`history.forbid`) lowered by the RVM
-//! compiler into portable history tables; this module owns the limits adapter
-//! and portable-source lowering.
+//! compiler onto one process-wide typed store; this module owns the store
+//! facade, limits adapter and portable-source lowering.
 
 pub(crate) mod limits;
+pub(crate) mod store;
 
 pub use history_syntax::Component;
 pub use junco_core::HistoryError;
+pub use store::{Event, HistoryHandle, HistoryStore};
 
 use crate::rvm::program::HistoryTableRule;
 use crate::utils::limits::ExecutionTimer;

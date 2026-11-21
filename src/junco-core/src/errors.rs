@@ -11,7 +11,7 @@ pub enum HistoryError {
     InvalidPolicy { path: String, message: &'static str },
     #[error("history variable {name:?} is not bound by request pattern")]
     UnboundVariable { name: String },
-    #[error("history symbolic graph payload exceeds {limit} bytes")]
+    #[error("history graph exceeds its limit of {limit}")]
     GraphBudget { limit: usize },
     #[error("history graph index or size computation overflowed")]
     GraphIndex,

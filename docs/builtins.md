@@ -295,9 +295,6 @@ Only the RVM compiler lowers these calls; the tree-walking interpreter, and the
 RVM compiler without `history`, report an unknown function. Language bindings do
 not forward a `history` feature.
 
-Evaluation is not implemented in this version: executing a compiled history rule
-fails with the fatal `VmError::HistoryUnimplemented`.
-
 ### Rego syntax
 
 ```rego
@@ -355,3 +352,40 @@ Each call compiles to one `HistoryStep` instruction and one row of
 `Program::history_tables[0]`. Programs store portable sources (string constants,
 not store identifiers) and serialize as format version 7; see the
 [instruction reference](rvm/instruction-set.md#history-table-instructions).
+
+### Native boundary
+
+Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Every
+wrapper fronts one process-wide arity-3 store: identities and histories are
+shared, so wrappers accept each other's handles and IDs and are not a tenant
+isolation boundary. Intern paths per coordinate with `intern(PRINCIPAL, path)`,
+`intern(ACTION, path)` and `intern(RESOURCE, path)`, then build an `Event` with
+`store.event(&[principal, action, resource])`, which validates arity and domain
+membership. Interned paths live for the process; IDs are not recycled.
+
+Use `store.new_history()`, then `store.append(&history, &events)`,
+`store.truncate(&history, len)` and `store.len(&history)`. Compile the policy
+with `Compiler::compile_from_policy`. After `vm.load_program(program)`, call
+`vm.attach_history(store.clone())`, which interns the program's rule constants,
+and `vm.set_history_input(history, request)`, then execute any entry point.
+Decisions never append the request. Repeated executions retain the staged input.
+Loading another program cancels any suspended execution and clears attachment
+and input, not the application's histories. Executing a history rule without
+attachment or staged input reports `HistoryContextMissing`; changing either
+while an execution is suspended reports `HistoryExecutionActive`.
+
+### Evaluation
+
+A decision captures the history's revision and length at its first
+`HistoryStep`; later appends are excluded until the next decision. Each dispatch
+folds at most `batch_size` events of that prefix into the rule's Brzozowski
+derivative and repeats at the same PC while events remain, so budgets are
+charged per dispatch and suspension keeps the continuation. Intermediate
+nullable prefixes do not grant. Truncation changes the revision: resume or
+completion reports `HistoryChanged` rather than publishing a stale result.
+Rule caching evaluates each history rule at most once per execution.
+
+The evaluator unfolds a source's shared subterms into a tree, bounded to depth
+256 and 65536 nodes per inflation or derivative; larger languages fail with
+`HistoryError::GraphBudget`. Native failures are fatal `VmError::History`
+errors, never rule failures; time and memory limits keep the VM's own variants.

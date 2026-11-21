@@ -48,9 +48,37 @@ pub enum VmError {
     #[error("history_step requires the `history` feature (pc={pc})")]
     HistoryFeatureDisabled { pc: usize },
 
+    /// Typed native history failures are never ordinary rule failures.
     #[cfg(feature = "history")]
-    #[error("history.require/forbid evaluation is not implemented yet (pc={pc})")]
-    HistoryUnimplemented { pc: usize },
+    #[error("{source} (pc={pc})")]
+    History {
+        source: crate::languages::history_table::HistoryError,
+        pc: usize,
+    },
+
+    #[cfg(feature = "history")]
+    #[error("History attachment and typed input are required (pc={pc})")]
+    HistoryContextMissing { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History execution is active (pc={pc})")]
+    HistoryExecutionActive { pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step params index {index} out of bounds (pc={pc})")]
+    InvalidHistoryStepParams { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table index {index} out of bounds (pc={pc})")]
+    InvalidHistoryTableIndex { index: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("History table {table} rule index {rule} out of bounds (pc={pc})")]
+    InvalidHistoryRuleIndex { table: u16, rule: u16, pc: usize },
+
+    #[cfg(feature = "history")]
+    #[error("history_step batch_size {batch_size} must be greater than zero (pc={pc})")]
+    InvalidHistoryBatchSize { batch_size: u32, pc: usize },
 
     #[error("Value serialization exceeds {limit} nested containers (pc={pc})")]
     SerializationDepthExceeded { limit: usize, pc: usize },
@@ -362,7 +390,19 @@ impl core::fmt::Debug for VmError {
             Self::RegexSizeLimitExceeded { .. } => "RegexSizeLimitExceeded",
             Self::HistoryFeatureDisabled { .. } => "HistoryFeatureDisabled",
             #[cfg(feature = "history")]
-            Self::HistoryUnimplemented { .. } => "HistoryUnimplemented",
+            Self::History { .. } => "History",
+            #[cfg(feature = "history")]
+            Self::HistoryContextMissing { .. } => "HistoryContextMissing",
+            #[cfg(feature = "history")]
+            Self::HistoryExecutionActive { .. } => "HistoryExecutionActive",
+            #[cfg(feature = "history")]
+            Self::InvalidHistoryStepParams { .. } => "InvalidHistoryStepParams",
+            #[cfg(feature = "history")]
+            Self::InvalidHistoryTableIndex { .. } => "InvalidHistoryTableIndex",
+            #[cfg(feature = "history")]
+            Self::InvalidHistoryRuleIndex { .. } => "InvalidHistoryRuleIndex",
+            #[cfg(feature = "history")]
+            Self::InvalidHistoryBatchSize { .. } => "InvalidHistoryBatchSize",
             Self::SerializationDepthExceeded { .. } => "SerializationDepthExceeded",
             Self::LiteralIndexOutOfBounds { .. } => "LiteralIndexOutOfBounds",
             Self::RegisterNotObject { .. } => "RegisterNotObject",

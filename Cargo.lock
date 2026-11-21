@@ -651,6 +651,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
+name = "history-store"
+version = "0.1.0"
+dependencies = [
+ "history-syntax",
+ "junco-core",
+ "parking_lot 0.13.0",
+ "spin 0.12.3",
+]
+
+[[package]]
 name = "history-syntax"
 version = "0.1.0"
 dependencies = [
@@ -1512,6 +1522,7 @@ dependencies = [
  "data-encoding",
  "globset",
  "hashbrown 0.17.1",
+ "history-store",
  "history-syntax",
  "icu_casemap",
  "indexmap",

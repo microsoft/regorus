@@ -10,6 +10,8 @@ repository = "https://github.com/microsoft/regorus"
 default = []
 serde = ["dep:serde", "history-syntax/serde"]
 std = ["history-syntax/std"]
+runtime = []
+test-util = ["runtime"]
 
 [dependencies]
 thiserror = { version = "2", default-features = false }

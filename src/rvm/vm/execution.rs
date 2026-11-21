@@ -73,6 +73,8 @@ impl RegoVM {
                             .jump_to(entry_point_pc_u32)
                             .map_err(|err| self.apply_memory_budget_precedence(err))?;
                         self.check_memory_budget()?;
+                        #[cfg(feature = "history")]
+                        self.finish_history_execution()?;
                         Ok(result)
                     })();
                     match result {
@@ -132,6 +134,8 @@ impl RegoVM {
                             .jump_to(entry_point_pc_u32)
                             .map_err(|err| self.apply_memory_budget_precedence(err))?;
                         self.check_memory_budget()?;
+                        #[cfg(feature = "history")]
+                        self.finish_history_execution()?;
                         Ok(result)
                     })();
                     match result {
@@ -179,6 +183,8 @@ impl RegoVM {
                 InstructionOutcome::Continue => {
                     self.pc = self.pc.saturating_add(1);
                 }
+                #[cfg(feature = "history")]
+                InstructionOutcome::Repeat => {}
                 InstructionOutcome::Return(value) => {
                     return Ok(value);
                 }
@@ -212,6 +218,8 @@ impl RegoVM {
                 .map_err(|err| self.apply_memory_budget_precedence(err))
                 .and_then(|value| {
                     self.check_memory_budget()?;
+                    #[cfg(feature = "history")]
+                    self.finish_history_execution()?;
                     Ok(value)
                 })
         })();
@@ -414,16 +422,7 @@ impl RegoVM {
 
         let program = self.program.clone();
         self.run_stackless_loop(&program, &mut last_result)?;
-
-        if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
-        }
+        self.finish_stackless_execution(last_result)
     }
 
     fn run_stackless_from(&mut self, start_pc: usize) -> Result<Value> {
@@ -435,16 +434,26 @@ impl RegoVM {
         let mut last_result = self.registers.first().cloned().unwrap_or(Value::Undefined);
 
         self.run_stackless_loop(&program, &mut last_result)?;
+        self.finish_stackless_execution(last_result)
+    }
 
+    fn finish_stackless_execution(&mut self, result: Value) -> Result<Value> {
         if matches!(self.execution_state, ExecutionState::Suspended { .. }) {
-            Ok(last_result)
-        } else {
-            self.execution_stack.clear();
-            self.execution_state = ExecutionState::Completed {
-                result: last_result.clone(),
-            };
-            Ok(last_result)
+            return Ok(result);
         }
+        self.execution_stack.clear();
+        // A completed decision is published only if its pinned history prefix still holds.
+        #[cfg(feature = "history")]
+        if let Err(error) = self.finish_history_execution() {
+            self.execution_state = ExecutionState::Error {
+                error: error.clone(),
+            };
+            return Err(error);
+        }
+        self.execution_state = ExecutionState::Completed {
+            result: result.clone(),
+        };
+        Ok(result)
     }
 
     fn run_stackless_loop(&mut self, program: &Program, last_result: &mut Value) -> Result<()> {
@@ -579,6 +588,15 @@ impl RegoVM {
                             frame.pc = self.pc.saturating_add(1);
                         }
                     }
+                    if self.step_mode {
+                        self.handle_instruction_suspend(SuspendReason::Step, &*last_result);
+                        return Ok(());
+                    }
+                }
+                #[cfg(feature = "history")]
+                Ok(InstructionOutcome::Repeat) => {
+                    // A repeated dispatch charges budgets normally but keeps the frame PC.
+                    self.frame_pc_overridden = true;
                     if self.step_mode {
                         self.handle_instruction_suspend(SuspendReason::Step, &*last_result);
                         return Ok(());

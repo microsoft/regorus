@@ -258,8 +258,15 @@ fn run_ci_suite(config: CiSuiteConfig) -> Result<()> {
         config.release,
         config.frozen,
         None,
-        &["-p", "history-syntax", "-p", "junco-core"],
-        "cargo test -p history-syntax -p junco-core (ci)",
+        &[
+            "-p",
+            "history-syntax",
+            "-p",
+            "junco-core",
+            "-p",
+            "history-store",
+        ],
+        "cargo test -p history-syntax -p junco-core -p history-store (ci)",
     )?;
 
     if config.include_azure_rbac {

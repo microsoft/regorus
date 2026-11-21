@@ -34,7 +34,13 @@ impl RegoVM {
             | VmError::NumericOverflow { .. }
             | VmError::HistoryFeatureDisabled { .. } => true,
             #[cfg(feature = "history")]
-            VmError::HistoryUnimplemented { .. } => true,
+            VmError::History { .. }
+            | VmError::HistoryContextMissing { .. }
+            | VmError::HistoryExecutionActive { .. }
+            | VmError::InvalidHistoryStepParams { .. }
+            | VmError::InvalidHistoryTableIndex { .. }
+            | VmError::InvalidHistoryRuleIndex { .. }
+            | VmError::InvalidHistoryBatchSize { .. } => true,
             _ => false,
         }
     }

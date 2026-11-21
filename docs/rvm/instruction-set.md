@@ -160,7 +160,7 @@ ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).
 
 | Mnemonic | Operands / Params | Behaviour |
 | :------- | :---------------- | :-------- |
-| `HistoryStep` | `params_index=pN` | Judges one history rule and writes its Boolean to `dest`. Evaluation is not implemented yet: with feature `history` execution fails with `HistoryUnimplemented`, without it with `HistoryFeatureDisabled`. Both errors are fatal and are never absorbed as rule failure. |
+| `HistoryStep` | `params_index=pN` | Advances one rule by at most `batch_size` events; repeats at the same PC while unfinished, then writes its Boolean to `dest`. Requires feature `history`, otherwise execution reports `HistoryFeatureDisabled`. Native failures are fatal and never absorbed as rule failure. |
 
 The RVM compiler lowers each Rego `history.require`/`history.forbid` call to one
 `HistoryStep` (batch size 256) inside the calling rule's body and appends the
@@ -170,7 +170,8 @@ portable sources (`RuleMode` plus `FlatPair<String>` from `junco-core`), not
 store identifiers. `Program::validate_limits` rejects invalid sources, zero
 batch sizes and out-of-range table/rule/parameter references, with or without
 the `history` feature. See
-[history rules](../builtins.md#history-rules-historyrequire--historyforbid-rvm-only).
+[history rules](../builtins.md#history-rules-historyrequire--historyforbid-rvm-only)
+for the native API and decision semantics.
 
 ---
 
