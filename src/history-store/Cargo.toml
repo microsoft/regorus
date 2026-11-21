@@ -1,0 +1,22 @@
+[package]
+name = "history-store"
+description = "Interned event store and committed histories for Regorus history rules"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/microsoft/regorus"
+
+[features]
+default = []
+runtime = ["junco-core/runtime", "dep:spin"]
+std = ["dep:parking_lot", "junco-core/std", "history-syntax/std"]
+test-util = ["runtime", "junco-core/test-util"]
+
+[dependencies]
+junco-core = { path = "../junco-core", version = "0.1.0", default-features = false }
+history-syntax = { path = "../history-syntax", version = "0.1.0", default-features = false }
+parking_lot = { version = "0.13", optional = true }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"], optional = true }
+
+[dev-dependencies]
+junco-core = { path = "../junco-core", default-features = false, features = ["test-util"] }

@@ -29,6 +29,8 @@ impl RegoVM {
     }
 
     pub(super) fn release_previous_execution_state(&mut self) {
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
         self.evaluated = Value::Undefined;
         self.execution_state = ExecutionState::Ready;
         self.execution_stack.clear();
@@ -81,6 +83,9 @@ impl RegoVM {
     /// Resource failures also release state; other unbudgeted errors preserve legacy state.
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        // A failed execution never leaves a history decision for a later run to publish.
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
         if matches!(
             error,
             VmError::RuleCallDepthExceeded { .. }
@@ -104,6 +109,9 @@ impl RegoVM {
 
     #[cfg(any(miri, not(feature = "allocator-memory-limits")))]
     pub(super) fn fail_suspendable_execution(&mut self, error: VmError) -> VmError {
+        // A failed execution never leaves a history decision for a later run to publish.
+        #[cfg(feature = "history")]
+        self.clear_history_execution();
         if matches!(
             error,
             VmError::RuleCallDepthExceeded { .. }

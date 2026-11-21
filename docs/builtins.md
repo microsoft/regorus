@@ -286,3 +286,106 @@ native `Value`s or using their iterative comparison and output methods.
    | Builtin                                                                                      | Feature |
    |----------------------------------------------------------------------------------------------|---------|
    | [trace](https://www.openpolicyagent.org/docs/latest/policy-reference/#builtin-tracing-trace) | _       |
+
+## History rules (`history.require` / `history.forbid`, RVM only)
+
+The opt-in `history` feature lets Rego policies constrain a typed event history.
+It implies `rvm` and is not included in the default features or `full-opa`.
+Only the RVM compiler lowers these calls; the tree-walking interpreter, and the
+RVM compiler without `history`, report an unknown function. Language bindings do
+not forward a `history` feature.
+
+### Rego syntax
+
+```rego
+package approvals
+import rego.v1
+
+release_after_edit := history.require(
+    {"action": "release", "principal": actor, "resource": doc},
+    [any, {principal == actor, action == "edit", resource == doc}, any],
+)
+no_remove_after_lock := history.forbid(
+    {"action": "remove", "resource": doc},
+    [any, {action == "lock", resource == doc}, any],
+)
+
+allow if {
+    release_after_edit
+    no_remove_after_lock
+}
+```
+
+`history.require(request, language)` is `false` when the staged request matches
+`request` and the history is outside `language`; `history.forbid` is `false` when
+it is inside. Otherwise, including a nonmatching request, the call is `true`; it
+is never undefined. Compose the Boolean with ordinary Rego.
+
+The request pattern is an object literal keyed by `"principal"`, `"action"`,
+and `"resource"`. A string value matches those exact bytes; a variable binds the
+request's coordinate for use in the language; `_` or an omitted key matches
+anything. Variables may not be named `principal`, `action`, `resource`, or `any`,
+and each belongs to one coordinate.
+
+| Language | Complete histories |
+|---|---|
+| `any` | All finite histories |
+| `[]` | Empty history only |
+| `{c == t, ...}` | One event satisfying every comparison |
+| `true`, `set()` | One arbitrary event |
+| `false` | No histories |
+| `[a, b, ...]` | Chronological concatenation |
+| `a \| b` | Union |
+| `a & b` | Intersection |
+| `a - b` | Difference (`a` and not `b`) |
+| `star(a)` | Kleene star |
+
+A comparison is `principal`, `action`, or `resource` with `==` or `!=` against a
+string constant or a request variable of the same coordinate. `{}` is an empty
+object, not a test; use `set()`. Malformed shapes, unknown names, unbound or
+cross-coordinate variables fail RVM compilation with a spanned error.
+
+Paths are exact raw UTF-8: case, slashes, embedded NULs, and distinct Unicode
+encodings remain distinct; there is no normalization or ancestry match.
+
+Each call compiles to one `HistoryStep` instruction and one row of
+`Program::history_tables[0]`. Programs store portable sources (string constants,
+not store identifiers) and serialize as format version 7; see the
+[instruction reference](rvm/instruction-set.md#history-table-instructions).
+
+### Native boundary
+
+Create an `Arc<HistoryStore>` from `regorus::languages::history_table`. Every
+wrapper fronts one process-wide arity-3 store: identities and histories are
+shared, so wrappers accept each other's handles and IDs and are not a tenant
+isolation boundary. Intern paths per coordinate with `intern(PRINCIPAL, path)`,
+`intern(ACTION, path)` and `intern(RESOURCE, path)`, then build an `Event` with
+`store.event(&[principal, action, resource])`, which validates arity and domain
+membership. Interned paths live for the process; IDs are not recycled.
+
+Use `store.new_history()`, then `store.append(&history, &events)`,
+`store.truncate(&history, len)` and `store.len(&history)`. Compile the policy
+with `Compiler::compile_from_policy`. After `vm.load_program(program)`, call
+`vm.attach_history(store.clone())`, which interns the program's rule constants,
+and `vm.set_history_input(history, request)`, then execute any entry point.
+Decisions never append the request. Repeated executions retain the staged input.
+Loading another program cancels any suspended execution and clears attachment
+and input, not the application's histories. Executing a history rule without
+attachment or staged input reports `HistoryContextMissing`; changing either
+while an execution is suspended reports `HistoryExecutionActive`.
+
+### Evaluation
+
+A decision captures the history's revision and length at its first
+`HistoryStep`; later appends are excluded until the next decision. Each dispatch
+folds at most `batch_size` events of that prefix into the rule's Brzozowski
+derivative and repeats at the same PC while events remain, so budgets are
+charged per dispatch and suspension keeps the continuation. Intermediate
+nullable prefixes do not grant. Truncation changes the revision: resume or
+completion reports `HistoryChanged` rather than publishing a stale result.
+Rule caching evaluates each history rule at most once per execution.
+
+The evaluator unfolds a source's shared subterms into a tree, bounded to depth
+256 and 65536 nodes per inflation or derivative; larger languages fail with
+`HistoryError::GraphBudget`. Native failures are fatal `VmError::History`
+errors, never rule failures; time and memory limits keep the VM's own variants.

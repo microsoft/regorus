@@ -7,6 +7,9 @@ use alloc::vec::Vec;
 use postcard::{take_from_bytes, to_allocvec};
 use serde::de::DeserializeOwned;
 
+use crate::rvm::instructions::HistoryStepParams;
+use crate::rvm::program::HistoryTable;
+
 use super::{DeserializationResult, Program};
 
 use super::value::{
@@ -103,6 +106,12 @@ impl Program {
         let binary_data = to_allocvec(self)
             .map_err(|e| format!("Program structure binary serialization failed: {}", e))?;
 
+        let history_bin = to_allocvec(&(
+            &self.history_tables,
+            &self.instruction_data.history_step_params,
+        ))
+        .map_err(|e| format!("History postcard serialization failed: {}", e))?;
+
         buffer.extend_from_slice(
             &u32::try_from(entry_points_bin.len())
                 .map_err(|_| "Entry points size too large")?
@@ -137,6 +146,14 @@ impl Program {
         );
         buffer.extend_from_slice(&binary_data);
 
+        // Version 7 appends the history section after the version-6 layout.
+        buffer.extend_from_slice(
+            &u32::try_from(history_bin.len())
+                .map_err(|_| "History size too large")?
+                .to_le_bytes(),
+        );
+        buffer.extend_from_slice(&history_bin);
+
         Ok(buffer)
     }
 
@@ -168,7 +185,8 @@ impl Program {
                 program.rego_v0 = Self::legacy_rego_v0(data, version).unwrap_or(false);
                 Ok(DeserializationResult::Partial(program))
             }
-            6 => {
+            // Version 7 is version 6 plus a trailing history section.
+            6 | 7 => {
                 if data.len() < 29 {
                     return Err("Data too short for header".to_string());
                 }
@@ -201,10 +219,23 @@ impl Program {
                 let binary_start = binary_offset.advance(binary_len)?;
                 let binary_end = binary_offset.current();
 
-                if data.len() < binary_end {
+                let history_range = if version >= 7 {
+                    if data.len() < binary_end.checked_add(4).ok_or("Offset overflow")? {
+                        return Err("Data too short for history length".to_string());
+                    }
+                    let history_len = Self::read_u32_as_usize(data, binary_end)?;
+                    binary_offset.advance(4)?;
+                    let history_start = binary_offset.advance(history_len)?;
+                    Some((history_start, binary_offset.current()))
+                } else {
+                    None
+                };
+                let end = binary_offset.current();
+
+                if data.len() < end {
                     return Err("Data truncated".to_string());
                 }
-                if data.len() > binary_end {
+                if data.len() > end {
                     return Err("Unexpected trailing data".to_string());
                 }
 
@@ -237,6 +268,16 @@ impl Program {
                 program.rule_tree = rule_tree;
                 program.rego_v0 = rego_v0;
                 program.needs_recompilation = false;
+
+                if let Some((history_start, history_end)) = history_range {
+                    let (history_tables, history_step_params) =
+                        Self::deserialize_section::<(Vec<HistoryTable>, Vec<HistoryStepParams>)>(
+                            Self::get_slice(data, history_start, history_end)?,
+                            "History",
+                        )?;
+                    program.history_tables = history_tables;
+                    program.instruction_data.history_step_params = history_step_params;
+                }
 
                 // Apply the same supported bounds as compilation and serialization.
                 program.validate_limits()?;
@@ -271,7 +312,7 @@ impl Program {
         let version = Self::read_u32(data, 4).ok();
 
         match version {
-            Some(1..=6) => Ok(true),
+            Some(1..=7) => Ok(true),
             _ => Ok(false),
         }
     }
@@ -358,6 +399,10 @@ mod tests {
         }
         blob.extend_from_slice(&len_of(&sections.artifact));
         blob.extend_from_slice(&sections.artifact);
+        let history: (Vec<HistoryTable>, Vec<HistoryStepParams>) = (Vec::new(), Vec::new());
+        let history = to_allocvec(&history).expect("history section");
+        blob.extend_from_slice(&len_of(&history));
+        blob.extend_from_slice(&history);
         blob
     }
 

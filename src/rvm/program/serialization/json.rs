@@ -53,7 +53,8 @@ impl Program {
                 "set_create_params": self.instruction_data.set_create_params,
                 "virtual_data_document_lookup_params": self.instruction_data.virtual_data_document_lookup_params,
                 "chained_index_params": self.instruction_data.chained_index_params,
-                "comprehension_begin_params": self.instruction_data.comprehension_begin_params
+                "comprehension_begin_params": self.instruction_data.comprehension_begin_params,
+                "history_step_params": self.instruction_data.history_step_params
             },
             "literals": literals,
             "builtin_info_table": self.builtin_info_table,
@@ -61,7 +62,8 @@ impl Program {
             "sources": self.sources,
             "rule_infos": self.rule_infos,
             "instruction_spans": self.instruction_spans,
-            "rule_tree": rule_tree
+            "rule_tree": rule_tree,
+            "history_tables": self.history_tables
         });
 
         serde_json::to_string_pretty(&json_data)
@@ -165,9 +167,15 @@ impl Program {
         let instruction_data_json = json_data
             .get("instruction_data")
             .ok_or("Missing instruction_data section")?;
-        let instruction_data: InstructionData =
+        let mut instruction_data: InstructionData =
             serde_json::from_value(instruction_data_json.clone())
                 .map_err(|e| format!("Failed to deserialize instruction_data: {}", e))?;
+        instruction_data.history_step_params = instruction_data_json
+            .get("history_step_params")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Failed to deserialize history_step_params: {}", e))?
+            .unwrap_or_default();
 
         let literals: Vec<Value> = json_data
             .get("literals")
@@ -208,6 +216,13 @@ impl Program {
             .map_err(|e| format!("Rule tree deserialization failed: {e}"))?
             .unwrap_or_else(Value::new_object);
 
+        let history_tables = json_data
+            .get("history_tables")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Failed to deserialize history_tables: {}", e))?
+            .unwrap_or_default();
+
         let mut program = Program {
             instructions,
             literals,
@@ -234,6 +249,7 @@ impl Program {
             has_host_await,
             needs_recompilation,
             rego_v0,
+            history_tables,
         };
 
         // Recompute has_host_await when it was not provided in the JSON input

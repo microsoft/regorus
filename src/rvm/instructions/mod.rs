@@ -7,8 +7,8 @@ mod types;
 
 pub use params::{
     ArrayCreateParams, BuiltinCallParams, ChainedIndexParams, ComprehensionBeginParams,
-    FunctionCallParams, InstructionData, LoopStartParams, ObjectCreateParams, SetCreateParams,
-    VirtualDataDocumentLookupParams,
+    FunctionCallParams, HistoryStepParams, InstructionData, LoopStartParams, ObjectCreateParams,
+    SetCreateParams, VirtualDataDocumentLookupParams,
 };
 pub use types::{
     ComprehensionMode, GuardMode, LiteralOrRegister, LogicalBlockMode, LoopMode, PolicyOp,
@@ -416,6 +416,14 @@ pub enum Instruction {
         mode: LogicalBlockMode,
         /// Register that accumulates the result.
         result: u8,
+    },
+
+    /// Advance one ordered history rule by at most its configured batch size.
+    ///
+    /// Last variant so that version-6 programs keep their postcard variant indices.
+    HistoryStep {
+        /// Index into `instruction_data.history_step_params`.
+        params_index: u16,
     },
 }
 

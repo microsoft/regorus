@@ -90,3 +90,30 @@ impl fmt::Display for LimitError {
 }
 
 impl core::error::Error for LimitError {}
+
+/// Maximum retained symbolic graph payload in bytes.
+pub const MAX_GRAPH_BYTES: usize = 100 * 1024;
+
+/// Host resource observations used by the shared history engine.
+pub trait Limits {
+    fn checkpoint(&mut self) -> Result<(), LimitError>;
+    fn publication_checkpoint(&mut self) -> Result<(), LimitError>;
+    fn enforce_memory(&mut self) -> Result<(), LimitError>;
+}
+
+/// No configured host budget; allocation and structural bounds still apply.
+pub struct Unmetered;
+
+impl Limits for Unmetered {
+    fn checkpoint(&mut self) -> Result<(), LimitError> {
+        Ok(())
+    }
+
+    fn publication_checkpoint(&mut self) -> Result<(), LimitError> {
+        Ok(())
+    }
+
+    fn enforce_memory(&mut self) -> Result<(), LimitError> {
+        Ok(())
+    }
+}
