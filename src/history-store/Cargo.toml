@@ -1,0 +1,36 @@
+[package]
+name = "history-store"
+description = "Interned event store, committed histories and symbolic graphs for Regorus history rules"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/microsoft/regorus"
+
+[package.metadata.verus]
+verify = true
+
+[features]
+default = []
+runtime = ["junco-core/runtime", "dep:bumpus", "dep:hashconsius", "dep:smallvec", "dep:lru", "dep:spin"]
+std = ["dep:parking_lot", "junco-core/std", "history-syntax/std", "vstd/std"]
+test-util = ["runtime", "junco-core/test-util"]
+
+[dependencies]
+# Keep aligned with the root crate's vstd pin (.github/workflows/verus.yml).
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
+junco-core = { path = "../junco-core", version = "0.1.0", default-features = false }
+history-syntax = { path = "../history-syntax", version = "0.1.0", default-features = false }
+parking_lot = { version = "0.13", optional = true }
+smallvec = { version = "=1.16.2", default-features = false, optional = true }
+# Verified arena and hash-consing crates; both pin the same vstd as this crate,
+# and bumpus must equal hashconsius's own `=0.1.2` pin.
+bumpus = { version = "=0.1.2", optional = true }
+hashconsius = { version = "=0.1.4", default-features = false, optional = true }
+lru = { version = "0.19.0", default-features = false, features = ["hashbrown"], optional = true }
+spin = { version = "0.12.0", default-features = false, features = ["mutex", "spin_mutex", "rwlock"], optional = true }
+
+[dev-dependencies]
+junco-core = { path = "../junco-core", default-features = false, features = ["test-util"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }

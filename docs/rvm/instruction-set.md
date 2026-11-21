@@ -156,6 +156,25 @@ ordering guarantees (arrays), uniqueness (sets) or key/value pairing (objects).
 
 ---
 
+## History table instructions
+
+| Mnemonic | Operands / Params | Behaviour |
+| :------- | :---------------- | :-------- |
+| `HistoryStep` | `params_index=pN` | Advances one rule by at most `batch_size` events; repeats at the same PC while unfinished, then writes its Boolean to `dest`. Requires feature `history`, otherwise execution reports `HistoryFeatureDisabled`. Native failures are fatal and never absorbed as rule failure. |
+
+The RVM compiler lowers each Rego `history.require`/`history.forbid` call to one
+`HistoryStep` (batch size 256) inside the calling rule's body and appends the
+rule to `Program::history_tables[0]`; the listing shows
+`HistoryStep table[T].rule[R] batch_size=N dest=rD`. Rules are stored as
+portable sources (`RuleMode` plus `FlatPair<String>` from `junco-core`), not
+store identifiers. `Program::validate_limits` rejects invalid sources, zero
+batch sizes and out-of-range table/rule/parameter references, with or without
+the `history` feature. See
+[history rules](../builtins.md#history-rules-historyrequire--historyforbid-rvm-only)
+for the native API and decision semantics.
+
+---
+
 ## Call and return instructions
 
 | Mnemonic              | Operands / Params         | Behaviour                                       |
@@ -334,6 +353,9 @@ inside instructions. The VM retrieves tables via `get_*` accessors.
 |                          | `result_reg`                              | Register receiving the final collection.                                   |
 |                          | `key_reg` / `value_reg`                   | Iteration registers (keys optional for arrays/sets).                       |
 |                          | `body_start` / `comprehension_end`        | Instruction pointers framing comprehension body and exit.                  |
+| `HistoryStepParams`      | `table` / `rule`                          | Row of `Program::history_tables` judged by the step.                       |
+|                          | `batch_size`                              | Maximum events advanced per dispatch (non-zero).                           |
+|                          | `dest`                                    | Register that receives the rule's Boolean.                                 |
 
 All parameter structs derive `Serialize`/`Deserialize` and can be stored inside
 artifacts. Some contain `Vec` fields; the compiler is responsible for ensuring

@@ -56,7 +56,8 @@ impl MemoryBudgetLifecycle {
 }
 
 /// The Rego Virtual Machine
-#[derive(Debug)]
+// History handles and records implement Debug only outside Verus builds.
+#[cfg_attr(not(verus_keep_ghost), derive(Debug))]
 pub struct RegoVM {
     /// Registers for storing values during execution
     pub(super) registers: Vec<Value>,
@@ -174,6 +175,19 @@ pub struct RegoVM {
 
     /// Cooperative execution timer used to enforce wall-clock limits
     pub(super) execution_timer: ExecutionTimer,
+
+    /// Attachment/input survive ordinary executions, never program replacement.
+    #[cfg(feature = "history")]
+    pub(super) history_attachment: Option<super::history_tables::HistoryAttachment>,
+    #[cfg(feature = "history")]
+    pub(super) history_input: Option<(
+        crate::languages::history_table::HistoryHandle,
+        crate::languages::history_table::Event,
+    )>,
+    #[cfg(feature = "history")]
+    pub(super) history_decision: Option<super::history_tables::HistoryDecision>,
+    #[cfg(feature = "history")]
+    pub(super) history_active_rule: Option<super::history_tables::ActiveHistoryRule>,
 
     /// Elapsed wall-clock time recorded when the VM entered a suspended state
     pub(super) execution_timer_elapsed_at_suspend: Option<Duration>,
@@ -308,6 +322,14 @@ impl RegoVM {
             builtins_cache: BTreeMap::new(),
             execution_timer_config: None,
             execution_timer: ExecutionTimer::new(fallback_timer),
+            #[cfg(feature = "history")]
+            history_attachment: None,
+            #[cfg(feature = "history")]
+            history_input: None,
+            #[cfg(feature = "history")]
+            history_decision: None,
+            #[cfg(feature = "history")]
+            history_active_rule: None,
             execution_timer_elapsed_at_suspend: None,
             #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
             memory_budget_config: None,
@@ -344,16 +366,23 @@ impl RegoVM {
 
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
+        // Loading cancels even a suspended execution; resuming the old program is invalid.
+        self.release_previous_execution_state();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         if matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::SuspendableExecution
         ) {
-            self.release_previous_execution_state();
             self.finish_active_memory_budget_execution();
         }
 
         self.program = program.clone();
+        #[cfg(feature = "history")]
+        {
+            self.history_attachment = None;
+            self.history_input = None;
+            self.clear_history_execution();
+        }
         self.program_tree_error =
             crate::utils::depth::check_value(&program.rule_tree, Program::MAX_PATH_DEPTH).err();
 

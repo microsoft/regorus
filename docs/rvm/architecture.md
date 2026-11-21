@@ -88,6 +88,7 @@ layout is deliberately split:
 | `needs_runtime_recursion_check: bool`           | Flags when `VirtualDataDocumentLookup` requires runtime guards.  | Ensures the VM short-circuits recursion before hitting the instruction budget ceiling. |
 | `needs_recompilation: bool`                     | Indicates a legacy binary format or unresolved builtin.          | Signals the loader to recompile; corrupt current-version sections are errors. |
 | `rego_v0: bool`                                 | Records whether the policy targeted Rego v0 semantics.          | Ensures recompilation preserves language-version behaviour. |
+| `history_tables: Vec<HistoryTable>`             | Ordered history rule tables judged by `HistoryStep`.             | Each rule is a `RuleMode` plus a portable `FlatPair<String>` source; checked by `validate_limits`. |
 
 Binary and JSON program formats support 32 nested containers in literals,
 rule trees, and metadata annotations. Readers validate nesting during child
@@ -100,6 +101,17 @@ Additional helpers such as `Program::add_*`, `Program::update_*`, and
 `Program::display_instruction_with_params` are used by the compiler and
 inspection tooling to populate and render the program.
 
+History execution is layered over four in-tree, no_std + alloc crates.
+`history-syntax` owns the rule DSL and event model; `junco-core` owns flat
+sources, their validation and constant lowering, and the numeric kernel;
+`history-store` owns interning, committed histories and graph/cache containers;
+`history-semantics` owns normalization, symbolic derivatives and the
+cursor-batched `RuleRuntime`. Only `history` enables the store and semantics
+runtimes; source validation needs only `junco-core` and `history-syntax`.
+Regorus's `rvm::vm::history_tables` adapter keeps the VM continuation, the
+Program-keyed table cache (retaining `Arc<Program>`) and host clock/memory-limit
+translation.
+
 ### Serialization layout
 
 The module `src/rvm/program/serialization` writes `Program` instances into a
@@ -107,7 +119,7 @@ compact binary envelope that stays forward-compatible within a major format
 version:
 
 1. **Header**: magic `REGO` bytes followed by `SERIALIZATION_VERSION` (currently
-  `6`).
+  `7`).
 2. **Section manifest**: four little-endian `u32` lengths for entry points,
   sources, literals, and the rule tree, plus a single-byte `rego_v0` flag.
 3. **Preamble payloads**: each section is encoded with `postcard` using helper
@@ -117,11 +129,16 @@ version:
   `Program` struct serialized via `postcard`; fields skipped by serde (entry points, literals, sources,
   rule_tree, resolved builtins) are re-inserted from the preamble when the
   program is reconstructed.
+5. **History**: a little-endian `u32` byte length precedes the `postcard`
+  encoding of `history_tables` and `InstructionData::history_step_params`
+  (version 7 and later). Version 6 has no history section and decodes
+  completely with empty history; `HistoryStep` is the last `Instruction`
+  variant, so version-6 instruction encodings are unchanged.
 
 During deserialization the loader checks the header, section lengths, version,
 and boolean `rego_v0` flag before decoding each section. For the current format,
-decode failures, unconsumed bytes within a section, and bytes after the program
-core are errors, not empty defaults or `DeserializationResult::Partial`.
+decode failures, unconsumed bytes within a section, and bytes after the last
+section are errors, not empty defaults or `DeserializationResult::Partial`.
 The assembled program must also satisfy `Program::validate_limits`; this checks
 supported table bounds, not full bytecode semantic validity.
 

@@ -1,0 +1,32 @@
+[package]
+name = "history-semantics"
+description = "Verified symbolic-derivative evaluation of Regorus history rules"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/microsoft/regorus"
+
+[package.metadata.verus]
+verify = true
+
+[features]
+default = []
+runtime = ["junco-core/runtime", "history-store/runtime", "dep:smallvec"]
+std = ["junco-core/std", "history-store/std", "history-syntax/std", "vstd/std"]
+cache = []
+test-util = ["runtime", "history-store/test-util", "junco-core/test-util"]
+
+[dependencies]
+# Keep aligned with the root crate's vstd pin (.github/workflows/verus.yml).
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"] }
+thiserror = { version = "2", default-features = false }
+smallvec = { version = "=1.16.2", default-features = false, optional = true }
+junco-core = { path = "../junco-core", version = "0.1.0", default-features = false }
+history-store = { path = "../history-store", version = "0.1.0", default-features = false }
+history-syntax = { path = "../history-syntax", version = "0.1.0", default-features = false }
+
+[dev-dependencies]
+history-store = { path = "../history-store", default-features = false, features = ["test-util"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }
