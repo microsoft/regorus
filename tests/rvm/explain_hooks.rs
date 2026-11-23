@@ -683,9 +683,12 @@ fn comprehension_yields_report_typed_payloads_and_static_begin_sites() {
             Value::from(std::collections::BTreeSet::from([v("2"), v("3")])),
         ),
         (
-            r#"{"k": y | some y in input.xs; y > 1}"#,
+            "{y: y | some y in input.xs; y > 1}",
             "object",
-            v(r#"{"k":3}"#),
+            Value::from(std::collections::BTreeMap::from([
+                (v("2"), v("2")),
+                (v("3"), v("3")),
+            ])),
         ),
     ];
     for (expression, kind, expected) in cases {
@@ -722,7 +725,7 @@ fn comprehension_yields_report_typed_payloads_and_static_begin_sites() {
         {
             assert_eq!(site, begin_pc);
             assert_eq!(observed_kind, kind);
-            assert_eq!(key, (kind == "object").then(|| v(r#""k""#)));
+            assert_eq!(key, (kind == "object").then(|| Value::from(expected_value)));
             assert_eq!(value, Value::from(expected_value));
             assert!(context.in_comprehension);
             assert!(matches!(
