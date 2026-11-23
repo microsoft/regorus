@@ -209,6 +209,7 @@ pub fn attributed_report() -> ExplanationReport {
         count: Some(Count::Exact(count)),
     };
     let proof = Derivation {
+        eligibility: None,
         call_uses: None,
         definition: 0,
         body: 0,

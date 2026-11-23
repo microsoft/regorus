@@ -858,6 +858,7 @@ fn result_attribution() -> ResultExplanation {
             count: Some(Count::Exact(200)),
         }],
         proofs: alloc::vec![Derivation {
+            eligibility: None,
             call_uses: None,
             definition: 0,
             body: 0,
@@ -996,6 +997,7 @@ fn proofs_reference_shared_sites_but_keep_helper_call_ownership() -> anyhow::Res
         condition.witness = None;
         condition.binding = None;
         let proof = Derivation {
+            eligibility: None,
             call_uses: None,
             definition: 0,
             body: 0,
@@ -1309,6 +1311,8 @@ fn schema_version_is_serialized_first_in_every_report() -> Result<(), serde_json
 #[test]
 fn query_target_identifies_entry_point_and_with_overrides() -> Result<(), serde_json::Error> {
     let mut target = fixtures::query("data.test.allow");
+    fn requires_eq<T: Eq>(_: &T) {}
+    requires_eq(&target);
     assert_eq!(
         serde_json::to_string(&target)?,
         r#"{"entry_point":"data.test.allow","rule":"data.test.allow","call_instance":0,"with_overrides":false}"#
@@ -1530,6 +1534,7 @@ fn redacted_binding_conflict_and_result_key_json() -> Result<(), serde_json::Err
         derivations_total: Count::Exact(1),
         distinct_elements: Vec::new(),
         proofs: alloc::vec![Derivation {
+            eligibility: None,
             call_uses: None,
             definition: 0,
             body: 0,
@@ -1686,27 +1691,32 @@ fn attempts_scopes_and_cached_uses_keep_ownership() -> anyhow::Result<()> {
         .and_then(|definition| definition.conditions.first())
         .context("retained callee check")?
         .clone();
-    let proof = |use_id| {
-        let mut condition = retained_check.clone();
-        condition.call_uses = Some(vec![vec![use_id]]);
-        Derivation {
-            definition: 0,
-            body: 1,
-            attempt: Some(2),
-            conditionality: Some(Conditionality::Concrete),
-            call_uses: Some(vec![use_id]),
-            conditions: vec![condition],
-            bindings: Some(Vec::new()),
-        }
+    let conditions = [1, 2]
+        .into_iter()
+        .map(|use_id| {
+            let mut condition = retained_check.clone();
+            condition.call_uses = Some(vec![vec![use_id]]);
+            condition
+        })
+        .collect();
+    let proof = Derivation {
+        definition: 0,
+        body: 1,
+        attempt: Some(2),
+        conditionality: None,
+        call_uses: Some(vec![1, 2]),
+        eligibility: None,
+        conditions,
+        bindings: Some(Vec::new()),
     };
     rule.results = Some(vec![ResultExplanation::new(
         None,
         rule.result.clone(),
-        Count::Exact(2),
+        Count::Exact(1),
         Vec::new(),
-        vec![proof(1), proof(2)],
+        vec![proof],
     )
-    .context("two cached-use proofs")?]);
+    .context("one producing path with two cached uses")?]);
     report.query.call_instance = Some(1);
     for (site_id, kind) in [
         (2, ConditionKind::Negation),
@@ -1776,20 +1786,29 @@ fn attempts_scopes_and_cached_uses_keep_ownership() -> anyhow::Result<()> {
         json.pointer("/rules/1/result"),
         Some(&serde_json::json!(false))
     );
+    let result_json = json.pointer("/rules/0/results/0").context("result")?;
+    assert_eq!(
+        result_json.get("derivations_total"),
+        Some(&serde_json::json!({"exact":1}))
+    );
+    assert_eq!(
+        result_json.get("derivations_shown"),
+        Some(&serde_json::json!(1))
+    );
     for (index, use_id, scope) in [(0, 1, None), (1, 2, Some(1))] {
-        let proof_json = json
-            .pointer(&format!("/rules/0/results/0/proofs/{index}"))
+        let proof_json = result_json
+            .pointer("/proofs/0")
             .context("cached-use proof")?;
         assert_eq!(
             proof_json.get("call_uses"),
-            Some(&serde_json::json!([use_id]))
+            Some(&serde_json::json!([1, 2]))
         );
         assert_eq!(
-            proof_json.pointer("/conditions/0/call_uses"),
+            proof_json.pointer(&format!("/conditions/{index}/call_uses")),
             Some(&serde_json::json!([[use_id]]))
         );
         assert_eq!(
-            proof_json.pointer("/conditions/0/owner"),
+            proof_json.pointer(&format!("/conditions/{index}/owner")),
             json.pointer("/rules/1/definitions/0/conditions/0/owner")
         );
         let use_edge = report
@@ -1812,6 +1831,206 @@ fn attempts_scopes_and_cached_uses_keep_ownership() -> anyhow::Result<()> {
     assert!(uncaptured.pointer("/rules/1/attempts").is_none());
     assert!(uncaptured.pointer("/rules/1/scopes").is_none());
     assert!(uncaptured.pointer("/rules/1/calls").is_none());
+    Ok(())
+}
+
+#[test]
+fn fallback_eligibility_retains_failed_helper_dependencies() -> anyhow::Result<()> {
+    // p := 1 if data.test.gate else := 2; p := 2 if data.test.other
+    // Both helpers are false; only gate's failure makes the else eligible.
+    for conditionality in [Conditionality::Concrete, Conditionality::Assumed] {
+        let mut report = complete_rule_report();
+        report.query = fixtures::query("data.test.p");
+        report.query.call_instance = Some(1);
+        report.query_result = Value::from(2);
+        report.checks = ["data.test.gate", "data.test.other"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| {
+                Ok(ConditionSite {
+                    site_id: u32::try_from(index)?,
+                    text: String::from(text),
+                    kind: ConditionKind::Truthiness,
+                    location: None,
+                    operator: None,
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+        let mut caller = report.rules.first().context("template")?.clone();
+        caller.name = String::from("data.test.p");
+        caller.call_instance = 1;
+        caller.result = ReportedValue::Known(Value::from(2));
+        caller.scopes = Some(Vec::new());
+        let check = |site_id, attempt, use_id| ConditionExplanation {
+            site_id,
+            owner: ConditionOwner {
+                rule: String::from("data.test.p"),
+                call_instance: 1,
+                attempt: Some(attempt),
+                scope: None,
+            },
+            call_uses: Some(vec![vec![use_id]]),
+            completed_scope: None,
+            outcome: Outcome::Failure,
+            left: Some(known(Value::from(false), None)),
+            right: None,
+            witness: None,
+            binding: None,
+        };
+        let guard = check(0, 1, 1);
+        let unrelated = check(1, 3, 2);
+        caller.attempts = Some(vec![
+            AttemptExplanation {
+                attempt: 1,
+                definition: 0,
+                body: 0,
+                outcome: Some(Outcome::Failure),
+                conditions: Some(vec![guard.clone()]),
+            },
+            AttemptExplanation {
+                attempt: 2,
+                definition: 0,
+                body: 1,
+                outcome: Some(Outcome::Success),
+                conditions: Some(Vec::new()),
+            },
+            AttemptExplanation {
+                attempt: 3,
+                definition: 1,
+                body: 0,
+                outcome: Some(Outcome::Failure),
+                conditions: Some(vec![unrelated.clone()]),
+            },
+        ]);
+        caller.definitions = vec![
+            DefinitionExplanation {
+                index: 0,
+                body: 1,
+                outcome: Outcome::Success,
+                location: None,
+                conditions: Vec::new(),
+            },
+            DefinitionExplanation {
+                index: 1,
+                body: 0,
+                outcome: Outcome::Failure,
+                location: None,
+                conditions: vec![unrelated],
+            },
+        ];
+        caller.calls = Some(vec![
+            CallUse {
+                use_id: 1,
+                call_instance: 2,
+                attempt: Some(1),
+                scope: None,
+                arguments: Some(Vec::new()),
+            },
+            CallUse {
+                use_id: 2,
+                call_instance: 3,
+                attempt: Some(3),
+                scope: None,
+                arguments: Some(Vec::new()),
+            },
+        ]);
+        let proof = Derivation {
+            definition: 0,
+            body: 1,
+            attempt: Some(2),
+            conditionality: Some(conditionality),
+            call_uses: Some(vec![1]),
+            eligibility: Some(vec![guard]),
+            conditions: Vec::new(),
+            bindings: Some(Vec::new()),
+        };
+        let mut result = ResultExplanation::new(
+            None,
+            caller.result.clone(),
+            Count::Exact(1),
+            Vec::new(),
+            vec![proof],
+        )
+        .context("fallback result")?;
+        result.conditionality = Some(conditionality);
+        caller.results = Some(vec![result]);
+        let helpers = ["gate", "other"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let mut helper = caller.clone();
+                helper.name = format!("data.test.{name}");
+                helper.call_instance = if index == 0 { 2 } else { 3 };
+                helper.result = ReportedValue::Known(Value::from(false));
+                helper.definitions.clear();
+                helper.attempts = None;
+                helper.calls = Some(Vec::new());
+                helper.results = None;
+                helper
+            })
+            .collect::<Vec<_>>();
+        report.rules = vec![caller];
+        report.rules.extend(helpers);
+        let json = serde_json::to_value(&report)?;
+        let result_json = json.pointer("/rules/0/results/0").context("result")?;
+        let proof_json = result_json.pointer("/proofs/0").context("proof")?;
+        assert_eq!(proof_json.get("conditions"), Some(&serde_json::json!([])));
+        assert_eq!(proof_json.get("call_uses"), Some(&serde_json::json!([1])));
+        assert_eq!(
+            proof_json.get("conditionality"),
+            Some(&serde_json::to_value(conditionality)?)
+        );
+        assert_eq!(
+            proof_json.get("conditionality"),
+            result_json.get("conditionality")
+        );
+        let eligibility = proof_json
+            .get("eligibility")
+            .and_then(serde_json::Value::as_array)
+            .context("captured eligibility")?;
+        assert_eq!(eligibility.len(), 1);
+        let guard_json = eligibility.first().context("guard")?;
+        assert_eq!(
+            guard_json.get("outcome"),
+            Some(&serde_json::json!("failure"))
+        );
+        assert_eq!(
+            guard_json.get("owner"),
+            Some(&serde_json::json!({
+                "rule":"data.test.p", "call_instance":1, "attempt":1
+            }))
+        );
+        assert_eq!(guard_json.get("call_uses"), Some(&serde_json::json!([[1]])));
+        assert_eq!(
+            guard_json,
+            json.pointer("/rules/0/attempts/0/conditions/0")
+                .context("failed primary")?
+        );
+        assert_eq!(
+            json.pointer("/rules/0/calls/0/call_instance"),
+            json.pointer("/rules/1/call_instance")
+        );
+        assert_eq!(
+            json.pointer("/rules/0/attempts/2/conditions/0/call_uses"),
+            Some(&serde_json::json!([[2]]))
+        );
+        let mutable_proof = report
+            .rules
+            .first_mut()
+            .and_then(|rule| rule.results.as_mut())
+            .and_then(|results| results.first_mut())
+            .and_then(|attribution| attribution.proofs.first_mut())
+            .context("mutable proof")?;
+        mutable_proof.eligibility = None;
+        assert!(serde_json::to_value(&mutable_proof)?
+            .get("eligibility")
+            .is_none());
+        mutable_proof.eligibility = Some(Vec::new());
+        assert_eq!(
+            serde_json::to_value(&mutable_proof)?.get("eligibility"),
+            Some(&serde_json::json!([]))
+        );
+    }
     Ok(())
 }
 
@@ -2101,7 +2320,7 @@ fn two_variable_query_witness_names_key_and_value_roles() -> anyhow::Result<()> 
 }
 
 #[test]
-fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow::Result<()> {
+fn incoming_arguments_keep_caller_paths_out_of_uncached_function_proofs() -> anyhow::Result<()> {
     for query_owned in [false, true] {
         let mut report = complete_rule_report();
         let mut template = report.rules.first().context("rule template")?.clone();
@@ -2163,21 +2382,21 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
             },
             CallUse {
                 use_id: 4,
-                call_instance: 3,
+                call_instance: 5,
                 attempt: None,
                 scope: None,
                 arguments: Some(vec![known(Value::from(false), Some("input.b"))]),
             },
             CallUse {
                 use_id: 5,
-                call_instance: 2,
+                call_instance: 6,
                 attempt: None,
                 scope: None,
                 arguments: Some(vec![known(Value::from(false), Some("input.a"))]),
             },
             CallUse {
                 use_id: 6,
-                call_instance: 4,
+                call_instance: 7,
                 attempt: None,
                 scope: None,
                 arguments: Some(vec![argument(4), argument(5)]),
@@ -2213,13 +2432,20 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
             caller.calls = Some(calls);
             report.rules.push(caller);
         }
-        for (call_instance, helper_name) in [(2, "f"), (3, "g"), (4, "same")] {
+        for (call_instance, helper_name) in [
+            (2, "f"),
+            (3, "g"),
+            (4, "same"),
+            (5, "g"),
+            (6, "f"),
+            (7, "same"),
+        ] {
             let mut helper = template.clone();
             helper.name = format!("data.test.{helper_name}");
             helper.call_instance = call_instance;
             helper.kind = RuleKind::Function;
-            helper.result = ReportedValue::Known(Value::from(call_instance == 4));
-            if call_instance == 4 {
+            helper.result = ReportedValue::Known(Value::from(helper_name == "same"));
+            if helper_name == "same" {
                 let parameter = |index| {
                     let mut operand = known(Value::from(false), None);
                     operand.parameter_origins = Some(vec![ParameterOrigin {
@@ -2237,7 +2463,7 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
                             owner: ConditionOwner {
                                 rule: helper.name.clone(),
                                 call_instance,
-                                attempt: Some(4),
+                                attempt: Some(call_instance),
                                 scope: None,
                             },
                             call_uses: Some(Vec::new()),
@@ -2255,7 +2481,7 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
                     owner: ConditionOwner {
                         rule: helper.name.clone(),
                         call_instance,
-                        attempt: Some(4),
+                        attempt: Some(call_instance),
                         scope: None,
                     },
                     call_uses: Some(Vec::new()),
@@ -2267,29 +2493,40 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
                     binding: None,
                 };
                 conditions.push(comparison.clone());
+                // This helper succeeds in the else body of its second definition.
                 helper.definitions = vec![DefinitionExplanation {
-                    index: 0,
-                    body: 0,
+                    index: 1,
+                    body: 1,
                     outcome: Outcome::Success,
                     location: None,
                     conditions: vec![comparison],
                 }];
-                helper.attempts = Some(vec![AttemptExplanation {
-                    attempt: 4,
-                    definition: 0,
-                    body: 0,
-                    outcome: Some(Outcome::Success),
-                    conditions: Some(conditions.clone()),
-                }]);
+                helper.attempts = Some(vec![
+                    AttemptExplanation {
+                        attempt: call_instance.saturating_sub(1),
+                        definition: 1,
+                        body: 0,
+                        outcome: Some(Outcome::Failure),
+                        conditions: None,
+                    },
+                    AttemptExplanation {
+                        attempt: call_instance,
+                        definition: 1,
+                        body: 1,
+                        outcome: Some(Outcome::Success),
+                        conditions: Some(conditions.clone()),
+                    },
+                ]);
                 helper.results = Some(vec![ResultExplanation::new(
                     None,
                     ReportedValue::Known(Value::from(true)),
                     Count::Exact(1),
                     Vec::new(),
                     vec![Derivation {
-                        definition: 0,
-                        body: 0,
-                        attempt: Some(4),
+                        eligibility: None,
+                        definition: 1,
+                        body: 1,
+                        attempt: Some(call_instance),
                         conditionality: None,
                         call_uses: Some(Vec::new()),
                         conditions,
@@ -2312,21 +2549,40 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
             .get("rules")
             .and_then(serde_json::Value::as_array)
             .context("rules")?;
-        let same = helpers.last().context("same")?;
         for (use_index, expected) in [
             (2, ["data.test.f", "data.test.g"]),
             (5, ["data.test.g", "data.test.f"]),
         ] {
+            let incoming = caller_uses.get(use_index).context("incoming same call")?;
+            let same = helpers
+                .iter()
+                .find(|rule| rule.get("call_instance") == incoming.get("call_instance"))
+                .context("owning same invocation")?;
+            let proof = same.pointer("/results/0/proofs/0").context("same proof")?;
+            let attempt = same
+                .get("attempts")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|attempts| {
+                    attempts
+                        .iter()
+                        .find(|attempt| attempt.get("attempt") == proof.get("attempt"))
+                })
+                .context("proof attempt resolves in its containing invocation")?;
+            assert_eq!(attempt.get("definition"), proof.get("definition"));
+            assert_eq!(attempt.get("body"), proof.get("body"));
+            assert_eq!(proof.get("definition"), Some(&serde_json::json!(1)));
+            assert_eq!(proof.get("body"), Some(&serde_json::json!(1)));
+            assert_ne!(proof.get("attempt"), Some(&serde_json::json!(1)));
             for (position, name) in expected.into_iter().enumerate() {
                 assert_eq!(
-                    same.pointer(&format!(
-                        "/attempts/0/conditions/{position}/left/parameter_origins/0/argument"
+                    attempt.pointer(&format!(
+                        "/conditions/{position}/left/parameter_origins/0/argument"
                     )),
                     Some(&serde_json::json!(position))
                 );
                 assert_eq!(
-                    same.pointer(&format!(
-                        "/attempts/0/conditions/2/{}/parameter_origins",
+                    attempt.pointer(&format!(
+                        "/conditions/2/{}/parameter_origins",
                         if position == 0 { "left" } else { "right" }
                     )),
                     Some(&serde_json::json!([{"argument":position,"path":[]}]))
@@ -2355,12 +2611,17 @@ fn incoming_arguments_keep_caller_paths_out_of_shared_callee_proofs() -> anyhow:
                     .context("producer")?;
                 assert_eq!(producer.get("name"), Some(&serde_json::json!(name)));
             }
+            assert_eq!(same.get("calls"), Some(&serde_json::json!([])));
+            assert_eq!(proof.get("call_uses"), Some(&serde_json::json!([])));
         }
-        assert_eq!(same.get("calls"), Some(&serde_json::json!([])));
-        assert_eq!(
-            same.pointer("/results/0/proofs/0/call_uses"),
-            Some(&serde_json::json!([]))
-        );
+        let invocations = caller_uses
+            .iter()
+            .filter_map(|edge| {
+                edge.get("call_instance")
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .collect::<alloc::collections::BTreeSet<_>>();
+        assert_eq!(invocations.len(), 6, "user function calls are not cached",);
     }
     Ok(())
 }
@@ -2467,6 +2728,7 @@ fn destructured_parameter_origins_preserve_typed_projections() -> anyhow::Result
 #[test]
 fn conditionality_is_independent_of_bounded_proofs() -> anyhow::Result<()> {
     let proof = |conditionality| Derivation {
+        eligibility: None,
         call_uses: None,
         definition: 0,
         body: 0,
@@ -3070,6 +3332,7 @@ fn nested_comprehension_conditions_do_not_replace_the_finding_subject() -> anyho
             count: Some(Count::Exact(1)),
         }],
         vec![Derivation {
+            eligibility: None,
             call_uses: None,
             definition: 0,
             body: 0,
@@ -3272,6 +3535,7 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
         Count::Exact(1),
         Vec::new(),
         vec![Derivation {
+            eligibility: None,
             call_uses: None,
             definition: 0,
             body: 0,
@@ -3327,6 +3591,7 @@ fn value_only_helpers_keep_argument_origins_without_body_predicates() -> anyhow:
 #[test]
 fn uncaptured_bindings_are_not_an_empty_contributor_set() -> Result<(), serde_json::Error> {
     let mut proof = Derivation {
+        eligibility: None,
         call_uses: None,
         definition: 0,
         body: 0,

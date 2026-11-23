@@ -179,7 +179,7 @@ impl Serialize for ExplanationReport {
 /// "with_overrides": ...}`; `rule` and `call_instance` are omitted when
 /// absent. Optional `calls` and `scopes` describe evaluation outside any
 /// rule invocation, including arbitrary query expressions.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct QueryTarget {
     /// The query or entry point as the caller gave it, for example
@@ -688,9 +688,9 @@ pub struct ScopeExplanation {
 /// The callee's checks retain their own owners/scopes. Negation-scope parity
 /// describes syntactic nesting only, including caller scopes along use edges;
 /// it does not determine how an inner check logically influences the result.
-/// A fresh call and each cached reuse have separate edges to the same
-/// callee invocation. Equal returned values do not identify invocations.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// Cached rule reuses have separate edges to one invocation; uncached
+/// function calls have distinct invocations even for equal arguments/results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct CallUse {
     /// Report-local use identifier, unique across query and rule use lists.
@@ -830,7 +830,7 @@ impl fmt::Display for Operator {
 }
 
 /// A runtime value that may have been withheld.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ReportedValue {
     /// The recorded value.
@@ -856,7 +856,7 @@ pub enum ReportedValue {
 /// `concrete_path` is always present (see [`ConcretePath`]); `path` is
 /// omitted when absent. `value` is replaced by `"redacted": true` or
 /// `"elided": true` when withheld, and omitted when undefined.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Operand {
     /// The runtime value.
@@ -1016,12 +1016,13 @@ pub enum PathSegment {
 }
 
 /// A successful producing path, including helper checks, without copying
-/// policy text. Definition/body indices refer to the queried rule; each
-/// check's owner identifies the invocation that actually evaluated it.
+/// policy text. Definition/body indices and attempt resolve in the invocation
+/// containing this proof, not necessarily the query. Checks keep their owners.
 ///
-/// Serializes as `{"definition": ..., "body": ..., "conditions": [...],
-/// "bindings": [...]}`, with `bindings` omitted when not captured and an
-/// empty array when capture established that no loops contributed.
+/// JSON has definition/body, conditions, optional attempt/conditionality,
+/// call_uses/eligibility and bindings; omitted capture lists mean unknown.
+/// Empty bindings certify no result-producing iteration bindings, not no
+/// nested-scope loop evidence on conditions.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[non_exhaustive]
 pub struct Derivation {
@@ -1029,21 +1030,28 @@ pub struct Derivation {
     pub definition: usize,
     /// Producing body index (`0` is the primary body).
     pub body: usize,
-    /// Producing body attempt, resolving in the queried invocation's
+    /// Producing body attempt, resolving in the containing invocation's
     /// [`RuleExplanation::attempts`]. Absent when not captured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt: Option<u64>,
-    /// Whether this derivation depends on unknown information. Absent when
-    /// not established, including when a helper's evidence was not captured.
+    /// Whether production, including eligibility, depends on unknown information.
+    /// Absent when not established, including uncaptured helper evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditionality: Option<Conditionality>,
     /// Contributing callee-use ids, resolving to [`CallUse::use_id`] across
     /// the owning invocation's calls and their descendants, never its
-    /// external caller/query prefixes. Includes nested uses, not failed
-    /// alternatives. `None` means not captured; `Some([])` means none
+    /// external caller/query prefixes. Includes nested/eligibility uses, not
+    /// unrelated failed alternatives. `None` is uncaptured; `Some([])` means none
     /// contributed. Individual checks retain their ordered use chains.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_uses: Option<Vec<u64>>,
+    /// Checks establishing eligibility, such as earlier body failures needed
+    /// to select an `else`, separate from successful producing-body conditions.
+    /// Owners and use paths follow the same rules as `conditions`. Outcomes
+    /// retain failure/undefined rather than being rewritten to success.
+    /// `None` is uncaptured; `Some([])` certifies no eligibility checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eligibility: Option<Vec<ConditionExplanation>>,
     /// Evaluated checks on this producing path, in evaluation order.
     /// Contributing parameter bindings may be copied from callee attempts,
     /// retaining their callee owners. An argument's presence alone does not
@@ -1051,8 +1059,8 @@ pub struct Derivation {
     pub conditions: Vec<ConditionExplanation>,
     /// The loop iteration that produced this proof at each loop on its
     /// path, outermost first, unlike a condition's loop-wide
-    /// [`witness`](ConditionExplanation::witness). `Some([])` means no loop
-    /// contributed; `None` means iteration bindings were not captured.
+    /// [`witness`](ConditionExplanation::witness). `Some([])` means no producing
+    /// iteration bindings, not no nested loops; `None` is uncaptured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bindings: Option<Vec<IterationBinding>>,
 }
@@ -1342,8 +1350,9 @@ pub struct LoopWitness {
     /// Variable bound to the iteration key, absent if unnamed or uncaptured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_binding: Option<String>,
-    /// Variable bound to the iteration value, absent if unnamed or uncaptured.
-    /// These roles apply to every iteration, not just the retained sample.
+    /// Value variable for a two-variable loop; single-variable loops use the
+    /// condition's `binding` instead. Absent if unnamed or uncaptured.
+    /// Roles apply to every iteration, not just the retained sample.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value_binding: Option<String>,
     /// Number of iterations executed, saturating at `u32::MAX`.

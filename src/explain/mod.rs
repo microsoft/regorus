@@ -100,12 +100,12 @@
 //! These are source-breaking changes despite the outer `non_exhaustive`.
 //! Direct constructors also initialize optional query witness/binding and
 //! operand-use metadata, using `None` when uncaptured.
-//! They also initialize optional witness binding roles, call arguments and
-//! parameter origins. `QueryTarget` and `CallUse` retain `PartialEq`, not `Eq`,
-//! because captured arguments contain operands.
+//! They also initialize optional witness roles, call arguments, parameter
+//! origins and proof eligibility checks. `QueryTarget` retains `Eq`.
 //! JSON schema version 2 is retained: omitted bindings remain unknown, including
 //! older reports that omitted either empty or uncaptured bindings. Only an
-//! explicit empty array certifies that no contributing loop bindings exist.
+//! explicit empty array certifies no result-producing iteration bindings;
+//! nested-scope loop evidence can still contribute through conditions.
 
 mod error;
 mod provenance;
