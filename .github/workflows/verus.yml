@@ -45,8 +45,8 @@ jobs:
       shell: bash
       run: |
         set -euxo pipefail
-        asset_url=https://github.com/verus-lang/verus/releases/download/release%2F0.2026.09.06.8dea4a2/verus-0.2026.09.06.8dea4a2-x86-linux.zip
-        asset_sha256=13d01e134c0620c3b29770874707d16c33b3d227c843a489c8ceb744d43c0a16
+        asset_url=https://github.com/verus-lang/verus/releases/download/release%2F0.2026.09.20.aef82ed/verus-0.2026.09.20.aef82ed-x86-linux.zip
+        asset_sha256=7b870fa12bc589015c2fab60a8b3d9f07c7b1adb3444eb0fadffcbf7f0447b33
         test -n "$asset_url"
         curl -fsSL "$asset_url" -o verus.zip
 
