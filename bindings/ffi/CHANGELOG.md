@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concurrent FFI calls no longer race on the process-global panic hook. The first guarded call
   installs one hook that records panic details for guarded calls and forwards all other panics to
   the hook installed before it, instead of swapping the hook on every call, which could drop panic
-  details or leave a stale hook installed in place of the host's hook.
+  details or leave a stale hook installed in place of the host's hook. The hook is never removed:
+  if other Rust code shares this library's copy of std (for example when both link std
+  dynamically), don't unload the library after its first call.
 
 ## [0.1.0](https://github.com/microsoft/regorus/releases/tag/regorus-ffi-v0.1.0) - 2024-02-08
 

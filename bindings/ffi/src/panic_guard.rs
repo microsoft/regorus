@@ -13,6 +13,16 @@
 //! it: guarded panics are then still caught, but also reach that hook and lose
 //! the extra details. Swapping hooks is not atomic on stable Rust, so a hook the
 //! host sets concurrently with the first guarded call can be lost.
+//!
+//! The hook belongs to the copy of std that this library is linked with. A
+//! default `cdylib` build contains its own copy, which no code outside the
+//! library uses, so host panics never reach the hook. Other Rust code can share
+//! the copy: for example Rust libraries that, like this one, link std
+//! dynamically (`-C prefer-dynamic`), whatever the host language, or a Rust
+//! program that links the `staticlib`. Panics in that code then reach this
+//! hook, and the rules above apply to the hooks it installs. The hook is never
+//! removed, so while that std stays loaded, this library must not be unloaded:
+//! a later panic would call unloaded code.
 
 extern crate alloc;
 
@@ -330,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn concurrent_guarded_panics_keep_their_messages_and_the_host_hook() {
         const THREADS: usize = 8;
         const ITERATIONS: usize = 40;
