@@ -49,6 +49,10 @@ impl<'a> Compiler<'a> {
             }
             .into());
         };
+        // A shadowed default that no rule can produce is undefined.
+        if definitions.is_empty() {
+            return Ok(RuleType::Complete);
+        }
 
         let rule_types: BTreeSet<RuleType> = definitions
             .iter()
@@ -304,7 +308,7 @@ impl<'a> Compiler<'a> {
                 }
             };
             // A shadowed default is read from its base's rules that can produce
-            // it or, if none can, from the whole base.
+            // it or, if they cannot be compiled as one rule, from the whole base.
             let shadowed = policy.inner.shadowed_defaults.get(&rule_path);
             let rule_idx = match (compiler.get_or_assign_rule_index(&rule_path), shadowed) {
                 (Err(_), Some(shadowed)) => compiler.get_or_assign_rule_index(&shadowed.base)?,

@@ -1254,7 +1254,96 @@ x := p.q
             ]),
         ],
     },
+    // OPA rejects a reference in a default's value even if the default is
+    // shadowed. The RVM drops a default whose value fails to evaluate (also
+    // when it is not shadowed), so it reads `p[k]`. No twin: OPA's error comes
+    // from the default.
+    Case {
+        name: "shadowed_default_invalid_value", v0: false, twin: None,
+        modules: &[r#"package probe
+p[k] := 1 if { some k in input.ks }
+default p.r := input.x
+child := p.r
+"#],
+        queries: &[
+            ("data.probe.child", &[
+                (r#"{"ks":["r"],"x":3}"#, r#"error; rvm=1"#),
+            ]),
+        ],
+    },
+    // The bracket form is registered at the owner `p`, beside `p[k]`.
+    Case {
+        name: "shadowed_default_invalid_value_bracket", v0: false, twin: None,
+        modules: &[r#"package probe
+p[k] := 1 if { some k in input.ks }
+default p["r"] := input.x
+child := p.r
+"#],
+        queries: &[
+            ("data.probe.child", &[
+                (r#"{"ks":["r"],"x":3}"#, r#"error; rvm=1"#),
+                (r#"{"ks":[],"x":3}"#, r#"error; rvm=undefined"#),
+            ]),
+            ("data.probe.p", &[
+                (r#"{"ks":["r"],"x":3}"#, r#"error; rvm={"r":1}"#),
+            ]),
+        ],
+    },
+    // No head of the owner can produce `p.r.u`, although the value of `p[x].t`
+    // contains `r.u`. No twin: see the next case.
+    Case {
+        name: "no_rule_produces_path_nested_value", v0: false, twin: None,
+        modules: &[r#"package probe
+p[x].t := {"r": {"u": 1}} if { x := input.x }
+default p.r.u := 0
+a := p.r.u
+"#],
+        queries: &[
+            ("data.probe.a", &[
+                (r#"{"x":"a"}"#, r#"undefined"#),
+                (r#"{"x":"r"}"#, r#"undefined"#),
+            ]),
+            ("data.probe.p.r.u", &[
+                (r#"{"x":"a"}"#, r#"undefined"#),
+                (r#"{"x":"r"}"#, r#"undefined"#),
+            ]),
+        ],
+    },
+    // Twin of no_rule_produces_path_nested_value without the default, where
+    // the RVM reads `p.r.u` from `p[x].t` (nested dynamic keys).
+    Case {
+        name: "no_rule_produces_path_nested_value_no_default", v0: false, twin: None,
+        modules: &[r#"package probe
+p[x].t := {"r": {"u": 1}} if { x := input.x }
+a := p.r.u
+"#],
+        queries: &[
+            ("data.probe.a", &[
+                (r#"{"x":"a"}"#, r#"undefined; rvm=1"#),
+                (r#"{"x":"r"}"#, r#"undefined; rvm=1"#),
+            ]),
+        ],
+    },
+    // Reads of `p.a` and `p.b` share the rule of `p`; see
+    // `shadowed_default_reads_share_the_owner_rule`.
+    Case {
+        name: "reads_share_owner_rule", v0: false, twin: Some(&[]),
+        modules: &[SHARED_OWNER_RULE],
+        queries: &[
+            ("data.probe.x", &[
+                (r#"{"ks":["a"]}"#, r#"[{"a":1},[1],[]]"#),
+                (r#"{"ks":[]}"#, r#"[{},[],[]]"#),
+            ]),
+        ],
+    },
 ];
+
+const SHARED_OWNER_RULE: &str = r#"package probe
+p[k] := 1 if { some k in input.ks }
+default p.a := 0
+default p.b := 0
+x := [p, [v | v := p.a], [v | v := p.b]]
+"#;
 
 fn expected(text: &str, engine: &str) -> Result<Option<Value>> {
     let mut parts = text.split("; ");
@@ -1377,5 +1466,28 @@ fn default_beneath_dynamic_key_matches_opa() -> Result<()> {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+/// Reads of shadowed defaults whose producers are all of their base's rules
+/// call the base's rule, like reads without the defaults, rather than
+/// compiling and evaluating those rules once per path.
+#[test]
+fn shadowed_default_reads_share_the_owner_rule() -> Result<()> {
+    let twin: String = SHARED_OWNER_RULE
+        .lines()
+        .filter(|line| !line.starts_with("default "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let mut rule_counts = vec![];
+    for module in [SHARED_OWNER_RULE.to_string(), twin] {
+        let mut engine = Engine::new();
+        engine.add_policy("m0.rego".into(), module)?;
+        let query = "data.probe.x";
+        let compiled = engine.compile_with_entrypoint(&query.into())?;
+        let program = Compiler::compile_from_policy(&compiled, &[query])?;
+        rule_counts.push(program.rule_infos.len());
+    }
+    assert_eq!(rule_counts[0], rule_counts[1]);
     Ok(())
 }

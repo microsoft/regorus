@@ -407,7 +407,12 @@ impl<'a> Compiler<'a> {
         let Some(shadowed) = policy.inner.shadowed_defaults.get(path) else {
             return Ok(None);
         };
-        let Ok(rule_index) = self.get_or_assign_rule_index(path) else {
+        // Share the base's rule, and its cached value, if it has no other rules.
+        let base = &shadowed.base;
+        let same_rules = policy.inner.rules.get(base) == Some(&shadowed.rules);
+        let base_index = same_rules.then(|| self.get_or_assign_rule_index(base).ok());
+        let path_index = || self.get_or_assign_rule_index(path).ok();
+        let Some(rule_index) = base_index.flatten().or_else(path_index) else {
             return Ok(None);
         };
         let dest = self.alloc_register()?;

@@ -4165,12 +4165,12 @@ impl Interpreter {
                 };
 
                 path.extend(get_rule_path_components(refr)?);
+                Self::check_default_value(value)?;
                 if self.is_shadowed_default(&module, refr)? {
                     return Ok(());
                 }
                 let paths: Vec<&str> = path.iter().map(PathComponent::value).collect();
 
-                Self::check_default_value(value)?;
                 let value = self.eval_expr(value)?;
 
                 // Assume at this point that all the non-default rules have been evaluated.
@@ -4813,10 +4813,17 @@ impl Interpreter {
                 if let Some(shadowed) = shadowed {
                     let policy = self.compiled_policy_mut();
                     policy.shadowed_defaults.insert(path, shadowed);
+                    self.memory_check()?;
                 }
             }
             // Like OPA, ignore the default at and above the owner too; beneath
-            // it, the paths are read through `shadowed_defaults`.
+            // it, the paths are read through `shadowed_defaults`. An invalid
+            // value stays registered so that evaluating it reports the error.
+            if let Rule::Default { value, .. } = default_rule.as_ref() {
+                if Self::check_default_value(value).is_err() {
+                    continue;
+                }
+            }
             for len in 1..=owner_len {
                 let path = format_path_components(components.get(..len).unwrap_or_default())?;
                 let policy = self.compiled_policy_mut();
