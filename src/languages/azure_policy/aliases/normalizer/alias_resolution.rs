@@ -102,6 +102,9 @@ pub fn apply_alias_entries(
                     obj_insert(result, target_lc, val);
                     continue;
                 };
+                // Keep the ARM-named key, as the loop above does when the
+                // casing matches.
+                obj_insert(result, source_lc, val);
                 obj_insert(result, target_lc, resolved);
                 // The remaps above ran before this value had its alias name.
                 for remap in &agg.element_remaps {

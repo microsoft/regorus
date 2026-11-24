@@ -1310,8 +1310,14 @@ cases:
                   rawz: 1
     # The array base rename supplies `x`; its elements are flattened and
     # remapped like those of a matching key.
+    # As with a matching key, the ARM-named key is kept too.
     expected_normalized:
       type: "Test/widgets"
+      items:
+        - y:
+            - name: one
+              properties:
+                rawz: 1
       x:
         - y:
             - name: one
@@ -1361,8 +1367,14 @@ cases:
               - rawState: s
                 properties:
                   z: 1
+    # As with a matching key, the ARM-named key is kept too.
     expected_normalized:
       type: "Test/widgets"
+      items:
+        - subnets:
+            - properties:
+                z: 1
+              rawstate: "s"
       x:
         - subnets:
             - state: s
@@ -1554,8 +1566,15 @@ cases:
                     keep: true
     # `items.y` and `a.y` are both sub-resource arrays. Each element's wrapper
     # is consumed once, so the payload's own `properties` stays.
+    # As with a matching key, the ARM-named key is kept too.
     expected_normalized:
       type: "Test/widgets"
+      items:
+        - y:
+            - name: "one"
+              properties:
+                keep: true
+              z: 1
       a:
         - y:
             - name: one
@@ -1605,8 +1624,13 @@ cases:
                   k: 2
     # `a.y` is not a sub-resource array, so its elements keep `properties`,
     # as they do when the input key is `items`.
+    # As with a matching key, the ARM-named key is kept too.
     expected_normalized:
       type: "Test/widgets"
+      items:
+        - y:
+            - k: 2
+              z: 1
       a:
         - y:
             - z: 1
@@ -1646,8 +1670,11 @@ cases:
           - b: 1
             c: 2
     # `a[*].d` reads ARM `c`, not the `b` that the `items[*].c` remap moved.
+    # As with a matching key, the ARM-named key is kept too.
     expected_normalized:
       type: "Test/widgets"
+      items:
+        - c: 1
       a:
         - b: 1
           d: 2
@@ -1811,3 +1838,295 @@ cases:
           - name: one
             properties:
               z: 1
+
+  - note: a write to an exact ancestor does not hide a later write that differs only in case from reverse remaps
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/p", "defaultPath": "properties.cfg", "paths": [] },
+                { "name": "Test/widgets/p.subnets[*].z", "defaultPath": "properties.cfg.subnets[*].rawz", "paths": [] },
+                { "name": "Test/widgets/q", "defaultPath": "properties.cfg.subNets", "paths": [] }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      p: {}
+      q:
+        - z: 2
+    expected_denormalized:
+      type: "Test/widgets"
+      properties:
+        cfg:
+          subNets:
+            - z: 2
+
+  - note: a scalar sibling that differs only in case does not stop an array from being re-wrapped
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/a", "defaultPath": "properties.cfg", "paths": [] },
+                { "name": "Test/widgets/a.Items[*].z", "defaultPath": "properties.cfg.Items[*].properties.z", "paths": [] },
+                { "name": "Test/widgets/b", "defaultPath": "properties.cfg.items", "paths": [] }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      a:
+        items:
+          - z: 1
+      b: 2
+    expected_denormalized:
+      type: "Test/widgets"
+      properties:
+        cfg:
+          Items:
+            - properties:
+                z: 1
+          items: 2
+
+  - note: an unwrapped field whose name is a wrapped field's ARM name stays unwrapped when the wrapped alias is absent
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test/widgets/config", "defaultPath": "properties.config", "paths": [] },
+                {
+                  "name": "Test/widgets/config.rules[*].rawstatus",
+                  "defaultPath": "properties.config.rules[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/config.rules[*].other",
+                  "defaultPath": "properties.config.rules[*].properties.rawstatus",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test/widgets"
+      config:
+        rules:
+          - rawstatus: 1
+          - other: 2
+    expected_denormalized:
+      type: "Test/widgets"
+      properties:
+        config:
+          rules:
+            - rawstatus: 1
+            - properties:
+                rawstatus: 2
+
+  # `z` stays unremapped in `Items`, as before this change: the remap looks up
+  # `ITEMS`, the smallest key differing only in case, which `q` replaced. This
+  # case checks that `rawz` does not land in `q`'s array.
+  - note: an element remap writes to the array the casing hint picks, not another alias's
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/Items[*].z",
+                  "defaultPath": "properties.Items[*].rawz",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/q",
+                  "defaultPath": "properties.ITEMS",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "items": [{"z": 1}], "q": [{"z": 2}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"ITEMS": [{"z": 2}], "Items": [{"z": 1}]}}
+
+  - note: a shared field stays at the element root when the element lacks the wrapped alias's full path
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/rules[*].rawstatus",
+                  "defaultPath": "properties.rules[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].other.code",
+                  "defaultPath": "properties.rules[*].properties.rawstatus.code",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].other.label",
+                  "defaultPath": "properties.rules[*].properties.other.label",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"rawstatus": 1, "other": {"label": "ready"}}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"rules": [{"rawstatus": 1, "properties": {"other": {"label": "ready"}}}]}}
+
+  - note: a renamed array's elements decide shared fields by the renamed input
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/r[*].w",
+                  "defaultPath": "properties.items[*].w",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/items[*].rawstatus",
+                  "defaultPath": "properties.items[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/items[*].other",
+                  "defaultPath": "properties.items[*].properties.rawstatus",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "r": [{"rawstatus": 1}, {"other": 2}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"items": [{"rawstatus": 1}, {"properties": {"rawstatus": 2}}]}}
+
+  - note: a collision-prefixed array decides shared fields by its own input
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/sku",
+                  "defaultPath": "properties.sku",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/sku.items[*].rawstatus",
+                  "defaultPath": "properties.sku.items[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/sku.items[*].other",
+                  "defaultPath": "properties.sku.items[*].properties.rawstatus",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "sku": {"name": "S"}, "_p_sku": {"items": [{"rawstatus": 1}]}}
+    expected_denormalized: {"type": "Test/widgets", "sku": {"name": "S"}, "properties": {"sku": {"items": [{"rawstatus": 1}]}}}
+
+  - note: a renamed array restored to another casing decides shared fields by its normalized key
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/R[*].w",
+                  "defaultPath": "properties.items[*].w",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/items[*].rawstatus",
+                  "defaultPath": "properties.items[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/items[*].other",
+                  "defaultPath": "properties.items[*].properties.rawstatus",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "r": [{"rawstatus": 1}, {"other": 2}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"items": [{"rawstatus": 1}, {"properties": {"rawstatus": 2}}]}}
+
+  # The remap that moves `other.code` leaves `other` empty, as remaps do.
+  - note: a shared field is wrapped when the element has the wrapped alias's full path in any case
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/rules[*].rawstatus",
+                  "defaultPath": "properties.rules[*].rawstatus",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].other.code",
+                  "defaultPath": "properties.rules[*].properties.rawstatus.code",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/rules[*].other.label",
+                  "defaultPath": "properties.rules[*].properties.other.label",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "rules": [{"rawstatus": 1}, {"Other": {"Code": "c"}}]}
+    expected_denormalized: {"type": "Test/widgets", "properties": {"rules": [{"rawstatus": 1}, {"properties": {"other": {}, "rawstatus": {"code": "c"}}}]}}

@@ -30,7 +30,7 @@ pub fn new_map() -> ObjMap {
 /// Find the key matching `key` in an ObjMap: an exact match if present,
 /// otherwise the smallest key equal to it ignoring ASCII case. Remap paths
 /// are lowercase, but the denormalizer writes keys with their ARM casing.
-fn obj_key_ci(map: &ObjMap, key: &str) -> Option<Rc<str>> {
+pub fn obj_key_ci(map: &ObjMap, key: &str) -> Option<Rc<str>> {
     match map.get_key_value(key) {
         Some((k, _)) => Some(k.clone()),
         None => map
