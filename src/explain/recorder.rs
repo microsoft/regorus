@@ -54,15 +54,20 @@ pub trait ExplanationRecorder: Send + Sync {
 
     /// An invocation starts, before parameter matching or default selection.
     /// `context` belongs to the caller; the event identifies the callee.
+    /// Undefined function arguments still produce a start/end pair for a
+    /// function target, but not for an invalid or non-function target.
     fn call_start(&mut self, _context: &HookContext, _event: &CallStartEvent) {}
 
     /// An invocation completes or aborts. `context` identifies the callee at
     /// its call site; definition/body indices are zero, not a selected body.
     /// Non-nested legacy mixed-mode termination aborts outstanding captured
     /// invocations rather than inventing completion or changing the VM result.
+    /// Loading another program aborts outstanding calls before discarding their
+    /// execution context, and cancels any suspended continuation.
     fn call_end(&mut self, _context: &HookContext, _event: &CallEndEvent<'_>) {}
 
     /// A caller uses a cached rule result. No new invocation is created.
+    /// A function call short-circuited by undefined arguments is not a cache use.
     fn call_reused(&mut self, _context: &HookContext, _event: &CallReusedEvent) {}
 
     /// A check in a rule body was executed.

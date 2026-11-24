@@ -25,7 +25,11 @@ impl RegoVM {
                 #[cfg(feature = "explanations")]
                 // Undefined arguments bypass callee validation, even in malformed bytecode.
                 if self.explain_enabled()
-                    && usize::from(params.func_rule_index) < self.program.rule_infos.len()
+                    && self
+                        .program
+                        .rule_infos
+                        .get(usize::from(params.func_rule_index))
+                        .is_some_and(|rule| rule.function_info.is_some())
                 {
                     if let Some(id) = self.explain_begin_call(params.func_rule_index)? {
                         self.explain_end_call(id, Some(&Value::Undefined));

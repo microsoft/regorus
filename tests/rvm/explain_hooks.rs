@@ -1715,6 +1715,103 @@ fn invocation_identity_survives_host_await_and_late_installation_is_explicit() {
 }
 
 #[test]
+fn invocation_program_replacement_discards_unbudgeted_continuation() {
+    let original = compile(
+        "package t\np := 1\nr := [p,__builtin_host_await(input.x,\"host\"),p]\n",
+        "data.t.r",
+    )
+    .unwrap();
+    let replacement = compile("package t\np := 9\nr := [p,p]\n", "data.t.r").unwrap();
+    for replace in [false, true] {
+        for recording in [false, true] {
+            let fixture = Fixture::default();
+            let mut vm = RegoVM::new();
+            vm.load_program(original.clone());
+            vm.set_execution_mode(ExecutionMode::Suspendable);
+            vm.set_input(v(r#"{"x":1}"#));
+            if recording {
+                vm.set_explanation_recorder(Box::new(fixture.clone()));
+            }
+            vm.execute().unwrap();
+            assert!(matches!(
+                vm.execution_state(),
+                ExecutionState::Suspended { .. }
+            ));
+            let before = fixture.calls();
+            if recording {
+                let starts: Vec<_> = before
+                    .iter()
+                    .filter_map(|call| match call {
+                        CallRecord::Start(_, event) => Some(event.call_instance),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(starts, [1, 2]);
+            }
+            if replace {
+                vm.load_program(replacement.clone());
+                if recording {
+                    let aborted = fixture.calls();
+                    let [CallRecord::End(context, None, None)] = aborted.as_slice() else {
+                        panic!("replacement must abort only the outstanding call: {aborted:?}");
+                    };
+                    assert_eq!(context.call_instance, Some(1));
+                }
+                assert_eq!(
+                    vm.resume(Some(v("7"))),
+                    Err(VmError::InvalidResumeState {
+                        state: "Ready".into(),
+                        pc: usize::try_from(replacement.main_entry_point).unwrap(),
+                    }),
+                    "replacement must reject the old continuation: {:?}",
+                    vm.execution_state()
+                );
+                assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+                assert!(fixture.calls().is_empty());
+                assert_eq!(
+                    execute(&mut vm, ExecutionMode::Suspendable).unwrap(),
+                    v("[9,9]")
+                );
+            } else {
+                vm.resume(Some(v("7"))).unwrap();
+            }
+            let expected = if replace { v("[9,9]") } else { v("[1,7,1]") };
+            assert!(
+                matches!(vm.execution_state(), ExecutionState::Completed { result } if result == &expected)
+            );
+            if recording {
+                let after = fixture.calls();
+                let reused: Vec<_> = after
+                    .iter()
+                    .filter_map(|call| match call {
+                        CallRecord::Reused(context, event) => {
+                            Some((context.call_instance, event.call_instance))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reused, [(Some(1), Some(2))]);
+                if replace {
+                    let starts: Vec<_> = after
+                        .iter()
+                        .filter_map(|call| match call {
+                            CallRecord::Start(_, event) => Some(event.call_instance),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(starts, [1, 2]);
+                }
+                assert!(after.iter().any(|call| matches!(
+                    call,
+                    CallRecord::End(context, Some(CallResultSource::Body), Some(result))
+                        if context.call_instance == Some(1) && result == &expected
+                )));
+            }
+        }
+    }
+}
+
+#[test]
 fn invocation_late_recorder_does_not_assign_uncaptured_default_to_caller() {
     let program = compile(
         "package t\ndefault p := false\np if __builtin_host_await(input.x,\"child\")\nr := [__builtin_host_await(input.x,\"outer\"),p]\n",
@@ -1830,6 +1927,91 @@ fn invocation_malformed_undefined_argument_preserves_recorder_off_result() {
             Ok(Value::Undefined),
             "{mode:?}: recording changed undefined-argument short-circuit semantics"
         );
+    }
+}
+
+#[test]
+fn invocation_undefined_argument_to_nonfunction_does_not_report_a_call_or_reuse() {
+    let compiled = compile("package t\np := 7\n", "data.t.p").unwrap();
+    let rule_index = u16::try_from(
+        compiled
+            .rule_infos
+            .iter()
+            .position(|rule| rule.name == "data.t.p")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(compiled.rule_infos[usize::from(rule_index)]
+        .function_info
+        .is_none());
+    for cached in [true, false] {
+        let mut program = (*compiled).clone();
+        program.dispatch_window_size = program.dispatch_window_size.max(2);
+        program
+            .entry_points
+            .insert("data.t.probe".into(), program.instructions.len());
+        if cached {
+            program.instructions.push(Instruction::CallRule {
+                dest: 0,
+                rule_index,
+            });
+        }
+        let params_index = program.add_function_call_params(FunctionCallParams {
+            dest: 0,
+            func_rule_index: rule_index,
+            num_args: 1,
+            args: [1, 0, 0, 0, 0, 0, 0, 0],
+        });
+        program
+            .instructions
+            .push(Instruction::FunctionCall { params_index });
+        program.instructions.push(Instruction::Return { value: 0 });
+        let program = Arc::new(program);
+        for mode in MODES {
+            for recording in [false, true] {
+                let fixture = Fixture::default();
+                let mut vm = RegoVM::new();
+                vm.load_program(program.clone());
+                vm.set_execution_mode(mode);
+                if recording {
+                    vm.set_explanation_recorder(Box::new(fixture.clone()));
+                }
+                assert_eq!(
+                    vm.execute_entry_point_by_name("data.t.probe"),
+                    Ok(Value::Undefined),
+                    "{mode:?}"
+                );
+                match mode {
+                    ExecutionMode::RunToCompletion => {
+                        assert!(matches!(vm.execution_state(), ExecutionState::Ready));
+                    }
+                    ExecutionMode::Suspendable => {
+                        assert!(
+                            matches!(vm.execution_state(), ExecutionState::Completed { result } if result == &Value::Undefined)
+                        );
+                    }
+                }
+                let calls = fixture.calls();
+                if recording && cached {
+                    let [CallRecord::Start(caller, start), CallRecord::End(owner, Some(CallResultSource::Body), Some(result))] =
+                        calls.as_slice()
+                    else {
+                        panic!("{mode:?}: only the cache-filling invocation is real: {calls:?}");
+                    };
+                    assert_eq!(caller.call_instance, None);
+                    assert_eq!(start.call_instance, 1);
+                    assert_eq!(start.rule_index, rule_index);
+                    assert_eq!(owner.call_instance, Some(1));
+                    assert_eq!(owner.rule_index, Some(rule_index));
+                    assert_eq!(result, &v("7"));
+                } else {
+                    assert!(
+                        calls.is_empty(),
+                        "{mode:?}: target was not invoked: {calls:?}"
+                    );
+                }
+            }
+        }
     }
 }
 
