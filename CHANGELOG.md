@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- *(rego)* Let variables declared with `some` (including `some .. in` patterns) shadow a rule or import of the same name, as in OPA. Previously, in both the interpreter and the RVM, `{k | some k; data.a.b[k]}` used the rule `k` and could return an empty or wrong set, and `some k in xs` failed to compile.
+- *(rego)* Let variables declared with `some` (including variables bound by `some .. in` patterns, but not those in set patterns, which are compared rather than bound) shadow a rule or import of the same name, as in OPA. Previously, in both the interpreter and the RVM, `{k | some k; data.a.b[k]}` used the rule `k` and could return an empty or wrong set, and `some k in xs` failed to compile.
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 

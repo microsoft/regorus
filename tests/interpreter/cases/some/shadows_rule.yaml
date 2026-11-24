@@ -63,3 +63,25 @@ cases:
       r:
         set!: ["c"]
       s: 5
+
+  - note: a variable in a set pattern of some in does not shadow a rule
+    modules:
+      - |
+        package test
+        import rego.v1
+        k := 1
+        xs := [{1}, {2}]
+        r contains 1 if { some {k} in xs }
+    query: data.test.r
+    error: used before definition
+
+  - note: a variable in an array pattern of some in shadows a rule, also when also in a set
+    modules:
+      - |
+        package test
+        import rego.v1
+        k := 1
+        r contains k if { some [k, {k}] in [[1, {1}], [2, {3}]] }
+    query: data.test.r
+    want_result:
+      set!: [1]

@@ -240,3 +240,25 @@ cases:
       q:
         set!: []
       s: []
+
+  - note: some_in_set_pattern_does_not_shadow_rule
+    modules:
+      - |
+        package test
+        import rego.v1
+        k := 1
+        xs := [{1}, {2}]
+        r contains 1 if { some {k} in xs }
+    query: data.test.r
+    want_error: used before definition
+
+  - note: some_in_array_and_set_pattern_shadows_rule
+    modules:
+      - |
+        package test
+        import rego.v1
+        k := 1
+        r contains k if { some [k, {k}] in [[1, {1}], [2, {3}]] }
+    query: data.test.r
+    want_result:
+      set!: [1]

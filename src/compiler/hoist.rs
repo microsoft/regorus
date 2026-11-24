@@ -13,7 +13,6 @@
 //! pre-computing loop hoisting information that can be stored in the
 //! compiled policy and reused by the interpreter.
 
-use super::destructuring_planner::utils::collect_pattern_var_spans;
 use super::destructuring_planner::{
     map_binding_error, BindingPlan, ScopingMode, VariableBindingContext,
 };
@@ -612,14 +611,12 @@ impl LoopHoister {
                     }
                 }
                 // Pattern variables also shadow rules and imports of the same name.
-                // `input` and `data` are skipped by `collect_pattern_var_spans`.
                 if let Some(globals) = &context.module_globals {
-                    let mut spans = Vec::new();
+                    let mut names = Vec::new();
                     for pattern in key.iter().chain(core::iter::once(value)) {
-                        collect_pattern_var_spans(pattern, &mut spans);
+                        collect_binding_pattern_vars(pattern, &mut names);
                     }
-                    for span in spans {
-                        let name = span.text();
+                    for name in names {
                         if globals.contains(name) && !context.bound_vars.contains(name) {
                             shadowing
                                 .get_or_insert_with(|| context.clone())
@@ -933,5 +930,27 @@ impl LoopHoister {
 impl Default for LoopHoister {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Collects the variables that a `some .. in` pattern binds: bare variables,
+/// array items and object values, but not `_`, `input`, `data` or variables in
+/// sets, which are compared rather than bound.
+fn collect_binding_pattern_vars<'a>(expr: &'a ExprRef, names: &mut Vec<&'a str>) {
+    match expr.as_ref() {
+        Expr::Var { span, .. } if !matches!(span.text(), "_" | "input" | "data") => {
+            names.push(span.text());
+        }
+        Expr::Array { items, .. } => {
+            for item in items {
+                collect_binding_pattern_vars(item, names);
+            }
+        }
+        Expr::Object { fields, .. } => {
+            for (_, _, value) in fields {
+                collect_binding_pattern_vars(value, names);
+            }
+        }
+        _ => {}
     }
 }

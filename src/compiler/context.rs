@@ -180,8 +180,8 @@ impl ScopeContext {
             .as_ref()
             .is_some_and(|globals| globals.contains(var_name));
 
-        // A `some` declaration shadows a rule or import of the same name, but
-        // `input` and `data` keep referring to the root documents.
+        // A `some` declaration shadows a rule or import of the same name.
+        // `input` and `data` keep their existing exclusion from loop hoisting.
         if self.is_unbound(var_name) && !(is_global && matches!(var_name, "input" | "data")) {
             return true;
         }
