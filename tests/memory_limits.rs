@@ -2603,6 +2603,79 @@ fn partial_eval_serialization_preflight_memory_failure_publishes_error_state() {
 
 #[cfg(feature = "explanations")]
 #[test]
+fn partial_eval_transient_shadow_paths_are_budgeted() {
+    use regorus::explain::{ExplainError, PartialEvalSettings, ResidualStatus, UnknownPath};
+    use regorus::rvm::{Instruction, Program};
+
+    let _guard = LimitGuard::lock();
+    for move_prefix in [false, true] {
+        for short_key in [false, true] {
+            let key = "x".repeat(if short_key {
+                8
+            } else if move_prefix {
+                32 * 1024
+            } else {
+                256 * 1024
+            });
+            let mut program = Program::new();
+            program.literals.push(Value::from(key.as_str()));
+            program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+            program.add_instruction(
+                Instruction::IndexLiteral {
+                    dest: 0,
+                    container: 0,
+                    literal_idx: 0,
+                },
+                None,
+            );
+            if move_prefix {
+                program.add_instruction(Instruction::Move { dest: 0, src: 0 }, None);
+                program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
+            }
+            program.add_instruction(Instruction::Return { value: 0 }, None);
+            program.add_entry_point("entry".into(), 0);
+            let mut vm = RegoVM::new();
+            vm.load_program(Arc::new(program));
+            vm.set_input(Value::new_object());
+            let mut settings = PartialEvalSettings::default();
+            settings.unknowns = vec![if move_prefix {
+                UnknownPath::input_keys([key.as_str(), "u"])
+            } else {
+                UnknownPath::input_keys(["u"])
+            }];
+            vm.set_partial_eval_settings(settings);
+            vm.set_memory_budget_config(Some(MemoryBudgetConfig {
+                limit: NonZeroU64::new(if move_prefix { 80 * 1024 } else { 64 * 1024 }).unwrap(),
+            }));
+            let result = vm.partial_eval("entry");
+            if short_key {
+                assert_eq!(result.unwrap().status, ResidualStatus::Exact);
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(ExplainError::Vm(VmError::MemoryBudgetExceeded { .. }))
+                    ),
+                    "move_prefix={move_prefix}: {result:?}"
+                );
+            }
+            vm.set_memory_budget_config(None);
+            let result = vm.partial_eval("entry").unwrap();
+            assert_eq!(result.status, ResidualStatus::Exact);
+            assert_eq!(
+                result.result,
+                if move_prefix {
+                    Value::Bool(true)
+                } else {
+                    Value::Undefined
+                }
+            );
+        }
+    }
+}
+
+#[cfg(feature = "explanations")]
+#[test]
 fn partial_eval_validation_is_in_the_memory_budget() {
     use regorus::explain::{ExplainError, PartialEvalSettings, UnknownPath};
 
@@ -2682,10 +2755,18 @@ fn partial_eval_warning_after_vm_error_is_budgeted() {
     let _guard = LimitGuard::lock();
     for filename_len in [8, 256 * 1024] {
         let mut program = Program::new();
-        let source = program.add_source("p".repeat(filename_len), "input".into());
+        let source = program.add_source("p".repeat(filename_len), "input == input".into());
         program.add_instruction(
             Instruction::LoadInput { dest: 0 },
             Some(SpanInfo::new(source, 1, 1, 5)),
+        );
+        program.add_instruction(
+            Instruction::Eq {
+                dest: 0,
+                left: 0,
+                right: 0,
+            },
+            Some(SpanInfo::new(source, 1, 1, 14)),
         );
         program.add_instruction(Instruction::LoadTrue { dest: 0 }, None);
         program.add_instruction(Instruction::LoadNull { dest: 1 }, None);
@@ -2726,7 +2807,7 @@ fn partial_eval_warning_after_vm_error_is_budgeted() {
             assert!(matches!(
                 vm.execution_state(),
                 ExecutionState::Error {
-                    error: VmError::ArithmeticError { pc: 3, .. }
+                    error: VmError::ArithmeticError { pc: 4, .. }
                 }
             ));
         }
@@ -2754,9 +2835,9 @@ fn partial_eval_temporary_vm(filename: Option<String>) -> RegoVM {
         } else {
             Instruction::LoadTrue { dest: 0 }
         },
-        span,
+        span.clone(),
     );
-    program.add_instruction(Instruction::Return { value: 0 }, None);
+    program.add_instruction(Instruction::Return { value: 0 }, span);
     program.add_entry_point("entry".into(), 0);
     let mut vm = RegoVM::new();
     vm.load_program(Arc::new(program));
@@ -2929,7 +3010,7 @@ fn partial_eval_temporary_warning_peak_is_accounted() {
             assert_eq!(
                 report.warnings,
                 vec![format!(
-                    "partial evaluation unsupported: `input` has unknown paths and is read at {}:1:1",
+                    "partial evaluation unsupported: `Return` reads a value that depends on unknown input at {}:1:1",
                     "p".repeat(filename_len)
                 )]
             );
