@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(azure_policy)* Sub-resource arrays are re-wrapped when a plain alias write is refused or ARM keys differ only in case, wrapped fields stay inside `properties`, and a plain alias whose ARM key has different casing normalizes like a matching key.
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07

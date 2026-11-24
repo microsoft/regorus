@@ -191,3 +191,33 @@ cases:
             y:
               - rawz: 1
     round_trip: true
+
+  - note: a refused plain alias write at the resource root does not stop re-wrapping
+    aliases_json: |
+      [
+        {
+          "namespace": "Test.Data",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                { "name": "Test.Data/widgets/b", "defaultPath": "x.y", "paths": [] },
+                { "name": "Test.Data/widgets/x[*].y[*].z", "defaultPath": "x[*].y[*].properties.z", "paths": [] }
+              ]
+            }
+          ]
+        }
+      ]
+    input:
+      type: "Test.Data/widgets"
+      x:
+        - y:
+            - z: 1
+      b: 2
+    # `x` is an array, so `b` has nowhere to go and is dropped.
+    expected_denormalized:
+      type: "Test.Data/widgets"
+      x:
+        - y:
+            - properties:
+                z: 1

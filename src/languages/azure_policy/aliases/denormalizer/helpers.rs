@@ -5,9 +5,10 @@
 
 use crate::Rc;
 
-use super::super::obj_map::ObjMap;
+use super::super::obj_map::{obj_key_ci, ObjMap};
 
-/// Find a key in an ObjMap using case-insensitive comparison.
+/// Find a key in an ObjMap: `key` itself, else the smallest key that
+/// differs only in ASCII case, so the choice does not depend on map order.
 pub fn find_key_ci(obj: &ObjMap, key: &str) -> Option<Rc<str>> {
-    obj.keys().find(|k| k.eq_ignore_ascii_case(key)).cloned()
+    obj_key_ci(obj, key)
 }

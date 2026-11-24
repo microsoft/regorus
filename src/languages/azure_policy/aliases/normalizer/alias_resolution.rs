@@ -79,19 +79,40 @@ pub fn apply_alias_entries(
             if let Some(val) = obj_remove(result, source_lc.as_str()) {
                 // A plain alias the loop above did not resolve (for example,
                 // its ARM key has different casing) gets its value here.
-                // Flatten it the same way, since the denormalizer re-wraps
-                // where the alias writes.
-                let is_plain_alias = entries.get(target_lc.as_str()).is_some_and(|entry| {
-                    !entry.is_wildcard
-                        && !sub_resource_set.contains(target_lc.as_str())
-                        && !is_root_field_collision(&entry.short_name, &entry.default_path)
-                });
-                let val = if is_plain_alias {
-                    normalize_value(&val, target_lc, Some(sub_resource_set))
-                } else {
-                    val
+                // `val` was flattened for the source name and rewritten by
+                // the source's remaps, so resolve the alias's own ARM value
+                // the way the loop above would have.
+                let resolved = entries
+                    .get(target_lc.as_str())
+                    .filter(|entry| {
+                        !entry.is_wildcard
+                            && !sub_resource_set.contains(target_lc.as_str())
+                            && !is_root_field_collision(&entry.short_name, &entry.default_path)
+                    })
+                    .and_then(|entry| {
+                        let segments = entry.select_path_segments(api_version);
+                        let value = navigate_arm_path_segments_ci(raw, segments)?;
+                        Some(normalize_value(
+                            &value,
+                            &entry.short_name,
+                            Some(sub_resource_set),
+                        ))
+                    });
+                let Some(resolved) = resolved else {
+                    obj_insert(result, target_lc, val);
+                    continue;
                 };
-                obj_insert(result, target_lc, val);
+                // Keep the ARM-named key, as the loop above does when the
+                // casing matches.
+                obj_insert(result, source_lc, val);
+                obj_insert(result, target_lc, resolved);
+                // The remaps above ran before this value had its alias name.
+                for remap in &agg.element_remaps {
+                    let root = remap.array_chain.first().and_then(|nav| nav.first());
+                    if root.is_some_and(|root| root == target_lc) {
+                        apply_element_remap_precomputed(result, remap);
+                    }
+                }
             }
         }
     }
@@ -105,6 +126,23 @@ fn navigate_arm_path_segments(value: &Value, segments: &[Rc<str>]) -> Option<Val
             .as_object()
             .ok()?
             .get(&Value::String(Rc::clone(segment)))?;
+    }
+    Some(current.clone())
+}
+
+/// [`navigate_arm_path_segments`], falling back to the first key that differs
+/// only in ASCII case (the key `merge_properties` takes) when there is no
+/// exact match.
+fn navigate_arm_path_segments_ci(value: &Value, segments: &[Rc<str>]) -> Option<Value> {
+    let mut current = value;
+    for segment in segments {
+        let obj = current.as_object().ok()?;
+        current = match obj.get(&Value::String(Rc::clone(segment))) {
+            Some(v) => v,
+            None => obj.iter().find_map(|(k, v)| {
+                matches!(k, Value::String(s) if s.eq_ignore_ascii_case(segment)).then_some(v)
+            })?,
+        };
     }
     Some(current.clone())
 }

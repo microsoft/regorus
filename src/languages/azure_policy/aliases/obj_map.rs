@@ -30,7 +30,7 @@ pub fn new_map() -> ObjMap {
 /// Find the key matching `key` in an ObjMap: an exact match if present,
 /// otherwise the smallest key equal to it ignoring ASCII case. Remap paths
 /// are lowercase, but the denormalizer writes keys with their ARM casing.
-fn obj_key_ci(map: &ObjMap, key: &str) -> Option<Rc<str>> {
+pub fn obj_key_ci(map: &ObjMap, key: &str) -> Option<Rc<str>> {
     match map.get_key_value(key) {
         Some((k, _)) => Some(k.clone()),
         None => map
@@ -201,25 +201,25 @@ pub fn set_nested_lowercased(result: &mut ObjMap, path: &str, value: Value) {
 
 /// Set a value at a dot-separated path in an [`ObjMap`], creating
 /// intermediate `Value::Object` nodes as needed.  Keys preserve their casing.
-pub fn set_nested_verbatim(result: &mut ObjMap, path: &str, value: Value) {
+/// Returns `false` if an intermediate value is not an object, in which case
+/// nothing is written.
+pub fn set_nested_verbatim(result: &mut ObjMap, path: &str, value: Value) -> bool {
     let segments: Vec<&str> = path.split('.').collect();
-    if segments.is_empty() {
-        return;
-    }
     if segments.len() == 1 {
         if let Some(&seg) = segments.first() {
             obj_insert(result, seg, value);
+            return true;
         }
-        return;
+        return false;
     }
-    set_nested_inner(result, &segments, value, false);
+    set_nested_inner(result, &segments, value, false)
 }
 
 /// Core implementation of nested-set.  Navigates the first N-1 segments,
 /// creating intermediate objects, then inserts the value at the last segment.
-fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase: bool) {
+fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase: bool) -> bool {
     let Some(&first) = segments.first() else {
-        return;
+        return false;
     };
 
     if segments.len() == 1 {
@@ -229,7 +229,7 @@ fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase
             Rc::from(first)
         };
         obj_insert_rc(obj, key, value);
-        return;
+        return true;
     }
 
     let seg: Rc<str> = if lowercase {
@@ -246,23 +246,26 @@ fn set_nested_inner(obj: &mut ObjMap, segments: &[&str], value: Value, lowercase
     // Descend directly into the BTreeMap, avoiding ObjMap round-trip.
     if let Some(Value::Object(inner_rc)) = obj.get_mut(&*seg) {
         let inner_btree = Rc::make_mut(inner_rc);
-        set_nested(
+        return set_nested(
             inner_btree,
             segments.get(1..).unwrap_or_default(),
             value,
             lowercase,
         );
     }
+    false
 }
 
 /// Set a value at a path directly in an `Object`, creating
 /// intermediate `Value::Object` nodes as needed.
 ///
 /// This avoids the `btree_to_obj_map` / `obj_map_to_btree` round-trip that
-/// would clone every sibling entry at each nesting level.
-pub fn set_nested(obj: &mut Object, segments: &[&str], value: Value, lowercase: bool) {
+/// would clone every sibling entry at each nesting level. Returns `false`
+/// if an intermediate value is not an object, in which case nothing is
+/// written.
+pub fn set_nested(obj: &mut Object, segments: &[&str], value: Value, lowercase: bool) -> bool {
     let Some(&first) = segments.first() else {
-        return;
+        return false;
     };
 
     let key_rc: Rc<str> = if lowercase {
@@ -274,7 +277,7 @@ pub fn set_nested(obj: &mut Object, segments: &[&str], value: Value, lowercase: 
 
     if segments.len() == 1 {
         obj.insert(key_val, value);
-        return;
+        return true;
     }
 
     // Ensure an intermediate object exists.
@@ -284,13 +287,14 @@ pub fn set_nested(obj: &mut Object, segments: &[&str], value: Value, lowercase: 
 
     if let Some(Value::Object(inner_rc)) = obj.get_mut(&key_val) {
         let inner = Rc::make_mut(inner_rc);
-        set_nested(
+        return set_nested(
             inner,
             segments.get(1..).unwrap_or_default(),
             value,
             lowercase,
         );
     }
+    false
 }
 
 /// Fields that exist at the ARM resource root (not under `properties`).

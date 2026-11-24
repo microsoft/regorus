@@ -10,142 +10,264 @@ use alloc::vec::Vec;
 use crate::value::Object;
 use crate::Value;
 
-use super::super::obj_map::{make_value, new_map, obj_insert, val_str, ObjMap};
+use super::super::obj_map::{make_value, new_map, obj_insert, obj_key_ci, val_str, ObjMap};
 use super::super::path;
 use super::super::types::ResolvedEntry;
-use super::helpers::find_key_ci;
+use super::casing::restore_casing;
 
 /// Sub-resource array element envelope fields that remain at the element root.
 const ELEMENT_ENVELOPE_FIELDS: &[&str] = &["name", "type", "id", "etag"];
 
-/// The keys leading to a sub-resource array, and the envelope fields of each
-/// sub-resource short name that resolves there.
-type Target<'a> = (Vec<&'a str>, BTreeMap<&'a str, BTreeSet<String>>);
+/// The fields of a sub-resource array's elements that stay at the element
+/// root, from the aliases over the array.
+#[derive(Clone, Debug, Default)]
+struct Fields {
+    /// Fields that stay at the element root.
+    envelope: BTreeSet<String>,
+    /// Fields that both a wrapped and an unwrapped alias give the same name,
+    /// with the element-level short-name keys of the wrapped aliases. Such a
+    /// field came from a wrapped alias, and is wrapped, when the element had
+    /// one of them.
+    shared: BTreeMap<String, BTreeSet<Vec<String>>>,
+}
 
-/// The writes of phases 2a, 2b and 2c, in order. Each records where it wrote
-/// (`true` for the ARM root rather than `properties`, then lowercase keys)
-/// and the normalized key whose value it wrote.
+impl Fields {
+    fn extend(&mut self, other: &Self) {
+        self.envelope.extend(other.envelope.iter().cloned());
+        for (field, names) in &other.shared {
+            self.shared
+                .entry(field.clone())
+                .or_default()
+                .extend(names.iter().cloned());
+        }
+    }
+
+    /// Whether `field` stays at the root of an element whose normalized
+    /// value was `input`.
+    fn at_root(&self, field: &str, input: Option<&Value>) -> bool {
+        let field = field.to_ascii_lowercase();
+        if self.envelope.contains(&field) {
+            return true;
+        }
+        let Some(names) = self.shared.get(&field) else {
+            return false;
+        };
+        let Some(Value::Object(input)) = input else {
+            return false;
+        };
+        !names.iter().any(|name| has_keys(input, name))
+    }
+}
+
+/// The fields of each sub-resource short name that resolves to one array.
+type Target<'a> = BTreeMap<&'a str, Fields>;
+
+/// The denormalization state that re-wrapping reads.
+pub struct Context<'a> {
+    /// The resource type's resolved aliases, by lowercase short name.
+    pub entries: &'a BTreeMap<String, ResolvedEntry>,
+    /// The API version that selects each alias's ARM path.
+    pub api_version: Option<&'a str>,
+    /// What phases 2a, 2b and 2c wrote.
+    pub writes: &'a Writes,
+    /// Whether phase 2a put non-aliased keys at the ARM root.
+    pub is_data_plane: bool,
+    /// The key casing phases 2a and 2b restored.
+    pub casing_map: &'a BTreeMap<String, String>,
+    /// The normalized resource being denormalized.
+    pub normalized: &'a Object,
+}
+
+/// The writes of phases 2a, 2b and 2c, in order.
 #[derive(Debug, Default)]
 pub struct Writes {
+    /// The lowercase short names of the plain aliases phase 2b wrote.
     aliases: BTreeSet<String>,
-    log: Vec<(bool, Vec<String>, String)>,
+    log: Vec<Write>,
+}
+
+/// One value written to the output.
+#[derive(Debug)]
+struct Write {
+    /// Whether the write was at the ARM root rather than under `properties`.
+    at_root: bool,
+    /// The output keys written, as spelled there: keys differing only in
+    /// case are distinct.
+    keys: Vec<String>,
+    /// The normalized name of the value, lowercase.
+    source: String,
+    /// The normalized key the value was read from, as it is spelled there.
+    read: String,
+}
+
+/// The write that left a value in the output.
+pub struct Origin<'a> {
+    /// The value's normalized name: the write's source, followed by the keys
+    /// below the write.
+    pub name: String,
+    /// The normalized key the write read.
+    pub read: &'a str,
+    /// How many output keys the write covered.
+    pub depth: usize,
 }
 
 impl Writes {
-    /// Record writing the value of normalized key `source` at the dotted
-    /// path `keys`.
-    pub fn record(&mut self, at_root: bool, keys: &str, source: &str) {
-        let keys = keys.split('.').map(str::to_ascii_lowercase).collect();
-        self.log.push((at_root, keys, source.to_ascii_lowercase()));
+    /// Record writing the value of normalized key `source`, read from the
+    /// normalized key `read`, at the dotted path `keys`.
+    pub fn record(&mut self, at_root: bool, keys: &str, source: &str, read: &str) {
+        let keys = keys.split('.').map(String::from).collect();
+        self.push(at_root, keys, source, read);
     }
 
-    /// Record writing the value of normalized key `source` at the single,
-    /// possibly dotted, key `key`.
-    pub fn record_key(&mut self, at_root: bool, key: &str, source: &str) {
-        let keys = alloc::vec![key.to_ascii_lowercase()];
-        self.log.push((at_root, keys, source.to_ascii_lowercase()));
+    /// [`Self::record`] at the single, possibly dotted, key `key`.
+    pub fn record_key(&mut self, at_root: bool, key: &str, source: &str, read: &str) {
+        self.push(at_root, alloc::vec![String::from(key)], source, read);
     }
 
-    /// Record phase 2b writing the plain alias `key` at `keys`.
-    pub fn record_alias(&mut self, at_root: bool, keys: &str, key: &str) {
+    /// Record phase 2b writing the plain alias `key`, read from the
+    /// normalized key `read`, at `keys`.
+    pub fn record_alias(&mut self, at_root: bool, keys: &str, key: &str, read: &str) {
         self.aliases.insert(String::from(key));
-        self.record(at_root, keys, key);
+        self.record(at_root, keys, key, read);
+    }
+
+    fn push(&mut self, at_root: bool, keys: Vec<String>, source: &str, read: &str) {
+        self.log.push(Write {
+            at_root,
+            keys,
+            source: source.to_ascii_lowercase(),
+            read: String::from(read),
+        });
+    }
+
+    /// The normalized key read by the last write to exactly `key` under
+    /// `properties`.
+    pub fn read_at(&self, key: &str) -> Option<String> {
+        self.log
+            .iter()
+            .rev()
+            .find(|write| {
+                !write.at_root
+                    && write.keys.len() == 1
+                    && write.keys.first().is_some_and(|k| k == key)
+            })
+            .map(|write| write.read.clone())
     }
 
     /// Whether a write of some other normalized name than `name` (dotted
-    /// lowercase keys) left the value now at `keys`.
+    /// keys) left the value now at `keys`.
     pub fn replaced(&self, at_root: bool, keys: &[String], name: &[String]) -> bool {
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-        self.survivor(at_root, &keys)
-            .is_some_and(|survivor| survivor != name.join(".").to_ascii_lowercase())
+        self.origin(at_root, &keys)
+            .is_some_and(|origin| origin.name != name.join(".").to_ascii_lowercase())
     }
 
-    /// The normalized name of the value now at `keys`: the source of the
-    /// last write at or above `keys`, followed by the keys below it. `None`
-    /// if nothing was written there.
-    fn survivor(&self, at_root: bool, keys: &[&str]) -> Option<String> {
-        let (_, written, source) = self.log.iter().rev().find(|(root, written, _)| {
-            *root == at_root
-                && written.len() <= keys.len()
-                && written
-                    .iter()
-                    .zip(keys)
-                    .all(|(dest, key)| key.eq_ignore_ascii_case(dest))
-        })?;
-        let below = keys.get(written.len()..).unwrap_or_default();
-        let name: Vec<&str> = core::iter::once(source.as_str())
+    /// The write that left the value now at `keys`: the last write at or
+    /// above `keys`. `None` if nothing was written there. Writes to exactly
+    /// `keys` come first; keys from normalized names match the written keys
+    /// in any case.
+    pub fn origin(&self, at_root: bool, keys: &[&str]) -> Option<Origin<'_>> {
+        let last_write = |same: fn(&str, &str) -> bool| {
+            self.log.iter().rev().find(|write| {
+                write.at_root == at_root
+                    && write.keys.len() <= keys.len()
+                    && write
+                        .keys
+                        .iter()
+                        .zip(keys)
+                        .all(|(dest, key)| same(dest, key))
+            })
+        };
+        let write = last_write(|dest, key| dest == key)
+            .or_else(|| last_write(|dest, key| dest.eq_ignore_ascii_case(key)))?;
+        let below = keys.get(write.keys.len()..).unwrap_or_default();
+        let name: Vec<&str> = core::iter::once(write.source.as_str())
             .chain(below.iter().copied())
             .collect();
-        Some(name.join(".").to_ascii_lowercase())
+        Some(Origin {
+            name: name.join(".").to_ascii_lowercase(),
+            read: &write.read,
+            depth: write.keys.len(),
+        })
     }
 }
 
 /// Re-wrap sub-resource array elements by moving non-envelope fields back
-/// under each element's `properties` object. `writes` holds what phases 2a
-/// and 2b wrote; `is_data_plane` says where phase 2a put non-aliased keys.
+/// under each element's `properties` object.
 pub fn rewrap_sub_resource_arrays(
     result: &mut ObjMap,
     properties: &mut ObjMap,
     sub_arrays: &BTreeSet<String>,
-    entries: &BTreeMap<String, ResolvedEntry>,
-    api_version: Option<&str>,
-    writes: &Writes,
-    is_data_plane: bool,
+    cx: &Context<'_>,
 ) {
     if sub_arrays.is_empty() {
         return;
     }
     // Parse once per call; only wildcard aliases can address array elements.
-    let parsed: Vec<(path::Path, path::Path)> = entries
+    let parsed: Vec<(path::Path, path::Path)> = cx
+        .entries
         .values()
         .filter(|entry| entry.is_wildcard)
         .filter_map(|entry| {
             Some((
                 path::parse(&entry.short_name)?,
-                path::parse(entry.select_path(api_version))?,
+                path::parse(entry.select_path(cx.api_version))?,
             ))
         })
         .collect();
 
     // Several short names can resolve to the same array (two plain aliases
-    // with one ARM path). Wrap each array once.
+    // with one ARM path). Wrap each array once. Keys differing only in case
+    // are different arrays, so group by the keys actually in the output.
     let mut targets: BTreeMap<(bool, Vec<String>), Target<'_>> = BTreeMap::new();
     for sub_array_path in sub_arrays {
-        let envelope_fields = classify_envelope_fields(sub_array_path, &parsed);
-        let (at_root, keys) =
-            written_keys(sub_array_path, entries, api_version, writes, is_data_plane);
-        let id = keys.iter().map(|key| key.to_ascii_lowercase()).collect();
+        let fields = classify_envelope_fields(sub_array_path, &parsed);
+        let (at_root, keys) = written_keys(sub_array_path, cx);
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let map = if at_root { &*result } else { &*properties };
         targets
-            .entry((at_root, id))
-            .or_insert_with(|| (keys, BTreeMap::new()))
-            .1
-            .insert(sub_array_path.as_str(), envelope_fields);
+            .entry((at_root, output_keys(map, &keys)))
+            .or_default()
+            .insert(sub_array_path.as_str(), fields);
     }
 
     // Deepest first, so an outer array is wrapped after the arrays inside it.
     let mut sorted: Vec<_> = targets.into_iter().collect();
-    sorted.sort_by_key(|((_, id), _)| core::cmp::Reverse(id.len()));
+    sorted.sort_by_key(|((_, keys), _)| core::cmp::Reverse(keys.len()));
 
-    for ((at_root, _), (keys, by_name)) in sorted {
+    for ((at_root, keys), by_name) in sorted {
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         // A later write may have replaced the flattened array with a value
         // the normalizer left wrapped (another plain alias with the same ARM
         // path, or one over the array's parent). Wrap only a flattened array.
-        let survivor = writes.survivor(at_root, &keys);
-        if survivor
+        let origin = cx.writes.origin(at_root, &keys);
+        if origin
             .as_ref()
-            .is_some_and(|name| !sub_arrays.contains(name))
+            .is_some_and(|origin| !sub_arrays.contains(&origin.name))
         {
             continue;
         }
         // Classify by the name whose value is there. Otherwise keep a field
         // at the element root if any of the names leaves it there.
-        let envelope_fields = survivor
-            .as_deref()
-            .and_then(|name| by_name.get(name))
+        let fields = origin
+            .as_ref()
+            .and_then(|origin| by_name.get(origin.name.as_str()))
             .map_or_else(
-                || by_name.values().flatten().cloned().collect(),
-                Clone::clone,
+                || {
+                    let mut all = Fields::default();
+                    for fields in by_name.values() {
+                        all.extend(fields);
+                    }
+                    all
+                },
+                Fields::clone,
             );
+        // The normalized value the write read, for the fields whose origin
+        // its elements decide. Below the write, the keys are the same.
+        let (input, skip) = origin.as_ref().map_or((None, 0), |origin| {
+            let read = Value::String(crate::Rc::from(origin.read));
+            (cx.normalized.get(&read), origin.depth.saturating_sub(1))
+        });
         let Some((first, rest)) = keys.split_first() else {
             continue;
         };
@@ -154,36 +276,73 @@ pub fn rewrap_sub_resource_arrays(
         } else {
             &mut *properties
         };
-        if let Some(key) = find_key_ci(map, first) {
-            if let Some(value) = map.get_mut(key.as_ref()) {
-                rewrap_at(value, rest, &envelope_fields);
+        if let Some(value) = obj_key_ci(map, first).and_then(|key| map.get_mut(key.as_ref())) {
+            rewrap_at(value, rest, &fields, input, skip);
+        }
+    }
+}
+
+/// The keys in `map` that `keys` lead to: each key as it is in the output
+/// (exact match first, else the smallest that differs only in case, as
+/// element remaps pick), as far as objects go. Keys inside arrays are matched
+/// per element and kept as given.
+pub fn output_keys(map: &ObjMap, keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::with_capacity(keys.len());
+    let mut current: Option<&Value> = None;
+    for (i, key) in keys.iter().enumerate() {
+        let found = match current {
+            None => {
+                obj_key_ci(map, key).and_then(|k| Some((String::from(k.as_ref()), map.get(&k)?)))
+            }
+            Some(Value::Object(obj)) => find_key_ci_btree(obj, key).and_then(|k| {
+                let name = String::from(val_str(&k)?);
+                Some((name, obj.get(&k)?))
+            }),
+            Some(_) => None,
+        };
+        match found {
+            Some((name, value)) => {
+                out.push(name);
+                current = Some(value);
+            }
+            None => {
+                out.extend(
+                    keys.get(i..)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|k| String::from(*k)),
+                );
+                break;
             }
         }
     }
+    out
 }
 
 /// Where a sub-resource array sits in the denormalized output: `true` for
 /// the ARM root rather than `properties`, plus the keys leading to it. When
 /// phase 2b wrote a plain alias for the first key, the array is under that
 /// alias's ARM path (`x` -> `properties.items` puts `x.y` at `items.y`);
-/// otherwise phase 2a wrote the key as is.
-fn written_keys<'a>(
-    sub_array_path: &'a str,
-    entries: &'a BTreeMap<String, ResolvedEntry>,
-    api_version: Option<&str>,
-    writes: &Writes,
-    is_data_plane: bool,
-) -> (bool, Vec<&'a str>) {
-    let keys: Vec<&str> = sub_array_path.split('.').collect();
-    let Some((first, rest)) = keys.split_first() else {
-        return (is_data_plane, keys);
+/// otherwise phase 2a wrote the key as is. Keys from the short name get the
+/// casing those phases restored, so a sibling that differs only in case is
+/// not taken for the array.
+fn written_keys(sub_array_path: &str, cx: &Context<'_>) -> (bool, Vec<String>) {
+    let names: Vec<&str> = sub_array_path.split('.').collect();
+    let restore = |part: &[&str]| -> Vec<String> {
+        part.iter()
+            .map(|name| restore_casing(name, cx.casing_map))
+            .collect()
     };
-    match alias_location(first, entries, api_version, writes) {
-        Some((at_root, mut arm)) => {
-            arm.extend(rest.iter().copied());
-            (at_root, arm)
+    let Some((first, rest)) = names.split_first() else {
+        return (cx.is_data_plane, restore(&names));
+    };
+    match alias_location(first, cx.entries, cx.api_version, cx.writes) {
+        Some((at_root, arm)) => {
+            let mut keys: Vec<String> = arm.into_iter().map(String::from).collect();
+            keys.extend(restore(rest));
+            (at_root, keys)
         }
-        None => (is_data_plane, keys),
+        None => (cx.is_data_plane, restore(&names)),
     }
 }
 
@@ -235,10 +394,7 @@ pub fn redirect_chain(
 /// Determine which element-level fields are envelope fields for a given
 /// sub-resource array, from parsed `(short name, ARM path)` pairs. Entries
 /// whose short name or selected ARM path does not parse are excluded.
-fn classify_envelope_fields(
-    sub_array_path: &str,
-    parsed: &[(path::Path, path::Path)],
-) -> BTreeSet<String> {
+fn classify_envelope_fields(sub_array_path: &str, parsed: &[(path::Path, path::Path)]) -> Fields {
     let mut envelope = BTreeSet::new();
     for &f in ELEMENT_ENVELOPE_FIELDS {
         envelope.insert(f.to_ascii_lowercase());
@@ -248,15 +404,16 @@ fn classify_envelope_fields(
     // ARM names of the element's root fields, and of the fields under its
     // `properties` wrapper.
     let mut unwrapped = BTreeSet::new();
-    let mut wrapped = BTreeSet::new();
+    let mut wrapped: BTreeMap<String, BTreeSet<Vec<String>>> = BTreeMap::new();
     for (short, arm_path) in parsed {
         let parts = short.parts();
         let Some(level) = array_level(&array_keys, &parts) else {
             continue;
         };
-        let Some(path::Segment::Key(first_segment)) =
-            parts.get(level).and_then(|part| part.segments.first())
-        else {
+        let Some(short_part) = parts.get(level) else {
+            continue;
+        };
+        let Some(path::Segment::Key(first_segment)) = short_part.segments.first() else {
             continue;
         };
         // Classify by the ARM part at this array's element level, not by the
@@ -266,7 +423,18 @@ fn classify_envelope_fields(
         let arm_part = arm_parts.get(level);
         if let Some(part) = arm_part.filter(|part| part.has_flattened_wrapper()) {
             if let Some(path::Segment::Key(key)) = part.segments.get(1) {
-                wrapped.insert(key.to_ascii_lowercase());
+                let name = short_part
+                    .segments
+                    .iter()
+                    .map_while(|segment| match segment {
+                        path::Segment::Key(segment_key) => Some(segment_key.to_ascii_lowercase()),
+                        _ => None,
+                    })
+                    .collect();
+                wrapped
+                    .entry(key.to_ascii_lowercase())
+                    .or_default()
+                    .insert(name);
             }
             continue;
         }
@@ -277,11 +445,33 @@ fn classify_envelope_fields(
             unwrapped.insert(key.to_ascii_lowercase());
         }
     }
-    // A name that is also a wrapped field's ARM name stays wrapped, as it was
-    // before phase 2d gave fields their ARM names.
-    envelope.extend(unwrapped.difference(&wrapped).cloned());
+    // A name that is also a wrapped field's ARM name may have come from
+    // either alias; the element decides. The standard envelope fields stay.
+    envelope.extend(unwrapped);
+    let mut shared = BTreeMap::new();
+    envelope.retain(|field| match wrapped.get(field) {
+        Some(names) if !ELEMENT_ENVELOPE_FIELDS.contains(&field.as_str()) => {
+            shared.insert(field.clone(), names.clone());
+            false
+        }
+        _ => true,
+    });
 
-    envelope
+    Fields { envelope, shared }
+}
+
+/// Whether `keys` lead somewhere in `object`, matching keys in any case.
+fn has_keys(object: &Object, keys: &[String]) -> bool {
+    let Some((first, rest)) = keys.split_first() else {
+        return true;
+    };
+    let Some(child) = find_key_ci_btree(object, first).and_then(|key| object.get(&key)) else {
+        return false;
+    };
+    match child {
+        Value::Object(child) => has_keys(child, rest),
+        _ => rest.is_empty(),
+    }
 }
 
 /// Number of leading short-name parts whose keys spell `array_keys`, i.e.
@@ -310,16 +500,29 @@ fn array_level(array_keys: &[&str], parts: &[path::Part<'_>]) -> Option<usize> {
 /// Follow `keys` from `value` and re-wrap the elements of the array there.
 /// Like the normalizer's path tracking, arrays along the way are walked
 /// element by element and objects by key, so a name such as `a.b.c` matches
-/// `a.b[*].c[*]` and `a[*].b[*].c[*]` alike.
-fn rewrap_at(value: &mut Value, keys: &[&str], envelope_fields: &BTreeSet<String>) {
+/// `a.b[*].c[*]` and `a[*].b[*].c[*]` alike. `input` follows along in the
+/// normalized value once the first `skip` keys, which have no counterpart
+/// there, are passed.
+fn rewrap_at(
+    value: &mut Value,
+    keys: &[&str],
+    fields: &Fields,
+    input: Option<&Value>,
+    skip: usize,
+) {
     match value {
         Value::Array(arr) => {
             let inner = crate::Rc::make_mut(arr);
-            for elem in inner.iter_mut() {
-                if keys.is_empty() {
-                    *elem = rewrap_element(elem, envelope_fields);
+            for (index, elem) in inner.iter_mut().enumerate() {
+                let input = if skip == 0 {
+                    input.and_then(|input| input.as_array().ok()?.get(index))
                 } else {
-                    rewrap_at(elem, keys, envelope_fields);
+                    input
+                };
+                if keys.is_empty() {
+                    *elem = rewrap_element(elem, fields, input);
+                } else {
+                    rewrap_at(elem, keys, fields, input, skip);
                 }
             }
         }
@@ -327,10 +530,17 @@ fn rewrap_at(value: &mut Value, keys: &[&str], envelope_fields: &BTreeSet<String
             let Some((first, rest)) = keys.split_first() else {
                 return;
             };
+            let input = match skip.checked_sub(1) {
+                Some(_) => input,
+                None => input.and_then(|input| {
+                    let input = input.as_object().ok()?;
+                    input.get(&find_key_ci_btree(input, first)?)
+                }),
+            };
             let obj = crate::Rc::make_mut(obj);
             if let Some(key) = find_key_ci_btree(obj, first) {
                 if let Some(child) = obj.get_mut(&key) {
-                    rewrap_at(child, rest, envelope_fields);
+                    rewrap_at(child, rest, fields, input, skip.saturating_sub(1));
                 }
             }
         }
@@ -338,8 +548,12 @@ fn rewrap_at(value: &mut Value, keys: &[&str], envelope_fields: &BTreeSet<String
     }
 }
 
-/// Find a key in a BTreeMap using case-insensitive comparison.
+/// Find a key in a BTreeMap: the exact key, else any case-insensitive match.
 fn find_key_ci_btree(btree: &Object, key: &str) -> Option<Value> {
+    let exact = Value::String(crate::Rc::from(key));
+    if btree.contains_key(&exact) {
+        return Some(exact);
+    }
     btree
         .keys()
         .find(|k| val_str(k).is_some_and(|s| s.eq_ignore_ascii_case(key)))
@@ -348,7 +562,7 @@ fn find_key_ci_btree(btree: &Object, key: &str) -> Option<Value> {
 
 /// Re-wrap a single sub-resource array element by moving non-envelope
 /// fields back under a `properties` object.
-fn rewrap_element(element: &Value, envelope_fields: &BTreeSet<String>) -> Value {
+fn rewrap_element(element: &Value, fields: &Fields, input: Option<&Value>) -> Value {
     let obj = match element.as_object() {
         Ok(o) => o,
         Err(_) => return element.clone(),
@@ -362,7 +576,7 @@ fn rewrap_element(element: &Value, envelope_fields: &BTreeSet<String>) -> Value 
             Some(s) => s,
             None => continue,
         };
-        if envelope_fields.contains(&key_s.to_ascii_lowercase()) {
+        if fields.at_root(key_s, input) {
             obj_insert(&mut envelope, key_s, val.clone());
         } else {
             obj_insert(&mut props, key_s, val.clone());

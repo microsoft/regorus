@@ -105,15 +105,15 @@ pub fn denormalize_with_aliases(
 
         if key_s.starts_with("_p_") {
             let restored = restore_casing(lookup_key, &casing_map);
-            writes.record_key(false, &restored, lookup_key);
+            writes.record_key(false, &restored, lookup_key, key_s);
             obj_insert(&mut properties, &restored, denorm_val);
         } else if is_data_plane {
             let restored = restore_casing(key_s, &casing_map);
-            writes.record_key(true, &restored, key_s);
+            writes.record_key(true, &restored, key_s, key_s);
             obj_insert(&mut result, &restored, denorm_val);
         } else {
             let restored = restore_casing(key_s, &casing_map);
-            writes.record_key(false, &restored, key_s);
+            writes.record_key(false, &restored, key_s, key_s);
             obj_insert(&mut properties, &restored, denorm_val);
         }
     }
@@ -139,27 +139,25 @@ pub fn denormalize_with_aliases(
             // Fast-path: direct BTreeMap lookup for lowercase keys,
             // with case-insensitive fallback for mixed-case external input.
             let nk_val = Value::String(Rc::from(normalized_key.as_str()));
-            let val = obj.get(&nk_val).or_else(|| {
-                obj.iter()
-                    .find(|(k, _)| {
-                        val_str(k).is_some_and(|s| s.eq_ignore_ascii_case(&normalized_key))
-                    })
-                    .map(|(_, v)| v)
+            let found = obj.get(&nk_val).map(|v| (&nk_val, v)).or_else(|| {
+                obj.iter().find(|(k, _)| {
+                    val_str(k).is_some_and(|s| s.eq_ignore_ascii_case(&normalized_key))
+                })
             });
-            let val = match val {
-                Some(v) => v,
-                None => continue,
+            let Some((read, val)) = found.and_then(|(k, v)| Some((val_str(k)?, v))) else {
+                continue;
             };
 
             let arm_path = entry.select_path(api_version);
             let denorm_val = denormalize_value(val, &casing_map);
 
+            // A write refused by a non-object on the way leaves no value.
             if let Some(props_path) = arm_path.strip_prefix("properties.") {
-                set_nested_verbatim(&mut properties, props_path, denorm_val);
-                writes.record_alias(false, props_path, lc_key);
-            } else {
-                set_nested_verbatim(&mut result, arm_path, denorm_val);
-                writes.record_alias(true, arm_path, lc_key);
+                if set_nested_verbatim(&mut properties, props_path, denorm_val) {
+                    writes.record_alias(false, props_path, lc_key, read);
+                }
+            } else if set_nested_verbatim(&mut result, arm_path, denorm_val) {
+                writes.record_alias(true, arm_path, lc_key, read);
             }
         }
 
@@ -181,7 +179,10 @@ pub fn denormalize_with_aliases(
                     if let Some(val) = properties.remove(key.as_ref()) {
                         obj_insert(&mut properties, arm_base, val);
                         // The normalizer flattened and remapped this value under its ARM name.
-                        writes.record_key(false, arm_base, arm_base);
+                        let read = writes
+                            .read_at(&key)
+                            .unwrap_or_else(|| alloc::string::String::from(&*key));
+                        writes.record_key(false, arm_base, arm_base, &read);
                     }
                 }
             }
@@ -212,9 +213,15 @@ pub fn denormalize_with_aliases(
                         });
                 // Another alias's value replaced this one there; it was not
                 // remapped with this alias's names.
+                // Check the keys the remap will reach, so an older write to an
+                // exact ancestor does not hide a later write that differs in case.
                 if let (Some(outer), Some(name)) = (array_chain.first(), remap.array_chain.first())
                 {
-                    if writes.replaced(at_root, outer, name) {
+                    let map = if at_root { &result } else { &properties };
+                    let outer: alloc::vec::Vec<&str> =
+                        outer.iter().map(|key| key.as_str()).collect();
+                    let reached = sub_resource::output_keys(map, &outer);
+                    if writes.replaced(at_root, &reached, name) {
                         continue;
                     }
                 }
@@ -235,14 +242,19 @@ pub fn denormalize_with_aliases(
     // Phase 3: Re-wrap sub-resource array elements.
     if let Some(aliases) = aliases {
         if !aliases.sub_resource_arrays.is_empty() {
+            let cx = sub_resource::Context {
+                entries: &aliases.entries,
+                api_version,
+                writes: &writes,
+                is_data_plane,
+                casing_map: &casing_map,
+                normalized: obj,
+            };
             sub_resource::rewrap_sub_resource_arrays(
                 &mut result,
                 &mut properties,
                 &aliases.sub_resource_arrays,
-                &aliases.entries,
-                api_version,
-                &writes,
-                is_data_plane,
+                &cx,
             );
         }
     }
