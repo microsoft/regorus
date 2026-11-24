@@ -1523,3 +1523,52 @@ fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> 
 
     Ok(())
 }
+
+#[test]
+fn test_eval_rule_dynamic_collection_with_packages_below_evaluated_once() -> Result<()> {
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let extension_calls = calls.clone();
+    let index_calls = calls.clone();
+    let mut engine = Engine::new();
+    engine.add_extension(
+        "key".to_string(),
+        0,
+        Box::new(move |_| {
+            extension_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::from("k"))
+        }),
+    )?;
+    engine.add_extension(
+        "index".to_string(),
+        0,
+        Box::new(move |_| {
+            index_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::from(0))
+        }),
+    )?;
+    engine.add_data(Value::from_json_str(
+        r#"{ "a" : { "k": "str" }, "b": [ { "x": {} } ] }"#,
+    )?)?;
+    engine.add_policy("p.rego".to_string(), "package a.k.p".to_string())?;
+    engine.add_policy(
+        "q.rego".to_string(),
+        "package q\nimport rego.v1\nx := [k | some k, _ in data.a[key()]]\ny := [k | data.a[key()][k]]\nz := [v | v := data.a[key()][_].r]\nw := [v | v := data.b[index()][_].r]".to_string(),
+    )?;
+
+    for (rule, want) in [
+        ("x", r#"["p"]"#),
+        ("y", r#"["p"]"#),
+        ("z", "[]"),
+        ("w", "[]"),
+    ] {
+        calls.store(0, Ordering::SeqCst);
+        let value = engine.eval_rule(format!("data.q.{rule}"))?;
+        assert_eq!(value, Value::from_json_str(want)?, "{rule}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{rule}");
+    }
+
+    Ok(())
+}

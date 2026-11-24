@@ -559,3 +559,70 @@ cases:
         x := data.a.c
     query: data.q.x
     error: not an object
+
+  - note: package without rules beside a rule overridden by base data
+    data:
+      a: str
+      z:
+        b: 0
+    modules:
+      - |
+        package a.c
+      - |
+        package z
+
+        b := 1
+      - |
+        package q
+
+        x := data.a.c
+        y := data.z.b
+    query: data.q
+    want_result:
+      x: {}
+      y: 0
+
+  - note: rules named like an import shadow it
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+
+        import data.a as alias
+
+        alias := "local"
+
+        r := alias.b
+      - |
+        package q2
+
+        import data.a as alias
+
+        alias.x := 1
+
+        r := alias.b
+    query: "[object.get(data.q, \"r\", \"undefined\"), object.get(data.q2, \"r\", \"undefined\")]"
+    want_result: ["undefined", "undefined"]
+
+  - note: iterating an object read below a value of `_` with packages deeper below it
+    data:
+      a:
+        s:
+          k:
+            o: str
+    modules:
+      - |
+        package a.s.k.o.p
+      - |
+        package q
+        import rego.v1
+
+        x := [v | some v in data.a[_].k]
+        y := [k | data.a[_].k[k]]
+    query: data.q
+    want_result:
+      x: [str]
+      y: [o]

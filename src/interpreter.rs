@@ -233,6 +233,10 @@ pub struct Interpreter {
     execution_timer: ExecutionTimer,
     // Packages without rules below a non-object value in base data. Computed once per evaluation.
     packages_below_non_object: Option<Rc<Vec<Vec<String>>>>,
+    // A rule below a non-object value in base data, found with packages_below_non_object.
+    rule_below_non_object: Option<String>,
+    // Paths in data of dynamic collections of loops, by module and expression index.
+    collection_paths: BTreeMap<(u32, u32), Option<Vec<String>>>,
 }
 
 impl Default for Interpreter {
@@ -284,6 +288,8 @@ impl Clone for Interpreter {
             no_rules_lookup: false,
             execution_timer: ExecutionTimer::new(self.execution_timer.config()),
             packages_below_non_object: None,
+            rule_below_non_object: None,
+            collection_paths: BTreeMap::new(),
         }
     }
 }
@@ -368,6 +374,8 @@ impl Interpreter {
             prints: Vec::default(),
             execution_timer: ExecutionTimer::new(None),
             packages_below_non_object: None,
+            rule_below_non_object: None,
+            collection_paths: BTreeMap::new(),
         }
     }
 
@@ -423,6 +431,8 @@ impl Interpreter {
             init_data,
             execution_timer: ExecutionTimer::new(None),
             packages_below_non_object: None,
+            rule_below_non_object: None,
+            collection_paths: BTreeMap::new(),
         }
     }
 
@@ -571,6 +581,7 @@ impl Interpreter {
         self.builtins_cache.clear();
         self.reset_execution_timer_state();
         self.packages_below_non_object = None;
+        self.collection_paths.clear();
     }
 
     #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
@@ -743,7 +754,12 @@ impl Interpreter {
                 };
                 if matches!(index.as_ref(), Expr::Var { span, .. } if span.text() == "_") {
                     // The key of `_` is unknown: fail only if a package may be below it.
-                    let Some(refr_path) = self.data_path(refr)? else {
+                    let key = (self.current_module_index, refr.eidx());
+                    let refr_path = match self.collection_paths.get(&key) {
+                        Some(collection_path) => collection_path.clone(),
+                        None => self.data_path(refr)?,
+                    };
+                    let Some(refr_path) = refr_path else {
                         return Ok((v, None));
                     };
                     if self.has_package_below_non_object(
@@ -766,7 +782,9 @@ impl Interpreter {
                 Expr::Var { span, .. } => {
                     path.reverse();
                     let value = self.lookup_var(span, &path[..], false)?;
-                    if value != Value::Undefined && !want_path {
+                    if (value != Value::Undefined && !want_path)
+                        || self.packages_below_non_object()?.is_empty()
+                    {
                         return Ok((value, None));
                     }
                     let Some(mut data_path) = self.data_root_path(&span.source_str())? else {
@@ -859,7 +877,9 @@ impl Interpreter {
                         }
 
                         let refr_root = get_root_var(refr)?;
+                        let has_packages = !self.packages_below_non_object()?.is_empty();
                         let (obj, dynamic_refr_path) = if static_components.is_none()
+                            && has_packages
                             && self.data_root_path(&refr_root)?.is_some()
                         {
                             self.with_native_depth(|this| this.eval_chained_ref(refr, true))?
@@ -882,7 +902,10 @@ impl Interpreter {
                             v = obj[index].clone();
                         }
                         let v = Self::get_value_chained(v, &path[..]);
-                        if (v != Value::Undefined && !want_path) || selected_by_number {
+                        if (v != Value::Undefined && !want_path)
+                            || selected_by_number
+                            || !has_packages
+                        {
                             return Ok((v, None));
                         }
                         let refr_path = match static_components {
@@ -1793,23 +1816,43 @@ impl Interpreter {
                 };
                 self.eval_call_impl(span, collection_expr, fcn, params_slice)
             } else {
-                let value = self.eval_expr(collection_expr)?;
-                self.collection_with_packages(collection_expr, value)
+                self.eval_collection(collection_expr)
             }
         })();
         self.restore_state(saved_state)?;
         result
     }
 
-    /// As in OPA, iterating over a scalar value in base data visits the packages without rules
-    /// below it. Iterating over an array or set with such packages below it is not supported.
-    fn collection_with_packages(&mut self, expr: &ExprRef, value: Value) -> Result<Value> {
-        if matches!(value, Value::Object(_) | Value::Undefined)
-            || self.packages_below_non_object()?.is_empty()
+    /// Evaluates the collection of a loop. As in OPA, iterating over a scalar value in base data
+    /// visits the packages without rules below it. Iterating over an array or set with such
+    /// packages below it is not supported.
+    fn eval_collection(&mut self, expr: &ExprRef) -> Result<Value> {
+        if self.packages_below_non_object()?.is_empty() {
+            return self.eval_expr(expr);
+        }
+        // Evaluate a dynamic reference into data once, along with its path. Reads of static
+        // fields below an iterated value have no side effects: find their path only if needed.
+        let key = (self.current_module_index, expr.eidx());
+        let (value, path) = if matches!(expr.as_ref(), Expr::RefDot { .. } | Expr::RefBrack { .. })
+            && !self.is_static_below_loop_var(expr)?
+            && Parser::get_static_string_path_components(expr).is_err()
+            && self.data_root_path(&get_root_var(expr)?)?.is_some()
         {
+            let (value, path) = self.with_native_depth(|this| this.eval_chained_ref(expr, true))?;
+            self.collection_paths.insert(key, path.clone());
+            (value, Some(path))
+        } else {
+            self.collection_paths.remove(&key);
+            (self.eval_expr(expr)?, None)
+        };
+        if matches!(value, Value::Object(_) | Value::Undefined) {
             return Ok(value);
         }
-        let Some(path) = self.data_path(expr)? else {
+        let path = match path {
+            Some(path) => path,
+            None => self.data_path(expr)?,
+        };
+        let Some(path) = path else {
             return Ok(value);
         };
         let fields = path.get(1..).unwrap_or_default();
@@ -1824,6 +1867,24 @@ impl Interpreter {
         match self.package_value_below_non_object(fields)? {
             Value::Undefined => Ok(value),
             packages => Ok(packages),
+        }
+    }
+
+    /// Returns true if `expr` is a loop-bound reference or reads static fields below one.
+    fn is_static_below_loop_var(&self, mut expr: &ExprRef) -> Result<bool> {
+        loop {
+            if self.get_loop_var_value(expr)?.is_some() {
+                return Ok(true);
+            }
+            match expr.as_ref() {
+                Expr::RefDot { refr, .. } => expr = refr,
+                Expr::RefBrack { refr, index, .. }
+                    if matches!(index.as_ref(), Expr::String { .. }) =>
+                {
+                    expr = refr;
+                }
+                _ => return Ok(false),
+            }
         }
     }
 
@@ -2258,8 +2319,7 @@ impl Interpreter {
         let mut result = false;
         let loop_target_expr = Self::loop_assignment_expr(loop_info);
         let collection = Self::loop_collection_expr(loop_info);
-        let value = self.eval_expr(collection)?;
-        match self.collection_with_packages(collection, value)? {
+        match self.eval_collection(collection)? {
             Value::Array(items) => {
                 for v in items.iter() {
                     self.set_loop_var_value(loop_target_expr, v.clone())?;
@@ -2411,8 +2471,7 @@ impl Interpreter {
             else {
                 bail!("internal error: missing binding plan for some..in expression");
             };
-            let value = self.eval_expr(collection)?;
-            let value = self.collection_with_packages(collection, value)?;
+            let value = self.eval_collection(collection)?;
             if !matches!(
                 value,
                 Value::Array(_) | Value::Set(_) | Value::Object(_) | Value::Undefined
@@ -3717,6 +3776,12 @@ impl Interpreter {
             return Ok(None);
         }
         let import_key = append_path_component(&self.current_module_path, name.text())?;
+        // As in lookup_var, a rule of the module named like the import shadows it.
+        if self.compiled_policy.rules.contains_key(&import_key)
+            || self.compiled_policy.default_rules.contains_key(&import_key)
+        {
+            return Ok(None);
+        }
         Ok(self
             .compiled_policy
             .imports
@@ -3739,6 +3804,23 @@ impl Interpreter {
                 if Self::is_package_below_non_object(&self.init_data, &package) {
                     packages.push(package);
                     self.memory_check()?;
+                }
+            }
+        }
+        // OPA rejects rules and functions below a non-object value in base data. A rule at a
+        // non-object value is overridden by that value.
+        self.rule_below_non_object = None;
+        if !packages.is_empty() {
+            for rule_path in &compiled_policy.rule_paths {
+                self.check_execution_time()?;
+                let rule_path = compiled_policy
+                    .rule_path_components
+                    .get(rule_path)
+                    .and_then(|components| components.get(1..))
+                    .unwrap_or_default();
+                if Self::is_package_below_non_object(&self.init_data, rule_path) {
+                    self.rule_below_non_object = Some(rule_path.join("."));
+                    break;
                 }
             }
         }
@@ -3802,21 +3884,8 @@ impl Interpreter {
             }
         }
         if value != Value::Undefined {
-            let compiled_policy = self.compiled_policy.clone();
-            // OPA rejects rules and functions below a non-object value in base data.
-            for rule_path in &compiled_policy.rule_paths {
-                self.check_execution_time()?;
-                let rule_path = compiled_policy
-                    .rule_path_components
-                    .get(rule_path)
-                    .and_then(|components| components.get(1..))
-                    .unwrap_or_default();
-                if Self::has_non_object_on_path(&self.init_data, rule_path) {
-                    bail!(
-                        "rule {} is below a value in data that is not an object",
-                        rule_path.join(".")
-                    );
-                }
+            if let Some(rule_path) = &self.rule_below_non_object {
+                bail!("rule {rule_path} is below a value in data that is not an object");
             }
         }
         Ok(value)
