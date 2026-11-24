@@ -36,19 +36,18 @@ impl<'a> Compiler<'a> {
         self.spans.push(SpanInfo::new(0, 0, 0, 0));
     }
 
-    /// Selects `keys` in turn from the value in `container` and returns the
-    /// register that holds the result.
+    /// Selects `keys` in turn from the value in `container`, in place, and
+    /// returns `container`.
     pub(super) fn emit_index_literals(
         &mut self,
-        mut container: super::Register,
+        container: super::Register,
         keys: &[Value],
         span: Option<&Span>,
     ) -> Result<super::Register> {
         for key in keys {
-            let dest = self.alloc_register()?;
             let literal_idx = self.add_literal(key.clone());
             let index = Instruction::IndexLiteral {
-                dest,
+                dest: container,
                 container,
                 literal_idx,
             };
@@ -59,7 +58,6 @@ impl<'a> Compiler<'a> {
                     self.spans.push(SpanInfo::new(0, 0, 0, 0));
                 }
             }
-            container = dest;
         }
         Ok(container)
     }

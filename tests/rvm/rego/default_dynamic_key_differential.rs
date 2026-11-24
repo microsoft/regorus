@@ -1336,6 +1336,77 @@ a := p.r.u
             ]),
         ],
     },
+    // OPA rejects a default function at a dynamically keyed rule's path as a
+    // conflict. A function's default is not shadowed, so the interpreter
+    // still applies it, as before; the RVM reads `p` itself, as before.
+    Case {
+        name: "default_function_at_owner", v0: false, twin: None,
+        modules: &[r#"package probe
+p[k] := 1 if { k := input.k }
+default p(_) := 2
+answer := p(0)
+"#],
+        queries: &[
+            ("data.probe.answer", &[
+                (r#"{"k":"a"}"#, r#"error; interpreter=2; eval_query=2; rvm={"a":1}"#),
+                (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
+            ]),
+        ],
+    },
+    // OPA rejects a `with` that replaces part of a virtual document. The
+    // interpreter reads the replacement, as before, rather than also
+    // evaluating `p[k]`, whose `r` would conflict with it. The RVM does not
+    // support `with`.
+    Case {
+        name: "with_replaces_shadowed_default", v0: false, twin: None,
+        modules: &[r#"package probe
+p[k] := 1 if { some k in input.ks }
+default p.r := 0
+t if { p.r == 7 with data.probe.p.r as 7 }
+u := x if { x := p.r with data.probe.p.r as 7 }
+"#],
+        queries: &[
+            ("data.probe.t", &[
+                (r#"{"ks":["r"]}"#, r#"error; interpreter=true; eval_query=true"#),
+                (r#"{"ks":[]}"#, r#"error; interpreter=true; eval_query=true"#),
+            ]),
+            ("data.probe.u", &[
+                (r#"{"ks":["r"]}"#, r#"error; interpreter=7; eval_query=7"#),
+            ]),
+        ],
+    },
+    // A `with` that replaces the owner replaces the shadowed default's
+    // producers; one on an unrelated path does not. The RVM does not support
+    // `with`.
+    Case {
+        name: "with_beside_shadowed_default", v0: false, twin: None,
+        modules: &[r#"package probe
+p[k] := 1 if { some k in input.ks }
+default p.r := 0
+ancestor := x if { x := p.r with data.probe.p as {"r": 7} }
+omitted := x if { x := p.r with data.probe.p as {"s": 7} }
+unrelated := x if { x := p.r with data.probe.other as 7 }
+"#],
+        queries: &[
+            ("data.probe.ancestor", &[(r#"{"ks":["r"]}"#, r#"7; rvm=error"#)]),
+            ("data.probe.omitted", &[(r#"{"ks":["r"]}"#, r#"undefined; rvm=error"#)]),
+            ("data.probe.unrelated", &[(r#"{"ks":["r"]}"#, r#"1; rvm=error"#)]),
+        ],
+    },
+    // Producers are matched by key and key type beneath the owner. The RVM
+    // does not support the nested dynamic key in `p["1"][j].t`.
+    Case {
+        name: "number_key_beside_string_key_rule", v0: false, twin: Some(&[]),
+        modules: &[r#"package probe
+p[k] := {"s": 9} if { some k in input.ks }
+p["1"][j].t := 2 if { some j in input.js }
+default p[1].s := 0
+answer := p[1].s
+"#],
+        queries: &[
+            ("data.probe.answer", &[(r#"{"ks":[1],"js":["s"]}"#, r#"9; rvm=error"#)]),
+        ],
+    },
 ];
 
 const SHARED_OWNER_RULE: &str = r#"package probe
@@ -1489,5 +1560,61 @@ fn shadowed_default_reads_share_the_owner_rule() -> Result<()> {
         rule_counts.push(program.rule_infos.len());
     }
     assert_eq!(rule_counts[0], rule_counts[1]);
+    Ok(())
+}
+
+/// Entry points at shadowed defaults index their owner's value in place, so
+/// that each uses as many registers as an entry point at a rule path.
+#[test]
+fn shadowed_default_entry_points_fit_the_register_window() -> Result<()> {
+    let mut module = "package probe\np[k] := 1 if { some k in input.ks }\n".to_string();
+    let entry_points: Vec<String> = (0..128).map(|i| format!("data.probe.p.r{i}")).collect();
+    for i in 0..128 {
+        module.push_str(&format!("default p.r{i} := 0\n"));
+    }
+    let mut engine = Engine::new();
+    engine.add_policy("m0.rego".into(), module)?;
+    let compiled = engine.compile_with_entrypoint(&entry_points[0].as_str().into())?;
+    let entry_points: Vec<&str> = entry_points.iter().map(String::as_str).collect();
+    let program = Compiler::compile_from_policy(&compiled, &entry_points)?;
+    let mut vm = RegoVM::new();
+    vm.load_program(program);
+    vm.set_input(Value::from_json_str(r#"{"ks":["r5"]}"#)?);
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.probe.p.r5")?,
+        Value::from(1)
+    );
+    assert_eq!(
+        vm.execute_entry_point_by_name("data.probe.p.r6")?,
+        Value::Undefined
+    );
+    Ok(())
+}
+
+/// Each shadowed default is matched only against the rules whose head can
+/// produce it, not against every rule of its base, so many constant-keyed
+/// rules beside many shadowed defaults, also one key further down, take
+/// linear, not quadratic, time.
+#[test]
+fn shadowed_defaults_scale_with_many_sibling_rules() -> Result<()> {
+    const N: usize = 20_000;
+    let start = std::time::Instant::now();
+    let mut engine = Engine::new();
+    let owner = "package probe\np[k] := 1 if { some k in input.ks }\n";
+    engine.add_policy("owner.rego".into(), owner.into())?;
+    // Spread over modules to stay within the line limit of a policy file.
+    for m in 0..N / 2_500 {
+        let mut module = "package probe\n".to_string();
+        for i in m * 2_500..(m + 1) * 2_500 {
+            module.push_str(&format!("p.s{i} := 1\ndefault p.r{i} := 0\n"));
+            module.push_str(&format!("p.t.s{i} := 1\ndefault p.t.r{i} := 0\n"));
+        }
+        engine.add_policy(format!("m{m}.rego"), module)?;
+    }
+    engine.set_input(Value::from_json_str(r#"{"ks":["r5"]}"#)?);
+    assert_eq!(engine.eval_rule("data.probe.p.r5".into())?, Value::from(1));
+    let elapsed = start.elapsed();
+    // Quadratic matching takes minutes here; linear takes seconds.
+    assert!(elapsed.as_secs() < 30, "took {elapsed:?}");
     Ok(())
 }

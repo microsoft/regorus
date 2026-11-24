@@ -190,6 +190,42 @@ fn merge_statement_cleanup<T>(result: Result<T>, cleanup: Result<()>) -> Result<
     }
 }
 
+/// The rules beneath a base path by the keys in their heads below it, with
+/// `None` for a dynamic key.
+#[derive(Default)]
+struct HeadTrie {
+    /// Positions of the rules whose heads end here.
+    rules: Vec<usize>,
+    children: BTreeMap<Option<Value>, HeadTrie>,
+}
+
+impl HeadTrie {
+    fn insert(&mut self, keys: &[Option<Value>], position: usize) {
+        let mut node = self;
+        for key in keys {
+            node = node.children.entry(key.clone()).or_default();
+        }
+        node.rules.push(position);
+    }
+
+    /// Adds the rules whose head keys match `keys` as far as both go.
+    fn matching(&self, keys: &[Value], out: &mut Vec<usize>) {
+        out.extend_from_slice(&self.rules);
+        match keys.split_first() {
+            None => self
+                .children
+                .values()
+                .for_each(|child| child.matching(&[], out)),
+            Some((key, rest)) => {
+                let exact = self.children.get(&Some(key.clone()));
+                for child in [self.children.get(&None), exact].into_iter().flatten() {
+                    child.matching(rest, out);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Interpreter {
     compiled_policy: Rc<CompiledPolicyData>,
@@ -3423,7 +3459,20 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        if let Some(rules) = self.compiled_policy.rules_for(&path) {
+        // A `with` that replaces a shadowed default's path (or an ancestor)
+        // replaces its producers too, as it replaces the default's rule.
+        let mut producers = self.compiled_policy.rules_for(&path);
+        if !self.compiled_policy.rules.contains_key(&path)
+            && self.compiled_policy.shadowed_defaults.contains_key(&path)
+        {
+            if let Some(components) = self.compiled_policy.rule_path_components.get(&path) {
+                let tail: Vec<&str> = components.iter().skip(1).map(String::as_str).collect();
+                if self.has_explicit_data_with_override_ancestor(&tail)? {
+                    producers = None;
+                }
+            }
+        }
+        if let Some(rules) = producers {
             matched = true;
             for r in rules.clone() {
                 if !self.processed.contains(&r) {
@@ -4651,7 +4700,7 @@ impl Interpreter {
 
             for rule in &module.policy {
                 let rule_refr = Self::get_rule_refr(rule);
-                if matches!(rule.as_ref(), Rule::Default { .. })
+                if matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
                     && self.is_shadowed_default(module, rule_refr)?
                 {
                     continue;
@@ -4774,6 +4823,8 @@ impl Interpreter {
             return Ok(());
         }
         let heads = self.rule_heads()?;
+        let mut producers: BTreeMap<String, HeadTrie> = BTreeMap::new();
+        let mut unregistered: BTreeMap<String, BTreeSet<Ref<Rule>>> = BTreeMap::new();
         for (components, default_rule) in defaults {
             let Some(owner_len) = self.compiled_policy.dynamic_rule_owner_len(&components) else {
                 continue;
@@ -4790,13 +4841,30 @@ impl Interpreter {
                 for base_len in owner_len..len {
                     let base =
                         format_path_components(components.get(..base_len).unwrap_or_default())?;
-                    let Some(base_rules) = self.compiled_policy.rules.get(&base) else {
+                    let compiled_policy = self.compiled_policy.clone();
+                    let Some(base_rules) = compiled_policy.rules.get(&base) else {
                         continue;
                     };
+                    if !producers.contains_key(&base) {
+                        let mut trie = HeadTrie::default();
+                        for (position, rule) in base_rules.iter().enumerate() {
+                            let head = heads.get(rule).and_then(|head| head.get(base_len..));
+                            trie.insert(head.unwrap_or_default(), position);
+                            self.memory_check()?;
+                        }
+                        producers.insert(base.clone(), trie);
+                    }
                     let keys = components.get(base_len..len).unwrap_or_default();
                     let keys: Vec<Value> = keys.iter().map(PathComponent::to_value).collect();
-                    let rules: Vec<_> = base_rules
+                    let mut positions = vec![];
+                    if let Some(trie) = producers.get(&base) {
+                        trie.matching(&keys, &mut positions);
+                    }
+                    positions.sort_unstable();
+                    self.memory_check()?;
+                    let rules: Vec<_> = positions
                         .iter()
+                        .filter_map(|position| base_rules.get(*position))
                         .filter(|rule| {
                             let head = heads.get(*rule).map(|head| head.get(base_len..));
                             let head = head.flatten().unwrap_or_default();
@@ -4826,14 +4894,21 @@ impl Interpreter {
             }
             for len in 1..=owner_len {
                 let path = format_path_components(components.get(..len).unwrap_or_default())?;
-                let policy = self.compiled_policy_mut();
-                if let Some(rules) = policy.default_rules.get_mut(&path) {
-                    rules.retain(|(rule, _)| *rule != default_rule);
-                    if rules.is_empty() {
-                        policy.default_rules.remove(&path);
-                        if !policy.rules.contains_key(&path) {
-                            policy.shadowed_default_prefixes.insert(path);
-                        }
+                unregistered
+                    .entry(path)
+                    .or_default()
+                    .insert(default_rule.clone());
+                self.memory_check()?;
+            }
+        }
+        let policy = self.compiled_policy_mut();
+        for (path, removed) in unregistered {
+            if let Some(rules) = policy.default_rules.get_mut(&path) {
+                rules.retain(|(rule, _)| !removed.contains(rule));
+                if rules.is_empty() {
+                    policy.default_rules.remove(&path);
+                    if !policy.rules.contains_key(&path) {
+                        policy.shadowed_default_prefixes.insert(path);
                     }
                 }
             }
@@ -4843,14 +4918,15 @@ impl Interpreter {
 
     /// Returns the full path keys (`data`, package, head) of every rule, with
     /// `None` for a dynamic key.
-    fn rule_heads(&self) -> Result<BTreeMap<Ref<Rule>, Vec<Option<Value>>>> {
+    fn rule_heads(&mut self) -> Result<BTreeMap<Ref<Rule>, Vec<Option<Value>>>> {
         let mut heads = BTreeMap::new();
-        for module in self.compiled_policy.modules.iter() {
+        for module in self.compiled_policy.modules.clone().iter() {
             let package = Self::package_keys(module)?;
             for rule in module.policy.iter() {
                 let mut head = package.clone();
                 Self::push_head_keys(Self::get_rule_refr(rule), &mut head);
                 heads.insert(rule.clone(), head);
+                self.memory_check()?;
             }
         }
         Ok(heads)
@@ -5051,7 +5127,11 @@ impl Interpreter {
                             };
 
                             let components = self.record_default_rule(refr, rule, index)?;
-                            defaults.push((components, rule.clone()));
+                            // A function's default is not shadowed.
+                            if matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
+                            {
+                                defaults.push((components, rule.clone()));
+                            }
                             self.memory_check()?;
                         }
                     }
