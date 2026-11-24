@@ -1910,9 +1910,10 @@ impl Interpreter {
 
     // Scalars, `-` over a number, and arrays, sets and objects built only from
     // these. Evaluating such an expression never reads module state.
-    fn is_constant_literal(expr: &Ref<Expr>) -> bool {
+    fn is_constant_literal(&mut self, expr: &Ref<Expr>) -> Result<bool> {
         let mut pending = vec![expr];
         while let Some(item) = pending.pop() {
+            self.check_execution_time()?;
             match item.as_ref() {
                 Expr::String { .. }
                 | Expr::RawString { .. }
@@ -1928,10 +1929,10 @@ impl Interpreter {
                         pending.push(value);
                     }
                 }
-                _ => return false,
+                _ => return Ok(false),
             }
         }
-        true
+        Ok(true)
     }
 
     // A rule's output expression is constant if it does not contain local variables.
@@ -3279,14 +3280,16 @@ impl Interpreter {
                         if let Rule::Default { value, .. } = rule.as_ref() {
                             // The value belongs to the default rule's module;
                             // a constant literal does not depend on it.
-                            let value = if Self::is_constant_literal(value) {
-                                self.eval_expr(value)
-                            } else {
-                                let module = self.get_rule_module(rule)?;
-                                let prev_module = self.set_current_module(Some(module))?;
-                                let value = self.eval_expr(value);
-                                self.set_current_module(prev_module)?;
-                                value
+                            let value = match self.is_constant_literal(value) {
+                                Ok(true) => self.eval_expr(value),
+                                Ok(false) => {
+                                    let module = self.get_rule_module(rule)?;
+                                    let prev_module = self.set_current_module(Some(module))?;
+                                    let value = self.eval_expr(value);
+                                    self.set_current_module(prev_module)?;
+                                    value
+                                }
+                                Err(e) => Err(e),
                             };
                             match value {
                                 Ok(v) => results.push(v),
