@@ -1501,3 +1501,25 @@ fn test_eval_rule_package_without_rules_beside_rules_below_base_string() -> Resu
 
     Ok(())
 }
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(
+        r#"{ "a" : "str", "z": { "b": "str" } }"#,
+    )?)?;
+    engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+    engine.add_policy("z.rego".to_string(), "package z\nb.p := 1".to_string())?;
+    engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+    // OPA rejects the rule z.b.p below the string at z.b, so a.c must not read as `{}`.
+    let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("rule z.b.p is below a value in data"),
+        "{error}"
+    );
+
+    Ok(())
+}
