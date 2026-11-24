@@ -28,6 +28,12 @@ pub enum ValueMode {
     /// written. Opted-in concrete paths can contain runtime-derived keys:
     /// sensitive paths are withheld in their entirety and marked
     /// [`ConcretePath::Redacted`](super::ConcretePath::Redacted). Redaction
+    /// also covers causal-origin paths and partial-object conflict keys.
+    /// The query's `entry_point` is copied verbatim, including caller literals;
+    /// callers must keep secrets out of it. Returned partial-rule collections
+    /// are no more secret than complete-rule results: the successful query
+    /// result itself is never sanitized.
+    /// Redaction
     /// is best effort, not a secrecy guarantee. Partial evaluation results
     /// are not affected.
     #[default]
@@ -78,7 +84,7 @@ pub struct ExplanationSettings {
     pub condition_mode: ConditionMode,
     /// Which parts of each rule are reported.
     pub scope: ExplanationScope,
-    /// Capture concrete operand paths separately from policy-source
+    /// Capture concrete operand and causal-origin paths separately from policy-source
     /// templates. Off by default. Distinct-element counting is independent:
     /// when identity cannot be tracked, its count is unavailable, not zero.
     pub capture_paths: bool,
