@@ -589,10 +589,15 @@ fn compute_aggregates_for_version(
                     let arm_leaf = path::render(arm_leaf);
                     let source_lc = arm_leaf.to_ascii_lowercase();
                     let target_lc = path::render(short_leaf).to_ascii_lowercase();
+                    let exact = !array_chain
+                        .first()
+                        .and_then(|nav| nav.first())
+                        .is_some_and(|root| root == "tags" || root == "identity");
                     element_remaps.push(PrecomputedRemap {
                         array_chain: array_chain.clone(),
                         source_field: source_lc.clone(),
                         target_field: target_lc.clone(),
+                        exact,
                     });
 
                     reverse_element_remaps.push(PrecomputedReverseRemap {
