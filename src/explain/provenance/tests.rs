@@ -1617,22 +1617,109 @@ fn operation_iteration_text_keeps_contains_identifiers() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
-fn operation_iteration_text_keeps_contains_calls() -> anyhow::Result<()> {
-    let provenance = provenance(
-        "package test\nimport rego.v1\ncontains(x) := {x}\nallow if {\n  some x in contains(input.a)|input.b\n}\n",
-        &["data.test.allow"],
-    )?;
+fn check_operation_iteration_boundary(body: &str, expected: &str) -> anyhow::Result<()> {
+    let provenance = allow(&alloc::format!(
+        "aa := input.aa\naaa := input.aaa\nb := input.b\nc := input.c\nd := input.d\n  {body}\n"
+    ))?;
     let loops: Vec<_> = provenance
         .sites()
         .iter()
         .filter(|site| site.kind == ConditionKind::Iteration)
         .map(|site| (site.text.as_str(), at(site)))
         .collect();
-    assert_eq!(
-        loops,
-        vec![("contains(input.a)|input.b", Some(("p.rego", 5, 13)))]
-    );
+    assert_eq!(loops, vec![(expected, Some(("p.rego", 10, 13)))], "{body}");
+    Ok(())
+}
+
+#[test]
+fn operation_iteration_text_stops_at_semicolons() -> anyhow::Result<()> {
+    check_operation_iteration_boundary("some x in aa&b|c; d", "aa&b|c")
+}
+
+#[test]
+fn operation_iteration_text_stops_at_adjacent_operands() -> anyhow::Result<()> {
+    check_operation_iteration_boundary("some x in aaa&b|c\n  d", "aaa&b|c")
+}
+
+#[test]
+fn operation_iteration_text_keeps_negative_number_boundaries() -> anyhow::Result<()> {
+    check_operation_iteration_boundary("some x in aaa&b|c\n  d-1", "aaa&b|c")
+}
+
+#[test]
+fn operation_iteration_text_stops_at_bracketed_statements() -> anyhow::Result<()> {
+    for following in ["[d]", "{d}"] {
+        check_operation_iteration_boundary(
+            &alloc::format!("some x in aaa&b|c\n{following}"),
+            "aaa&b|c",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_iteration_boundary_controls() -> anyhow::Result<()> {
+    for (body, expected) in [
+        ("some x in aaa&b|c\n  d - 1", "aaa&b|c"),
+        ("some x in (aa&b|c); d", "(aa&b|c)"),
+        ("some x in (aaa&b|c)\n  d", "(aaa&b|c)"),
+    ] {
+        check_operation_iteration_boundary(body, expected)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_candidates_do_not_stop_before_an_operator() {
+    for suffix in ["&c", "+c", "- c", "-1", "==c", "[0]", "(c)"] {
+        let content = alloc::format!("a|b{suffix}");
+        let source = SourceIndex::new("p.rego", &content);
+        assert!(!source.bounded(0, 2), "{content}");
+        assert!(source.bounded(0, source.tokens.len() - 1), "{content}");
+    }
+}
+
+#[test]
+fn operation_iteration_text_keeps_contains_calls() -> anyhow::Result<()> {
+    for expression in ["contains(input.a)|input.b", "contains (input.a)|input.b"] {
+        let provenance = provenance(
+            &alloc::format!("package test\nimport rego.v1\ncontains(x) := {{x}}\nallow if {{\n  some x in {expression}\n}}\n"),
+            &["data.test.allow"],
+        )?;
+        let loops: Vec<_> = provenance
+            .sites()
+            .iter()
+            .filter(|site| site.kind == ConditionKind::Iteration)
+            .map(|site| (site.text.as_str(), at(site)))
+            .collect();
+        assert_eq!(
+            loops,
+            vec![(expression, Some(("p.rego", 5, 13)))],
+            "{expression}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn operation_iteration_text_keeps_indirect_and_multiline_calls() -> anyhow::Result<()> {
+    for expression in ["input.a|f\n(input.b)", "input.a|data.test[\"f\"] (input.b)"] {
+        let provenance = provenance(
+            &alloc::format!("package test\nimport rego.v1\nf(x) := {{x}}\nallow if {{\n  some x in {expression}\n}}\n"),
+            &["data.test.allow"],
+        )?;
+        let loops: Vec<_> = provenance
+            .sites()
+            .iter()
+            .filter(|site| site.kind == ConditionKind::Iteration)
+            .map(|site| (site.text.as_str(), at(site)))
+            .collect();
+        assert_eq!(
+            loops,
+            vec![(expression, Some(("p.rego", 5, 13)))],
+            "{expression}"
+        );
+    }
     Ok(())
 }
 
