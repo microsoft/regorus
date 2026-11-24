@@ -27,7 +27,8 @@
 //! - Destructuring an array checks its length, which is reported as a
 //!   comparison of the array's length with the pattern's.
 //! - Iterating an empty collection, or a value that is not a collection,
-//!   runs no iteration and reports no check of its own.
+//!   runs no iteration and reports no iteration body checks. A guarded loop
+//!   can still report a loop-level [`Iteration`](ConditionKind::Iteration) check.
 //! - Errors that end the evaluation, such as exceeded limits or numeric
 //!   overflow, are not reported.
 //! - Azure Policy conditions and their logical combinations

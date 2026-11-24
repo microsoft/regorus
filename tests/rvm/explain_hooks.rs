@@ -1228,6 +1228,9 @@ fn check_every_inner_loop(body: &str) {
     for (collection, outcome, expected) in [
         ("[]", Failure, Value::Undefined),
         ("{}", Failure, Value::Undefined),
+        ("42", Failure, Value::Undefined),
+        (r#""text""#, Failure, Value::Undefined),
+        ("null", Failure, Value::Undefined),
         ("[false]", Failure, Value::Undefined),
         ("[true]", Success, Value::Bool(true)),
     ] {
@@ -1309,6 +1312,9 @@ fn loops_outside_every_do_not_report_a_result_check() {
         let policy = format!("package t\nallow if {{ {body} }}\n");
         for (input, expected) in [
             (r#"{"xs":[]}"#, Value::Undefined),
+            (r#"{"xs":42}"#, Value::Undefined),
+            (r#"{"xs":"text"}"#, Value::Undefined),
+            (r#"{"xs":null}"#, Value::Undefined),
             (r#"{"xs":[true]}"#, Value::Bool(true)),
         ] {
             let r = run(&policy, "data.t.allow", input);
