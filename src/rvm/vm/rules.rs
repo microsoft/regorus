@@ -240,11 +240,45 @@ impl RegoVM {
         Ok((final_result, rule_failed_due_to_inconsistency))
     }
 
+    #[cfg_attr(not(feature = "explanations"), inline(always))]
     pub(super) fn execute_call_rule_common(
         &mut self,
         dest: u8,
         rule_index: u16,
         function_call_params: Option<&FunctionCallParams>,
+    ) -> Result<()> {
+        // Leave invalid-index diagnostics to the evaluator.
+        #[cfg(feature = "explanations")]
+        let call = if self.explain_enabled() && usize::from(rule_index) < self.rule_cache.len() {
+            self.explain_begin_call(rule_index)?
+        } else {
+            None
+        };
+        let result = self.execute_call_rule_common_inner(
+            dest,
+            rule_index,
+            function_call_params,
+            #[cfg(feature = "explanations")]
+            call,
+        );
+        #[cfg(feature = "explanations")]
+        if let Some(id) = call {
+            let value = result
+                .as_ref()
+                .ok()
+                .and_then(|&()| self.registers.get(usize::from(dest)))
+                .cloned();
+            self.explain_end_call(id, value.as_ref());
+        }
+        result
+    }
+
+    fn execute_call_rule_common_inner(
+        &mut self,
+        dest: u8,
+        rule_index: u16,
+        function_call_params: Option<&FunctionCallParams>,
+        #[cfg(feature = "explanations")] call: Option<u64>,
     ) -> Result<()> {
         let rule_idx = usize::from(rule_index);
 
@@ -296,6 +330,15 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
+            #[cfg(feature = "explanations")]
+            if self.explain_enabled()
+                && rule_info
+                    .default_literal_index
+                    .and_then(|idx| self.program.literals.get(usize::from(idx)))
+                    .is_some()
+            {
+                self.explain_call_default(call);
+            }
             if !is_function_rule {
                 let available = self.rule_cache.len();
                 let entry =
@@ -395,6 +438,10 @@ impl RegoVM {
                                 .get(usize::from(default_literal_index))
                                 .cloned()
                             {
+                                #[cfg(feature = "explanations")]
+                                if self.explain_enabled() {
+                                    self.explain_call_default(call);
+                                }
                                 self.set_register(dest, default_value)?;
                             }
                         }
@@ -456,6 +503,13 @@ impl RegoVM {
 
         let is_function_rule = rule_info.function_info.is_some();
 
+        #[cfg(feature = "explanations")]
+        let call = if self.explain_enabled() {
+            self.explain_begin_call(rule_index)?
+        } else {
+            None
+        };
+
         if !is_function_rule {
             let (ref computed, ref cached_result) =
                 *self
@@ -478,6 +532,15 @@ impl RegoVM {
                 .default_literal_index
                 .and_then(|idx| self.program.literals.get(usize::from(idx)).cloned())
                 .unwrap_or(Value::Undefined);
+            #[cfg(feature = "explanations")]
+            if self.explain_enabled()
+                && rule_info
+                    .default_literal_index
+                    .and_then(|idx| self.program.literals.get(usize::from(idx)))
+                    .is_some()
+            {
+                self.explain_call_default(call);
+            }
             if !is_function_rule {
                 let available = self.rule_cache.len();
                 let entry =
@@ -496,7 +559,13 @@ impl RegoVM {
                     self.checked_add_one(dest_index, "register capacity for destination")?;
                 self.registers.resize(new_len, Value::Undefined);
             }
+            #[cfg(feature = "explanations")]
+            let captured_result = call.map(|id| (id, result.clone()));
             self.set_register(dest, result)?;
+            #[cfg(feature = "explanations")]
+            if let Some((id, value)) = captured_result {
+                self.explain_end_call(id, Some(&value));
+            }
             return Ok(());
         }
 
@@ -550,6 +619,8 @@ impl RegoVM {
         });
 
         let mut frame_data = RuleFrameData {
+            #[cfg(feature = "explanations")]
+            explain_call: call,
             return_pc: self.pc,
             dest_reg: dest,
             rule_index,
@@ -886,6 +957,10 @@ impl RegoVM {
                                 },
                             )?;
                             *slot = default_value;
+                            #[cfg(feature = "explanations")]
+                            if self.explain_enabled() {
+                                self.explain_call_default(frame_data.explain_call);
+                            }
                         }
                     }
                 }
@@ -927,6 +1002,10 @@ impl RegoVM {
 
         self.pc = return_pc;
 
+        #[cfg(feature = "explanations")]
+        if let Some(id) = frame_data.explain_call {
+            self.explain_end_call(id, Some(&final_value));
+        }
         Ok(final_value)
     }
 

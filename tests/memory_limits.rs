@@ -25,6 +25,58 @@ use regorus::Rc;
 
 static LIMIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(all(feature = "rvm", feature = "explanations"))]
+#[derive(Default)]
+struct InvocationTrace {
+    starts: Vec<u64>,
+    ends: Vec<u64>,
+}
+
+#[cfg(all(feature = "rvm", feature = "explanations"))]
+struct InvocationRecorder(Arc<Mutex<InvocationTrace>>);
+
+#[cfg(all(feature = "rvm", feature = "explanations"))]
+impl regorus::explain::ExplanationRecorder for InvocationRecorder {
+    fn call_start(
+        &mut self,
+        _: &regorus::explain::HookContext,
+        event: &regorus::explain::CallStartEvent,
+    ) {
+        self.0
+            .lock()
+            .expect("trace lock")
+            .starts
+            .push(event.call_instance);
+    }
+
+    fn call_end(
+        &mut self,
+        context: &regorus::explain::HookContext,
+        event: &regorus::explain::CallEndEvent<'_>,
+    ) {
+        assert!(event.result.is_none(), "outstanding invocation must abort");
+        assert!(event.source.is_none());
+        self.0
+            .lock()
+            .expect("trace lock")
+            .ends
+            .push(context.call_instance.expect("captured invocation"));
+    }
+}
+
+#[cfg(all(feature = "rvm", feature = "explanations"))]
+impl InvocationTrace {
+    fn assert_aborted(&self) {
+        assert!(!self.starts.is_empty());
+        let mut started = self.starts.clone();
+        let mut ended = self.ends.clone();
+        started.sort_unstable();
+        ended.sort_unstable();
+        assert!(started.windows(2).all(|pair| pair[0] != pair[1]));
+        assert_eq!(started, ended);
+    }
+}
+
 struct LimitGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
 }
@@ -2084,6 +2136,10 @@ fn vm_memory_budget_is_enforced_during_compiled_host_await_resume() {
     vm.set_data(engine.get_data()).expect("set data");
     vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
     vm.set_memory_budget_config(Some(memory_budget(TIGHT_MEMORY_BUDGET_BYTES)));
+    #[cfg(feature = "explanations")]
+    let trace = Arc::new(Mutex::new(InvocationTrace::default()));
+    #[cfg(feature = "explanations")]
+    vm.set_explanation_recorder(Box::new(InvocationRecorder(trace.clone())));
 
     assert_eq!(
         vm.execute_entry_point_by_name("data.limit.result")
@@ -2105,6 +2161,8 @@ fn vm_memory_budget_is_enforced_during_compiled_host_await_resume() {
             error: VmError::MemoryBudgetExceeded { .. }
         }
     ));
+    #[cfg(feature = "explanations")]
+    trace.lock().expect("trace lock").assert_aborted();
 }
 
 #[cfg(feature = "rvm")]
@@ -2171,6 +2229,10 @@ fn vm_memory_budget_load_program_abandons_suspended_continuation() {
     ));
     vm.set_input(Value::from_json_str(r#"{"value":"request"}"#).expect("valid input JSON"));
     vm.set_memory_budget_config(Some(memory_budget(RELAXED_MEMORY_BUDGET_BYTES)));
+    #[cfg(feature = "explanations")]
+    let trace = Arc::new(Mutex::new(InvocationTrace::default()));
+    #[cfg(feature = "explanations")]
+    vm.set_explanation_recorder(Box::new(InvocationRecorder(trace.clone())));
 
     assert_eq!(
         vm.execute_entry_point_by_name("data.limit.result")
@@ -2186,10 +2248,14 @@ fn vm_memory_budget_load_program_abandons_suspended_continuation() {
         SIMPLE_MODULE,
         "data.limit.allow",
     ));
+    #[cfg(feature = "explanations")]
+    trace.lock().expect("trace lock").assert_aborted();
     assert!(matches!(
         vm.resume(Some(Value::from("stale continuation"))),
         Err(VmError::InvalidResumeState { .. })
     ));
+    #[cfg(feature = "explanations")]
+    assert!(vm.take_explanation_recorder().is_some());
     assert_eq!(
         vm.execute_entry_point_by_name("data.limit.allow")
             .expect("new program can execute after abandonment"),

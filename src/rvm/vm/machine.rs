@@ -344,6 +344,8 @@ impl RegoVM {
 
     /// Load a complete program for execution
     pub fn load_program(&mut self, program: Arc<Program>) {
+        #[cfg(feature = "explanations")]
+        self.explain_abort_calls();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         if matches!(
             self.memory_budget_lifecycle,

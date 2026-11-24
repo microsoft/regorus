@@ -62,6 +62,8 @@ pub(super) enum RuleFramePhase {
 
 #[derive(Debug, Clone)]
 pub(super) struct RuleFrameData {
+    #[cfg(feature = "explanations")]
+    pub(super) explain_call: Option<u64>,
     pub(super) return_pc: usize,
     pub(super) dest_reg: u8,
     pub(super) rule_index: u16,
