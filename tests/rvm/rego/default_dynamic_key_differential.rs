@@ -1345,9 +1345,16 @@ a := p.r.u
 p[k] := 1 if { k := input.k }
 default p(_) := 2
 answer := p(0)
+q[k] := 1 if { k := input.k }
+default q() := 2
+zero := q()
 "#],
         queries: &[
             ("data.probe.answer", &[
+                (r#"{"k":"a"}"#, r#"error; interpreter=2; eval_query=2; rvm={"a":1}"#),
+                (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
+            ]),
+            ("data.probe.zero", &[
                 (r#"{"k":"a"}"#, r#"error; interpreter=2; eval_query=2; rvm={"a":1}"#),
                 (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
             ]),
@@ -1364,6 +1371,7 @@ p[k] := 1 if { some k in input.ks }
 default p.r := 0
 t if { p.r == 7 with data.probe.p.r as 7 }
 u := x if { x := p.r with data.probe.p.r as 7 }
+w := x if { x := p.r.s with data.probe.p.r.s as 7 }
 "#],
         queries: &[
             ("data.probe.t", &[
@@ -1371,6 +1379,9 @@ u := x if { x := p.r with data.probe.p.r as 7 }
                 (r#"{"ks":[]}"#, r#"error; interpreter=true; eval_query=true"#),
             ]),
             ("data.probe.u", &[
+                (r#"{"ks":["r"]}"#, r#"error; interpreter=7; eval_query=7"#),
+            ]),
+            ("data.probe.w", &[
                 (r#"{"ks":["r"]}"#, r#"error; interpreter=7; eval_query=7"#),
             ]),
         ],
@@ -1391,6 +1402,37 @@ unrelated := x if { x := p.r with data.probe.other as 7 }
             ("data.probe.ancestor", &[(r#"{"ks":["r"]}"#, r#"7; rvm=error"#)]),
             ("data.probe.omitted", &[(r#"{"ks":["r"]}"#, r#"undefined; rvm=error"#)]),
             ("data.probe.unrelated", &[(r#"{"ks":["r"]}"#, r#"1; rvm=error"#)]),
+        ],
+    },
+    // `p["true"]` selects a string key, not the boolean of `default p[true].s`.
+    Case {
+        name: "bool_and_null_key_default", v0: false, twin: Some(&[]),
+        modules: &[r#"package probe
+p[k] := {"s": 9} if { some k in input.ks }
+default p[true].s := 0
+default p[null].s := 0
+a := p["true"].s
+b := p[true].s
+c := p["null"].s
+d := p[null].s
+"#],
+        queries: &[
+            ("data.probe.a", &[
+                (r#"{"ks":[true]}"#, r#"undefined"#),
+                (r#"{"ks":["true"]}"#, r#"9"#),
+            ]),
+            ("data.probe.b", &[
+                (r#"{"ks":[true]}"#, r#"9"#),
+                (r#"{"ks":["true"]}"#, r#"undefined"#),
+            ]),
+            ("data.probe.c", &[
+                (r#"{"ks":[null]}"#, r#"undefined"#),
+                (r#"{"ks":["null"]}"#, r#"9"#),
+            ]),
+            ("data.probe.d", &[
+                (r#"{"ks":[null]}"#, r#"9"#),
+                (r#"{"ks":["null"]}"#, r#"undefined"#),
+            ]),
         ],
     },
     // Producers are matched by key and key type beneath the owner. The RVM
@@ -1596,6 +1638,7 @@ fn shadowed_default_entry_points_fit_the_register_window() -> Result<()> {
 /// rules beside many shadowed defaults, also one key further down, take
 /// linear, not quadratic, time.
 #[test]
+#[cfg_attr(miri, ignore = "large fixture with a wall-clock bound")]
 fn shadowed_defaults_scale_with_many_sibling_rules() -> Result<()> {
     const N: usize = 20_000;
     let start = std::time::Instant::now();

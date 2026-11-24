@@ -169,6 +169,9 @@ impl<'a> Compiler<'a> {
             let rule_candidate =
                 format_string_path(&static_prefix[0..=i]).map_err(CompilerError::from)?;
 
+            if self.is_typed_shadowed_default(&rule_candidate) {
+                continue;
+            }
             if let Some(value) = self.compile_shadowed_default_call(&rule_candidate, span)? {
                 return self.compile_chain_access(value, &chain.components[i..], span);
             }
@@ -350,6 +353,9 @@ impl<'a> Compiler<'a> {
                     append_path_component(&rule_candidate, field).map_err(CompilerError::from)?;
             }
 
+            if self.is_typed_shadowed_default(&rule_candidate) {
+                continue;
+            }
             if let Some(value) = self.compile_shadowed_default_call(&rule_candidate, span)? {
                 return self.compile_chain_access(value, &chain.components[i..], span);
             }
@@ -392,6 +398,13 @@ impl<'a> Compiler<'a> {
             name: root.to_string(),
         }
         .at(span))
+    }
+
+    /// Returns whether `path` is a shadowed default with a non-string key, e.g.
+    /// `p[true].s`, which `p["true"].s`, of the same path, does not read.
+    fn is_typed_shadowed_default(&self, path: &str) -> bool {
+        let shadowed = self.policy.inner.shadowed_defaults.get(path);
+        shadowed.is_some_and(|s| s.keys.iter().any(|key| !matches!(key, Value::String(_))))
     }
 
     /// Calls a shadowed default `path` (see `ShadowedDefault`), i.e. the rules

@@ -3459,15 +3459,17 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        // A `with` that replaces a shadowed default's path (or an ancestor)
-        // replaces its producers too, as it replaces the default's rule.
+        // A `with` that replaces a shadowed default's path, an ancestor or a
+        // descendant replaces its producers too, as it replaces the default's rule.
         let mut producers = self.compiled_policy.rules_for(&path);
         if !self.compiled_policy.rules.contains_key(&path)
             && self.compiled_policy.shadowed_defaults.contains_key(&path)
         {
             if let Some(components) = self.compiled_policy.rule_path_components.get(&path) {
                 let tail: Vec<&str> = components.iter().skip(1).map(String::as_str).collect();
-                if self.has_explicit_data_with_override_ancestor(&tail)? {
+                if self.has_explicit_data_with_override_ancestor(&tail)?
+                    || self.has_explicit_data_with_override_within(&tail)
+                {
                     producers = None;
                 }
             }
@@ -3572,6 +3574,19 @@ impl Interpreter {
         }
 
         Ok(false)
+    }
+
+    /// Returns whether a `with` explicitly replaces `path` or a path beneath it.
+    fn has_explicit_data_with_override_within(&self, path: &[&str]) -> bool {
+        let mut pending = vec![Self::get_value_chained(self.processed_paths.clone(), path)];
+        while let Some(Value::Object(fields)) = pending.pop() {
+            if fields.contains_key(&EXPLICIT_DATA_WITH_OVERRIDE_MARKER) {
+                return true;
+            }
+            let children = fields.values().filter(|v| matches!(v, Value::Object(_)));
+            pending.extend(children.cloned());
+        }
+        false
     }
 
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
@@ -4700,9 +4715,7 @@ impl Interpreter {
 
             for rule in &module.policy {
                 let rule_refr = Self::get_rule_refr(rule);
-                if matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
-                    && self.is_shadowed_default(module, rule_refr)?
-                {
+                if Self::is_value_default(rule) && self.is_shadowed_default(module, rule_refr)? {
                     continue;
                 }
                 let mut prefix_path = module_path.clone();
@@ -4778,6 +4791,15 @@ impl Interpreter {
         }
 
         Ok(())
+    }
+
+    /// Returns whether `rule` is the default of a value, not of a function:
+    /// `default f() := 1`, like `default x := 1`, has no arguments.
+    fn is_value_default(rule: &Rule) -> bool {
+        matches!(rule, Rule::Default { span, refr, args, .. } if args.is_empty() && {
+            let head = usize::try_from(refr.span().end.saturating_sub(span.start)).unwrap_or(0);
+            !span.text().get(head..).is_some_and(|rest| rest.trim_start().starts_with('('))
+        })
     }
 
     /// Returns whether a default rule for `refr` in `module` lies within the
@@ -5128,8 +5150,7 @@ impl Interpreter {
 
                             let components = self.record_default_rule(refr, rule, index)?;
                             // A function's default is not shadowed.
-                            if matches!(rule.as_ref(), Rule::Default { args, .. } if args.is_empty())
-                            {
+                            if Self::is_value_default(rule) {
                                 defaults.push((components, rule.clone()));
                             }
                             self.memory_check()?;
