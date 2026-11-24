@@ -466,13 +466,13 @@ allow if { get_account(input.account_id) == "allow" }
         AssertCumulativeHostAwaitListing(listing);
 
         // The generated path is:
-        // E: PC 0, 2, 3, 4, 5, 6 -> first HostAwait (6 dispatches).
-        // R1: PC 7, 8 -> second HostAwait (2 dispatches).
-        // R2: PC 9, 10, 11, 1 -> completion (4 dispatches).
-        const ulong executeToFirstSuspension = 6;
-        const ulong firstResumeToSecondSuspension = 2;
+        // E: PC 0, 2-10 -> first HostAwait (10 dispatches).
+        // R1: PC 11-16 -> second HostAwait (6 dispatches).
+        // R2: PC 17, 18, 19, 1 -> completion (4 dispatches).
+        const ulong executeToFirstSuspension = 10;
+        const ulong firstResumeToSecondSuspension = 6;
         const ulong secondResumeToCompletion = 4;
-        const ulong positiveLimit = 8;
+        const ulong positiveLimit = 16;
 
         Assert.AreEqual(
             positiveLimit,
@@ -485,7 +485,7 @@ allow if { get_account(input.account_id) == "allow" }
             firstResumeToSecondSuspension + secondResumeToCompletion <= positiveLimit);
 
         Console.WriteLine(
-            $"RVM budget path: entry_points=[data.demo.result], listing_instructions=12, "
+            $"RVM budget path: entry_points=[data.demo.result], listing_instructions=20, "
             + $"E={executeToFirstSuspension}, R1={firstResumeToSecondSuspension}, "
             + $"R2={secondResumeToCompletion}, N={positiveLimit}; "
             + "E+R1<=N<E+R1+R2 and R1+R2<=N.");
@@ -584,19 +584,27 @@ allow if { get_account(input.account_id) == "allow" }
     {
         var expectedInstructions = new[]
         {
-            "; RVM Assembly - 12 instructions, 3 literals, 0 builtins",
+            "; RVM Assembly - 20 instructions, 3 literals, 0 builtins",
             "000: CallRule",
             "001: Return",
             "002: RuleInit",
             "003:     LoadInput",
             "004:     IndexLiteral",
             "005:     Load",
-            "006:     HostAwait",
-            "007:     Load",
-            "008:     HostAwait",
-            "009:     AssertNotUndefined",
-            "010:     Move",
-            "011: } return from rule",
+            "006:     ArrayCreate",
+            "007:     Move",
+            "008:     Not",
+            "009:     ANY_OF_NEXT",
+            "010:     HostAwait",
+            "011:     Load",
+            "012:     ArrayCreate",
+            "013:     Move",
+            "014:     Not",
+            "015:     ANY_OF_NEXT",
+            "016:     HostAwait",
+            "017:     AssertNotUndefined",
+            "018:     Move",
+            "019: } return from rule",
         };
 
         foreach (var expectedInstruction in expectedInstructions)

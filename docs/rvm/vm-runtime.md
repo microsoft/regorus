@@ -51,8 +51,9 @@ fields to responsibilities.
   runtime policy. `set_max_instructions` replaces the limit without resetting
   the current execution's counter.
 - `set_host_await_responses`: pre-loads responses per identifier, consumed in
-  FIFO order when `HostAwait` executes in run-to-completion mode. A registered
-  call with an undefined input skips `HostAwait` and leaves the queue untouched.
+  FIFO order when `HostAwait` executes in run-to-completion mode. A Rego host
+  call (registered or `__builtin_host_await`) with an undefined input skips
+  `HostAwait` and leaves the queue untouched.
 - `set_strict_builtin_errors`: toggles builtin failure semantics between
   `VmError::ArithmeticError` and returning `Value::Undefined`.
 - Accessors (`get_pc`, `get_registers`, `get_loop_stack`, etc.) aid debugging

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
+- *(rvm)* Rego `__builtin_host_await` calls with an undefined argument or identifier are undefined, like other calls, instead of asking the host (and consuming a response) or failing with a missing response. The `HostAwait` instruction itself, and Azure Policy existence lookups, are unchanged.
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 

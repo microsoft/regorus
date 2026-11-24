@@ -227,10 +227,10 @@ returned or bound by the policy.
 
 Both the explicit `__builtin_host_await(arg, id)` call and a registered
 builtin call converge on the same `HostAwait` bytecode instruction, but their
-payload construction differs. Explicit calls pass the supplied `arg` value
-and `id` register through unchanged. Registered calls create the ordered input
-array, guard against undefined inputs, and load the registered name as the
-identifier. Previously compiled programs retain their original raw
+payload construction differs. Both forms skip the host call when an input is
+undefined. Explicit calls then pass the supplied `arg` value and `id` register
+through unchanged. Registered calls create the ordered input array and load the
+registered name as the identifier. Previously compiled programs retain their original raw
 registered-call payloads after deserialization. Since an old raw payload may
 itself be an array, payload shape cannot identify the program generation.
 Applications must deploy a matching program/handler/native/managed bundle or
@@ -279,8 +279,10 @@ or not.)
 
 **Undefined handling**: Registered inputs are evaluated under normal Rego
 semantics. If any input is undefined, the registered host call is skipped and
-no response is consumed. Explicit `__builtin_host_await` calls retain their
-existing raw-payload behavior.
+no response is consumed. The same applies to explicit `__builtin_host_await`
+calls when the argument or identifier is undefined; their defined payload is
+still sent raw. This check is emitted by the Rego compiler, so programs
+compiled earlier must be recompiled to get it.
 
 ---
 

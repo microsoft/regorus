@@ -1,0 +1,211 @@
+# An undefined argument makes `__builtin_host_await` undefined, like any other
+# call: the host is not asked and no response is consumed.
+cases:
+  - note: undefined_argument_rtc
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &undefined_argument
+      - |
+        package demo
+        import rego.v1
+
+        y if __builtin_host_await(count(input.v), "id-1") == 2
+    query: data.demo.y
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: "#undefined"
+
+  - note: undefined_argument_suspendable
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *undefined_argument
+    query: data.demo.y
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: "#undefined"
+
+  - note: undefined_identifier_rtc
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &undefined_identifier
+      - |
+        package demo
+        import rego.v1
+
+        y := __builtin_host_await(1, input.missing)
+    query: data.demo.y
+    want_result: "#undefined"
+
+  - note: undefined_identifier_suspendable
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *undefined_identifier
+    query: data.demo.y
+    want_result: "#undefined"
+
+  - note: undefined_argument_under_not_rtc
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &undefined_argument_under_not
+      - |
+        package demo
+        import rego.v1
+
+        z if not __builtin_host_await(count(input.v), "id-1") == 2
+    query: data.demo.z
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: true
+
+  - note: undefined_argument_under_not_suspendable
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *undefined_argument_under_not
+    query: data.demo.z
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: true
+
+  # The single response goes to the call with a defined argument.
+  - note: undefined_argument_keeps_response_rtc
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &keeps_response
+      - |
+        package demo
+        import rego.v1
+
+        a := __builtin_host_await(count(input.v), "id-1")
+        b := __builtin_host_await("q", "id-1")
+        a_undefined if not a
+        r := [a_undefined, b]
+    query: data.demo.r
+    host_await_responses:
+      - id: "id-1"
+        value: 2
+    want_result: [true, 2]
+
+  - note: undefined_argument_keeps_response_suspendable
+    data: {}
+    input: {v: 5}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *keeps_response
+    query: data.demo.r
+    host_await_responses_suspendable:
+      - id: "id-1"
+        args: "q"
+        value: 2
+    want_result: [true, 2]
+
+  # No response is queued: the call must not ask for one.
+  - note: undefined_argument_without_responses_rtc
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        y := __builtin_host_await(input.missing, "id-1")
+    query: data.demo.y
+    want_result: "#undefined"
+
+  - note: undefined_argument_without_responses_suspendable
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules:
+      - |
+        package demo
+        import rego.v1
+
+        y := __builtin_host_await(input.missing, "id-1")
+    query: data.demo.y
+    want_result: "#undefined"
+
+  - note: undefined_argument_with_output_rtc
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &undefined_argument_with_output
+      - |
+        package demo
+        import rego.v1
+
+        bound := out if __builtin_host_await(input.missing, "id-1", out)
+        negated if not __builtin_host_await(input.missing, "id-1", "expected")
+        bound_undefined if not bound
+        r := [bound_undefined, negated]
+    query: data.demo.r
+    host_await_responses:
+      - id: "id-1"
+        value: "expected"
+    want_result: [true, true]
+
+  - note: undefined_argument_with_output_suspendable
+    data: {}
+    input: {}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *undefined_argument_with_output
+    query: data.demo.r
+    want_result: [true, true]
+
+  # Only iterations with a defined argument ask the host, in order.
+  - note: undefined_argument_in_comprehension_rtc
+    data: {}
+    input: {items: [{v: "a"}, {}, {v: "b"}]}
+    skip_interpreter: true
+    execution_mode: run-to-completion
+    modules: &undefined_argument_in_comprehension
+      - |
+        package demo
+        import rego.v1
+
+        r := [__builtin_host_await(item.v, "id-1") | some item in input.items]
+    query: data.demo.r
+    host_await_responses:
+      - id: "id-1"
+        value: 1
+      - id: "id-1"
+        value: 2
+    want_result: [1, 2]
+
+  - note: undefined_argument_in_comprehension_suspendable
+    data: {}
+    input: {items: [{v: "a"}, {}, {v: "b"}]}
+    skip_interpreter: true
+    execution_mode: suspendable
+    modules: *undefined_argument_in_comprehension
+    query: data.demo.r
+    host_await_responses_suspendable:
+      - id: "id-1"
+        args: "a"
+        value: 1
+      - id: "id-1"
+        args: "b"
+        value: 2
+    want_result: [1, 2]
