@@ -100,15 +100,14 @@ fn eval_rvm(engine: &mut Engine, query: &str, input: &Value, mode: ExecutionMode
 }
 
 fn check(modules: &[&str], cases: &[(&str, &str, Option<&str>)]) -> Result<()> {
-    check_with_data(modules, "{}", true, cases)
+    check_with_data(modules, "{}", cases)
 }
 
 /// Requires `query` on `input` with base `data` to produce `want` (`None` for
-/// undefined) in both RVM modes and, if `interpreter` is set, in the interpreter.
+/// undefined) in the interpreter and in both RVM modes.
 fn check_with_data(
     modules: &[&str],
     data: &str,
-    interpreter: bool,
     cases: &[(&str, &str, Option<&str>)],
 ) -> Result<()> {
     let mut engine = Engine::new();
@@ -122,10 +121,7 @@ fn check_with_data(
         let input_value = Value::from_json_str(input)?;
         engine.set_input(input_value.clone());
 
-        let mut results = Vec::new();
-        if interpreter {
-            results.push(("interpreter", engine.eval_rule(query.to_string())));
-        }
+        let mut results = vec![("interpreter", engine.eval_rule(query.to_string()))];
         for (name, mode) in [
             ("run-to-completion", ExecutionMode::RunToCompletion),
             ("suspendable", ExecutionMode::Suspendable),
@@ -252,7 +248,7 @@ fn base_data_merges_with_packages_without_rules() -> Result<()> {
     let str_ab = r#"{"a": {"b": "str"}}"#;
     let p_str_ab = ("data.q.p", EMPTY, Some(r#"{"b": "str"}"#));
     let r_str = ("data.q.r", EMPTY, Some(r#""str""#));
-    check_with_data(&["package a.b", reads], str_ab, true, &[p_str_ab, r_str])?;
+    check_with_data(&["package a.b", reads], str_ab, &[p_str_ab, r_str])?;
     check_with_data(
         &[
             "package a\nx := 1",
@@ -261,7 +257,6 @@ fn base_data_merges_with_packages_without_rules() -> Result<()> {
             reads,
         ],
         r#"{"a": {"b": {"k": 1}}}"#,
-        true,
         &[
             (
                 "data.q.p",
@@ -271,11 +266,9 @@ fn base_data_merges_with_packages_without_rules() -> Result<()> {
             ("data.q.r", EMPTY, Some(r#"{"k": 1}"#)),
         ],
     )?;
-    // The interpreter fails on these ("make: not an object").
     check_with_data(
         &["package a.b", reads],
         r#"{"a": "str"}"#,
-        false,
         &[
             ("data.q.p", EMPTY, Some(r#""str""#)),
             ("data.q.r", EMPTY, Some("{}")),
@@ -284,7 +277,53 @@ fn base_data_merges_with_packages_without_rules() -> Result<()> {
     check_with_data(
         &["package a.b.c", reads],
         str_ab,
-        false,
         &[p_str_ab, r_str, ("data.q.c", EMPTY, Some("{}"))],
+    )
+}
+
+#[test]
+fn packages_without_rules_at_or_below_base_arrays() -> Result<()> {
+    // Some shapes in the interpreter YAML cases, such as iterating over a non-object value
+    // with packages below it, still differ in the RVM.
+    check_with_data(
+        &[
+            r#"package n["0"].b"#,
+            "package q\nx := data.n[0].b\ny := data.n[\"0\"].b",
+        ],
+        r#"{"n": [{"x": 1}]}"#,
+        &[("data.q.x", EMPTY, None), ("data.q.y", EMPTY, Some("{}"))],
+    )?;
+    check_with_data(
+        &[
+            "package a",
+            "package e",
+            "package q\nvalues := [v | v := data.a[_]]\nempty := [v | v := data.e[_]]",
+        ],
+        r#"{"a": [7], "e": []}"#,
+        &[
+            ("data.q.values", EMPTY, Some("[7]")),
+            ("data.q.empty", EMPTY, Some("[]")),
+        ],
+    )
+}
+
+#[test]
+fn packages_without_rules_below_base_strings_on_iterated_paths() -> Result<()> {
+    check_with_data(
+        &[
+            "package a.b",
+            "package q\nmissing := [v | v := data.rows[_].missing]",
+        ],
+        r#"{"a": "str", "rows": [{}]}"#,
+        &[("data.q.missing", EMPTY, Some("[]"))],
+    )?;
+    // OPA 1.2.0 returns [{}, {}]: it binds k to "b" once for base data and once for the package.
+    check_with_data(
+        &[
+            "package a.b.c",
+            "package q\nvalues := [v | v := data.a[k][input.key]]",
+        ],
+        r#"{"a": {"b": "str"}}"#,
+        &[("data.q.values", r#"{"key": "c"}"#, Some("[{}]"))],
     )
 }

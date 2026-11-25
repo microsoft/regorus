@@ -1,0 +1,644 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: package without rules below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+    query: data.q
+    want_result:
+      p: str
+      r: {}
+
+  - note: package without rules two levels below a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+        c := data.a.b.c
+    query: data.q
+    want_result:
+      p:
+        b: str
+      r: str
+      c: {}
+
+  - note: packages without rules below a string in base data merge when read
+    data:
+      a: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package a.b.d
+      - |
+        package q
+        import rego.v1
+
+        r := data.a.b
+        k := v if {
+          x := "b"
+          v := data.a[x]
+        }
+        w := v if {
+          v := data.a.b with data.a as "x"
+        }
+        n := data.a.b.c.e
+        wz := v if {
+          v := data.a.b with data.z as 1
+        }
+        ks := {key | some key; data.a.b[key]}
+    query: data.q
+    want_result:
+      r:
+        c: {}
+        d: {}
+      k:
+        c: {}
+        d: {}
+      wz:
+        c: {}
+        d: {}
+      ks:
+        set!: [c, d]
+
+  - note: package without rules below a string in base data, read via data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b.c
+    query: data
+    want_result:
+      a: str
+
+  - note: package without rules three levels below a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c.d
+      - |
+        package q
+
+        p := data.a
+        r := data.a.b
+        c := data.a.b.c
+        d := data.a.b.c.d
+    query: data.q
+    want_result:
+      p:
+        b: str
+      r: str
+      c:
+        d: {}
+      d: {}
+
+  - note: package without rules below an array in base data, read from query
+    data:
+      a: [1]
+    modules:
+      - |
+        package a.b
+    query: data.a
+    want_result: [1]
+
+  - note: package without rules at a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b
+    query: data.a
+    want_result:
+      b: str
+
+  - note: package without rules below an object in base data
+    data:
+      a:
+        x: 1
+    modules:
+      - |
+        package a.b.c
+    query: data.a
+    want_result:
+      b:
+        c: {}
+      x: 1
+
+  - note: package without rules below missing base data
+    data: {}
+    modules:
+      - |
+        package a.b.c
+    query: data.a
+    want_result:
+      b:
+        c: {}
+
+  - note: package with rules below an object in base data
+    data:
+      a:
+        x: 1
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    want_result:
+      b:
+        x: 1
+      x: 1
+
+  - note: package with rules below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    error: not an object
+
+  - note: package with only functions below a string in base data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+
+        f(v) := v
+    query: data.a
+    error: not an object
+
+  - note: package with rules at a string in base data
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b
+
+        x := 1
+    query: data.a
+    error: not an object
+
+  - note: package without rules below a string produced by a rule
+    input:
+      x: str
+    modules:
+      - |
+        package a
+
+        b := input.x
+      - |
+        package a.b.c
+      - |
+        package q
+
+        x := data.a
+        y := data.a.b.c
+    query: data.q
+    want_result:
+      x:
+        b: str
+
+  - note: package without rules below a set produced by a rule
+    modules:
+      - |
+        package a
+        import rego.v1
+
+        s contains "x"
+      - |
+        package a.s.t
+      - |
+        package q
+
+        x := data.a
+        y := data.a.s.t
+    query: data.q
+    want_result:
+      x:
+        s:
+          set!: [x]
+
+
+  - note: package without rules below a string in base data, read through two variable indexes
+    data:
+      a: str
+    input:
+      k1: a
+      k2: b
+    modules:
+      - |
+        package a.b
+    query: data[input.k1][input.k2]
+    want_result: {}
+
+  - note: iteration over a string in base data visits packages without rules below it
+    data:
+      a: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package a.b.d
+      - |
+        package q
+        import rego.v1
+
+        ks := [k | data.a[k]]
+        n := count([1 | data.a[_]])
+        kv := [[k, v] | some k, v in data.a]
+    query: data.q
+    want_result:
+      ks: [b]
+      n: 1
+      kv:
+        - - b
+          - c: {}
+            d: {}
+
+  - note: iteration over an array in base data with a package without rules below it, a key variable
+    data:
+      a: [7]
+    modules:
+      - |
+        package a.b
+    query: "[k | data.a[k]]"
+    error: iterating over a collection in data with packages below it is not supported
+
+  - note: iteration over an array in base data with a package without rules below it, some in
+    data:
+      a: [7]
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+
+        values := [v | some v in data.a]
+    query: data.q.values
+    error: iterating over a collection in data with packages below it is not supported
+
+  - note: iteration over an array in base data with a package without rules below it, an output expression
+    data:
+      a: [7]
+    modules:
+      - |
+        package a.b
+    query: "[data.a[_] | true]"
+    error: iterating over a collection in data with packages below it is not supported
+
+  - note: iteration over an array in base data with a package without rules below it, a wildcard below a package
+    data:
+      a: [7]
+    modules:
+      - |
+        package a.b.c
+    query: "[v | v := data.a[_]]"
+    error: iterating over a collection in data with packages below it is not supported
+
+  - note: iteration over an array in base data with a package without rules below it, some with a number-string package
+    data:
+      n:
+        - x: 1
+    modules:
+      - |
+        package n["0"].b
+      - |
+        package q
+        import rego.v1
+
+        pairs := [[k, v] | some k, v in data.n]
+    query: data.q.pairs
+    error: iterating over a collection in data with packages below it is not supported
+
+  - note: iteration over an array in data that a with override puts above a package without rules
+    data:
+      a: [7]
+      s: 1
+    modules:
+      - |
+        package a.b
+      - |
+        package s.b
+      - |
+        package q
+        import rego.v1
+
+        a := x if x := [v | v := data.a[_]] with data.a as [8]
+        s := x if x := [v | some v in data.s] with data.s as [7]
+        c := x if x := [v | v := data.a[_].c] with data.a as {"x": {"c": 5}}
+    query: data.q
+    want_result:
+      a: [8]
+      s: [7]
+      c: [5]
+
+  - note: iteration over scalars other than strings in base data visits packages without rules below them
+    data:
+      a: 7
+      n: null
+      f: false
+    modules:
+      - |
+        package a.x
+      - |
+        package n.x
+      - |
+        package f.x
+    query: "[[k | data.a[k]], [k | data.n[k]], [k | data.f[k]], [v | v := data.a[_].missing]]"
+    want_result: [[x], [x], [x], []]
+
+  - note: iteration over an array in base data at a package without rules
+    data:
+      a: [7]
+      e: []
+    modules:
+      - |
+        package a
+      - |
+        package e
+      - |
+        package q
+        import rego.v1
+
+        a := [v | v := data.a[_]]
+        e := [v | v := data.e[_]]
+    query: data.q
+    want_result:
+      a: [7]
+      e: []
+
+  - note: iteration over a string in base data in an output expression
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+    query: "[data.a[_] | true]"
+    want_result: [{}]
+
+  - note: package without rules below a string in base data, unrelated read below an iterated wildcard
+    data:
+      a: str
+      rows: [{}]
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+
+        missing := [v | v := data.rows[_].missing]
+        rows := [v | some v in data.rows]
+        wildcard := [data.rows[_] | true]
+    query: data.q
+    want_result:
+      missing: []
+      rows: [{}]
+      wildcard: [{}]
+
+  # OPA 1.2.0 returns [{}, {}]: it binds k to "b" once for base data and once for the package.
+  - note: package without rules below a string in base data, read through iterated and variable indexes
+    data:
+      a:
+        b: str
+    input:
+      key: c
+    modules:
+      - |
+        package a.b.c
+    query: "[v | v := data.a[k][input.key]]"
+    want_result: [{}]
+
+  - note: package without rules below a string in base data, read below an iterated value
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c
+      - |
+        package q
+        import rego.v1
+
+        ks := {k | data.a[k].c}
+        kb := [k | data.a.b[k]]
+    query: data.q
+    want_result:
+      ks:
+        set!: [b]
+      kb: [c]
+
+  - note: package without rules below a string in base data, read below an iterated wildcard
+    data:
+      a:
+        b: str
+    modules:
+      - |
+        package a.b.c
+    query: "[v | v := data.a[_].c]"
+    error: not supported
+
+  - note: package without rules below a string in base data, read through an import
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+        import data.a
+
+        x := a.b
+        k := "b"
+        z := a[k]
+        allow if not a.b
+    query: data.q
+    want_result:
+      x: {}
+      k: b
+      z: {}
+
+  - note: package without rules below a string in base data, read through a bracket import
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+        import data["a"]
+
+        x := a.b
+    query: data.q
+    want_result:
+      x: {}
+
+  - note: package without rules below a string in base data, local data variable
+    data:
+      a: str
+    input:
+      s: local
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+
+        allow {
+          data := {"a": input.s}
+          k := "b"
+          data.a[k] == {}
+        }
+    query: data.q
+    want_result: {}
+
+  - note: package without rules below an array in base data, read through a number
+    data:
+      a:
+        - x: 1
+    modules:
+      - |
+        package a["0"].b
+      - |
+        package q
+        import rego.v1
+
+        x := data.a[0].b
+        y := data.a["0"].b
+        z := v if {
+          i := 0
+          v := data.a[i].b
+        }
+    query: data.q
+    want_result:
+      y: {}
+
+  - note: package without rules beside a rule below a string in base data
+    data:
+      a: str
+      z:
+        b: str
+    modules:
+      - |
+        package a.c
+      - |
+        package z
+        import rego.v1
+
+        b.p := 1
+      - |
+        package q
+
+        x := data.a.c
+    query: data.q.x
+    error: rule z.b.p conflicts with a value in base data
+
+  - note: package without rules beside a rule overridden by base data
+    data:
+      a: str
+      z:
+        b: 0
+    modules:
+      - |
+        package a.c
+      - |
+        package z
+
+        b := 1
+      - |
+        package q
+
+        x := data.a.c
+        y := data.z.b
+    query: data.q
+    want_result:
+      x: {}
+      y: 0
+
+  - note: rules named like an import shadow it
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+
+        import data.a as alias
+
+        alias := "local"
+
+        r := alias.b
+      - |
+        package q2
+
+        import data.a as alias
+
+        alias.x := 1
+
+        r := alias.b
+    query: "[object.get(data.q, \"r\", \"undefined\"), object.get(data.q2, \"r\", \"undefined\")]"
+    want_result: ["undefined", "undefined"]
+
+  - note: iterating an object read below a value of `_` with packages deeper below it
+    data:
+      a:
+        s:
+          k:
+            o: str
+    modules:
+      - |
+        package a.s.k.o.p
+      - |
+        package q
+        import rego.v1
+
+        x := [v | some v in data.a[_].k]
+        y := [k | data.a[_].k[k]]
+    query: data.q
+    want_result:
+      x: [str]
+      y: [o]
+
+  - note: reading below a value of a compound key pattern with packages below non-object data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+
+        obj := {[1]: {"x": 1}}
+        r := [v | v := data.q.obj[[_]].r]
+        s := [k | data.q.obj[[k]].r]
+    query: "[data.q.r, data.q.s]"
+    want_result: [[], []]

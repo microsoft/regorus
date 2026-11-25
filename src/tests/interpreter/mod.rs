@@ -1483,3 +1483,160 @@ computed := data.base.foo.a + data.base.foo.b
 
     Ok(())
 }
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_rules_below_base_string() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(r#"{ "a" : "str" }"#)?)?;
+    engine.add_policy("c.rego".to_string(), "package a.b.c".to_string())?;
+    engine.add_policy("d.rego".to_string(), "package a.b.d\np := 1".to_string())?;
+    engine.add_policy(
+        "q.rego".to_string(),
+        "package q\nx := data.a.b.c".to_string(),
+    )?;
+
+    // OPA rejects these policies; the package must not read as an empty object.
+    let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
+    assert!(
+        error.to_string().contains("rule a.b.d.p conflicts"),
+        "{error}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.add_data(Value::from_json_str(
+        r#"{ "a" : "str", "z": { "b": "str" } }"#,
+    )?)?;
+    engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+    engine.add_policy("z.rego".to_string(), "package z\nb.p := 1".to_string())?;
+    engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+    // OPA rejects the rule z.b.p below the string at z.b, so a.c must not read as `{}`.
+    let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
+    assert!(
+        error.to_string().contains("rule z.b.p conflicts"),
+        "{error}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_legacy_set_at_base_number() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.set_rego_v0(true);
+    engine.add_data(Value::from_json_str(r#"{ "a" : "str", "z": { "b": 0 } }"#)?)?;
+    engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+    engine.add_policy("z.rego".to_string(), "package z\nb.p { true }".to_string())?;
+    engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+    // The legacy set rule stores the member p in a set at z.b, overridden by the number there.
+    assert_eq!(
+        engine.eval_rule("data.q.x".to_string())?,
+        Value::new_object()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_eval_rule_package_without_rules_beside_partial_object_at_base_string() -> Result<()> {
+    for (b, rule, conflicts) in [
+        (r#""str""#, "b[k] := 1 if k := \"p\"", true),
+        (r#""str""#, "b[k] contains 1 if k := \"p\"", true),
+        (r#""str""#, "b[1] := 1", false),
+        (r#""str""#, "b[true] := 1", false),
+        (r#""str""#, "b[- 1] contains 1", false),
+        (r#""str""#, "b[1].p := 1", false),
+        (r#"{ "1": "str" }"#, "b[1].p := 1", false),
+        (r#"{ "p": "str" }"#, "b[k].r := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[k] := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[k][1] := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[1][k] := 1 if k := \"p\"", false),
+        (r#""str""#, "b.p[1] := 1", false),
+        (r#""str""#, "b.p[k] := 1 if k := 1", true),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_data(Value::from_json_str(&format!(
+            r#"{{ "a" : "str", "z": {{ "b": {b} }} }}"#
+        ))?)?;
+        engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+        engine.add_policy(
+            "z.rego".to_string(),
+            format!("package z\nimport rego.v1\n{rule}"),
+        )?;
+        engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+        // As in OPA, a rule with a dynamic key below a value at z.b conflicts, and a rule with
+        // a non-string literal key before any dynamic key does not.
+        let result = engine.eval_rule("data.q.x".to_string());
+        if conflicts {
+            let error = result.unwrap_err();
+            assert!(
+                error.to_string().starts_with("rule z.b")
+                    && error
+                        .to_string()
+                        .contains("conflicts with a value in base data"),
+                "{rule}: {error}"
+            );
+        } else {
+            assert_eq!(result?, Value::new_object(), "{rule}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_eval_rule_dynamic_collection_with_packages_below_evaluated_once() -> Result<()> {
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let extension_calls = calls.clone();
+    let index_calls = calls.clone();
+    let mut engine = Engine::new();
+    engine.add_extension(
+        "key".to_string(),
+        0,
+        Box::new(move |_| {
+            extension_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::from("k"))
+        }),
+    )?;
+    engine.add_extension(
+        "index".to_string(),
+        0,
+        Box::new(move |_| {
+            index_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::from(0))
+        }),
+    )?;
+    engine.add_data(Value::from_json_str(
+        r#"{ "a" : { "k": "str" }, "b": [ { "x": {} } ] }"#,
+    )?)?;
+    engine.add_policy("p.rego".to_string(), "package a.k.p".to_string())?;
+    engine.add_policy(
+        "q.rego".to_string(),
+        "package q\nimport rego.v1\nx := [k | some k, _ in data.a[key()]]\ny := [k | data.a[key()][k]]\nz := [v | v := data.a[key()][_].r]\nw := [v | v := data.b[index()][_].r]\nu := [v | v := data.a[key()][k].r]".to_string(),
+    )?;
+
+    for (rule, want) in [
+        ("x", r#"["p"]"#),
+        ("y", r#"["p"]"#),
+        ("z", "[]"),
+        ("w", "[]"),
+        ("u", "[]"),
+    ] {
+        calls.store(0, Ordering::SeqCst);
+        let value = engine.eval_rule(format!("data.q.{rule}"))?;
+        assert_eq!(value, Value::from_json_str(want)?, "{rule}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{rule}");
+    }
+
+    Ok(())
+}

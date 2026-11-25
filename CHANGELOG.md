@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
+- *(interpreter)* a package without rules no longer fails with `internal error: make: not an object` when base data has a non-object value at or above its path. As in OPA, the base data value wins, and the package still reads as an empty object below that value, including through variable indexes, imports and iteration over a string, number, boolean or null. Two shapes fail with a "not supported" error instead: iterating over an array or set in data that has such a package below it, and reading below an iterated `_` (such as `data.a[_].b`) when such a package may be below the value read. As in OPA, reading such a package fails with "rule ... conflicts with a value in base data" when a rule is below a non-object value in base data, or has a dynamic key below any value in base data.
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 
