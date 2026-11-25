@@ -11,6 +11,7 @@
 cases:
   # Case 1: All components consumed and rule index found
   - note: rule_index_all_components_consumed
+    execution_mode: all
     data:
       users:
         alice: {"name": "Alice", "age": 30}
@@ -31,6 +32,7 @@ cases:
 
   # Case 2: Rule index found with remaining components  
   - note: rule_index_with_remaining_components
+    execution_mode: all
     data:
       users:
         alice: {"name": "Alice", "age": 30, "profile": {"bio": "Software Engineer"}}
@@ -53,6 +55,7 @@ cases:
 
   # Case 2b: Rule index with multiple remaining components
   - note: rule_index_multiple_remaining_components
+    execution_mode: all
     data:
       config:
         app:

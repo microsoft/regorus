@@ -37,9 +37,12 @@ impl ExecutionFrame {
 #[derive(Debug, Clone)]
 pub(super) enum FrameKind {
     /// Main entry frame used when executing the program start point
-    Main { return_value_register: u8 },
+    Main {
+        return_value_register: u8,
+    },
     /// Rule execution frame (replaces recursive jump_to calls)
     Rule(RuleFrameData),
+    VirtualDataLookup(VirtualDataLookupFrameData),
     /// Loop iteration frame
     Loop {
         return_pc: usize,
@@ -50,6 +53,17 @@ pub(super) enum FrameKind {
         return_pc: usize,
         context: ComprehensionContext,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct VirtualDataLookupFrameData {
+    pub(super) return_pc: usize,
+    pub(super) dest_reg: u8,
+    pub(super) root_path: Vec<Value>,
+    pub(super) remaining_path: Vec<Value>,
+    pub(super) pending: Vec<(Value, Vec<Value>)>,
+    pub(super) current_path: Option<Vec<Value>>,
+    pub(super) result: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
