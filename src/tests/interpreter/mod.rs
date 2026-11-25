@@ -1497,7 +1497,10 @@ fn test_eval_rule_package_without_rules_beside_rules_below_base_string() -> Resu
 
     // OPA rejects these policies; the package must not read as an empty object.
     let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
-    assert!(error.to_string().contains("not an object"), "{error}");
+    assert!(
+        error.to_string().contains("rule a.b.d.p conflicts"),
+        "{error}"
+    );
 
     Ok(())
 }
@@ -1515,9 +1518,7 @@ fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> 
     // OPA rejects the rule z.b.p below the string at z.b, so a.c must not read as `{}`.
     let error = engine.eval_rule("data.q.x".to_string()).unwrap_err();
     assert!(
-        error
-            .to_string()
-            .contains("rule z.b.p is below a value in data"),
+        error.to_string().contains("rule z.b.p conflicts"),
         "{error}"
     );
 
@@ -1525,18 +1526,44 @@ fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> 
 }
 
 #[test]
+fn test_eval_rule_package_without_rules_beside_legacy_set_at_base_number() -> Result<()> {
+    let mut engine = Engine::new();
+    engine.set_rego_v0(true);
+    engine.add_data(Value::from_json_str(r#"{ "a" : "str", "z": { "b": 0 } }"#)?)?;
+    engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+    engine.add_policy("z.rego".to_string(), "package z\nb.p { true }".to_string())?;
+    engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+    // The legacy set rule stores the member p in a set at z.b, overridden by the number there.
+    assert_eq!(
+        engine.eval_rule("data.q.x".to_string())?,
+        Value::new_object()
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_eval_rule_package_without_rules_beside_partial_object_at_base_string() -> Result<()> {
-    for (rule, conflicts) in [
-        ("b[k] := 1 if k := \"p\"", true),
-        ("b[k] contains 1 if k := \"p\"", true),
-        ("b[1] := 1", false),
-        ("b[true] := 1", false),
-        ("b[- 1] contains 1", false),
+    for (b, rule, conflicts) in [
+        (r#""str""#, "b[k] := 1 if k := \"p\"", true),
+        (r#""str""#, "b[k] contains 1 if k := \"p\"", true),
+        (r#""str""#, "b[1] := 1", false),
+        (r#""str""#, "b[true] := 1", false),
+        (r#""str""#, "b[- 1] contains 1", false),
+        (r#""str""#, "b[1].p := 1", false),
+        (r#"{ "1": "str" }"#, "b[1].p := 1", false),
+        (r#"{ "p": "str" }"#, "b[k].r := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[k] := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[k][1] := 1 if k := \"p\"", true),
+        (r#"{ "x": 1 }"#, "b[1][k] := 1 if k := \"p\"", false),
+        (r#""str""#, "b.p[1] := 1", false),
+        (r#""str""#, "b.p[k] := 1 if k := 1", true),
     ] {
         let mut engine = Engine::new();
-        engine.add_data(Value::from_json_str(
-            r#"{ "a" : "str", "z": { "b": "str" } }"#,
-        )?)?;
+        engine.add_data(Value::from_json_str(&format!(
+            r#"{{ "a" : "str", "z": {{ "b": {b} }} }}"#
+        ))?)?;
         engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
         engine.add_policy(
             "z.rego".to_string(),
@@ -1544,14 +1571,16 @@ fn test_eval_rule_package_without_rules_beside_partial_object_at_base_string() -
         )?;
         engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
 
-        // A rule writing into the string at z.b with a non-literal key conflicts, as in OPA.
+        // As in OPA, a rule with a dynamic key below a value at z.b conflicts, and a rule with
+        // a non-string literal key before any dynamic key does not.
         let result = engine.eval_rule("data.q.x".to_string());
         if conflicts {
             let error = result.unwrap_err();
             assert!(
-                error
-                    .to_string()
-                    .contains("rule z.b is below a value in data"),
+                error.to_string().starts_with("rule z.b")
+                    && error
+                        .to_string()
+                        .contains("conflicts with a value in base data"),
                 "{rule}: {error}"
             );
         } else {

@@ -558,7 +558,7 @@ cases:
 
         x := data.a.c
     query: data.q.x
-    error: not an object
+    error: rule z.b.p conflicts with a value in base data
 
   - note: package without rules beside a rule overridden by base data
     data:
