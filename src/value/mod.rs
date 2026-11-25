@@ -2764,10 +2764,12 @@ impl ops::Index<&Value> for Value {
                 Some(v) => v,
                 _ => &Value::Undefined,
             },
-            (Value::Array(a), Value::Number(n)) => match n.as_u64() {
-                Some(index) => a.get(index as usize).unwrap_or(&Value::Undefined),
-                _ => &Value::Undefined,
-            },
+            (Value::Array(a), Value::Number(n)) => {
+                match n.as_u64().and_then(|i| usize::try_from(i).ok()) {
+                    Some(index) => a.get(index).unwrap_or(&Value::Undefined),
+                    _ => &Value::Undefined,
+                }
+            }
             _ => &Value::Undefined,
         }
     }

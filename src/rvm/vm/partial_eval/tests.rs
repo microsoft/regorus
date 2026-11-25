@@ -802,6 +802,285 @@ fn shadow_indexing_preserves_invalid_register_errors() -> anyhow::Result<()> {
 }
 
 #[test]
+fn b33_review_chained_undefined_prefix_skips_unreachable_register() -> anyhow::Result<()> {
+    use crate::rvm::instructions::{ChainedIndexParams, LiteralOrRegister};
+
+    // A compiler-produced reference allocates its key registers. Malformed
+    // bytecode is needed to distinguish an unreachable register error.
+    let mut program = Program::new();
+    program.literals.push(Value::from("missing"));
+    let params_index = program
+        .instruction_data
+        .add_chained_index_params(ChainedIndexParams {
+            dest: 1,
+            root: 0,
+            path_components: vec![
+                LiteralOrRegister::Literal(0),
+                LiteralOrRegister::Register(255),
+            ],
+        });
+    program.add_instruction(Instruction::LoadInput { dest: 0 }, None);
+    program.add_instruction(Instruction::ChainedIndex { params_index }, None);
+    program.add_instruction(Instruction::Return { value: 1 }, None);
+    program.add_entry_point("entry".into(), 0);
+    let program = Arc::new(program);
+    for (input, unknowns, status) in [
+        (Value::new_object(), keys(&["u"]), ResidualStatus::Exact),
+        (
+            Value::new_object(),
+            keys(&["missing.child"]),
+            ResidualStatus::Unsupported,
+        ),
+        (
+            Value::new_object(),
+            keys(&["missing"]),
+            ResidualStatus::Unsupported,
+        ),
+        (
+            Value::Undefined,
+            vec![UnknownPath::new(UnknownRoot::Input, [])],
+            ResidualStatus::Unsupported,
+        ),
+    ] {
+        let mut machine = RegoVM::new();
+        machine.load_program(program.clone());
+        machine.set_base_register_count(2);
+        machine.set_input(input);
+        assert_eq!(
+            machine.execute_entry_point_by_name("entry")?,
+            Value::Undefined
+        );
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = unknowns;
+        machine.set_partial_eval_settings(settings);
+        let result = machine.partial_eval("entry")?;
+        assert_eq!(result.status, status, "{result:?}");
+        assert_eq!(result.result, Value::Undefined);
+        assert!(result.residual_queries.is_empty());
+        assert_eq!(
+            result.warnings.len(),
+            usize::from(status == ResidualStatus::Unsupported)
+        );
+    }
+
+    // With a defined intermediate object, the same bad register is reachable.
+    let mut machine = RegoVM::new();
+    machine.load_program(program);
+    machine.set_base_register_count(2);
+    machine.set_input(Value::from_json_str(r#"{"missing":{}}"#)?);
+    let expected = VmError::RegisterIndexOutOfBounds {
+        index: 255,
+        pc: 1,
+        register_count: 2,
+    };
+    assert_eq!(
+        machine.execute_entry_point_by_name("entry"),
+        Err(expected.clone())
+    );
+    let mut settings = PartialEvalSettings::default();
+    settings.unknowns = keys(&["missing.child"]);
+    machine.set_partial_eval_settings(settings);
+    assert_eq!(
+        machine.partial_eval("entry"),
+        Err(ExplainError::Vm(expected.clone()))
+    );
+
+    // An undefined root does not skip the first key: dispatch tries it before
+    // deciding whether later keys are unreachable.
+    let mut first_key_program = machine.get_program().as_ref().clone();
+    first_key_program.instruction_data.chained_index_params[usize::from(params_index)]
+        .path_components = vec![LiteralOrRegister::Register(255)];
+    machine.load_program(Arc::new(first_key_program));
+    machine.set_input(Value::Undefined);
+    assert_eq!(
+        machine.execute_entry_point_by_name("entry"),
+        Err(expected.clone())
+    );
+    assert_eq!(
+        machine.partial_eval("entry"),
+        Err(ExplainError::Vm(expected))
+    );
+    Ok(())
+}
+
+#[test]
+fn b33_review_compiled_chained_prefix_keeps_siblings_exact() -> anyhow::Result<()> {
+    for (input, status, want) in [
+        (
+            r#"{"key":"child"}"#,
+            ResidualStatus::Unsupported,
+            Value::Undefined,
+        ),
+        (
+            r#"{"key":"sibling"}"#,
+            ResidualStatus::Exact,
+            Value::Undefined,
+        ),
+        (
+            r#"{"key":"sibling","missing":{"sibling":1}}"#,
+            ResidualStatus::Exact,
+            Value::from(1),
+        ),
+    ] {
+        let mut machine = vm("package test\nallow := input.missing[input.key]")?;
+        assert!(machine
+            .get_program()
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ChainedIndex { .. })));
+        machine.set_input(Value::from_json_str(input)?);
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = keys(&["missing.child"]);
+        machine.set_partial_eval_settings(settings);
+        let report = machine.partial_eval("data.test.allow")?;
+        assert_eq!(report.status, status, "{input}: {report:?}");
+        assert_eq!(report.result, want, "{input}");
+    }
+    Ok(())
+}
+
+#[test]
+fn b33_review_numeric_object_keys_and_exact_array_numbers() -> anyhow::Result<()> {
+    use alloc::collections::BTreeMap;
+
+    let source = "package test\nallow if input.xs[input.key] == 1";
+    for key in [
+        Value::from(4_294_967_296_u64),
+        Value::from(u64::MAX),
+        Value::from(u128::MAX),
+        Value::from(-1),
+        Value::from(1.5_f64),
+        Value::from(1.0_f64),
+    ] {
+        let input = Value::from(BTreeMap::from([
+            (Value::from("key"), key.clone()),
+            (
+                Value::from("xs"),
+                Value::from(BTreeMap::from([(key.clone(), Value::from(1))])),
+            ),
+        ]));
+        let mut machine = vm(source)?;
+        machine.set_input(input);
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = keys(&["u"]);
+        machine.set_partial_eval_settings(settings);
+        let report = machine.partial_eval("data.test.allow")?;
+        assert_eq!(report.status, ResidualStatus::Exact, "{key:?}: {report:?}");
+        assert_eq!(report.result, Value::Bool(true), "{key:?}");
+    }
+    for (key, want) in [
+        (Value::from(-1), Value::Undefined),
+        (Value::from(1.5_f64), Value::Undefined),
+        (Value::from(1.0_f64), Value::Bool(true)),
+    ] {
+        let mut machine = vm(source)?;
+        machine.set_input(Value::from(BTreeMap::from([
+            (Value::from("key"), key),
+            (
+                Value::from("xs"),
+                Value::from(vec![Value::from(0), Value::from(1)]),
+            ),
+        ])));
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = keys(&["u"]);
+        machine.set_partial_eval_settings(settings);
+        let report = machine.partial_eval("data.test.allow")?;
+        assert_eq!(report.status, ResidualStatus::Exact, "{report:?}");
+        assert_eq!(report.result, want);
+    }
+    Ok(())
+}
+
+#[test]
+fn b33_review_large_numeric_object_unknowns_still_fail_closed() -> anyhow::Result<()> {
+    use alloc::collections::BTreeMap;
+
+    for index in [4_294_967_296_u64, u64::MAX] {
+        let mut machine = vm("package test\nallow := input.xs[input.key]")?;
+        let input = |xs| {
+            Value::from(BTreeMap::from([
+                (Value::from("key"), Value::from(index)),
+                (Value::from("xs"), xs),
+            ]))
+        };
+        machine.set_input(input(Value::new_object()));
+        let mut settings = PartialEvalSettings::default();
+        settings.unknowns = vec![UnknownPath::new(
+            UnknownRoot::Input,
+            [PathSegment::Key("xs".into()), PathSegment::Index(index)],
+        )];
+        machine.set_partial_eval_settings(settings);
+        let report = machine.partial_eval("data.test.allow")?;
+        assert_eq!(
+            report.status,
+            ResidualStatus::Unsupported,
+            "{index}: {report:?}"
+        );
+        machine.set_input(input(Value::from(BTreeMap::from([(
+            Value::from(index),
+            Value::from(1),
+        )]))));
+        assert!(matches!(
+            machine.partial_eval("data.test.allow"),
+            Err(ExplainError::UnknownValueSupplied { .. })
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn b33_review_32bit_array_overflow_is_not_an_in_range_index() -> anyhow::Result<()> {
+    use alloc::collections::BTreeMap;
+
+    let mut machine = vm("package test\nallow := input.xs[input.key]")?;
+    for key in [4_294_967_296_u64, 4_294_967_297_u64] {
+        machine.set_input(Value::from(BTreeMap::from([
+            (Value::from("key"), Value::from(key)),
+            (
+                Value::from("xs"),
+                Value::from(vec![Value::from(10), Value::from(11)]),
+            ),
+        ])));
+        assert_eq!(
+            machine.execute_entry_point_by_name("data.test.allow")?,
+            Value::Undefined,
+            "overflowing array index {key}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn b33_review_32bit_exact_result_survives_unknown_index_completion() -> anyhow::Result<()> {
+    let source = "package test\nallow if { not input.xs[4294967296] == 1 }";
+    let mut machine = vm(source)?;
+    machine.set_input(Value::from_json_str(r#"{"xs":[]}"#)?);
+    let mut settings = PartialEvalSettings::default();
+    settings.unknowns = vec![UnknownPath::new(
+        UnknownRoot::Input,
+        [PathSegment::Key("xs".into()), PathSegment::Index(0)],
+    )];
+    machine.set_partial_eval_settings(settings);
+    let report = machine.partial_eval("data.test.allow")?;
+    // Rejecting overflow in Value indexing permits Exact(true); tracking the
+    // current 32-bit alias instead must fail closed. Either must be sound.
+    if report.status == ResidualStatus::Exact {
+        machine.set_input(Value::from_json_str(r#"{"xs":[1]}"#)?);
+        machine.set_partial_eval_settings(PartialEvalSettings::default());
+        assert_eq!(
+            report.result,
+            machine.execute_entry_point_by_name("data.test.allow")?,
+            "an Exact result must survive completion of unknown input.xs[0]"
+        );
+    } else {
+        assert_eq!(report.status, ResidualStatus::Unsupported, "{report:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn unknowns_index_values_as_rego_does() -> anyhow::Result<()> {
     use alloc::collections::{BTreeMap, BTreeSet};
     let run = |input: Value, segments: [PathSegment; 2]| {

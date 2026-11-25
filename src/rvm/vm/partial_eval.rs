@@ -9,6 +9,9 @@
 //! Only indexing and `Move` understand tainted registers. Any other read of
 //! a tainted register, or a read of an unknown root outside the frame, makes
 //! the result `Unsupported`, so constructs not handled here fail closed.
+//! Chained indexing may inspect skipped keys to distinguish known siblings
+//! from unknown paths, but falls back to ordinary dispatch if a skipped
+//! register cannot be inspected, preserving undefined-path short-circuiting.
 //! Errors the VM treats as fatal, such as resource limits, numeric overflow
 //! and builtin limits, are always returned as errors, even when an unknown
 //! being undefined led to them, so limits are enforced. Any other
@@ -574,13 +577,20 @@ impl RegoVM {
         };
         self.check_initial_memory_limit()?;
         let mut value = self.pe_raw(container)?;
-        for component in keys {
+        for (index, component) in keys.iter().enumerate() {
             let key = match *component {
                 LiteralOrRegister::Literal(idx) => match program.literals.get(usize::from(idx)) {
                     Some(literal) => literal.clone(),
                     None => return Ok(None),
                 },
                 LiteralOrRegister::Register(reg) if self.pe_taint(reg).is_none() => {
+                    // Ordinary dispatch skips this key after an undefined lookup.
+                    if index != 0
+                        && value == Value::Undefined
+                        && usize::from(reg) >= self.registers.len()
+                    {
+                        return Ok(None);
+                    }
                     self.pe_raw(reg)?
                 }
                 LiteralOrRegister::Register(_) => return Ok(None),
