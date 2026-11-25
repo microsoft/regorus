@@ -8,13 +8,15 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::builtins::types::get_type;
 use crate::explain::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent,
-    ConditionKind, EmissionEvent, ExplanationRecorder, HookContext, NotCapturedEvent, Operator,
-    Outcome, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CallEndEvent, CallResultSource, CallReusedEvent,
+    CallStartEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent, ConditionKind,
+    EmissionEvent, ExplanationRecorder, HookContext, NotCapturedEvent, Operator, Outcome,
+    UncapturedConstruct,
 };
 use crate::rvm::instructions::{ComprehensionMode, GuardMode, Instruction, LoopMode};
 use crate::rvm::program::{Program, RuleType};
@@ -27,12 +29,21 @@ use super::machine::RegoVM;
 #[derive(Default)]
 pub(super) struct ExplainHooks {
     recorder: Option<Box<dyn ExplanationRecorder>>,
+    next_call: u64,
+    calls: Vec<Invocation>,
+    cached_calls: Vec<Option<u64>>,
     /// Run-to-completion only: smallest call depth whose frame was inside a
     /// comprehension when it called the rule or function executing above it.
     comprehension_floor: Option<usize>,
     /// Run-to-completion only: call depth of the rule or function whose
     /// parameter patterns are executing.
     parameters_depth: Option<usize>,
+}
+
+struct Invocation {
+    context: HookContext,
+    defaulted: bool,
+    cacheable: bool,
 }
 
 impl fmt::Debug for ExplainHooks {
@@ -109,6 +120,12 @@ impl RegoVM {
         };
         let rule = self.call_rule_stack.last();
         HookContext {
+            call_instance: self
+                .explain
+                .calls
+                .last()
+                .filter(|call| call.context.call_depth == call_depth)
+                .and_then(|call| call.context.call_instance),
             pc,
             rule_index: rule.map(|ctx| ctx.rule_index),
             definition_index: rule.map_or(0, |ctx| ctx.current_definition_index),
@@ -164,6 +181,142 @@ impl RegoVM {
         if let Some(mut recorder) = self.explain.recorder.take() {
             recorder.reset();
             self.explain.recorder = Some(recorder);
+        }
+    }
+
+    pub(super) fn explain_reset_identity(&mut self) {
+        self.explain.next_call = 0;
+        self.explain.cached_calls.clear();
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn explain_begin_call(&mut self, rule_index: u16) -> Result<Option<u64>> {
+        let index = usize::from(rule_index);
+        let info = self
+            .program
+            .rule_infos
+            .get(index)
+            .ok_or(VmError::RuleInfoMissing {
+                index: rule_index,
+                pc: self.pc,
+                available: self.program.rule_infos.len(),
+            })?;
+        let cacheable = info.function_info.is_none();
+        if cacheable && self.rule_cache.get(index).is_some_and(|entry| entry.0) {
+            self.explain_reuse_call(rule_index);
+            return Ok(None);
+        }
+        let caller = self.explain_context();
+        let id = self
+            .explain
+            .next_call
+            .checked_add(1)
+            .filter(|id| *id < (1_u64 << 53))
+            .ok_or(VmError::NumericOverflow {
+                operation: "explanation invocation id",
+                pc: self.pc,
+            })?;
+        self.explain.next_call = id;
+        let context = HookContext {
+            call_instance: Some(id),
+            rule_index: Some(rule_index),
+            definition_index: 0,
+            body_index: 0,
+            call_depth: self.checked_add_one(caller.call_depth, "explanation call depth")?,
+            ..caller
+        };
+        self.explain.calls.push(Invocation {
+            context,
+            defaulted: false,
+            cacheable,
+        });
+        let event = CallStartEvent {
+            call_instance: id,
+            rule_index,
+        };
+        self.explain_deliver(|_, recorder| recorder.call_start(&caller, &event));
+        Ok(Some(id))
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn explain_reuse_call(&mut self, rule_index: u16) {
+        let caller = self.explain_context();
+        let event = CallReusedEvent {
+            call_instance: self
+                .explain
+                .cached_calls
+                .get(usize::from(rule_index))
+                .copied()
+                .flatten(),
+            rule_index,
+        };
+        self.explain_deliver(|_, recorder| recorder.call_reused(&caller, &event));
+    }
+
+    pub(super) fn explain_call_default(&mut self, id: Option<u64>) {
+        if let Some(call) = self
+            .explain
+            .calls
+            .last_mut()
+            .filter(|call| call.context.call_instance == id)
+        {
+            call.defaulted = true;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn explain_end_call(&mut self, id: u64, result: Option<&Value>) {
+        if self
+            .explain
+            .calls
+            .last()
+            .is_some_and(|call| call.context.call_instance == Some(id))
+        {
+            if let Some(call) = self.explain.calls.pop() {
+                self.explain_deliver_call_end(call, result);
+            }
+        } else if self
+            .explain
+            .calls
+            .iter()
+            .any(|call| call.context.call_instance == Some(id))
+        {
+            // Legacy mixed-mode dispatch can terminate a caller with a child
+            // still active. Abort capture, without changing evaluation behavior.
+            self.explain_abort_calls();
+        }
+    }
+
+    fn explain_deliver_call_end(&mut self, call: Invocation, result: Option<&Value>) {
+        let source = result.map(|value| {
+            if call.defaulted {
+                CallResultSource::Default
+            } else if *value == Value::Undefined {
+                CallResultSource::Undefined
+            } else {
+                CallResultSource::Body
+            }
+        });
+        if result.is_some() && call.cacheable {
+            if let Some(index) = call.context.rule_index.map(usize::from) {
+                self.explain
+                    .cached_calls
+                    .resize(self.program.rule_infos.len(), None);
+                if let Some(slot) = self.explain.cached_calls.get_mut(index) {
+                    *slot = call.context.call_instance;
+                }
+            }
+        }
+        let event = CallEndEvent { source, result };
+        self.explain_deliver(|_, recorder| recorder.call_end(&call.context, &event));
+    }
+
+    pub(super) fn explain_abort_calls(&mut self) {
+        while let Some(call) = self.explain.calls.pop() {
+            self.explain_deliver_call_end(call, None);
         }
     }
 

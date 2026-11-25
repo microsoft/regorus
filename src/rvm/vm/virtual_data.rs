@@ -139,6 +139,18 @@ impl RegoVM {
                             let rule_result = if let Some(cached) = cached_result {
                                 self.cache_hits =
                                     self.checked_add_one(self.cache_hits, "cache hits counter")?;
+                                #[cfg(feature = "explanations")]
+                                if self.explain_enabled() {
+                                    let rule_index_u16 =
+                                        u16::try_from(rule_index).map_err(|_| {
+                                            VmError::InvalidRuleIndex {
+                                                rule_index: Value::Number(rule_idx.clone()).into(),
+                                                pc: self.pc,
+                                            }
+                                        })?;
+                                    self.explain_reuse_call(rule_index_u16);
+                                    self.execution_timer_tick(1)?;
+                                }
                                 cached
                             } else {
                                 let temp_reg =
@@ -157,6 +169,10 @@ impl RegoVM {
                                     }
                                 })?;
                                 self.execute_call_rule_common(temp_reg, rule_index_u16, None)?;
+                                #[cfg(feature = "explanations")]
+                                if self.explain_enabled() {
+                                    self.execution_timer_tick(1)?;
+                                }
                                 let register_count = self.registers.len();
                                 let result = self.registers.pop().ok_or(
                                     VmError::RegisterIndexOutOfBounds {

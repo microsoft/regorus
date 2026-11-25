@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
+- *(rvm)* Loading a replacement program cancels suspended execution and clears evaluation-local caches and invocation identities, including without a configured memory budget.
+- *(explain)* Undefined-argument function calls do not report invocation or cache-use events for non-function targets in malformed bytecode.
+- *(explain)* Check execution deadlines between package providers warmed by direct rule references or evaluated from default-only rules.
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 

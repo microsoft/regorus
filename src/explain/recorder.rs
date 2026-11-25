@@ -18,8 +18,7 @@
 //! policy's text:
 //!
 //! - A rule (complete or partial) is evaluated once per evaluation. Later
-//!   references use the cached value and produce no events, so a rule's
-//!   events belong to the context of its first reference.
+//!   references report reuse of that invocation, not another evaluation.
 //! - Likewise, a builtin call answered from the evaluation's cache reports
 //!   no error again.
 //! - Matching a rule's or function's parameter patterns, such as the `1` in
@@ -30,7 +29,7 @@
 //!   runs no iteration and reports no iteration body checks. A guarded loop
 //!   can still report a loop-level [`Iteration`](ConditionKind::Iteration) check.
 //! - Errors that end the evaluation, such as exceeded limits or numeric
-//!   overflow, are not reported.
+//!   overflow, have no dedicated error event; active invocations end aborted.
 //! - Azure Policy conditions and their logical combinations
 //!   (`allOf`, `anyOf`, `not`) are not reported.
 //!
@@ -52,6 +51,24 @@ pub trait ExplanationRecorder: Send + Sync {
     /// recorder installed while an evaluation is suspended receives the rest
     /// of that evaluation's events without a reset.
     fn reset(&mut self) {}
+
+    /// An invocation starts, before parameter matching or default selection.
+    /// `context` belongs to the caller; the event identifies the callee.
+    /// Undefined function arguments still produce a start/end pair for a
+    /// function target, but not for an invalid or non-function target.
+    fn call_start(&mut self, _context: &HookContext, _event: &CallStartEvent) {}
+
+    /// An invocation completes or aborts. `context` identifies the callee at
+    /// its call site; definition/body indices are zero, not a selected body.
+    /// Non-nested legacy mixed-mode termination aborts outstanding captured
+    /// invocations rather than inventing completion or changing the VM result.
+    /// Loading another program aborts outstanding calls before discarding their
+    /// execution context, and cancels any suspended continuation.
+    fn call_end(&mut self, _context: &HookContext, _event: &CallEndEvent<'_>) {}
+
+    /// A caller uses a cached rule result. No new invocation is created.
+    /// A function call short-circuited by undefined arguments is not a cache use.
+    fn call_reused(&mut self, _context: &HookContext, _event: &CallReusedEvent) {}
 
     /// A check in a rule body was executed.
     fn check(&mut self, _context: &HookContext, _event: &CheckEvent<'_>) {}
@@ -89,6 +106,10 @@ pub trait ExplanationRecorder: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HookContext {
+    /// Evaluation-local executing invocation, or `None` outside a captured
+    /// invocation (including a call already active when capture was installed,
+    /// or one whose capture was aborted).
+    pub call_instance: Option<u64>,
     /// Program counter of the instruction that produced the event, except
     /// for [`check`](ExplanationRecorder::check), where it is the pc of the
     /// check's site in a Rego program's
@@ -96,7 +117,8 @@ pub struct HookContext {
     /// [`site_at`](crate::explain::Provenance::site_at). A check of a value
     /// that must be defined ([`Existence`](ConditionKind::Existence)) has no
     /// site. For [`body_end`](ExplanationRecorder::body_end) it is the
-    /// instruction at which the body ended.
+    /// instruction at which the body ended. Lifecycle start/reuse events
+    /// identify the caller's call site; end events retain that same site.
     pub pc: usize,
     /// Index of the executing rule in the program's rule table, or `None`
     /// outside any rule.
@@ -115,6 +137,54 @@ pub struct HookContext {
     /// of the enclosing body's own checks: see
     /// [`UncapturedConstruct::Comprehension`].
     pub in_comprehension: bool,
+}
+
+/// A fresh rule or function invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CallStartEvent {
+    /// Sequential evaluation-local identifier, starting at one. Suspension
+    /// retains it; only a fresh evaluation resets the sequence.
+    pub call_instance: u64,
+    /// Callee's index in the program's rule table.
+    pub rule_index: u16,
+}
+
+/// How a completed invocation obtained its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CallResultSource {
+    /// Rule/function evaluation, including an empty partial collection.
+    Body,
+    /// A default value was selected, including a default-only rule.
+    Default,
+    /// No value was produced, including undefined function arguments.
+    Undefined,
+}
+
+/// A terminal invocation event.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct CallEndEvent<'a> {
+    /// `None` means evaluation aborted, not a completed undefined result.
+    /// An abort makes both `source` and `result` absent.
+    pub source: Option<CallResultSource>,
+    /// A completed invocation always supplies its result, including
+    /// `Some(&Value::Undefined)` for ordinary undefined.
+    pub result: Option<&'a Value>,
+}
+
+/// A further use of an already evaluated rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CallReusedEvent {
+    /// Original captured invocation. `None` means its identity was not
+    /// captured, for example because a recorder was installed after caching.
+    /// It never means a fresh invocation or no reuse, and unrelated `None`
+    /// uses must not be merged or treated as complete call-graph evidence.
+    pub call_instance: Option<u64>,
+    /// Cached rule's index in the program's rule table.
+    pub rule_index: u16,
 }
 
 /// A check in a rule body.

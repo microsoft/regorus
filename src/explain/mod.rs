@@ -122,8 +122,9 @@ mod tests;
 pub use error::ExplainError;
 pub use provenance::{AzurePolicySite, CheckSite, Provenance, RuleOwner, SiteId, SiteOwner};
 pub use recorder::{
-    BodyEndEvent, BuiltinErrorEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent,
-    EmissionEvent, ExplanationRecorder, HookContext, NotCapturedEvent, UncapturedConstruct,
+    BodyEndEvent, BuiltinErrorEvent, CallEndEvent, CallResultSource, CallReusedEvent,
+    CallStartEvent, CheckEvent, ComprehensionElement, ComprehensionEmissionEvent, EmissionEvent,
+    ExplanationRecorder, HookContext, NotCapturedEvent, UncapturedConstruct,
 };
 pub use report::{
     AttemptExplanation, CallUse, CausalOrigins, ConcretePath, ConditionExplanation, ConditionKind,

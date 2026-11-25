@@ -342,14 +342,19 @@ impl RegoVM {
         vm
     }
 
-    /// Load a complete program for execution
+    /// Load a complete program, discarding any previous execution or suspension.
+    ///
+    /// Outstanding captured invocations end aborted in the old program's context.
+    /// The next evaluation starts a fresh invocation ID sequence.
     pub fn load_program(&mut self, program: Arc<Program>) {
+        self.release_previous_execution_state();
+        #[cfg(feature = "explanations")]
+        self.explain_reset_identity();
         #[cfg(all(feature = "allocator-memory-limits", not(miri)))]
         if matches!(
             self.memory_budget_lifecycle,
             MemoryBudgetLifecycle::SuspendableExecution
         ) {
-            self.release_previous_execution_state();
             self.finish_active_memory_budget_execution();
         }
 

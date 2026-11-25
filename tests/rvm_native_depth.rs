@@ -11,6 +11,40 @@ use std::sync::Arc;
 
 mod native_depth_support;
 
+#[cfg(feature = "explanations")]
+#[derive(Default)]
+struct InvocationTrace {
+    starts: Vec<u64>,
+    ends: Vec<(u64, bool)>,
+}
+
+#[cfg(feature = "explanations")]
+struct InvocationRecorder(Arc<std::sync::Mutex<InvocationTrace>>);
+
+#[cfg(feature = "explanations")]
+impl regorus::explain::ExplanationRecorder for InvocationRecorder {
+    fn call_start(
+        &mut self,
+        _: &regorus::explain::HookContext,
+        event: &regorus::explain::CallStartEvent,
+    ) {
+        self.0.lock().unwrap().starts.push(event.call_instance);
+    }
+
+    fn call_end(
+        &mut self,
+        context: &regorus::explain::HookContext,
+        event: &regorus::explain::CallEndEvent<'_>,
+    ) {
+        assert_eq!(event.result.is_none(), event.source.is_none());
+        self.0
+            .lock()
+            .unwrap()
+            .ends
+            .push((context.call_instance.unwrap(), event.result.is_none()));
+    }
+}
+
 #[derive(Deserialize)]
 struct Scenarios {
     cases: Vec<Scenario>,
@@ -196,6 +230,60 @@ fn native_depth_lifecycle() {
             && (case.want_error.is_some() || case.note.contains("virtual-"))
         {
             check_lifecycle(case, true);
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "explanations")]
+#[cfg_attr(miri, ignore = "requires native-stack subprocess isolation")]
+fn native_depth_recorded_invocations() {
+    if std::env::var_os("REGORUS_NATIVE_DEPTH_CHILD").is_none() {
+        native_depth_support::run_in_subprocess("native_depth_recorded_invocations");
+        return;
+    }
+    let scenarios: Scenarios =
+        yaml_serde::from_str(include_str!("rvm/rego/cases/native_depth.yaml")).unwrap();
+    let case = scenarios
+        .cases
+        .iter()
+        .find(|case| case.note == "native-depth/rules-17-error-not-default")
+        .unwrap();
+    let program = compile_case(case);
+    for limit in [16, 17] {
+        for recorded in [false, true] {
+            let trace = Arc::new(std::sync::Mutex::new(InvocationTrace::default()));
+            let mut vm = RegoVM::new();
+            vm.load_program(program.clone());
+            vm.set_max_native_rule_call_depth(limit);
+            if recorded {
+                vm.set_explanation_recorder(Box::new(InvocationRecorder(trace.clone())));
+            }
+            let result = vm.execute_entry_point_by_name(&case.query);
+            if limit == 16 {
+                assert!(matches!(
+                    result,
+                    Err(VmError::RuleCallDepthExceeded { limit: 16, .. })
+                ));
+            } else {
+                assert_eq!(result.unwrap(), Value::from(42));
+            }
+            if recorded {
+                let trace = trace.lock().unwrap();
+                let mut started = trace.starts.clone();
+                let mut ended: Vec<_> = trace.ends.iter().map(|(id, _)| *id).collect();
+                started.sort_unstable();
+                ended.sort_unstable();
+                assert!(!started.is_empty());
+                assert!(started.windows(2).all(|pair| pair[0] != pair[1]));
+                assert_eq!(started, ended);
+                assert_eq!(trace.ends.iter().any(|(_, aborted)| *aborted), limit == 16);
+            }
+            assert!(vm.get_call_stack().is_empty());
+            assert_eq!(
+                vm.execute_entry_point_by_name("data.probe.safe").unwrap(),
+                Value::from(7)
+            );
         }
     }
 }
