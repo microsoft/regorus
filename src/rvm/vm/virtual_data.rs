@@ -169,6 +169,10 @@ impl RegoVM {
                                     }
                                 })?;
                                 self.execute_call_rule_common(temp_reg, rule_index_u16, None)?;
+                                #[cfg(feature = "explanations")]
+                                if self.explain_enabled() {
+                                    self.execution_timer_tick(1)?;
+                                }
                                 let register_count = self.registers.len();
                                 let result = self.registers.pop().ok_or(
                                     VmError::RegisterIndexOutOfBounds {

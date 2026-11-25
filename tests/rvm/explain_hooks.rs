@@ -3529,6 +3529,167 @@ fn invocation_subtree_cache_reuse_checks_deadline_between_providers() -> Result<
     Ok(())
 }
 
+#[test]
+fn invocation_subtree_direct_cached_providers_check_deadline() -> Result<()> {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "target.rego".into(),
+        "package target.dept\np0 := 0\np1 := 1\np2 := 2\np3 := 3\n".into(),
+    )?;
+    engine.add_policy(
+        "t.rego".into(),
+        "package t\nr := [data.target.dept.p0,data.target.dept.p1,data.target.dept.p2,data.target.dept.p3,data.target[input.a]]\n".into(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.t.r"))?;
+    let program = Compiler::compile_from_policy(&compiled, &["data.t.r"])?;
+    let expected = v(r#"[0,1,2,3,{"p0":0,"p1":1,"p2":2,"p3":3}]"#);
+    let mut expired_provider_counts = Vec::new();
+    for mode in MODES {
+        let control = Fixture::default();
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(v(r#"{"a":"dept"}"#));
+        vm.set_explanation_recorder(Box::new(control.clone()));
+        assert_eq!(execute(&mut vm, mode)?, expected);
+        assert_eq!(
+            control
+                .calls()
+                .iter()
+                .filter(|call| matches!(call, CallRecord::Reused(_, _)))
+                .count(),
+            4,
+            "{mode:?}: direct references must warm all four providers"
+        );
+
+        let fixture = Fixture::default();
+        vm.set_explanation_recorder(Box::new(SlowCallReuse(fixture.clone())));
+        vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: std::time::Duration::from_millis(100),
+            check_interval: NonZeroU32::MIN,
+        }));
+        let outcome = vm.execute();
+        assert!(
+            matches!(outcome, Err(VmError::TimeLimitExceeded { .. })),
+            "{mode:?}: expected deadline error, got {outcome:?}"
+        );
+        let calls = fixture.calls();
+        expired_provider_counts.push((
+            mode,
+            calls
+                .iter()
+                .filter(|call| matches!(call, CallRecord::Reused(_, _)))
+                .count(),
+        ));
+        assert!(calls
+            .iter()
+            .any(|call| matches!(call, CallRecord::End(_, None, None))));
+
+        vm.set_execution_timer_config(None);
+        vm.set_explanation_recorder(Box::new(Fixture::default()));
+        assert_eq!(execute(&mut vm, mode)?, expected);
+    }
+    assert!(
+        expired_provider_counts.iter().all(|&(_, count)| count == 1),
+        "callbacks must stop after the first expired provider: {expired_provider_counts:?}"
+    );
+    Ok(())
+}
+
+struct SlowDefaultEnd(Fixture);
+
+impl ExplanationRecorder for SlowDefaultEnd {
+    fn call_start(&mut self, context: &HookContext, event: &CallStartEvent) {
+        self.0.call_start(context, event);
+    }
+
+    fn call_end(&mut self, context: &HookContext, event: &CallEndEvent<'_>) {
+        self.0.call_end(context, event);
+        if event.source == Some(CallResultSource::Default) {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
+#[test]
+fn invocation_subtree_default_only_providers_check_deadline() -> Result<()> {
+    use regorus::utils::limits::ExecutionTimerConfig;
+    use std::num::NonZeroU32;
+
+    let mut engine = Engine::new();
+    engine.add_policy(
+        "target.rego".into(),
+        "package target.dept\ndefault p0 := 0\ndefault p1 := 1\ndefault p2 := 2\ndefault p3 := 3\n"
+            .into(),
+    )?;
+    engine.add_policy(
+        "t.rego".into(),
+        "package t\nr := data.target[input.a]\n".into(),
+    )?;
+    let compiled = engine.compile_with_entrypoint(&Rc::from("data.t.r"))?;
+    let program = Compiler::compile_from_policy(&compiled, &["data.t.r"])?;
+    let expected = v(r#"{"p0":0,"p1":1,"p2":2,"p3":3}"#);
+    let mut expired_provider_counts = Vec::new();
+    for mode in MODES {
+        let control = Fixture::default();
+        let mut vm = RegoVM::new();
+        vm.load_program(program.clone());
+        vm.set_execution_mode(mode);
+        vm.set_input(v(r#"{"a":"dept"}"#));
+        vm.set_explanation_recorder(Box::new(control.clone()));
+        assert_eq!(execute(&mut vm, mode)?, expected);
+        assert_eq!(
+            control
+                .calls()
+                .iter()
+                .filter(|call| matches!(
+                    call,
+                    CallRecord::End(_, Some(CallResultSource::Default), _)
+                ))
+                .count(),
+            4,
+            "{mode:?}: the control must evaluate all four defaults"
+        );
+
+        let fixture = Fixture::default();
+        vm.set_explanation_recorder(Box::new(SlowDefaultEnd(fixture.clone())));
+        vm.set_execution_timer_config(Some(ExecutionTimerConfig {
+            limit: std::time::Duration::from_millis(100),
+            check_interval: NonZeroU32::MIN,
+        }));
+        let outcome = vm.execute();
+        assert!(
+            matches!(outcome, Err(VmError::TimeLimitExceeded { .. })),
+            "{mode:?}: expected deadline error, got {outcome:?}"
+        );
+        let calls = fixture.calls();
+        expired_provider_counts.push((
+            mode,
+            calls
+                .iter()
+                .filter(|call| {
+                    matches!(call, CallRecord::End(_, Some(CallResultSource::Default), _))
+                })
+                .count(),
+        ));
+        assert!(calls
+            .iter()
+            .any(|call| matches!(call, CallRecord::End(_, None, None))));
+
+        vm.set_execution_timer_config(None);
+        vm.set_explanation_recorder(Box::new(Fixture::default()));
+        assert_eq!(execute(&mut vm, mode)?, expected);
+    }
+    assert!(
+        expired_provider_counts.iter().all(|&(_, count)| count == 1),
+        "defaults must stop after the first expired provider: {expired_provider_counts:?}"
+    );
+    Ok(())
+}
+
 struct SlowReset;
 
 impl ExplanationRecorder for SlowReset {
