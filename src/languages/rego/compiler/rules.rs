@@ -401,6 +401,7 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
+        let saved_register_peak = self.register_peak;
         if let Some(rule_definitions) = rules.get(rule_path) {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
@@ -448,6 +449,7 @@ impl<'a> Compiler<'a> {
                 if let Rule::Spec { head, bodies, span } = rule_ref.as_ref() {
                     self.push_scope();
                     self.register_counter = 0;
+                    self.register_peak = 0;
 
                     let result_register = self.alloc_register()?;
 
@@ -721,9 +723,7 @@ impl<'a> Compiler<'a> {
                     self.rule_definitions[rule_index as usize].push(body_entry_points);
                     self.rule_definition_else_bodies[rule_index as usize].push(body_is_else);
 
-                    if self.register_counter > num_registers_used {
-                        num_registers_used = self.register_counter;
-                    }
+                    num_registers_used = num_registers_used.max(self.register_window_size());
                 }
             }
 
@@ -758,6 +758,7 @@ impl<'a> Compiler<'a> {
             }
 
             self.register_counter = saved_register_counter;
+            self.register_peak = saved_register_peak;
             self.current_package = saved_package;
             self.current_module_index = saved_module_index;
         } else {
@@ -792,6 +793,7 @@ impl<'a> Compiler<'a> {
             }
 
             self.register_counter = saved_register_counter;
+            self.register_peak = saved_register_peak;
             self.current_package = saved_package;
             self.current_module_index = saved_module_index;
         }

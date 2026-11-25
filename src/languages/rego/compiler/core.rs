@@ -85,6 +85,17 @@ impl<'a> Compiler<'a> {
         Ok(reg)
     }
 
+    /// Release registers from `base` upwards for reuse while keeping the
+    /// window large enough for every register already used.
+    pub(super) fn release_registers(&mut self, base: Register) {
+        self.register_peak = self.register_window_size();
+        self.register_counter = base;
+    }
+
+    pub(super) fn register_window_size(&self) -> Register {
+        self.register_peak.max(self.register_counter)
+    }
+
     pub(super) fn ensure_register_capacity(&self, additional: usize) -> Result<()> {
         let next_register = usize::from(self.register_counter).checked_add(additional);
         if next_register.is_none_or(|next| next > usize::from(u8::MAX)) {

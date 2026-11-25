@@ -194,14 +194,15 @@ impl<'a> Compiler<'a> {
                     }
                     .at(&span));
                 }
-                self.emit_instruction(
-                    Instruction::HostAwait {
-                        dest,
-                        arg: arg_regs[0],
-                        id: arg_regs[1],
-                    },
-                    &span,
-                );
+                // Like other calls, an undefined argument or identifier makes
+                // the call undefined without reaching the host.
+                let (arg, id) = (arg_regs[0], arg_regs[1]);
+                let (guard_base, _, branch_index) =
+                    self.emit_host_await_undefined_guard(dest, arg_regs, &span)?;
+                any_of_next_patch = Some(branch_index);
+                self.emit_instruction(Instruction::HostAwait { dest, arg, id }, &span);
+                // The guard temporaries are dead once the host is called.
+                self.release_registers(guard_base);
             }
             CallTarget::RegisteredHostAwait {
                 identifier,
@@ -222,22 +223,6 @@ impl<'a> Compiler<'a> {
                     .at(&span));
                 }
 
-                let array_params_len = self.program.instruction_data.array_create_params.len();
-                let array_params_index = u16::try_from(array_params_len).map_err(|_| {
-                    CompilerError::General {
-                        message:
-                            "registered host-await array parameter table exceeds the RVM index limit"
-                                .to_string(),
-                    }
-                })?;
-                self.program
-                    .instruction_data
-                    .array_create_params
-                    .try_reserve(1)
-                    .map_err(|_| CompilerError::General {
-                        message: "failed to reserve registered host-await array parameters"
-                            .to_string(),
-                    })?;
                 self.program
                     .instructions
                     .try_reserve(6)
@@ -250,48 +235,9 @@ impl<'a> Compiler<'a> {
                         message: "failed to reserve registered host-await source spans".to_string(),
                     })?;
 
-                let argument_reg = self.alloc_register()?;
-                let params_index =
-                    self.program
-                        .instruction_data
-                        .add_array_create_params(ArrayCreateParams {
-                            dest: argument_reg,
-                            elements: arg_regs,
-                        });
-                if params_index != array_params_index {
-                    return Err(CompilerError::General {
-                        message:
-                            "registered host-await array parameter index changed during compilation"
-                                .to_string(),
-                    }
-                    .into());
-                }
-                self.emit_instruction(Instruction::ArrayCreate { params_index }, &span);
-                self.emit_instruction(
-                    Instruction::Move {
-                        dest,
-                        src: argument_reg,
-                    },
-                    &span,
-                );
-                let predicate_reg = self.alloc_register()?;
-                self.emit_instruction(
-                    Instruction::Not {
-                        dest: predicate_reg,
-                        operand: argument_reg,
-                    },
-                    &span,
-                );
-                let branch_index = self.program.instructions.len();
+                let (argument_reg, predicate_reg, branch_index) =
+                    self.emit_host_await_undefined_guard(dest, arg_regs, &span)?;
                 any_of_next_patch = Some(branch_index);
-                self.emit_instruction(
-                    Instruction::AnyOfNext {
-                        check: predicate_reg,
-                        result: predicate_reg,
-                        end_pc: 0,
-                    },
-                    &span,
-                );
 
                 let identifier_literal = Value::String(identifier.into());
                 let literal_idx = if let Some(index) = self
@@ -378,16 +324,15 @@ impl<'a> Compiler<'a> {
                 .checked_sub(1)
                 .and_then(|pc| u16::try_from(pc).ok())
                 .ok_or_else(|| CompilerError::General {
-                    message:
-                        "registered host-await branch target exceeds the RVM instruction limit"
-                            .to_string(),
+                    message: "host-await branch target exceeds the RVM instruction limit"
+                        .to_string(),
                 })?;
             let branch = self
                 .program
                 .instructions
                 .get_mut(branch_index)
                 .ok_or_else(|| CompilerError::General {
-                    message: "registered host-await branch instruction is missing".to_string(),
+                    message: "host-await branch instruction is missing".to_string(),
                 })?;
             match branch {
                 Instruction::AnyOfNext {
@@ -396,9 +341,8 @@ impl<'a> Compiler<'a> {
                 } => *branch_end_pc = end_pc,
                 _ => {
                     return Err(CompilerError::General {
-                        message:
-                            "registered host-await branch patch points to a different instruction"
-                                .to_string(),
+                        message: "host-await branch patch points to a different instruction"
+                            .to_string(),
                     }
                     .into())
                 }
@@ -406,6 +350,70 @@ impl<'a> Compiler<'a> {
         }
 
         Ok(dest)
+    }
+
+    /// Packs `elements` into an array (Undefined if any element is), copies it
+    /// to `dest` and branches past the host call when it is Undefined. Returns
+    /// the array register, the predicate register and the branch index, which
+    /// the caller patches to the end of the call.
+    fn emit_host_await_undefined_guard(
+        &mut self,
+        dest: Register,
+        elements: Vec<Register>,
+        span: &Span,
+    ) -> Result<(Register, Register, usize)> {
+        let array_params_len = self.program.instruction_data.array_create_params.len();
+        let array_params_index =
+            u16::try_from(array_params_len).map_err(|_| CompilerError::General {
+                message: "host-await array parameter table exceeds the RVM index limit".to_string(),
+            })?;
+        self.program
+            .instruction_data
+            .array_create_params
+            .try_reserve(1)
+            .map_err(|_| CompilerError::General {
+                message: "failed to reserve host-await array parameters".to_string(),
+            })?;
+        let argument_reg = self.alloc_register()?;
+        let params_index =
+            self.program
+                .instruction_data
+                .add_array_create_params(ArrayCreateParams {
+                    dest: argument_reg,
+                    elements,
+                });
+        if params_index != array_params_index {
+            return Err(CompilerError::General {
+                message: "host-await array parameter index changed during compilation".to_string(),
+            }
+            .into());
+        }
+        self.emit_instruction(Instruction::ArrayCreate { params_index }, span);
+        self.emit_instruction(
+            Instruction::Move {
+                dest,
+                src: argument_reg,
+            },
+            span,
+        );
+        let predicate_reg = self.alloc_register()?;
+        self.emit_instruction(
+            Instruction::Not {
+                dest: predicate_reg,
+                operand: argument_reg,
+            },
+            span,
+        );
+        let branch_index = self.program.instructions.len();
+        self.emit_instruction(
+            Instruction::AnyOfNext {
+                check: predicate_reg,
+                result: predicate_reg,
+                end_pc: 0,
+            },
+            span,
+        );
+        Ok((argument_reg, predicate_reg, branch_index))
     }
 
     /// Rewrite an import-aliased call path to its target, e.g. `b.f(1)` to

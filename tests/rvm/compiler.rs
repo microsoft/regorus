@@ -1173,3 +1173,34 @@ fn modules_with_the_same_path_keep_their_own_source() -> anyhow::Result<()> {
     assert_eq!(program.sources.len(), 2);
     Ok(())
 }
+
+#[test]
+fn explicit_host_await_guard_reuses_registers_in_wide_rule() -> anyhow::Result<()> {
+    // Each call needs its two arguments and a destination; the undefined guard
+    // temporaries must be reused rather than widening the 255-register window.
+    const CALLS: usize = 84;
+    let calls = vec![r#"__builtin_host_await(1, "id")"#; CALLS].join(",\n  ");
+    let module = format!("package test\np := [\n  {calls}\n]");
+    let program = compile_rule_with_host_await(&module, &[])?;
+
+    let mut vm = RegoVM::new();
+    vm.set_execution_mode(ExecutionMode::Suspendable);
+    vm.load_program(program);
+    vm.execute()?;
+    for response in 0..CALLS {
+        assert!(matches!(
+            vm.execution_state(),
+            ExecutionState::Suspended {
+                reason: SuspendReason::HostAwait { .. },
+                ..
+            }
+        ));
+        vm.resume(Some(Value::from(response as u64)))?;
+    }
+    let expected = Value::from((0..CALLS as u64).map(Value::from).collect::<Vec<_>>());
+    assert!(matches!(
+        vm.execution_state(),
+        ExecutionState::Completed { result } if result == &expected
+    ));
+    Ok(())
+}
