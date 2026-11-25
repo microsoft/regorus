@@ -4,15 +4,17 @@
 
 use crate::ast::{Expr, Ref};
 use crate::builtins;
-use crate::builtins::utils::{ensure_args_count, ensure_array, ensure_numeric};
+use crate::builtins::utils::{enforce_limit, ensure_args_count, ensure_array, ensure_numeric};
 use crate::lexer::Span;
 use crate::Rc;
 use crate::Value;
+use crate::Vec;
 
 use anyhow::Result;
 
 pub fn register(m: &mut builtins::BuiltinsMap<&'static str, builtins::BuiltinFcn>) {
     m.insert("array.concat", (concat, 2));
+    m.insert("array.flatten", (flatten, 1));
     m.insert("array.reverse", (reverse, 1));
     m.insert("array.slice", (slice, 3));
 }
@@ -67,4 +69,29 @@ fn slice(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Re
 
     let slice = array.as_slice().get(start..stop).unwrap_or_default();
     Ok(Value::from(slice.to_vec()))
+}
+
+fn flatten(span: &Span, params: &[Ref<Expr>], args: &[Value], _strict: bool) -> Result<Value> {
+    let name = "array.flatten";
+    ensure_args_count(span, name, params, args, 1)?;
+    let array = ensure_array(name, &params[0], args[0].clone())?;
+    let mut flattened = Vec::new();
+
+    for value in array.iter() {
+        // `pattern_type_mismatch` requires the explicit `&`/`ref` here, which in
+        // turn triggers `needless_borrowed_reference`; the two lints conflict for
+        // this shape, so silence the latter (see template_functions_collection.rs).
+        #[allow(clippy::needless_borrowed_reference)]
+        if let &Value::Array(ref nested) = value {
+            for nested_value in nested.iter() {
+                flattened.push(nested_value.clone());
+                enforce_limit()?;
+            }
+        } else {
+            flattened.push(value.clone());
+            enforce_limit()?;
+        }
+    }
+
+    Ok(Value::from_array(flattened))
 }
