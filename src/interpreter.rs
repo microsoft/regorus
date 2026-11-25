@@ -772,8 +772,30 @@ impl Interpreter {
                     }
                     return Ok((v, None));
                 }
-                if self.eval_expr(index)? == Value::Undefined {
+                // Packages have string keys, which compound key patterns do not match.
+                if !matches!(index.as_ref(), Expr::Var { .. }) {
                     return Ok((v, None));
+                }
+                let key_value = self.eval_expr(index)?;
+                if key_value == Value::Undefined {
+                    return Ok((v, None));
+                }
+                // Reuse the path of a dynamic collection instead of evaluating it again.
+                let key = (self.current_module_index, refr.eidx());
+                if let Some(refr_path) = self.collection_paths.get(&key).cloned() {
+                    let (Some(mut data_path), Value::String(key_name)) = (refr_path, key_value)
+                    else {
+                        return Ok((v, None));
+                    };
+                    data_path.push(key_name.as_ref().to_string());
+                    data_path.extend(path.iter().map(|component| (*component).to_string()));
+                    let v = match v {
+                        Value::Undefined => self.package_value_below_non_object(
+                            data_path.get(1..).unwrap_or_default(),
+                        )?,
+                        v => v,
+                    };
+                    return Ok((v, Some(data_path)));
                 }
                 path.reverse();
             }
@@ -3808,17 +3830,33 @@ impl Interpreter {
             }
         }
         // OPA rejects rules and functions below a non-object value in base data. A rule at a
-        // non-object value is overridden by that value.
+        // non-object value is overridden by that value, unless the rule writes into that value
+        // with a key that is not a scalar literal.
         self.rule_below_non_object = None;
+        let is_scalar_literal = |index: &ExprRef| match index.as_ref() {
+            Expr::UnaryExpr { expr, .. } => matches!(expr.as_ref(), Expr::Number { .. }),
+            _ => Self::is_simple_literal(index).unwrap_or_default(),
+        };
+        let is_partial_object = |rule: &Ref<Rule>| {
+            matches!(rule.as_ref(), Rule::Spec {
+                head: RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. }, ..
+            } if matches!(refr.as_ref(), Expr::RefBrack { index, .. } if !is_scalar_literal(index)))
+        };
         if !packages.is_empty() {
-            for rule_path in &compiled_policy.rule_paths {
+            for registered_path in &compiled_policy.rule_paths {
                 self.check_execution_time()?;
                 let rule_path = compiled_policy
                     .rule_path_components
-                    .get(rule_path)
+                    .get(registered_path)
                     .and_then(|components| components.get(1..))
                     .unwrap_or_default();
-                if Self::is_package_below_non_object(&self.init_data, rule_path) {
+                if Self::is_package_below_non_object(&self.init_data, rule_path)
+                    || (Self::has_non_object_on_path(&self.init_data, rule_path)
+                        && compiled_policy
+                            .rules
+                            .get(registered_path)
+                            .is_some_and(|rules| rules.iter().any(is_partial_object)))
+                {
                     self.rule_below_non_object = Some(rule_path.join("."));
                     break;
                 }

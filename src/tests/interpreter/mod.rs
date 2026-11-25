@@ -1525,6 +1525,44 @@ fn test_eval_rule_package_without_rules_beside_rule_path_below_base_string() -> 
 }
 
 #[test]
+fn test_eval_rule_package_without_rules_beside_partial_object_at_base_string() -> Result<()> {
+    for (rule, conflicts) in [
+        ("b[k] := 1 if k := \"p\"", true),
+        ("b[k] contains 1 if k := \"p\"", true),
+        ("b[1] := 1", false),
+        ("b[true] := 1", false),
+        ("b[- 1] contains 1", false),
+    ] {
+        let mut engine = Engine::new();
+        engine.add_data(Value::from_json_str(
+            r#"{ "a" : "str", "z": { "b": "str" } }"#,
+        )?)?;
+        engine.add_policy("c.rego".to_string(), "package a.c".to_string())?;
+        engine.add_policy(
+            "z.rego".to_string(),
+            format!("package z\nimport rego.v1\n{rule}"),
+        )?;
+        engine.add_policy("q.rego".to_string(), "package q\nx := data.a.c".to_string())?;
+
+        // A rule writing into the string at z.b with a non-literal key conflicts, as in OPA.
+        let result = engine.eval_rule("data.q.x".to_string());
+        if conflicts {
+            let error = result.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("rule z.b is below a value in data"),
+                "{rule}: {error}"
+            );
+        } else {
+            assert_eq!(result?, Value::new_object(), "{rule}");
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_eval_rule_dynamic_collection_with_packages_below_evaluated_once() -> Result<()> {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -1555,7 +1593,7 @@ fn test_eval_rule_dynamic_collection_with_packages_below_evaluated_once() -> Res
     engine.add_policy("p.rego".to_string(), "package a.k.p".to_string())?;
     engine.add_policy(
         "q.rego".to_string(),
-        "package q\nimport rego.v1\nx := [k | some k, _ in data.a[key()]]\ny := [k | data.a[key()][k]]\nz := [v | v := data.a[key()][_].r]\nw := [v | v := data.b[index()][_].r]".to_string(),
+        "package q\nimport rego.v1\nx := [k | some k, _ in data.a[key()]]\ny := [k | data.a[key()][k]]\nz := [v | v := data.a[key()][_].r]\nw := [v | v := data.b[index()][_].r]\nu := [v | v := data.a[key()][k].r]".to_string(),
     )?;
 
     for (rule, want) in [
@@ -1563,6 +1601,7 @@ fn test_eval_rule_dynamic_collection_with_packages_below_evaluated_once() -> Res
         ("y", r#"["p"]"#),
         ("z", "[]"),
         ("w", "[]"),
+        ("u", "[]"),
     ] {
         calls.store(0, Ordering::SeqCst);
         let value = engine.eval_rule(format!("data.q.{rule}"))?;

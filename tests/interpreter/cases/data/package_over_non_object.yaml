@@ -626,3 +626,19 @@ cases:
     want_result:
       x: [str]
       y: [o]
+
+  - note: reading below a value of a compound key pattern with packages below non-object data
+    data:
+      a: str
+    modules:
+      - |
+        package a.b
+      - |
+        package q
+        import rego.v1
+
+        obj := {[1]: {"x": 1}}
+        r := [v | v := data.q.obj[[_]].r]
+        s := [k | data.q.obj[[k]].r]
+    query: "[data.q.r, data.q.s]"
+    want_result: [[], []]
