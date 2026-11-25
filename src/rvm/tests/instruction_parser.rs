@@ -70,6 +70,7 @@ pub fn parse_instruction(text: &str) -> Result<Instruction> {
             "AssertNot" => parse_guard(params_text, GuardMode::Not),
             "AssertCondition" => parse_guard(params_text, GuardMode::Condition),
             "AssertNotUndefined" => parse_guard(params_text, GuardMode::NotUndefined),
+            "AssertRuleOutput" => parse_guard(params_text, GuardMode::RuleOutput),
             "BuiltinCall" => parse_builtin_call(params_text),
             "FunctionCall" => parse_function_call(params_text),
             "CallRule" => parse_call_rule(params_text),
@@ -529,7 +530,7 @@ fn parse_guard(params_text: &str, mode: GuardMode) -> Result<Instruction> {
     let register: u8 = match mode {
         GuardMode::Not => get_param_u16(&params, "operand")?,
         GuardMode::Condition => get_param_u16(&params, "condition")?,
-        GuardMode::NotUndefined => get_param_u16(&params, "register")?,
+        GuardMode::NotUndefined | GuardMode::RuleOutput => get_param_u16(&params, "register")?,
     }
     .try_into()
     .unwrap();
