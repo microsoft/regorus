@@ -17,8 +17,7 @@ use super::execution_model::{
 use super::machine::RegoVM;
 
 impl RegoVM {
-    /// Returns true if the error represents a resource-limit violation that
-    /// must never be silently absorbed by rule evaluation.
+    /// Strict errors and resource limits propagate; failed body assertions do not.
     pub(super) const fn is_fatal_vm_error(&self, err: &VmError) -> bool {
         self.builtin_limit_exceeded
             || matches!(
@@ -32,6 +31,7 @@ impl RegoVM {
                     | VmError::InstructionLimitExceeded { .. }
                     | VmError::NumericOverflow { .. }
             )
+            || (self.strict_builtin_errors && !matches!(err, VmError::AssertionFailed { .. }))
     }
 
     /// Restore VM state that was swapped out for rule execution.

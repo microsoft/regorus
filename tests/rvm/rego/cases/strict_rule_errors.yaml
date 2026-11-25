@@ -1,0 +1,253 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: issue_932_age_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &rules
+      - |
+        package errors
+        age := time.now_ns() - time.parse_rfc3339_ns(input.published)
+        deny contains "published less than a day ago" if {
+          age < ((24 * 60) * 60) * 1000000000
+        }
+        parsed([published]) := time.parse_rfc3339_ns(published)
+        function_result := parsed([input.published])
+        default fallback := true
+        fallback := false if age >= 0
+        selected := age if input.enabled else := "fallback"
+        members contains "ok"
+        members contains age
+        object[k] := 1 if k := "ok"
+        object[k] := age if k := "parsed"
+        comprehension := [time.parse_rfc3339_ns(x) | some x in input.items]
+        negated if not age
+        same if input.enabled
+        same if time.parse_rfc3339_ns(input.published) >= 0
+        witness if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        constant_set contains "ok" if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        dynamic_head := x if { some x in input.items; time.parse_rfc3339_ns(x) >= 0 }
+        matched := parsed(input.argument)
+      - |
+        package consumer
+        virtual := data.errors[input.key]
+    input: &invalid {published: yesterday, items: ["1970-01-01T00:00:00Z", yesterday], enabled: true, key: age}
+    query: data.errors.age
+    want_error: Failed to parse datetime
+
+  - note: issue_932_age_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.age
+    want_result: "#undefined"
+
+  - note: issue_932_deny_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.deny
+    want_error: Failed to parse datetime
+
+  - note: issue_932_deny_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.deny
+    want_result: {set!: []}
+
+  - note: function_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.function_result
+    want_error: Failed to parse datetime
+
+  - note: default_cannot_mask_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.fallback
+    want_error: Failed to parse datetime
+
+  - note: default_recovers_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.fallback
+    want_result: true
+
+  - note: else_cannot_mask_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.selected
+    want_error: Failed to parse datetime
+
+  - note: else_recovers_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.selected
+    want_result: fallback
+
+  - note: partial_set_cannot_hide_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.members
+    want_error: Failed to parse datetime
+
+  - note: partial_object_cannot_hide_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.object
+    want_error: Failed to parse datetime
+
+  - note: partial_object_recovers_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.object
+    want_result: {ok: 1}
+
+  - note: comprehension_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.comprehension
+    want_error: Failed to parse datetime
+
+  - note: comprehension_recovers_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *invalid
+    query: data.errors.comprehension
+    want_result: [0]
+
+  - note: negation_cannot_hide_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.negated
+    want_error: Failed to parse datetime
+
+  - note: virtual_document_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.consumer.virtual
+    want_error: Failed to parse datetime
+
+  # OPA v1.22.4 short-circuits equal complete outputs; the interpreter does not.
+  - note: equal_outputs_still_short_circuit
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.same
+    want_result: true
+    allow_interpreter_incorrect_behavior: true
+
+  - note: virtual_function_strict
+    execution_mode: run-to-completion
+    strict_builtin_errors: true
+    modules: *rules
+    input: {key: function_result, published: yesterday}
+    query: data.consumer.virtual
+    want_error: Failed to parse datetime
+
+  - note: virtual_comprehension_strict
+    execution_mode: run-to-completion
+    strict_builtin_errors: true
+    modules: *rules
+    input: {key: comprehension, items: [yesterday]}
+    query: data.consumer.virtual
+    want_error: Failed to parse datetime
+
+  # OPA evaluates partial sets exhaustively, unlike the interpreter.
+  - note: constant_set_remains_exhaustive
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.constant_set
+    want_error: Failed to parse datetime
+    allow_interpreter_success: true
+
+  - note: error_before_first_witness_propagates
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {items: [yesterday, "1970-01-01T00:00:00Z"]}
+    query: data.errors.witness
+    want_error: Failed to parse datetime
+
+  - note: dynamic_head_remains_exhaustive
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *invalid
+    query: data.errors.dynamic_head
+    want_error: Failed to parse datetime
+
+  - note: missing_input_remains_undefined
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {}
+    query: data.errors.age
+    want_result: "#undefined"
+
+  - note: failed_function_pattern_is_not_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {argument: []}
+    query: data.errors.matched
+    want_result: "#undefined"
+
+  - note: missing_function_argument_is_not_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {}
+    query: data.errors.matched
+    want_result: "#undefined"
+
+  - note: arithmetic_default_cannot_mask_strict_error
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: &division
+      - |
+        package division
+        default quotient := 7
+        quotient := 1 / input.divisor
+    input: {divisor: 0}
+    query: data.division.quotient
+    want_error: Cannot divide
+
+  - note: arithmetic_default_recovers_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *division
+    input: {divisor: 0}
+    query: data.division.quotient
+    want_result: 7
