@@ -41,11 +41,13 @@ pub fn apply_element_remap(result: &mut ObjMap, remap: &ElementRemap, lowercase:
         &remap.source_field,
         &remap.target_field,
         lowercase,
+        false,
     );
 }
 
 /// Apply a precomputed element remap (from [`PrecomputedRemap`]) without
-/// any per-call string splitting or allocation.
+/// any per-call string splitting or allocation. Keys are looked up exactly
+/// when the remap's keys are known to be lowercase.
 pub fn apply_element_remap_precomputed(result: &mut ObjMap, remap: &PrecomputedRemap) {
     apply_remap_at_depth(
         result,
@@ -54,6 +56,7 @@ pub fn apply_element_remap_precomputed(result: &mut ObjMap, remap: &PrecomputedR
         &remap.source_field,
         &remap.target_field,
         true,
+        remap.exact,
     );
 }
 
@@ -66,9 +69,10 @@ fn apply_remap_at_depth(
     source_field: &str,
     target_field: &str,
     lowercase: bool,
+    exact: bool,
 ) {
     let Some(nav) = array_chain.get(depth) else {
-        remap_deep_field(obj, source_field, target_field, lowercase);
+        remap_deep_field(obj, source_field, target_field, lowercase, exact);
         return;
     };
 
@@ -79,18 +83,18 @@ fn apply_remap_at_depth(
 
     // Navigate through intermediate segments to reach the array value.
     let arr_val = if nav.len() == 1 {
-        match obj_get_mut_ci(obj, first) {
+        match obj_get_mut(obj, first, exact) {
             Some(v) => v,
             None => return,
         }
     } else {
-        let mut cur: &mut Value = match obj_get_mut_ci(obj, first) {
+        let mut cur: &mut Value = match obj_get_mut(obj, first, exact) {
             Some(v) => v,
             None => return,
         };
         for segment in nav.iter().skip(1) {
             cur = match cur.as_object_mut() {
-                Ok(inner) => match object_get_mut_ci(inner, segment) {
+                Ok(inner) => match object_get_mut(inner, segment, exact) {
                     Some(v) => v,
                     None => return,
                 },
@@ -112,6 +116,7 @@ fn apply_remap_at_depth(
                     source_field,
                     target_field,
                     lowercase,
+                    exact,
                 );
             }
         }
@@ -127,9 +132,10 @@ fn remap_at_depth_in_btree(
     source_field: &str,
     target_field: &str,
     lowercase: bool,
+    exact: bool,
 ) {
     let Some(nav) = array_chain.get(depth) else {
-        remap_deep_field_in_btree(btree, source_field, target_field, lowercase);
+        remap_deep_field_in_btree(btree, source_field, target_field, lowercase, exact);
         return;
     };
 
@@ -139,18 +145,18 @@ fn remap_at_depth_in_btree(
     };
 
     let arr_val = if nav.len() == 1 {
-        match object_get_mut_ci(btree, first) {
+        match object_get_mut(btree, first, exact) {
             Some(v) => v,
             None => return,
         }
     } else {
-        let mut cur: &mut Value = match object_get_mut_ci(btree, first) {
+        let mut cur: &mut Value = match object_get_mut(btree, first, exact) {
             Some(v) => v,
             None => return,
         };
         for segment in nav.iter().skip(1) {
             cur = match cur.as_object_mut() {
-                Ok(inner) => match object_get_mut_ci(inner, segment) {
+                Ok(inner) => match object_get_mut(inner, segment, exact) {
                     Some(v) => v,
                     None => return,
                 },
@@ -172,6 +178,7 @@ fn remap_at_depth_in_btree(
                     source_field,
                     target_field,
                     lowercase,
+                    exact,
                 );
             }
         }
@@ -179,8 +186,14 @@ fn remap_at_depth_in_btree(
 }
 
 /// Move a value between dotted paths directly in a BTreeMap.
-fn remap_deep_field_in_btree(btree: &mut Object, source: &str, target: &str, lowercase: bool) {
-    let val = match read_dotted_path_btree(btree, source) {
+fn remap_deep_field_in_btree(
+    btree: &mut Object,
+    source: &str,
+    target: &str,
+    lowercase: bool,
+    exact: bool,
+) {
+    let val = match read_dotted_path_btree(btree, source, exact) {
         Some(v) => v,
         None => return,
     };
@@ -200,20 +213,20 @@ fn remap_deep_field_in_btree(btree: &mut Object, source: &str, target: &str, low
 }
 
 /// Read a value at a dotted path from a BTreeMap.
-fn read_dotted_path_btree(btree: &Object, path: &str) -> Option<Value> {
+fn read_dotted_path_btree(btree: &Object, path: &str, exact: bool) -> Option<Value> {
     let segments: Vec<&str> = path.split('.').collect();
     let first = segments.first()?;
-    let mut cur: &Value = object_get_ci(btree, first)?;
+    let mut cur: &Value = object_get(btree, first, exact)?;
     for &seg in segments.iter().skip(1) {
-        cur = object_get_ci(cur.as_object().ok()?, seg)?;
+        cur = object_get(cur.as_object().ok()?, seg, exact)?;
     }
     Some(cur.clone())
 }
 
 /// Move a value from one (possibly nested) dot-separated path to another
 /// in an ObjMap.  Used only at the top level when `depth >= array_chain.len()`.
-fn remap_deep_field(obj: &mut ObjMap, source: &str, target: &str, lowercase: bool) {
-    let val = match read_dotted_path(obj, source) {
+fn remap_deep_field(obj: &mut ObjMap, source: &str, target: &str, lowercase: bool, exact: bool) {
+    let val = match read_dotted_path(obj, source, exact) {
         Some(v) => v,
         None => return,
     };
@@ -237,12 +250,44 @@ fn remap_deep_field(obj: &mut ObjMap, source: &str, target: &str, lowercase: boo
 }
 
 /// Read a value at a dot-separated path from an ObjMap.
-fn read_dotted_path(obj: &ObjMap, path: &str) -> Option<Value> {
+fn read_dotted_path(obj: &ObjMap, path: &str, exact: bool) -> Option<Value> {
     let segments: Vec<&str> = path.split('.').collect();
     let first = segments.first()?;
-    let mut cur: &Value = obj_get_ci(obj, first)?;
+    let mut cur: &Value = if exact {
+        obj.get(*first)?
+    } else {
+        obj_get_ci(obj, first)?
+    };
     for &seg in segments.iter().skip(1) {
-        cur = object_get_ci(cur.as_object().ok()?, seg)?;
+        cur = object_get(cur.as_object().ok()?, seg, exact)?;
     }
     Some(cur.clone())
+}
+
+/// Look up `key` exactly if `exact`, otherwise falling back to a key that
+/// differs only in ASCII case.
+fn obj_get_mut<'a>(obj: &'a mut ObjMap, key: &str, exact: bool) -> Option<&'a mut Value> {
+    if exact {
+        obj.get_mut(key)
+    } else {
+        obj_get_mut_ci(obj, key)
+    }
+}
+
+/// [`obj_get_mut`] in an Object.
+fn object_get<'a>(obj: &'a Object, key: &str, exact: bool) -> Option<&'a Value> {
+    if exact {
+        obj.get(&Value::from(key))
+    } else {
+        object_get_ci(obj, key)
+    }
+}
+
+/// Mutable [`object_get`].
+fn object_get_mut<'a>(obj: &'a mut Object, key: &str, exact: bool) -> Option<&'a mut Value> {
+    if exact {
+        obj.get_mut(&Value::from(key))
+    } else {
+        object_get_mut_ci(obj, key)
+    }
 }

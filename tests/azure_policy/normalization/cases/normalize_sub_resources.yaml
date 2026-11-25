@@ -1364,3 +1364,37 @@ cases:
               - rawState: s
                 properties:
                   z: 1
+
+  # Keys nested under `tags` and `identity` keep their ARM casing, so remaps
+  # there still match keys in any case.
+  - note: element remaps under tags and identity match keys in any case
+    aliases_json: |
+      [
+        {
+          "namespace": "Test",
+          "resourceTypes": [
+            {
+              "resourceType": "widgets",
+              "aliases": [
+                {
+                  "name": "Test/widgets/identity.rules[*].alias",
+                  "defaultPath": "identity.rules[*].raw",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/tags.rules[*].alias",
+                  "defaultPath": "tags.rules[*].raw",
+                  "paths": []
+                },
+                {
+                  "name": "Test/widgets/identity.cfg.rules[*].alias",
+                  "defaultPath": "identity.cfg.rules[*].raw",
+                  "paths": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    input: {"type": "Test/widgets", "identity": {"rules": [{"Raw": 1}], "cfg": {"Rules": [{"raw": 3}]}}, "tags": {"rules": [{"RAW": 2}]}}
+    expected_normalized: {"type": "Test/widgets", "identity": {"rules": [{"alias": 1}], "cfg": {"Rules": [{"alias": 3}]}}, "tags": {"rules": [{"alias": 2}]}}

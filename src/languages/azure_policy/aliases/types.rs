@@ -389,6 +389,10 @@ pub struct PrecomputedRemap {
     pub source_field: String,
     /// Field to write within each element.
     pub target_field: String,
+    /// Whether the keys the remap reads are lowercase, so it can look them
+    /// up exactly. The normalizer lowercases every key except those below
+    /// the first level of `tags` and `identity`.
+    pub exact: bool,
 }
 
 /// A precomputed reverse remap for denormalization, including the forward
