@@ -41,7 +41,7 @@ impl<'a> Compiler<'a> {
 
         self.program.max_rule_window_size =
             self.rule_num_registers.iter().cloned().max().unwrap_or(0);
-        self.program.dispatch_window_size = self.register_counter;
+        self.program.dispatch_window_size = self.register_window_size();
 
         let mut rule_infos_map = BTreeMap::new();
 

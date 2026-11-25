@@ -197,10 +197,12 @@ impl<'a> Compiler<'a> {
                 // Like other calls, an undefined argument or identifier makes
                 // the call undefined without reaching the host.
                 let (arg, id) = (arg_regs[0], arg_regs[1]);
-                let (_, _, branch_index) =
+                let (guard_base, _, branch_index) =
                     self.emit_host_await_undefined_guard(dest, arg_regs, &span)?;
                 any_of_next_patch = Some(branch_index);
                 self.emit_instruction(Instruction::HostAwait { dest, arg, id }, &span);
+                // The guard temporaries are dead once the host is called.
+                self.release_registers(guard_base);
             }
             CallTarget::RegisteredHostAwait {
                 identifier,

@@ -115,6 +115,8 @@ pub struct Compiler<'a> {
     program: Program,
     spans: Vec<SpanInfo>,
     register_counter: Register,
+    /// Highest register count reached before registers were released.
+    register_peak: Register,
     scopes: Vec<Scope>,
     policy: &'a CompiledPolicy,
     current_package: String,
@@ -160,6 +162,7 @@ impl<'a> Compiler<'a> {
             program,
             spans: Vec::new(),
             register_counter: 1,
+            register_peak: 0,
             scopes: vec![Scope::default()],
             policy,
             current_package: String::new(),
