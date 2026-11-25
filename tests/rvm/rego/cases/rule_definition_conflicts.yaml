@@ -1,0 +1,163 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: issue_932_tier_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: &rules
+      - |
+        package conflicts
+        tier := "gold" if input.gold
+        tier := "silver" if input.silver
+        default p := "fallback"
+        p := input.left
+        p := input.right
+        f(x) := x.left
+        f(x) := x.right
+        function_result := f(input)
+        wrapped_function := [function_result]
+        wrapped := [p | some _ in [0]]
+        selected := p if { true } else := "fallback"
+        negated if { not p }
+        partial contains p
+        else_result := input.left if input.enabled else := input.right
+    input: {gold: true, silver: true}
+    query: data.conflicts.tier
+    want_error: conflicts
+
+  - note: issue_932_tier_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {gold: true, silver: true}
+    query: data.conflicts.tier
+    want_error: conflicts
+
+  - note: default_cannot_mask_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: &distinct {left: 1, right: 2, enabled: true}
+    query: data.conflicts.p
+    want_error: conflicts
+
+  - note: default_cannot_mask_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.p
+    want_error: conflicts
+
+  - note: function_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.function_result
+    want_error: conflicts
+
+  - note: function_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.function_result
+    want_error: conflicts
+
+  - note: nested_comprehension_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.wrapped
+    want_error: conflicts
+
+  - note: else_cannot_mask_nested_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.selected
+    want_error: conflicts
+
+  - note: negation_cannot_mask_conflict_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.negated
+    want_error: conflicts
+
+  - note: partial_cannot_mask_conflict_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.partial
+    want_error: conflicts
+
+  - note: equal_container_outputs_nonstrict
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: &equal {left: {a: [1, false, null]}, right: {a: [1.0, false, null]}}
+    query: data.conflicts.p
+    want_result: {a: [1, false, null]}
+
+  - note: equal_container_outputs_strict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *equal
+    query: data.conflicts.function_result
+    want_result: {a: [1, false, null]}
+
+  - note: false_output_is_defined
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {left: false, right: false}
+    query: data.conflicts.p
+    want_result: false
+
+  - note: null_output_is_defined
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {left: null, right: null}
+    query: data.conflicts.wrapped_function
+    want_result: [null]
+
+  - note: undefined_definition_is_not_a_conflict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {right: 7}
+    query: data.conflicts.p
+    want_result: 7
+
+  - note: missing_outputs_select_default
+    execution_mode: all
+    strict_builtin_errors: false
+    modules: *rules
+    input: {}
+    query: data.conflicts.p
+    want_result: fallback
+
+  - note: else_branches_remain_exclusive
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: *distinct
+    query: data.conflicts.else_result
+    want_result: 1
+
+  - note: different_output_types_conflict
+    execution_mode: all
+    strict_builtin_errors: true
+    modules: *rules
+    input: {left: 1, right: "1"}
+    query: data.conflicts.p
+    want_error: conflicts

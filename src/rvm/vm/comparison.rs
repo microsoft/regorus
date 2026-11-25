@@ -97,7 +97,20 @@ impl RegoVM {
         let pc = self.pc;
         let (left, right) = operands(&self.registers, pc, left, right)?;
         let (left, right) = (left.clone(), right.clone());
-        compare_checked(&left, &right, equality, &mut || {
+        self.compare_values(&left, &right, equality)
+    }
+
+    pub(super) fn compare_values(
+        &mut self,
+        left: &Value,
+        right: &Value,
+        equality: bool,
+    ) -> Result<Ordering> {
+        if !self.needs_checked_comparison() {
+            return Ok(compare_unchecked(left, right, equality));
+        }
+        let pc = self.pc;
+        compare_checked(left, right, equality, &mut || {
             Self::tick_execution_timer(&mut self.execution_timer, pc, 1)?;
             self.check_initial_memory_limit()
         })

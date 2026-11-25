@@ -71,7 +71,6 @@ pub(super) struct RuleFrameData {
     pub(super) phase: RuleFramePhase,
     pub(super) accumulated_result: Option<Value>,
     pub(super) any_body_succeeded: bool,
-    pub(super) rule_failed_due_to_inconsistency: bool,
     pub(super) rule_type: RuleType,
     pub(super) result_reg: u8,
     pub(super) is_function_rule: bool,
