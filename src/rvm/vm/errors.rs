@@ -229,6 +229,9 @@ pub enum VmError {
     #[error("Assertion failed (pc={pc})")]
     AssertionFailed { pc: usize },
 
+    #[error("Object comprehension conflict: object keys must be unique (pc={pc})")]
+    ObjectKeyConflict { pc: usize },
+
     #[error("Rule-data conflict: {} (pc={pc})", bounded(format_args!("{message}")))]
     RuleDataConflict { message: String, pc: usize },
 
@@ -385,6 +388,7 @@ impl core::fmt::Debug for VmError {
             Self::InvalidIteration { .. } => "InvalidIteration",
             Self::HostAwaitResponseMissing { .. } => "HostAwaitResponseMissing",
             Self::AssertionFailed { .. } => "AssertionFailed",
+            Self::ObjectKeyConflict { .. } => "ObjectKeyConflict",
             Self::RuleDataConflict { .. } => "RuleDataConflict",
             Self::ArithmeticError { .. } => "ArithmeticError",
             Self::NumericOverflow { .. } => "NumericOverflow",

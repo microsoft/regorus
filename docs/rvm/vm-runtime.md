@@ -352,8 +352,11 @@ the caller's PC when needed, and decides whether to continue or exit.
 - `iteration_state` for nested loops bound to the comprehension.
 
 `ComprehensionYield` writes to the builder, respecting set uniqueness and object
-key/value pairing. `ComprehensionEnd` publishes the result to `result_reg` and
-pops the context.
+key/value pairing. Object comprehensions skip undefined keys or values, allow
+equal duplicate values, and raise `ObjectKeyConflict` for unequal values under
+the same key. This error terminates evaluation in both execution modes, even
+under negation or with non-strict builtin errors. `ComprehensionEnd` publishes
+the result to `result_reg` and pops the context.
 
 ---
 
