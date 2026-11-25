@@ -4798,7 +4798,9 @@ impl Interpreter {
     fn is_value_default(rule: &Rule) -> bool {
         matches!(rule, Rule::Default { span, refr, args, .. } if args.is_empty() && {
             let head = usize::try_from(refr.span().end.saturating_sub(span.start)).unwrap_or(0);
-            !span.text().get(head..).is_some_and(|rest| rest.trim_start().starts_with('('))
+            let rest = span.text().get(head..).unwrap_or_default().lines();
+            let mut code = rest.map(|line| line.split('#').next().unwrap_or_default().trim());
+            !code.find(|code| !code.is_empty()).is_some_and(|code| code.starts_with('('))
         })
     }
 

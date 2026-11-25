@@ -1348,6 +1348,10 @@ answer := p(0)
 q[k] := 1 if { k := input.k }
 default q() := 2
 zero := q()
+r[k] := 1 if { k := input.k }
+default r # A comment before `()`.
+() := 2
+commented := r()
 "#],
         queries: &[
             ("data.probe.answer", &[
@@ -1355,6 +1359,10 @@ zero := q()
                 (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
             ]),
             ("data.probe.zero", &[
+                (r#"{"k":"a"}"#, r#"error; interpreter=2; eval_query=2; rvm={"a":1}"#),
+                (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
+            ]),
+            ("data.probe.commented", &[
                 (r#"{"k":"a"}"#, r#"error; interpreter=2; eval_query=2; rvm={"a":1}"#),
                 (r#"{}"#, r#"error; interpreter=2; eval_query=2; rvm={}"#),
             ]),
