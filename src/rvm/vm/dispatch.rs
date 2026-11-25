@@ -496,11 +496,7 @@ impl RegoVM {
             }
             HostAwait { dest, arg, id } => {
                 let argument = self.get_register(arg)?.clone();
-                let identifier = self
-                    .registers
-                    .get(usize::from(id))
-                    .cloned()
-                    .unwrap_or(Value::Undefined);
+                let identifier = self.get_register(id).cloned().unwrap_or(Value::Undefined);
                 match self.execution_mode {
                     ExecutionMode::RunToCompletion => {
                         let response = self.next_host_await_response(&identifier, dest)?;

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(value)* Reject array indices that overflow the target pointer width instead of truncating them; numeric object keys retain exact number semantics.
+- *(explain)* Partial evaluation preserves chained-index short-circuiting after undefined paths without reading unreachable invalid key registers.
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
 - *(rvm)* Loading a replacement program cancels suspended execution and clears evaluation-local caches and invocation identities, including without a configured memory budget.
 - *(explain)* Undefined-argument function calls do not report invocation or cache-use events for non-function targets in malformed bytecode.
