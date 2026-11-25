@@ -20,6 +20,7 @@ use crate::ast::{Expr, ExprRef, Literal, LiteralStmt, Module, Query, Ref, Rule, 
 use crate::compiler::context::{ContextType, ScopeContext};
 use crate::lookup::Lookup;
 use crate::lookup::LookupResult;
+use crate::query::traversal::negation_lifted_calls;
 use crate::scheduler::compute_module_globals;
 use crate::*;
 use anyhow::{anyhow, Result};
@@ -112,6 +113,10 @@ pub struct HoistedLoopsLookup {
     /// Value terms evaluated separately in statements with WITH modifiers.
     statement_terms: Lookup<crate::Rc<Vec<ExprRef>>>,
 
+    /// Negated statements whose expression may have calls to evaluate
+    /// before the negation (`negation_lifted_calls`).
+    negation_lifts: Lookup<()>,
+
     /// Maps (module_index, expr_index) -> Vec<HoistedLoop>  
     /// For output expressions in comprehensions and rule values
     expr_loops: Lookup<Vec<HoistedLoop>>,
@@ -135,6 +140,7 @@ impl HoistedLoopsLookup {
     pub fn ensure_statement_capacity(&mut self, module_idx: u32, stmt_idx: u32) {
         self.statement_loops.ensure_capacity(module_idx, stmt_idx);
         self.statement_terms.ensure_capacity(module_idx, stmt_idx);
+        self.negation_lifts.ensure_capacity(module_idx, stmt_idx);
         self.expr_loops.ensure_capacity(module_idx, 0);
         self.expr_binding_plans.ensure_capacity(module_idx, 0);
         self.query_contexts.ensure_capacity(module_idx, 0);
@@ -145,6 +151,7 @@ impl HoistedLoopsLookup {
         self.expr_loops.ensure_capacity(module_idx, expr_idx);
         self.statement_loops.ensure_capacity(module_idx, 0);
         self.statement_terms.ensure_capacity(module_idx, 0);
+        self.negation_lifts.ensure_capacity(module_idx, 0);
         self.expr_binding_plans
             .ensure_capacity(module_idx, expr_idx);
         self.query_contexts.ensure_capacity(module_idx, 0);
@@ -155,6 +162,7 @@ impl HoistedLoopsLookup {
         self.query_contexts.ensure_capacity(module_idx, query_idx);
         self.statement_loops.ensure_capacity(module_idx, 0);
         self.statement_terms.ensure_capacity(module_idx, 0);
+        self.negation_lifts.ensure_capacity(module_idx, 0);
         self.expr_loops.ensure_capacity(module_idx, 0);
         self.expr_binding_plans.ensure_capacity(module_idx, 0);
     }
@@ -187,6 +195,15 @@ impl HoistedLoopsLookup {
         stmt_idx: u32,
     ) -> LookupResult<Option<&crate::Rc<Vec<ExprRef>>>> {
         self.statement_terms.get_checked(module_idx, stmt_idx)
+    }
+
+    /// Whether the negated statement may have calls to evaluate before the
+    /// negation. If not, the interpreter skips searching for them.
+    pub fn has_negation_lifts(&self, module_idx: u32, stmt_idx: u32) -> LookupResult<bool> {
+        Ok(self
+            .negation_lifts
+            .get_checked(module_idx, stmt_idx)?
+            .is_some())
     }
 
     /// Store hoisted loops for an expression (output expressions)
@@ -594,6 +611,15 @@ impl LoopHoister {
 
         self.lookup.ensure_statement_capacity(module_idx, stmt_idx);
         self.lookup.statement_terms.clear(module_idx, stmt_idx);
+        self.lookup.negation_lifts.clear(module_idx, stmt_idx);
+        if let Literal::NotExpr { expr, .. } = &stmt.literal {
+            if !negation_lifted_calls(expr, &mut |_| Ok(false))?.is_empty() {
+                self.lookup
+                    .negation_lifts
+                    .set_checked(module_idx, stmt_idx, ())
+                    .map_err(|err| anyhow!("negation_lifts out of bounds: {err}"))?;
+            }
+        }
         if !stmt.with_mods.is_empty() {
             if let Literal::Expr { expr, .. } | Literal::NotExpr { expr, .. } = &stmt.literal {
                 let mut terms = Vec::new();

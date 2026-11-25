@@ -30,3 +30,108 @@ cases:
         b: 1
       b:
         c: 1
+
+  - note: function-across-modules-negation-in-later-definition
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 1 if x == 0
+
+        r := f(1)
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 2 if not count([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) > 50
+    query: data.p.r
+    want_result: 2
+
+  - note: function-across-modules-undefined-call-under-negation
+    data: {}
+    input: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 1 if x == 0
+
+        r := f(1)
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 2 if {
+          x == 1
+          not count(input.v) > count([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        }
+    query: data.p.r
+    no_result: true
+
+  - note: function-across-modules-defined-call-under-negation
+    data: {}
+    input: {"v": [1]}
+    modules:
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 1 if x == 0
+
+        r := f(1)
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 2 if {
+          x == 1
+          not count(input.v) > count([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        }
+    query: data.p.r
+    want_result: 2
+
+  - note: function-across-modules-loop-in-later-definition
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 1 if x == 0
+
+        r := f(1)
+      - |
+        package p
+        import rego.v1
+
+        f(x) := y if {
+          x == 1
+          some y in [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
+          y == 2
+        }
+    query: data.p.r
+    want_result: 2
+
+  - note: function-across-modules-destructured-parameter
+    data: {}
+    modules:
+      - |
+        package p
+        import rego.v1
+
+        f(x) := 1 if x == 0
+
+        r := f([1, 2])
+      - |
+        package p
+        import rego.v1
+
+        f([x, y]) := 2 if {
+          x == 1
+          count([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) == 50
+        }
+    query: data.p.r
+    want_result: 2

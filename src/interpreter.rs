@@ -29,6 +29,7 @@ use crate::value::*;
 use crate::*;
 use crate::{Expression, Extension, Location, QueryResult, QueryResults};
 
+use crate::query::traversal::negation_lifted_calls;
 #[cfg(feature = "coverage")]
 use crate::query::traversal::traverse;
 
@@ -1202,26 +1203,23 @@ impl Interpreter {
                 }
             }
             Literal::NotExpr { span, expr, .. } => {
-                let value = match expr.as_ref() {
-                    // Extra parameter is allowed; but a return argument is not allowed.
-                    Expr::Call {
-                        span: call_span,
-                        fcn,
-                        params,
-                        ..
-                    } => self.eval_call(
-                        call_span,
-                        expr,
-                        fcn,
-                        params,
-                        get_extra_arg(
-                            expr,
-                            Some(self.current_module_path.as_str()),
-                            &self.compiled_policy.functions,
-                        ),
-                        false,
-                    )?,
-                    _ => self.eval_expr(expr)?,
+                let mut lifted = Vec::new();
+                let may_lift = self
+                    .loop_hoisting_table(self.current_module_index)
+                    .has_negation_lifts(self.current_module_index, stmt.sidx)
+                    .map_err(|err| anyhow!("negation lifts out of bounds: {err}"))?;
+                let value = self.eval_negated_expr(expr, may_lift, &mut lifted);
+                for call in &lifted {
+                    self.remove_loop_var_value(call);
+                }
+                let Some(value) = value? else {
+                    if let Some(ctx) = self.contexts.last_mut() {
+                        if let Some(result) = &mut ctx.result {
+                            result.bindings = Value::new_object();
+                            result.expressions.clear();
+                        }
+                    }
+                    return Ok(false);
                 };
 
                 if let Some(ctx) = self.contexts.last_mut() {
@@ -1703,10 +1701,10 @@ impl Interpreter {
             self.current_scope_mut()?.clone_from(scope);
         } else {
             Self::clear_scope(self.current_scope_mut()?);
-            self.get_current_context_mut()?
-                .result
-                .clone_from(&frame.query_result);
         }
+        self.get_current_context_mut()?
+            .result
+            .clone_from(&frame.query_result);
         Ok(())
     }
 
@@ -1912,6 +1910,33 @@ impl Interpreter {
                 | Expr::Null { .. }
                 | Expr::Number { .. }
         ))
+    }
+
+    // Scalars, `-` over a number, and arrays, sets and objects built only from
+    // these. Evaluating such an expression never reads module state.
+    fn is_constant_literal(&mut self, expr: &Ref<Expr>) -> Result<bool> {
+        let mut pending = vec![expr];
+        while let Some(item) = pending.pop() {
+            self.check_execution_time()?;
+            match item.as_ref() {
+                Expr::String { .. }
+                | Expr::RawString { .. }
+                | Expr::Number { .. }
+                | Expr::Bool { .. }
+                | Expr::Null { .. } => {}
+                Expr::UnaryExpr { expr: operand, .. }
+                    if matches!(operand.as_ref(), Expr::Number { .. }) => {}
+                Expr::Array { items, .. } | Expr::Set { items, .. } => pending.extend(items),
+                Expr::Object { fields, .. } => {
+                    for (_, key, value) in fields {
+                        pending.push(key);
+                        pending.push(value);
+                    }
+                }
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
     }
 
     // A rule's output expression is constant if it does not contain local variables.
@@ -2246,6 +2271,7 @@ impl Interpreter {
                     .push(Self::make_expression_result(&stmt.span, &Value::Bool(true)));
             }
             let saved_scope = Some(self.current_scope()?.clone());
+            let query_result = self.get_current_context()?.result.clone();
             let module_idx = self.current_module_index;
             let Some(BindingPlan::SomeIn {
                 key_plan,
@@ -2280,7 +2306,7 @@ impl Interpreter {
                 target: None,
                 previous_loop_value: None,
                 saved_scope,
-                query_result: None,
+                query_result,
                 saved_state: None,
                 started: false,
                 success: false,
@@ -2893,7 +2919,24 @@ impl Interpreter {
         Ok(())
     }
 
-    fn eval_print(&mut self, span: &Span, params: &[ExprRef], args: Vec<Value>) -> Result<Value> {
+    /// True if `expr` calls the builtin `print`: `eval_call` resolves a call
+    /// of `print` to an import, a function, a default function or an
+    /// extension of that name first.
+    fn is_builtin_print_call(&self, expr: &ExprRef) -> bool {
+        let Expr::Call { fcn, .. } = expr.as_ref() else {
+            return false;
+        };
+        if !matches!(fcn.as_ref(), Expr::Var { span, .. } if span.text() == "print") {
+            return false;
+        }
+        let path = format!("{}.print", self.current_module_path);
+        self.resolve_fcn_path_through_imports("print").is_none()
+            && !self.compiled_policy.functions.contains_key(&path)
+            && !self.is_default_function(&path)
+            && !self.extensions.contains_key("print")
+    }
+
+    fn eval_print(&mut self, span: &Span, args: Vec<Value>) -> Result<Value> {
         const MAX_ARGS: u8 = 100;
         if args.len() > usize::from(MAX_ARGS) {
             bail!(span.error(&format!("print supports upto {MAX_ARGS} arguments")));
@@ -2907,11 +2950,11 @@ impl Interpreter {
         }
 
         let mut msg = String::default();
-        for (i, p) in params.iter().enumerate() {
+        for (i, a) in args.into_iter().enumerate() {
             if i > 0 {
                 msg.push(' ');
             }
-            match self.eval_expr(p)? {
+            match a {
                 Value::Undefined => msg.push_str("<undefined>"),
                 // Do not print quotes for string values.
                 Value::String(s) => msg.push_str(&format!("{s}")),
@@ -2952,7 +2995,8 @@ impl Interpreter {
         params: &[ExprRef],
     ) -> Result<Value> {
         self.check_execution_time()?;
-        // Return generated values of walk builtin.
+        // Return generated values of walk builtin, or of a call lifted out of a
+        // negated expression (`eval_negated_expr`).
         if let Some(v) = self.get_loop_var_value(expr)? {
             return Ok(v.clone());
         }
@@ -3018,7 +3062,7 @@ impl Interpreter {
                     extension = Some(ext);
                     (&empty, None)
                 } else if selected_fcn_path == "print" {
-                    return self.eval_print(span, params, param_values);
+                    return self.eval_print(span, param_values);
                 }
                 // Look up builtin function.
                 else if let Some(builtin) = Self::lookup_builtin(span, &selected_fcn_path)? {
@@ -3091,6 +3135,13 @@ impl Interpreter {
                 ));
             }
 
+            // A function's definitions may be spread over several modules of
+            // its package; `fcn_module` is the module of the first one.
+            let rule_module = match &fcn_module {
+                Some(m) if m.package.span.source == fcn_rule.span().source => m.clone(),
+                _ => self.get_rule_module(&fcn_rule)?,
+            };
+
             // Back up local variables of current function and empty
             // the local variables of callee function.
             let scopes = core::mem::take(&mut self.scopes);
@@ -3099,45 +3150,48 @@ impl Interpreter {
             let args_scope = Scope::new();
             self.scopes.push(args_scope);
 
-            // Determine the module index for the callee so we can fetch binding plans
-            let callee_module_idx = fcn_module
-                .as_ref()
-                .map(|module| self.find_module_index(module))
-                .unwrap_or(self.current_module_index);
+            // The parameter patterns and bodies belong to the callee's module.
+            let prev_module = self.set_current_module(Some(rule_module))?;
+            let params_bound = (|| -> Result<bool> {
+                for (idx, a) in args.iter().enumerate() {
+                    // Fetch the binding plan for this function parameter
+                    let module_idx = self.current_module_index;
+                    let expr_idx = a.as_ref().eidx();
 
-            for (idx, a) in args.iter().enumerate() {
-                // Fetch the binding plan for this function parameter
-                let module_idx = callee_module_idx;
-                let expr_idx = a.as_ref().eidx();
+                    let param_value = param_values
+                        .get(idx)
+                        .ok_or_else(|| anyhow!("internal error: missing param value"))?;
 
-                let param_value = param_values
-                    .get(idx)
-                    .ok_or_else(|| anyhow!("internal error: missing param value"))?;
+                    let Some(BindingPlan::Parameter {
+                        destructuring_plan, ..
+                    }) = self
+                        .loop_hoisting_table(module_idx)
+                        .get_expr_binding_plan(module_idx, expr_idx)
+                        .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
+                        .cloned()
+                    else {
+                        // Raise error if binding plan is not found
+                        return Err(span.error(&format!(
+                            "binding plan not found for parameter {}",
+                            a.span().text()
+                        )));
+                    };
 
-                let binding_success = if let Some(BindingPlan::Parameter {
-                    destructuring_plan,
-                    ..
-                }) = self
-                    .loop_hoisting_table(module_idx)
-                    .get_expr_binding_plan(module_idx, expr_idx)
-                    .map_err(|err| anyhow!("loop hoisting table out of bounds: {err}"))?
-                    .cloned()
-                {
                     // Execute the destructuring plan with the parameter value
-                    self.execute_destructuring_plan(&destructuring_plan, param_value)?
-                        == Value::from(true)
-                } else {
-                    // Raise error if binding plan is not found
-                    return Err(span.error(&format!(
-                        "binding plan not found for parameter {}",
-                        a.span().text()
-                    )));
-                };
-
-                if !binding_success {
-                    self.scopes = scopes;
-                    continue 'outer;
+                    if self.execute_destructuring_plan(&destructuring_plan, param_value)?
+                        != Value::from(true)
+                    {
+                        return Ok(false);
+                    }
                 }
+                Ok(true)
+            })();
+
+            if !matches!(params_bound, Ok(true)) {
+                self.set_current_module(prev_module)?;
+                self.scopes = scopes;
+                params_bound?;
+                continue 'outer;
             }
 
             let ctx = Context {
@@ -3146,7 +3200,6 @@ impl Interpreter {
                 ..Context::default()
             };
 
-            let prev_module = self.set_current_module(fcn_module.clone())?;
             let value = match self.eval_rule_bodies(ctx, span, bodies) {
                 Ok(v) => v,
                 Err(e) => {
@@ -3236,7 +3289,20 @@ impl Interpreter {
                 if let Some(rules) = rules {
                     for (rule, _) in rules.iter() {
                         if let Rule::Default { value, .. } = rule.as_ref() {
-                            match self.eval_expr(value) {
+                            // The value belongs to the default rule's module;
+                            // a constant literal does not depend on it.
+                            let value = match self.is_constant_literal(value) {
+                                Ok(true) => self.eval_expr(value),
+                                Ok(false) => {
+                                    let module = self.get_rule_module(rule)?;
+                                    let prev_module = self.set_current_module(Some(module))?;
+                                    let value = self.eval_expr(value);
+                                    self.set_current_module(prev_module)?;
+                                    value
+                                }
+                                Err(e) => Err(e),
+                            };
+                            match value {
                                 Ok(v) => results.push(v),
                                 Err(e) if is_evaluation_limit_error(&e) => {
                                     self.scopes = scopes;
@@ -3440,8 +3506,9 @@ impl Interpreter {
                 if !self.processed.contains(&r) {
                     let module = self.get_rule_module(&r)?;
                     let prev_module = self.set_current_module(Some(module))?;
-                    self.eval_default_rule(&r)?;
+                    let result = self.eval_default_rule(&r);
                     self.set_current_module(prev_module)?;
+                    result?;
                 }
             }
         }
@@ -3653,6 +3720,60 @@ impl Interpreter {
         }
     }
 
+    /// Evaluates a negated expression. OPA evaluates the calls nested in its
+    /// operands (`negation_lifted_calls`) before the negation: an Undefined
+    /// one fails the body (`None`) instead of satisfying `not`. The values of
+    /// the others are cached for the negated expression; the caller removes
+    /// the `lifted` entries. The arguments of the builtin `print` are not
+    /// lifted, since it accepts Undefined arguments. `may_lift` is false when
+    /// the loop hoister found no calls to lift in `expr`.
+    fn eval_negated_expr(
+        &mut self,
+        expr: &ExprRef,
+        may_lift: bool,
+        lifted: &mut Vec<ExprRef>,
+    ) -> Result<Option<Value>> {
+        let calls = if !may_lift || self.is_builtin_print_call(expr) {
+            Vec::new()
+        } else {
+            negation_lifted_calls(expr, &mut |e| {
+                self.check_execution_time()?;
+                Ok(self.get_loop_var_value(e)?.is_some())
+            })?
+        };
+        self.memory_check()?;
+        for call in calls {
+            let value = self.eval_expr(&call)?;
+            if value == Value::Undefined {
+                return Ok(None);
+            }
+            self.set_loop_var_value(&call, value)?;
+            lifted.push(call);
+        }
+        let value = match expr.as_ref() {
+            // Extra parameter is allowed; but a return argument is not allowed.
+            Expr::Call {
+                span: call_span,
+                fcn,
+                params,
+                ..
+            } => self.eval_call(
+                call_span,
+                expr,
+                fcn,
+                params,
+                get_extra_arg(
+                    expr,
+                    Some(self.current_module_path.as_str()),
+                    &self.compiled_policy.functions,
+                ),
+                false,
+            )?,
+            _ => self.eval_expr(expr)?,
+        };
+        Ok(Some(value))
+    }
+
     fn eval_expr(&mut self, expr: &ExprRef) -> Result<Value> {
         self.with_native_depth(|this| this.eval_expr_impl(expr))
     }
@@ -3687,6 +3808,19 @@ impl Interpreter {
                         self.coverage.insert(source.clone(), c);
                     }
                 }
+            }
+        }
+
+        // Operators lifted out of a negated expression (`eval_negated_expr`).
+        if matches!(
+            expr.as_ref(),
+            Expr::BinExpr { .. }
+                | Expr::BoolExpr { .. }
+                | Expr::ArithExpr { .. }
+                | Expr::Membership { .. }
+        ) {
+            if let Some(v) = self.get_loop_var_value(expr)? {
+                return Ok(v.clone());
             }
         }
 
@@ -4431,8 +4565,6 @@ impl Interpreter {
 
     pub fn eval_rule(&mut self, module: &Ref<Module>, rule: &Ref<Rule>) -> Result<()> {
         self.check_execution_time()?;
-        // Set current module index
-        self.current_module_index = self.find_module_index(module);
 
         // Skip reprocessing rule
         if self.processed.contains(rule) {
