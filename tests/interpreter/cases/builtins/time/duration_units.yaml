@@ -1,0 +1,26 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: days-weeks-years
+    data: {}
+    modules:
+      - |
+        package test
+        one_day   = time.parse_duration_ns("1d")
+        one_week  = time.parse_duration_ns("1w")
+        one_year  = time.parse_duration_ns("1y")
+    query: data.test
+    want_result:
+      one_day:  86400000000000
+      one_week: 604800000000000
+      one_year: 31536000000000000
+
+  - note: mixed-units
+    data: {}
+    modules:
+      - |
+        package test
+        x = time.parse_duration_ns("1d12h")
+    query: data.test.x
+    want_result: 129600000000000
