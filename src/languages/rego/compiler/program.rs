@@ -9,7 +9,7 @@
 
 use super::{Compiler, CompilerError, Result};
 use crate::interpreter::Interpreter;
-use crate::lexer::Source;
+use crate::lexer::{Source, Span};
 use crate::rvm::program::{Program, RuleType, SpanInfo};
 use crate::rvm::Instruction;
 use crate::Rc;
@@ -34,6 +34,32 @@ impl<'a> Compiler<'a> {
             .instructions
             .push(Instruction::CallRule { dest, rule_index });
         self.spans.push(SpanInfo::new(0, 0, 0, 0));
+    }
+
+    /// Selects `keys` in turn from the value in `container`, in place, and
+    /// returns `container`.
+    pub(super) fn emit_index_literals(
+        &mut self,
+        container: super::Register,
+        keys: &[Value],
+        span: Option<&Span>,
+    ) -> Result<super::Register> {
+        for key in keys {
+            let literal_idx = self.add_literal(key.clone());
+            let index = Instruction::IndexLiteral {
+                dest: container,
+                container,
+                literal_idx,
+            };
+            match span {
+                Some(span) => self.emit_instruction(index, span),
+                None => {
+                    self.program.instructions.push(index);
+                    self.spans.push(SpanInfo::new(0, 0, 0, 0));
+                }
+            }
+        }
+        Ok(container)
     }
 
     pub(super) fn finish(mut self) -> Result<Program> {

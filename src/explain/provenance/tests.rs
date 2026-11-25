@@ -2186,3 +2186,14 @@ fn only_the_loop_result_guard_is_not_a_site() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// A read of a default that a dynamically keyed rule shadows keeps its path.
+#[test]
+fn shadowed_default_reads_keep_their_path() -> anyhow::Result<()> {
+    let rego =
+        "package test\np[k] := 1 if { some k in input.ks }\ndefault p.r := 0\nallow if p.r == 1\n";
+    let provenance = provenance(rego, &["data.test.allow"])?;
+    let site = provenance.sites().first();
+    assert_eq!(site.and_then(|site| site.left_path.as_deref()), Some("p.r"));
+    Ok(())
+}

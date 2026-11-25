@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(rvm)* Package values such as `data.pkg` omit undefined rules and include subpackages that have no rules (as `{}`), matching OPA and the interpreter.
+- *(rego)* [**breaking**] Ignore a `default` rule beneath a rule with a dynamic key (`default p.r := 0` beside `p[k] := 1`), as OPA does: `p.r` is read through `p[k]` and is undefined unless `p[k]` produces `r`, and the default no longer appears in `p` or in any document above it (e.g. `data.pkg`). Applies to the interpreter and the RVM. Function defaults (`default p(_) := 0`) are not affected. Literal keys, including negated numbers such as `p[-1]`, are not dynamic, so a default beside them still applies. A default exactly at such a rule's path (`default p := 0`), which OPA rejects as a conflict, is also ignored rather than rejected; a bracket default naming that path from a parent package (`default sub["p"] := 0` beside `p[k]` in package `sub`) still applies, as before. A default value containing a reference is still rejected by the interpreter. Migration: such defaults are now Undefined, as in OPA; to keep a fallback, give it a name outside the dynamic rule's extent (e.g. `default r := 0` with `r := p.r`).
 
 ## [0.15.0](https://github.com/microsoft/regorus/compare/regorus-v0.14.1...regorus-v0.15.0) - 2026-11-07
 

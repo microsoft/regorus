@@ -36,6 +36,16 @@ impl PathComponent {
             Self::String(value) | Self::Raw(value) => value,
         }
     }
+
+    /// Returns the key that this component selects.
+    pub(crate) fn to_value(&self) -> Value {
+        match self {
+            Self::String(value) => Value::from(value.as_str()),
+            Self::Raw(value) => {
+                Value::from_json_str(value).unwrap_or_else(|_| Value::from(value.as_str()))
+            }
+        }
+    }
 }
 
 fn is_identifier_component(component: &str) -> bool {

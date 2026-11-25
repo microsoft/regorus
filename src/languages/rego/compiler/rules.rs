@@ -38,7 +38,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub(super) fn compute_rule_type(&self, rule_path: &str) -> Result<RuleType> {
-        let Some(definitions) = self.policy.inner.rules.get(rule_path) else {
+        let Some(definitions) = self.policy.inner.rules_for(rule_path) else {
             // Default-only rules (e.g., `default deny := true`) have no regular definitions
             // in the `rules` map — they only exist in `default_rules`. Treat them as Complete.
             if self.policy.inner.default_rules.contains_key(rule_path) {
@@ -49,6 +49,10 @@ impl<'a> Compiler<'a> {
             }
             .into());
         };
+        // A shadowed default that no rule can produce is undefined.
+        if definitions.is_empty() {
+            return Ok(RuleType::Complete);
+        }
 
         let rule_types: BTreeSet<RuleType> = definitions
             .iter()
@@ -196,7 +200,10 @@ impl<'a> Compiler<'a> {
         rule_path: &str,
         rules: &Map<String, Vec<crate::ast::NodeRef<Rule>>>,
     ) -> Result<(String, u32)> {
-        if let Some(rule_definitions) = rules.get(rule_path) {
+        if let Some(rule_definitions) = rules
+            .get(rule_path)
+            .or_else(|| self.policy.inner.rules_for(rule_path))
+        {
             if let Some(first_rule_ref) = rule_definitions.first() {
                 let rule = first_rule_ref.as_ref();
 
@@ -300,13 +307,20 @@ impl<'a> Compiler<'a> {
                     entry_point_name.to_string()
                 }
             };
-            let rule_idx = compiler.get_or_assign_rule_index(&rule_path)?;
+            // A shadowed default is read from its base's rules that can produce
+            // it or, if they cannot be compiled as one rule, from the whole base.
+            let shadowed = policy.inner.shadowed_defaults.get(&rule_path);
+            let rule_idx = match (compiler.get_or_assign_rule_index(&rule_path), shadowed) {
+                (Err(_), Some(shadowed)) => compiler.get_or_assign_rule_index(&shadowed.base)?,
+                (rule_idx, _) => rule_idx?,
+            };
+            let keys = shadowed.map_or(&[][..], |shadowed| shadowed.keys.as_slice());
             compiler
                 .entry_points
                 .insert(entry_point_name.to_string(), instruction_index);
             compiler.emit_call_rule(result_reg, rule_idx);
-
-            compiler.emit_return(result_reg);
+            let value_reg = compiler.emit_index_literals(result_reg, keys, None)?;
+            compiler.emit_return(value_reg);
         }
 
         compiler.compile_worklist_rules(rules)?;
@@ -401,7 +415,7 @@ impl<'a> Compiler<'a> {
         self.current_module_index = module_index;
 
         let saved_register_counter = self.register_counter;
-        if let Some(rule_definitions) = rules.get(rule_path) {
+        if let Some(rule_definitions) = self.policy.inner.rules_for(rule_path) {
             let Some(rule_index) = self.rule_index_map.get(rule_path).copied() else {
                 return Err(CompilerError::General {
                     message: format!(
@@ -734,7 +748,9 @@ impl<'a> Compiler<'a> {
 
             self.rule_function_param_count[rule_index as usize] = rule_param_count;
 
-            if rule_param_count.is_none() {
+            // A shadowed default's rule produces its base's value, not the path's.
+            let shadowed = self.policy.inner.shadowed_defaults.contains_key(rule_path);
+            if rule_param_count.is_none() && !shadowed {
                 let components = self
                     .policy
                     .inner

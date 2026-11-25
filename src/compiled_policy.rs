@@ -15,7 +15,7 @@ use crate::scheduler::*;
 use crate::utils::*;
 use crate::*;
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use anyhow::Result;
 
 #[cfg(feature = "azure_policy")]
@@ -221,6 +221,14 @@ pub(crate) struct CompiledPolicyData {
     pub(crate) imports: BTreeMap<String, Ref<Expr>>,
     pub(crate) functions: FunctionTable,
     pub(crate) rule_paths: MapSet<String>,
+    /// Keys of the ground prefixes of rules whose head has a dynamic key, such
+    /// as `["data", "pkg", "p"]` for `p[k] := 1`.
+    pub(crate) dynamic_rule_owners: BTreeSet<Vec<Value>>,
+    /// Paths beneath such a rule registered only by defaults that it shadows.
+    pub(crate) shadowed_defaults: Map<String, ShadowedDefault>,
+    /// Paths at or above such a rule, other than rule paths, registered only
+    /// by defaults that it shadows; they are read as `data` references.
+    pub(crate) shadowed_default_prefixes: BTreeSet<String>,
     #[cfg(feature = "azure_policy")]
     pub(crate) target_info: Option<TargetInfo>,
     #[cfg(feature = "azure_policy")]
@@ -240,4 +248,44 @@ pub(crate) struct CompiledPolicyData {
 
     // Pre-computed loop hoisting information
     pub(crate) loop_hoisting_table: HoistedLoopsLookup,
+}
+
+/// A path such as `data.pkg.p.r` registered only by defaults (`default p.r :=
+/// 0`) that a dynamically keyed rule (`p[k] := 1`) shadows. Like OPA, it is
+/// read as if those defaults did not exist: from its base, the deepest rule
+/// path above it with rules that can produce it, i.e. the owner (`data.pkg.p`)
+/// or one beneath it.
+#[derive(Debug, Clone)]
+pub(crate) struct ShadowedDefault {
+    /// The base's path.
+    #[cfg_attr(not(feature = "rvm"), allow(dead_code))]
+    pub(crate) base: String,
+    /// Keys that select the path within the base's value.
+    #[cfg_attr(not(feature = "rvm"), allow(dead_code))]
+    pub(crate) keys: Vec<Value>,
+    /// The base's rules whose heads can produce the path. It may be empty, in
+    /// which case the base is the owner.
+    pub(crate) rules: Vec<Ref<Rule>>,
+}
+
+impl CompiledPolicyData {
+    /// Returns how many leading `components` form the ground prefix of a rule
+    /// whose head has a dynamic key, if any does.
+    pub(crate) fn dynamic_rule_owner_len(&self, components: &[PathComponent]) -> Option<usize> {
+        let mut prefix = vec![];
+        for component in components {
+            prefix.push(component.to_value());
+            if self.dynamic_rule_owners.contains(&prefix) {
+                return Some(prefix.len());
+            }
+        }
+        None
+    }
+
+    /// Returns the rules that define `path` or, if it is a shadowed default,
+    /// those that can produce it.
+    pub(crate) fn rules_for(&self, path: &str) -> Option<&Vec<Ref<Rule>>> {
+        let shadowed = || self.shadowed_defaults.get(path).map(|s| &s.rules);
+        self.rules.get(path).or_else(shadowed)
+    }
 }

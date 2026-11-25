@@ -4,9 +4,9 @@
 
 use crate::ast::*;
 use crate::builtins::{self, BuiltinFcn};
-use crate::compiled_policy::CompiledPolicyData;
 #[cfg(feature = "azure_policy")]
 use crate::compiled_policy::TargetInfo;
+use crate::compiled_policy::{CompiledPolicyData, ShadowedDefault};
 use crate::compiler::destructuring_planner::{
     AssignmentPlan, BindingPlan, DestructuringPlan, WildcardSide,
 };
@@ -185,6 +185,42 @@ fn merge_statement_cleanup<T>(result: Result<T>, cleanup: Result<()>) -> Result<
                 Err(cleanup_error.context(message))
             } else {
                 Err(error.context(message))
+            }
+        }
+    }
+}
+
+/// The rules beneath a base path by the keys in their heads below it, with
+/// `None` for a dynamic key.
+#[derive(Default)]
+struct HeadTrie {
+    /// Positions of the rules whose heads end here.
+    rules: Vec<usize>,
+    children: BTreeMap<Option<Value>, HeadTrie>,
+}
+
+impl HeadTrie {
+    fn insert(&mut self, keys: &[Option<Value>], position: usize) {
+        let mut node = self;
+        for key in keys {
+            node = node.children.entry(key.clone()).or_default();
+        }
+        node.rules.push(position);
+    }
+
+    /// Adds the rules whose head keys match `keys` as far as both go.
+    fn matching(&self, keys: &[Value], out: &mut Vec<usize>) {
+        out.extend_from_slice(&self.rules);
+        match keys.split_first() {
+            None => self
+                .children
+                .values()
+                .for_each(|child| child.matching(&[], out)),
+            Some((key, rest)) => {
+                let exact = self.children.get(&Some(key.clone()));
+                for child in [self.children.get(&None), exact].into_iter().flatten() {
+                    child.matching(rest, out);
+                }
             }
         }
     }
@@ -3423,7 +3459,22 @@ impl Interpreter {
     fn ensure_rule_evaluated(&mut self, path: String) -> Result<()> {
         self.check_execution_time()?;
         let mut matched = false;
-        if let Some(rules) = self.compiled_policy.rules.get(&path) {
+        // A `with` that replaces a shadowed default's path, an ancestor or a
+        // descendant replaces its producers too, as it replaces the default's rule.
+        let mut producers = self.compiled_policy.rules_for(&path);
+        if !self.compiled_policy.rules.contains_key(&path)
+            && self.compiled_policy.shadowed_defaults.contains_key(&path)
+        {
+            if let Some(components) = self.compiled_policy.rule_path_components.get(&path) {
+                let tail: Vec<&str> = components.iter().skip(1).map(String::as_str).collect();
+                if self.has_explicit_data_with_override_ancestor(&tail)?
+                    || self.has_explicit_data_with_override_within(&tail)
+                {
+                    producers = None;
+                }
+            }
+        }
+        if let Some(rules) = producers {
             matched = true;
             for r in rules.clone() {
                 if !self.processed.contains(&r) {
@@ -3525,6 +3576,19 @@ impl Interpreter {
         Ok(false)
     }
 
+    /// Returns whether a `with` explicitly replaces `path` or a path beneath it.
+    fn has_explicit_data_with_override_within(&self, path: &[&str]) -> bool {
+        let mut pending = vec![Self::get_value_chained(self.processed_paths.clone(), path)];
+        while let Some(Value::Object(fields)) = pending.pop() {
+            if fields.contains_key(&EXPLICIT_DATA_WITH_OVERRIDE_MARKER) {
+                return true;
+            }
+            let children = fields.values().filter(|v| matches!(v, Value::Object(_)));
+            pending.extend(children.cloned());
+        }
+        false
+    }
+
     fn lookup_var(&mut self, span: &Span, fields: &[&str], no_error: bool) -> Result<Value> {
         let name = span.source_str();
 
@@ -3605,7 +3669,17 @@ impl Interpreter {
                 .collect::<Vec<_>>();
             let rule_path = format_string_path(&rule_path_components)?;
 
+            // A name registered only by shadowed defaults is read like
+            // `data.<package>.<name>.<fields>`: evaluate only what can produce
+            // that path.
+            let prefixes = &self.compiled_policy.shadowed_default_prefixes;
+            let shadowed_prefix = prefixes.contains(&rule_path);
+            if shadowed_prefix {
+                let path = rule_path_components.iter().chain(fields);
+                self.ensure_module_evaluated(&path.map(|c| c.to_string()).collect::<Vec<_>>())?;
+            }
             if !no_error
+                && !shadowed_prefix
                 && !self.compiled_policy.rules.contains_key(&rule_path)
                 && !self.compiled_policy.default_rules.contains_key(&rule_path)
                 && !self.compiled_policy.imports.contains_key(&rule_path)
@@ -4155,9 +4229,12 @@ impl Interpreter {
                 };
 
                 path.extend(get_rule_path_components(refr)?);
+                Self::check_default_value(value)?;
+                if self.is_shadowed_default(&module, refr)? {
+                    return Ok(());
+                }
                 let paths: Vec<&str> = path.iter().map(PathComponent::value).collect();
 
-                Self::check_default_value(value)?;
                 let value = self.eval_expr(value)?;
 
                 // Assume at this point that all the non-default rules have been evaluated.
@@ -4638,6 +4715,9 @@ impl Interpreter {
 
             for rule in &module.policy {
                 let rule_refr = Self::get_rule_refr(rule);
+                if Self::is_value_default(rule) && self.is_shadowed_default(module, rule_refr)? {
+                    continue;
+                }
                 let mut prefix_path = module_path.clone();
                 let mut components = Self::get_rule_path_components(rule_refr)?;
                 let is_old_set = matches!(
@@ -4713,12 +4793,223 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Returns whether `rule` is the default of a value, not of a function:
+    /// `default f() := 1`, like `default x := 1`, has no arguments.
+    fn is_value_default(rule: &Rule) -> bool {
+        matches!(rule, Rule::Default { span, refr, args, .. } if args.is_empty() && {
+            let head = usize::try_from(refr.span().end.saturating_sub(span.start)).unwrap_or(0);
+            let rest = span.text().get(head..).unwrap_or_default().lines();
+            let mut code = rest.map(|line| line.split('#').next().unwrap_or_default().trim());
+            !code.find(|code| !code.is_empty()).is_some_and(|code| code.starts_with('('))
+        })
+    }
+
+    /// Returns whether a default rule for `refr` in `module` lies within the
+    /// document of a rule with a dynamic key, e.g. `default p.r := 0` beside
+    /// `p[k] := 1`. Like OPA, such a default is ignored.
+    fn is_shadowed_default(&self, module: &Module, refr: &Expr) -> Result<bool> {
+        let mut path = vec![PathComponent::String("data".to_string())];
+        path.extend(get_rule_path_components(&module.package.refr)?);
+        path.extend(get_rule_path_components(refr)?);
+        Ok(self.compiled_policy.dynamic_rule_owner_len(&path).is_some())
+    }
+
+    /// Records the ground prefix of a rule whose head has a dynamic key, i.e.
+    /// its path up to the first dynamic key, e.g. `data.pkg.p` for `p[k] := 1`
+    /// or `p[k].s := 1`.
+    fn record_dynamic_rule_owner(&mut self, rule: &Ref<Rule>) -> Result<()> {
+        let Rule::Spec {
+            head: RuleHead::Compr { refr, .. } | RuleHead::Set { refr, .. },
+            ..
+        } = rule.as_ref()
+        else {
+            return Ok(());
+        };
+        let mut keys = Self::package_keys(&*self.current_module()?)?;
+        Self::push_head_keys(refr, &mut keys);
+        if let Some(len) = keys.iter().position(Option::is_none) {
+            let owner = keys.into_iter().take(len).flatten().collect();
+            self.compiled_policy_mut().dynamic_rule_owners.insert(owner);
+        }
+        Ok(())
+    }
+
+    /// For each `default` rule (with its path components) beneath a dynamically
+    /// keyed rule (its owner), records in `shadowed_defaults` each of its paths
+    /// beneath the owner that no rule defines. It also unregisters the default
+    /// at and above the owner; a path left with neither a default nor a rule is
+    /// recorded in `shadowed_default_prefixes`.
+    fn record_shadowed_defaults(
+        &mut self,
+        defaults: Vec<(Vec<PathComponent>, Ref<Rule>)>,
+    ) -> Result<()> {
+        if defaults.is_empty() || self.compiled_policy.dynamic_rule_owners.is_empty() {
+            return Ok(());
+        }
+        let heads = self.rule_heads()?;
+        let mut producers: BTreeMap<String, HeadTrie> = BTreeMap::new();
+        let mut unregistered: BTreeMap<String, BTreeSet<Ref<Rule>>> = BTreeMap::new();
+        for (components, default_rule) in defaults {
+            let Some(owner_len) = self.compiled_policy.dynamic_rule_owner_len(&components) else {
+                continue;
+            };
+            for len in owner_len.saturating_add(1)..=components.len() {
+                let path = format_path_components(components.get(..len).unwrap_or_default())?;
+                if self.compiled_policy.rules.contains_key(&path) {
+                    continue;
+                }
+                // Like without the default, the path is produced by the deepest
+                // rule path above it (the owner or one beneath it) that has
+                // rules whose head can produce it.
+                let mut shadowed = None;
+                for base_len in owner_len..len {
+                    let base =
+                        format_path_components(components.get(..base_len).unwrap_or_default())?;
+                    let compiled_policy = self.compiled_policy.clone();
+                    let Some(base_rules) = compiled_policy.rules.get(&base) else {
+                        continue;
+                    };
+                    if !producers.contains_key(&base) {
+                        let mut trie = HeadTrie::default();
+                        for (position, rule) in base_rules.iter().enumerate() {
+                            let head = heads.get(rule).and_then(|head| head.get(base_len..));
+                            trie.insert(head.unwrap_or_default(), position);
+                            self.memory_check()?;
+                        }
+                        producers.insert(base.clone(), trie);
+                    }
+                    let keys = components.get(base_len..len).unwrap_or_default();
+                    let keys: Vec<Value> = keys.iter().map(PathComponent::to_value).collect();
+                    let mut positions = vec![];
+                    if let Some(trie) = producers.get(&base) {
+                        trie.matching(&keys, &mut positions);
+                    }
+                    positions.sort_unstable();
+                    self.memory_check()?;
+                    let rules: Vec<_> = positions
+                        .iter()
+                        .filter_map(|position| base_rules.get(*position))
+                        .filter(|rule| {
+                            let head = heads.get(*rule).map(|head| head.get(base_len..));
+                            let head = head.flatten().unwrap_or_default();
+                            head.iter().zip(&keys).all(|(head_key, key)| {
+                                head_key.as_ref().is_none_or(|head_key| head_key == key)
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    if shadowed.is_none() || !rules.is_empty() {
+                        shadowed = Some(ShadowedDefault { base, keys, rules });
+                    }
+                }
+                if let Some(shadowed) = shadowed {
+                    let policy = self.compiled_policy_mut();
+                    policy.shadowed_defaults.insert(path, shadowed);
+                    self.memory_check()?;
+                }
+            }
+            // Like OPA, ignore the default at and above the owner too; beneath
+            // it, the paths are read through `shadowed_defaults`. An invalid
+            // value stays registered so that evaluating it reports the error.
+            if let Rule::Default { value, .. } = default_rule.as_ref() {
+                if Self::check_default_value(value).is_err() {
+                    continue;
+                }
+            }
+            for len in 1..=owner_len {
+                let path = format_path_components(components.get(..len).unwrap_or_default())?;
+                unregistered
+                    .entry(path)
+                    .or_default()
+                    .insert(default_rule.clone());
+                self.memory_check()?;
+            }
+        }
+        let policy = self.compiled_policy_mut();
+        for (path, removed) in unregistered {
+            if let Some(rules) = policy.default_rules.get_mut(&path) {
+                rules.retain(|(rule, _)| !removed.contains(rule));
+                if rules.is_empty() {
+                    policy.default_rules.remove(&path);
+                    if !policy.rules.contains_key(&path) {
+                        policy.shadowed_default_prefixes.insert(path);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the full path keys (`data`, package, head) of every rule, with
+    /// `None` for a dynamic key.
+    fn rule_heads(&mut self) -> Result<BTreeMap<Ref<Rule>, Vec<Option<Value>>>> {
+        let mut heads = BTreeMap::new();
+        for module in self.compiled_policy.modules.clone().iter() {
+            let package = Self::package_keys(module)?;
+            for rule in module.policy.iter() {
+                let mut head = package.clone();
+                Self::push_head_keys(Self::get_rule_refr(rule), &mut head);
+                heads.insert(rule.clone(), head);
+                self.memory_check()?;
+            }
+        }
+        Ok(heads)
+    }
+
+    /// Returns the keys `data` and the package path of `module`.
+    fn package_keys(module: &Module) -> Result<Vec<Option<Value>>> {
+        let package = get_rule_path_components(&module.package.refr)?;
+        let keys = package.iter().map(|component| Some(component.to_value()));
+        Ok(core::iter::once(Some(Value::from("data")))
+            .chain(keys)
+            .collect())
+    }
+
+    /// Returns the key that a literal index such as `"r"`, `1` or `- 1` selects.
+    fn literal_key(index: &Expr) -> Option<Value> {
+        match index {
+            Expr::String { value, .. }
+            | Expr::RawString { value, .. }
+            | Expr::Number { value, .. }
+            | Expr::Bool { value, .. }
+            | Expr::Null { value, .. } => Some(value.clone()),
+            Expr::UnaryExpr { expr, .. } => match expr.as_ref() {
+                // Like the evaluator, reject `- -1`.
+                Expr::Number {
+                    span,
+                    value: Value::Number(number),
+                    ..
+                } if !span.text().starts_with('-') => crate::number::Number::from(0_u64)
+                    .sub(number)
+                    .ok()
+                    .map(Value::Number),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Appends the keys of a rule head, with `None` for a dynamic key.
+    fn push_head_keys(refr: &Expr, keys: &mut Vec<Option<Value>>) {
+        match refr {
+            Expr::RefDot { refr, field, .. } => {
+                Self::push_head_keys(refr, keys);
+                keys.push(Some(Value::from(field.0.text())));
+            }
+            Expr::RefBrack { refr, index, .. } => {
+                Self::push_head_keys(refr, keys);
+                keys.push(Self::literal_key(index));
+            }
+            _ => keys.push(Some(Value::from(refr.span().text()))),
+        }
+    }
+
     fn record_default_rule(
         &mut self,
         refr: &Ref<Expr>,
         rule: &Ref<Rule>,
         index: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<Vec<PathComponent>> {
         let rule_components = get_rule_path_components(refr)?;
         let mut path_components = self.current_module_data_path_components()?;
         for (idx, component) in rule_components.iter().enumerate() {
@@ -4757,7 +5048,7 @@ impl Interpreter {
             }
         }
 
-        Ok(())
+        Ok(path_components)
     }
 
     fn clear_rule_registrations(&mut self) {
@@ -4766,6 +5057,9 @@ impl Interpreter {
         compiled_policy.default_rules.clear();
         compiled_policy.rule_paths.clear();
         compiled_policy.rule_path_components.clear();
+        compiled_policy.dynamic_rule_owners.clear();
+        compiled_policy.shadowed_defaults.clear();
+        compiled_policy.shadowed_default_prefixes.clear();
     }
 
     pub fn process_imports(&mut self) -> Result<()> {
@@ -4813,6 +5107,7 @@ impl Interpreter {
     pub fn gather_rules(&mut self) -> Result<()> {
         self.clear_rule_registrations();
         let result = (|| -> Result<()> {
+            let mut defaults = vec![];
             for module in self.compiled_policy.modules.clone().iter() {
                 let prev_module = self.set_current_module(Some(module.clone()))?;
                 let registration_result = (|| -> Result<()> {
@@ -4832,6 +5127,7 @@ impl Interpreter {
                                 _ => refr,
                             };
                             self.record_rule(refr, rule.clone())?;
+                            self.record_dynamic_rule_owner(rule)?;
                             self.memory_check()?;
                         } else if let Rule::Default { .. } = rule.as_ref() {
                             let (refr, index) = match refr.as_ref() {
@@ -4854,7 +5150,11 @@ impl Interpreter {
                                 _ => (refr, None),
                             };
 
-                            self.record_default_rule(refr, rule, index)?;
+                            let components = self.record_default_rule(refr, rule, index)?;
+                            // A function's default is not shadowed.
+                            if Self::is_value_default(rule) {
+                                defaults.push((components, rule.clone()));
+                            }
                             self.memory_check()?;
                         }
                     }
@@ -4863,7 +5163,7 @@ impl Interpreter {
                 self.set_current_module(prev_module)?;
                 registration_result?;
             }
-            Ok(())
+            self.record_shadowed_defaults(defaults)
         })();
         if result.is_err() {
             self.clear_rule_registrations();
