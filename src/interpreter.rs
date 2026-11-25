@@ -1204,7 +1204,11 @@ impl Interpreter {
             }
             Literal::NotExpr { span, expr, .. } => {
                 let mut lifted = Vec::new();
-                let value = self.eval_negated_expr(expr, &mut lifted);
+                let may_lift = self
+                    .loop_hoisting_table(self.current_module_index)
+                    .has_negation_lifts(self.current_module_index, stmt.sidx)
+                    .map_err(|err| anyhow!("negation lifts out of bounds: {err}"))?;
+                let value = self.eval_negated_expr(expr, may_lift, &mut lifted);
                 for call in &lifted {
                     self.remove_loop_var_value(call);
                 }
@@ -3131,6 +3135,13 @@ impl Interpreter {
                 ));
             }
 
+            // A function's definitions may be spread over several modules of
+            // its package; `fcn_module` is the module of the first one.
+            let rule_module = match &fcn_module {
+                Some(m) if m.package.span.source == fcn_rule.span().source => m.clone(),
+                _ => self.get_rule_module(&fcn_rule)?,
+            };
+
             // Back up local variables of current function and empty
             // the local variables of callee function.
             let scopes = core::mem::take(&mut self.scopes);
@@ -3140,7 +3151,7 @@ impl Interpreter {
             self.scopes.push(args_scope);
 
             // The parameter patterns and bodies belong to the callee's module.
-            let prev_module = self.set_current_module(fcn_module.clone())?;
+            let prev_module = self.set_current_module(Some(rule_module))?;
             let params_bound = (|| -> Result<bool> {
                 for (idx, a) in args.iter().enumerate() {
                     // Fetch the binding plan for this function parameter
@@ -3714,13 +3725,15 @@ impl Interpreter {
     /// one fails the body (`None`) instead of satisfying `not`. The values of
     /// the others are cached for the negated expression; the caller removes
     /// the `lifted` entries. The arguments of the builtin `print` are not
-    /// lifted, since it accepts Undefined arguments.
+    /// lifted, since it accepts Undefined arguments. `may_lift` is false when
+    /// the loop hoister found no calls to lift in `expr`.
     fn eval_negated_expr(
         &mut self,
         expr: &ExprRef,
+        may_lift: bool,
         lifted: &mut Vec<ExprRef>,
     ) -> Result<Option<Value>> {
-        let calls = if self.is_builtin_print_call(expr) {
+        let calls = if !may_lift || self.is_builtin_print_call(expr) {
             Vec::new()
         } else {
             negation_lifted_calls(expr, &mut |e| {
