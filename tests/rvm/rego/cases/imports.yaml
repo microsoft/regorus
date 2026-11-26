@@ -2,6 +2,177 @@
 # Licensed under the MIT License.
 
 cases:
+  - note: import_cross_package_no_false_cycle
+    modules:
+      - |
+        package registry
+        import data.registry.packages.package_a
+        allow_stage1 if package_a.allow_stage1
+      - |
+        package registry.packages.package_a
+        import data.registry
+        allow_stage2 if registry.allow_stage1
+        allow_stage1 := true
+    query: data.registry.packages.package_a.allow_stage2
+    want_result: true
+
+  - note: dynamic_data_index_evaluates_matching_rules
+    modules:
+      - |
+        package registry
+        allow_stage1 if {
+          name := "package_a"
+          data.registry.packages[name].allow_stage2
+        }
+      - |
+        package registry.packages.package_a
+        allow_stage2 := true
+    query: data.registry.allow_stage1
+    want_result: true
+
+  # A wildcard leaf can still select a recursive rule; the RVM rejects that graph.
+  - note: import_dynamic_leaf_retains_conservative_cycle_detection
+    modules:
+      - |
+        package registry
+        import data.registry.packages.package_a
+        allow_stage1 if {
+          key := "allow_stage1"
+          package_a[key]
+        }
+      - |
+        package registry.packages.package_a
+        import data.registry
+        allow_stage2 if registry.allow_stage1
+        allow_stage1 := true
+    query: data.registry.packages.package_a.allow_stage2
+    want_error: "Compile-time recursion detected"
+    allow_interpreter_success: true
+
+  - note: import_dynamic_package_suffix_no_false_cycle
+    modules:
+      - |
+        package registry
+        import data.registry.packages as packages
+        allow_stage1 if {
+          name := "package_a"
+          packages[name].allow_stage2
+        }
+      - |
+        package registry.packages.package_a
+        import data.registry
+        unused if registry.allow_stage1
+        allow_stage2 := true
+    query: data.registry.allow_stage1
+    want_result: true
+
+  - note: import_literal_dot_package_suffix_no_false_cycle
+    modules:
+      - |
+        package registry
+        import data.registry.packages["package.a"] as selected
+        allow_stage1 if selected.allow_stage1
+      - |
+        package registry.packages["package.a"]
+        import data.registry as parent
+        allow_stage2 if parent.allow_stage1
+        allow_stage1 := true
+    query: data.registry.packages["package.a"].allow_stage2
+    want_result: true
+
+  - note: import_unrelated_equal_length_namespace_is_materialized
+    modules:
+      - |
+        package nope.allow
+        result := data.auth
+      - |
+        package auth
+        allow := true
+    query: data.nope.allow.result
+    want_result: {allow: true}
+
+  - note: import_suffix_preserves_false
+    modules:
+      - |
+        package lib
+        value := false
+      - |
+        package rules
+        import data.lib as alias
+        result := alias.value
+    query: data.rules.result
+    want_result: false
+
+  - note: import_missing_suffix_preserves_undefined
+    modules:
+      - |
+        package lib
+        value := true
+      - |
+        package rules
+        import data.lib as alias
+        result := alias.missing
+    query: data.rules.result
+    want_result: "#undefined"
+
+  - note: import_static_cycle_still_errors
+    modules:
+      - |
+        package first
+        import data.second
+        result if second.result
+      - |
+        package second
+        import data.first
+        result if first.result
+    query: data.first.result
+    want_error: "recurs"
+
+  - note: import_shared_acyclic_rule_dependencies
+    modules:
+      - |
+        package rules
+        import data.lib
+        result := [lib.left, lib.right]
+      - |
+        package lib
+        left := leaf
+        right := leaf
+        leaf := 1
+    query: data.rules.result
+    want_result: [1, 1]
+
+  - note: import_dynamic_suffix_preserves_local_shadowing
+    modules:
+      - |
+        package lib
+        value := true
+      - |
+        package rules
+        import data.lib as alias
+        result := alias[key] if {
+          alias := {"value": false}
+          key := "value"
+        }
+    query: data.rules.result
+    want_result: false
+
+  - note: import_suffix_preserves_non_string_index_types
+    modules:
+      - |
+        package lib
+        values := [{1: "number", "1": "string", true: "boolean"}]
+      - |
+        package rules
+        import data.lib as alias
+        result := [alias.values[0][n], alias.values[0][s], alias.values[0][b]] if {
+          n := 1
+          s := "1"
+          b := true
+        }
+    query: data.rules.result
+    want_result: ["number", "string", "boolean"]
+
   - note: import_data_inside_rule_body
     modules:
       - |

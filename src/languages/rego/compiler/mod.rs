@@ -120,6 +120,7 @@ pub struct Compiler<'a> {
     current_package: String,
     current_module_index: u32,
     rule_index_map: BTreeMap<String, u16>,
+    rule_dependencies: BTreeMap<u16, BTreeSet<u16>>,
     rule_worklist: Vec<WorklistEntry>,
     /// `data`-prefixed path of every package, computed once per compile.
     package_paths: BTreeSet<Vec<String>>,
@@ -165,6 +166,7 @@ impl<'a> Compiler<'a> {
             current_package: String::new(),
             current_module_index: 0,
             rule_index_map: BTreeMap::new(),
+            rule_dependencies: BTreeMap::new(),
             rule_worklist: Vec::new(),
             package_paths: policy
                 .inner

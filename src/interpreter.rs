@@ -707,9 +707,10 @@ impl Interpreter {
         Ok(Value::Undefined)
     }
 
-    fn eval_chained_ref_dot_or_brack(&mut self, mut expr: &ExprRef) -> Result<Value> {
-        // Collect a chaing of '.field' or '["field"]'
-        let mut path = vec![];
+    // Keep an already-resolved suffix attached until namespace lookup. Evaluating an
+    // imported package first can enter unrelated rules and report a false cycle.
+    fn eval_reference_with_suffix(&mut self, mut expr: &ExprRef, suffix: &[&str]) -> Result<Value> {
+        let mut path: Vec<&str> = suffix.iter().rev().copied().collect();
         loop {
             if let Some(v) = self.get_loop_var_value(expr)? {
                 path.reverse();
@@ -738,6 +739,10 @@ impl Interpreter {
                         path.reverse();
 
                         let index = self.eval_expr(index)?;
+                        if let Value::String(index) = &index {
+                            path.insert(0, index.as_ref());
+                            return self.eval_reference_with_suffix(refr, &path);
+                        }
 
                         // Handle indexing into data.
                         if index != Value::Undefined {
@@ -3639,10 +3644,7 @@ impl Interpreter {
 
             if !found {
                 if let Some(imported_var) = self.compiled_policy.imports.get(&rule_path).cloned() {
-                    return Ok(Self::get_value_chained(
-                        self.eval_expr(&imported_var)?,
-                        fields,
-                    ));
+                    return self.eval_reference_with_suffix(&imported_var, fields);
                 }
             }
 
@@ -3698,9 +3700,9 @@ impl Interpreter {
             Expr::String { value: v, .. } => Ok(v.clone()),
             Expr::RawString { value: v, .. } => Ok(v.clone()),
             // TODO: Handle undefined variables
-            Expr::Var { .. } => self.eval_chained_ref_dot_or_brack(expr),
-            Expr::RefDot { .. } => self.eval_chained_ref_dot_or_brack(expr),
-            Expr::RefBrack { .. } => self.eval_chained_ref_dot_or_brack(expr),
+            Expr::Var { .. } | Expr::RefDot { .. } | Expr::RefBrack { .. } => {
+                self.eval_reference_with_suffix(expr, &[])
+            }
 
             // Expressions with operators
             Expr::ArithExpr { op, lhs, rhs, .. } => self.eval_arith_expr(expr.span(), op, lhs, rhs),
