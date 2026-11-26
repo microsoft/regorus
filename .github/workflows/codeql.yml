@@ -92,14 +92,14 @@ jobs:
 
     - name: Setup Java
       if: matrix.language == 'java-kotlin'
-      uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
       with:
         distribution: 'corretto'
         java-version: '8'
 
     - name: Setup Go
       if: matrix.language == 'go'
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version: '1.21'
 
@@ -147,7 +147,7 @@ jobs:
 
     - name: Setup Ruby
       if: matrix.language == 'rust' && contains(matrix.working-directory, 'ruby')
-      uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+      uses: ruby/setup-ruby@f9c4492e86def3e644ab32a0ef185eda5b0c20d0 # v1.342.0
       with:
         ruby-version: '3.4.2'
         bundler-cache: true
