@@ -31,6 +31,7 @@ v0/functionerrors
 v0/functions
 v0/globmatch
 v0/globquotemeta
+v0/globsmatch
 v0/helloworld
 v0/hexbuiltins
 v0/indexing
@@ -139,6 +140,7 @@ v1/functionerrors
 v1/functions
 v1/globmatch
 v1/globquotemeta
+v1/globsmatch
 v1/helloworld
 v1/hexbuiltins
 v1/indexing

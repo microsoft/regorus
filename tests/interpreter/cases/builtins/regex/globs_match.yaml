@@ -1,0 +1,160 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# Cases for regex.globs_match, which OPA implements with
+# github.com/yashtewari/glob-intersection. Expected values follow that
+# library's documented semantics; the OPA v1.2.0 globsmatch conformance cases
+# run separately through tests/opa.rs.
+cases:
+  - note: intersecting-globs
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        matches := [
+            regex.globs_match("a.a.[0-9]+z", ".b.b2359825792*594823z"),
+            regex.globs_match("b.*", "bar"),
+            regex.globs_match(`[a-z]+\[[0-9]+\]`, "foo\\[1\\]"),
+            regex.globs_match("a*b", "ab+"),
+            regex.globs_match("a?b", "a?b"),
+            regex.globs_match("[^a]", "^"),
+            regex.globs_match("[^a]", "a"),
+            regex.globs_match("[a-c]+", "[b-d]+"),
+            regex.globs_match("", ""),
+            regex.globs_match("a+a+", "a"),
+            regex.globs_match("[]", "."),
+            regex.globs_match("[a?]", "?"),
+            regex.globs_match("[[]", "[[]"),
+            regex.globs_match("a*", "a+"),
+        ]
+
+        pass if {
+            every m in matches {
+                m == true
+            }
+        }
+    query: data.play.pass
+    want_result: true
+
+  - note: disjoint-globs
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        misses := [
+            regex.globs_match("a?b", "ab"),
+            regex.globs_match("[^a]", "b"),
+            regex.globs_match("", "a*"),
+            regex.globs_match("a+b*", "aa"),
+            regex.globs_match("[a-z]+", "[0-9]*"),
+            regex.globs_match(`[a-z]+\[[0-9]+\]`, "foo[\"bar\"]"),
+            regex.globs_match("a+", ""),
+            regex.globs_match("ab", "abc"),
+            regex.globs_match("a.b", "ab"),
+            regex.globs_match("aa+", "a"),
+            regex.globs_match(".*", ""),
+            regex.globs_match(`a\+`, "a+"),
+        ]
+
+        pass if {
+            every m in misses {
+                m == false
+            }
+        }
+    query: data.play.pass
+    want_result: true
+
+  - note: unmatched-set-close
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match("pqrs]", "[a-b]+")
+    query: data.play.p
+    error: "set-close ']' with no preceding '['"
+
+  - note: range-without-end
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match("[a-]", "a")
+    query: data.play.p
+    error: "range character '-' must be followed by a Unicode character"
+
+  - note: range-without-start
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match("[-a]", "a")
+    query: data.play.p
+    error: "range character '-' must be preceded by a Unicode character"
+
+  - note: range-ending-in-dash
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match("[a--]", "a")
+    query: data.play.p
+    error: "range character '-' cannot be followed by a special symbol"
+
+  - note: flag-without-token
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match("a**", "a")
+    query: data.play.p
+    error: "flag '*' must be preceded by a non-flag"
+
+  - note: non-string-argument
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match(1, "a")
+    query: data.play.p
+    error: "`regex.globs_match` expects string argument."
+
+  - note: too-many-tokens
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match(concat("", [x | some i in numbers.range(1, 300); x := "a*b*"]), "a")
+    query: data.play.p
+    error: "a glob may have at most 256 tokens"
+
+  - note: step-limit-on-adversarial-globs
+    data: {}
+    modules:
+      - |
+        package play
+        import rego.v1
+
+        p := regex.globs_match(
+            "aaa+.+..*[ab]*[ab].+a+b+.*b*b[ab]+[ab]*.*[ab]*a*b+a+a*.b+",
+            "[ab]+[ab][ab]b*[ab]*a*b*b*a*a+b*[ab].a*..b+[ab][ab]*b*[ab]+[ab][ab]+a+",
+        )
+    query: data.play.p
+    error: "the globs are too complex to compare"
