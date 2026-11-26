@@ -3,8 +3,26 @@
 
 //! Minimal helpers for catching panics inside the FFI layer.
 //!
-//! These are not yet wired into the exported functions; they will
-//! be used once the integration work is complete.
+//! A panic inside a guarded call is caught, marks regorus as poisoned, and is
+//! returned as a `Panic` result whose message includes the panic location and a
+//! backtrace. The process-global panic hook is never swapped per call, because
+//! concurrent calls would race on it and could leave a stale hook installed.
+//! Instead, the first guarded call installs one hook that records panics on
+//! threads inside a guarded call and forwards every other panic to the hook
+//! that was installed before it. A hook the host installs afterwards replaces
+//! it: guarded panics are then still caught, but also reach that hook and lose
+//! the extra details. Swapping hooks is not atomic on stable Rust, so a hook the
+//! host sets concurrently with the first guarded call can be lost.
+//!
+//! The hook belongs to the copy of std that this library is linked with. A
+//! default `cdylib` build contains its own copy, which no code outside the
+//! library uses, so host panics never reach the hook. Other Rust code can share
+//! the copy: for example Rust libraries that, like this one, link std
+//! dynamically (`-C prefer-dynamic`), whatever the host language, or a Rust
+//! program that links the `staticlib`. Panics in that code then reach this
+//! hook, and the rules above apply to the hooks it installs. The hook is never
+//! removed, so while that std stays loaded, this library must not be unloaded:
+//! a later panic would call unloaded code.
 
 extern crate alloc;
 
@@ -13,57 +31,116 @@ use crate::common::{RegorusResult, RegorusStatus};
 use alloc::string::String;
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "std")]
-use std::{
-    backtrace::Backtrace,
-    cell::RefCell,
-    panic::{self, AssertUnwindSafe},
-};
+use std::panic::{self, AssertUnwindSafe};
 
 #[cfg(feature = "std")]
-thread_local! {
-    // Stashes the formatted panic + backtrace for whichever call last panicked on this thread.
-    static PANIC_BACKTRACE: RefCell<Option<String>> = const { RefCell::new(None) };
-}
+mod hook {
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use core::cell::{Cell, RefCell};
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::backtrace::Backtrace;
+    use std::panic::{self, PanicHookInfo};
+    use std::sync::{Mutex, PoisonError};
 
-#[cfg(feature = "std")]
-type PanicHook = dyn Fn(&panic::PanicHookInfo<'_>) + Sync + Send + 'static;
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    static INSTALL_LOCK: Mutex<()> = Mutex::new(());
 
-#[cfg(feature = "std")]
-/// RAII helper that installs a per-call panic hook and restores the prior hook on drop.
-struct PanicHookGuard {
-    previous: Option<Box<PanicHook>>,
-}
+    std::thread_local! {
+        // Number of guarded calls active on this thread (guards can nest).
+        static GUARD_DEPTH: Cell<usize> = const { Cell::new(0) };
+        // Formatted panic + backtrace for whichever guarded call last panicked on this thread.
+        static PANIC_BACKTRACE: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
 
-#[cfg(feature = "std")]
-impl PanicHookGuard {
-    fn install() -> Self {
-        // Remember whatever hook the embedding application already registered.
+    /// Installs the recording hook once per process, chaining to the current hook.
+    fn ensure_installed() {
+        // The hook cannot be changed while this thread is unwinding.
+        if INSTALLED.load(Ordering::Acquire) || std::thread::panicking() {
+            return;
+        }
+        let _install = INSTALL_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        if INSTALLED.load(Ordering::Acquire) {
+            return;
+        }
         let previous = panic::take_hook();
-        PANIC_BACKTRACE.with(|slot| {
-            slot.replace(None);
-        });
-        // Install our temporary hook so we can capture a backtrace for this invocation.
-        panic::set_hook(Box::new(|info| {
-            let backtrace = Backtrace::force_capture();
-            PANIC_BACKTRACE.with(|slot| {
-                slot.replace(Some(format!(
-                    "panic hook observed: {}\nbacktrace:\n{:#?}",
-                    info, backtrace
-                )));
-            });
+        panic::set_hook(Box::new(move |info| {
+            if !record(info) {
+                previous(info);
+            }
         }));
-        Self {
-            previous: Some(previous),
+        INSTALLED.store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+    /// Swaps the process hook without racing an install; the next guarded call reinstalls.
+    #[cfg(test)]
+    pub(super) fn replace_process_hook(new: Hook) -> Hook {
+        let _install = INSTALL_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let previous = panic::take_hook();
+        panic::set_hook(new);
+        INSTALLED.store(false, Ordering::Release);
+        previous
+    }
+
+    /// Records a panic raised inside a guarded call; returns false for any other panic.
+    fn record(info: &PanicHookInfo<'_>) -> bool {
+        // `try_with`: thread-locals may already be destroyed on this thread.
+        if !GUARD_DEPTH
+            .try_with(|depth| depth.get() > 0)
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        let backtrace = Backtrace::force_capture();
+        store_details(Some(alloc::format!(
+            "panic hook observed: {info}\nbacktrace:\n{backtrace:#?}"
+        )));
+        true
+    }
+
+    fn store_details(details: Option<String>) {
+        let _ = PANIC_BACKTRACE.try_with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                *slot = details;
+            }
+        });
+    }
+
+    pub(super) fn take_panic_backtrace() -> Option<String> {
+        PANIC_BACKTRACE
+            .try_with(|slot| slot.try_borrow_mut().ok().and_then(|mut slot| slot.take()))
+            .ok()
+            .flatten()
+    }
+
+    /// Marks the current thread as inside a guarded call for the scope's lifetime.
+    /// The outermost scope discards stale details on entry and clears them on
+    /// exit. A nested scope (e.g. entered by a destructor while an outer panic
+    /// unwinds) saves the enclosing call's details and restores them on exit.
+    pub(super) struct GuardScope {
+        enclosing: Option<String>,
+    }
+
+    impl GuardScope {
+        pub(super) fn enter() -> Self {
+            ensure_installed();
+            let nested = GUARD_DEPTH
+                .try_with(|depth| depth.replace(depth.get().saturating_add(1)) > 0)
+                .unwrap_or(false);
+            let previous = take_panic_backtrace();
+            GuardScope {
+                enclosing: previous.filter(|_| nested),
+            }
         }
     }
-}
 
-#[cfg(feature = "std")]
-impl Drop for PanicHookGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            // Restore the original panic hook before we return control to the host.
-            panic::set_hook(previous);
+    impl Drop for GuardScope {
+        fn drop(&mut self) {
+            let _ = GUARD_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
+            store_details(self.enclosing.take());
         }
     }
 }
@@ -165,24 +242,27 @@ where
         return poisoned_result();
     }
 
-    // The closure passed across this boundary closes over raw pointers and lock guards.
-    // These types are not unwind safe by default and may become poisoned if a panic occurs.
-    // We therefore use AssertUnwindSafe to get the compiler to accept the closure.
     // Upon unwind, we mark regorus as poisoned and disallow further use.
     #[cfg(feature = "std")]
-    {
-        let outcome = {
-            let _hook_guard = PanicHookGuard::install();
-            match panic::catch_unwind(AssertUnwindSafe(f)) {
-                Ok(value) => GuardResult::Success(value),
-                Err(payload) => GuardResult::Panic(panic_message_to_string(payload)),
-            }
-        };
-        finalize(outcome)
-    }
+    return finalize(catch_panic(f));
 
     #[cfg(not(feature = "std"))]
     return finalize(GuardResult::Success(f()));
+}
+
+#[cfg(feature = "std")]
+fn catch_panic<F>(f: F) -> GuardResult<RegorusResult>
+where
+    F: FnOnce() -> RegorusResult,
+{
+    let _guard_scope = hook::GuardScope::enter();
+    // The closure passed across this boundary closes over raw pointers and lock guards.
+    // These types are not unwind safe by default and may become poisoned if a panic occurs.
+    // We therefore use AssertUnwindSafe to get the compiler to accept the closure.
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(value) => GuardResult::Success(value),
+        Err(payload) => GuardResult::Panic(panic_message_to_string(payload)),
+    }
 }
 
 fn finalize(outcome: GuardResult<RegorusResult>) -> RegorusResult {
@@ -205,17 +285,12 @@ fn panic_message_to_string(payload: Box<dyn core::any::Any + Send + 'static>) ->
         String::from("regorus encountered panic")
     };
 
-    if let Some(backtrace) = take_panic_backtrace() {
+    if let Some(backtrace) = hook::take_panic_backtrace() {
         message.push('\n');
         message.push_str(&backtrace);
     }
 
     message
-}
-
-#[cfg(feature = "std")]
-fn take_panic_backtrace() -> Option<String> {
-    PANIC_BACKTRACE.with(|slot| slot.borrow_mut().take())
 }
 
 fn poisoned_result() -> RegorusResult {
@@ -239,10 +314,229 @@ pub(crate) fn reset_poison() {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-    use super::with_unwind_guard;
+    use super::{catch_panic, hook, with_unwind_guard, GuardResult};
     use crate::common::{regorus_result_drop, RegorusResult, RegorusStatus};
-    use std::sync::mpsc;
+    use core::cell::Cell;
+    use std::panic;
+    use std::sync::{mpsc, Mutex};
     use std::time::Duration;
+
+    const TEST_PANIC_PREFIX: &str = "panic_guard_test:";
+    static HOST_HOOK_PANICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn host_hook(info: &panic::PanicHookInfo<'_>) {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        if payload.starts_with(TEST_PANIC_PREFIX) {
+            HOST_HOOK_PANICS
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(payload);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_guarded_panics_keep_their_messages_and_the_host_hook() {
+        const THREADS: usize = 8;
+        const ITERATIONS: usize = 40;
+        const CHILD_ENV: &str = "REGORUS_FFI_PANIC_HOOK_TEST_CHILD";
+
+        // Replacing the process hook would disturb concurrently running tests, so the
+        // checks run in a child process that executes only this test.
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "panic_guard::tests::concurrent_guarded_panics_keep_their_messages_and_the_host_hook",
+                    "--test-threads=1",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("failed to run the hook test in a child process");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "child process failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        // `catch_panic` never touches the poison flag, so this test does not take the
+        // poison test gate; it is the only test that replaces the process hook.
+        HOST_HOOK_PANICS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        let previous_hook = hook::replace_process_hook(Box::new(host_hook));
+
+        let workers: Vec<_> = (0..THREADS)
+            .map(|thread| {
+                std::thread::spawn(move || {
+                    let mut problems = Vec::new();
+                    for iteration in 0..ITERATIONS {
+                        let payload = format!("{TEST_PANIC_PREFIX} t{thread} i{iteration}");
+                        let panics = (thread + iteration) % 2 == 0;
+                        let expected = payload.clone();
+                        let outcome = catch_panic(move || {
+                            if panics {
+                                panic!("{expected}");
+                            }
+                            RegorusResult::ok_void()
+                        });
+                        match (panics, outcome) {
+                            (true, GuardResult::Panic(message)) => {
+                                let observed = message.split_once("panic hook observed: ");
+                                let own_location = observed.is_some_and(|(head, hook)| {
+                                    head.starts_with(&payload)
+                                        && hook.contains(&payload)
+                                        && hook.contains(file!())
+                                });
+                                if !own_location {
+                                    problems.push(format!("{payload}: message {message:?}"));
+                                }
+                            }
+                            (false, GuardResult::Success(result)) => regorus_result_drop(result),
+                            (true, GuardResult::Success(result)) => {
+                                regorus_result_drop(result);
+                                problems.push(format!("{payload}: panic not caught"));
+                            }
+                            (false, GuardResult::Panic(message)) => {
+                                problems.push(format!("{payload}: unexpected panic {message:?}"));
+                            }
+                        }
+                    }
+                    problems
+                })
+            })
+            .collect();
+        let mut problems: Vec<String> = workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| vec!["worker panicked".into()])
+            })
+            .collect();
+
+        // An unguarded panic on another thread while a guarded call is in progress.
+        let (entered_sender, entered_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let outcome = catch_panic(move || {
+                let _ = entered_sender.send(());
+                let _ = release_receiver.recv_timeout(Duration::from_secs(5));
+                RegorusResult::ok_void()
+            });
+            if let GuardResult::Success(result) = outcome {
+                regorus_result_drop(result);
+            }
+        });
+        if entered_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .is_err()
+        {
+            problems.push("guarded call on the holder thread did not start".into());
+        }
+        let during = format!("{TEST_PANIC_PREFIX} during a guarded call");
+        let expected = during.clone();
+        let _ = std::thread::spawn(move || panic!("{expected}")).join();
+        let _ = release_sender.send(());
+        let _ = holder.join();
+
+        // Nested and earlier guarded calls on a thread, then an unguarded panic on it.
+        let after = format!("{TEST_PANIC_PREFIX} after guarded calls");
+        let expected = after.clone();
+        let same_thread = std::thread::spawn(move || {
+            let mut problems = Vec::new();
+            let nested = catch_panic(|| {
+                if let GuardResult::Success(result) = catch_panic(RegorusResult::ok_void) {
+                    regorus_result_drop(result);
+                }
+                panic!("{TEST_PANIC_PREFIX} outer after inner")
+            });
+            match nested {
+                GuardResult::Panic(message) if message.contains("panic hook observed: ") => {}
+                _ => problems.push("panic after a nested guarded call lost its details".into()),
+            }
+            let inner_caught = catch_panic(|| {
+                let _ = panic::catch_unwind(|| panic!("{TEST_PANIC_PREFIX} caught inside"));
+                RegorusResult::ok_void()
+            });
+            if let GuardResult::Success(result) = inner_caught {
+                regorus_result_drop(result);
+            }
+            // `resume_unwind` skips the hook, so this call has no details of its own.
+            let resumed = catch_panic(|| panic::resume_unwind(Box::new(String::from("resumed"))));
+            match resumed {
+                GuardResult::Panic(message) if message == "resumed" => {}
+                _ => problems.push("a later guarded call showed stale panic details".into()),
+            }
+            let _ = panic::catch_unwind(|| panic!("{expected}"));
+            problems
+        });
+        problems.extend(
+            same_thread
+                .join()
+                .unwrap_or_else(|_| vec!["same-thread checks panicked".into()]),
+        );
+
+        let host_panics = core::mem::take(
+            &mut *HOST_HOOK_PANICS
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        if host_panics != [during, after] {
+            problems.push(format!(
+                "host hook must see only the unguarded panics, saw {} panics: {:?}",
+                host_panics.len(),
+                host_panics.iter().take(5).collect::<Vec<_>>()
+            ));
+        }
+
+        // Restore before asserting: the hook cannot be changed while unwinding.
+        drop(hook::replace_process_hook(previous_hook));
+        assert!(
+            problems.is_empty(),
+            "{} problems: {:#?}",
+            problems.len(),
+            &problems[..problems.len().min(10)]
+        );
+    }
+
+    #[test]
+    fn guarded_call_reentered_during_unwinding_keeps_outer_panic_details() {
+        // Asserting inside the destructor would abort, so it reports what the nested calls saw.
+        struct ReenterOnDrop<'a>(&'a Cell<bool>);
+        impl Drop for ReenterOnDrop<'_> {
+            fn drop(&mut self) {
+                if let GuardResult::Success(result) = catch_panic(RegorusResult::ok_void) {
+                    regorus_result_drop(result);
+                }
+                let inner = catch_panic(|| panic!("{TEST_PANIC_PREFIX} inner while unwinding"));
+                self.0.set(matches!(inner, GuardResult::Panic(m)
+                    if m.contains("panic hook observed: ") && !m.contains("outer unwinding")));
+            }
+        }
+        let inner_ok = Cell::new(false);
+        let outer = catch_panic(|| {
+            let _reenter = ReenterOnDrop(&inner_ok);
+            panic!("{TEST_PANIC_PREFIX} outer unwinding")
+        });
+        assert!(inner_ok.get(), "nested panic did not get its own details");
+        match outer {
+            GuardResult::Panic(message) => assert!(
+                message.contains("panic hook observed: ") && !message.contains("inner while"),
+                "outer panic lost its details: {message:?}"
+            ),
+            GuardResult::Success(_) => panic!("outer panic not caught"),
+        }
+    }
 
     #[test]
     fn ordinary_guarded_calls_are_not_serialized_by_the_poison_test_gate() {
