@@ -186,6 +186,7 @@ pub use compile::{compile_policy_with_entrypoint, PolicyModule};
 pub use compiled_policy::CompiledPolicy;
 pub use engine::{Engine, InvalidRuleRootError, PolicyPackageComponents};
 pub use lexer::Source;
+pub use number::Number;
 pub use policy_info::PolicyInfo;
 pub use utils::limits::LimitError;
 pub use utils::limits::PolicyLengthConfig;
