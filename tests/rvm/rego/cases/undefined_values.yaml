@@ -1,0 +1,362 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+cases:
+  - note: undefined_assignments
+    data: {}
+    input:
+      values: [false, null, 0, "", [], {}]
+    modules:
+      - |
+        package test
+
+        default named := false
+        named := true if { x := input.missing }
+        default wildcard := false
+        wildcard := true if { _ := input.missing }
+        fallback := "missing" if { _ := input.missing } else := "fallback"
+
+        main := {
+          "named": named,
+          "wildcard": wildcard,
+          "fallback": fallback,
+          "array": [x | x := input.missing],
+          "set": {x | x := input.missing},
+          "object": {"key": x | x := input.missing},
+          "wildcard_array": [true | _ := input.missing],
+          "defined": [x | some i in [0, 1, 2, 3, 4, 5, 6]; x := input.values[i]],
+          "defined_wildcard": [i | some i in [0, 1, 2, 3, 4, 5, 6]; _ := input.values[i]],
+        }
+    query: data.test.main
+    want_result:
+      named: false
+      wildcard: false
+      fallback: fallback
+      array: []
+      set:
+        set!: []
+      object: {}
+      wildcard_array: []
+      defined: [false, null, 0, "", [], {}]
+      defined_wildcard: [0, 1, 2, 3, 4, 5]
+
+  - note: undefined_assignments_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      values: [false, null, 0, "", [], {}]
+    modules:
+      - |
+        package test
+
+        default named := false
+        named := true if { x := input.missing }
+        default wildcard := false
+        wildcard := true if { _ := input.missing }
+        fallback := "missing" if { _ := input.missing } else := "fallback"
+
+        main := {
+          "named": named,
+          "wildcard": wildcard,
+          "fallback": fallback,
+          "array": [x | x := input.missing],
+          "set": {x | x := input.missing},
+          "object": {"key": x | x := input.missing},
+          "wildcard_array": [true | _ := input.missing],
+          "defined": [x | some i in [0, 1, 2, 3, 4, 5, 6]; x := input.values[i]],
+          "defined_wildcard": [i | some i in [0, 1, 2, 3, 4, 5, 6]; _ := input.values[i]],
+        }
+    query: data.test.main
+    want_result:
+      named: false
+      wildcard: false
+      fallback: fallback
+      array: []
+      set:
+        set!: []
+      object: {}
+      wildcard_array: []
+      defined: [false, null, 0, "", [], {}]
+      defined_wildcard: [0, 1, 2, 3, 4, 5]
+
+  - note: undefined_comprehension_heads
+    data: {}
+    input:
+      items:
+        - {key: before, value: false}
+        - {}
+        - {key: no_value}
+        - {value: no_key}
+        - {key: after, value: null}
+        - {key: zero, value: 0}
+        - {key: empty_array, value: []}
+        - {key: empty_object, value: {}}
+        - {key: "", value: ""}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing_array": [input.missing | true],
+          "missing_set": {input.missing | true},
+          "missing_key": {input.missing: "value" | true},
+          "missing_value": {"key": input.missing | true},
+          "array": [item.value | some item in input.items],
+          "object": {item.key: item.value | some item in input.items},
+        }
+    query: data.test.main
+    want_result:
+      missing_array: []
+      missing_set:
+        set!: []
+      missing_key: {}
+      missing_value: {}
+      array: [false, no_key, null, 0, [], {}, ""]
+      object:
+        before: false
+        after: null
+        zero: 0
+        empty_array: []
+        empty_object: {}
+        "": ""
+
+  - note: undefined_comprehension_heads_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      items:
+        - {key: before, value: false}
+        - {}
+        - {key: no_value}
+        - {value: no_key}
+        - {key: after, value: null}
+        - {key: zero, value: 0}
+        - {key: empty_array, value: []}
+        - {key: empty_object, value: {}}
+        - {key: "", value: ""}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing_array": [input.missing | true],
+          "missing_set": {input.missing | true},
+          "missing_key": {input.missing: "value" | true},
+          "missing_value": {"key": input.missing | true},
+          "array": [item.value | some item in input.items],
+          "object": {item.key: item.value | some item in input.items},
+        }
+    query: data.test.main
+    want_result:
+      missing_array: []
+      missing_set:
+        set!: []
+      missing_key: {}
+      missing_value: {}
+      array: [false, no_key, null, 0, [], {}, ""]
+      object:
+        before: false
+        after: null
+        zero: 0
+        empty_array: []
+        empty_object: {}
+        "": ""
+
+  - note: undefined_nested_comprehensions
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "assignment": [true | _ := [true | _ := input.missing]],
+          "array_head": [count([input.missing | true]) | true],
+          "object_key": [count({input.missing: true | true}) | true],
+          "object_value": [count({"key": input.missing | true}) | true],
+          "loop_assignment": [count([true | _ := input.missing]) | some i in [1, 2]],
+          "loop_array_head": [count([input.missing | true]) | some i in [1, 2]],
+          "loop_object_key": [count({input.missing: true | true}) | some i in [1, 2]],
+          "loop_object_value": [count({"key": input.missing | true}) | some i in [1, 2]],
+          "inner_loop": [count([x | some x in [1, 2]; _ := input.missing]) | some i in [1, 2]],
+          "mixed": [count([x.value | some x in [{"value": false}, {}, {"value": null}]]) | some i in [1, 2]],
+          "every": [true | every i in [1, 2] { count([input.missing | true]) == 0 }],
+        }
+    query: data.test.main
+    want_result:
+      assignment: [true]
+      array_head: [0]
+      object_key: [0]
+      object_value: [0]
+      loop_assignment: [0, 0]
+      loop_array_head: [0, 0]
+      loop_object_key: [0, 0]
+      loop_object_value: [0, 0]
+      inner_loop: [0, 0]
+      mixed: [2, 2]
+      every: [true]
+
+  - note: undefined_loop_else
+    data: {}
+    input:
+      items: [{}]
+    modules:
+      - |
+        package test
+
+        p := 1 if { some x in input.items; _ := x.missing } else := 2
+        f(items) := 1 if { some x in items; _ := x.missing } else := 2
+        false_fallback := 1 if { some x in input.items; _ := x.missing } else := false
+        null_fallback := 1 if { some x in input.items; _ := x.missing } else := null
+        empty_fallback := 1 if { some x in input.items; _ := x.missing } else := []
+        found(items) := x.value if { some x in items; _ := x.value } else := "fallback"
+
+        main := {
+          "rule": p,
+          "function": f(input.items),
+          "empty": f([]),
+          "false": false_fallback,
+          "null": null_fallback,
+          "array": empty_fallback,
+          "defined": found([{}, {"value": false}, {}]),
+          "mixed": f([{}, {"missing": false}, {}]),
+        }
+    query: data.test.main
+    want_result:
+      rule: 2
+      function: 2
+      empty: 2
+      "false": false
+      "null": null
+      array: []
+      defined: false
+      mixed: 1
+
+  - note: undefined_loop_else_suspendable
+    execution_mode: suspendable
+    data: {}
+    input:
+      items: [{}]
+    modules:
+      - |
+        package test
+
+        p := 1 if { some x in input.items; _ := x.missing } else := 2
+        f(items) := 1 if { some x in items; _ := x.missing } else := 2
+        false_fallback := 1 if { some x in input.items; _ := x.missing } else := false
+        null_fallback := 1 if { some x in input.items; _ := x.missing } else := null
+        empty_fallback := 1 if { some x in input.items; _ := x.missing } else := []
+        found(items) := x.value if { some x in items; _ := x.value } else := "fallback"
+
+        main := {
+          "rule": p,
+          "function": f(input.items),
+          "empty": f([]),
+          "false": false_fallback,
+          "null": null_fallback,
+          "array": empty_fallback,
+          "defined": found([{}, {"value": false}, {}]),
+          "mixed": f([{}, {"missing": false}, {}]),
+        }
+    query: data.test.main
+    want_result:
+      rule: 2
+      function: 2
+      empty: 2
+      "false": false
+      "null": null
+      array: []
+      defined: false
+      mixed: 1
+
+  - note: undefined_negated_assignments
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing": [true | not _ := input.missing],
+          "nested_assignment": [true | not _ := [true | _ := input.missing]],
+          "nested_head": [true | not _ := [input.missing | true]],
+          "nested_condition": [true | not _ := [true | input.missing == 1]],
+          "nested_assignment_count": [true | not count([true | _ := input.missing]) > 0],
+          "nested_condition_count": [true | not count([true | input.missing == 1]) > 0],
+          "object": [true | not _ := {"key": input.missing | true}],
+          "loop": [i | some i in [1, 2]; not _ := input.missing],
+        }
+    query: data.test.main
+    want_result:
+      missing: [true]
+      nested_assignment: []
+      nested_head: []
+      nested_condition: []
+      nested_assignment_count: [true]
+      nested_condition_count: [true]
+      object: []
+      loop: [1, 2]
+
+  - note: undefined_negated_assignments_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "missing": [true | not _ := input.missing],
+          "nested_assignment": [true | not _ := [true | _ := input.missing]],
+          "nested_head": [true | not _ := [input.missing | true]],
+          "nested_condition": [true | not _ := [true | input.missing == 1]],
+          "nested_assignment_count": [true | not count([true | _ := input.missing]) > 0],
+          "nested_condition_count": [true | not count([true | input.missing == 1]) > 0],
+          "object": [true | not _ := {"key": input.missing | true}],
+          "loop": [i | some i in [1, 2]; not _ := input.missing],
+        }
+    query: data.test.main
+    want_result:
+      missing: [true]
+      nested_assignment: []
+      nested_head: []
+      nested_condition: []
+      nested_assignment_count: [true]
+      nested_condition_count: [true]
+      object: []
+      loop: [1, 2]
+
+  - note: undefined_nested_comprehensions_suspendable
+    execution_mode: suspendable
+    data: {}
+    input: {}
+    modules:
+      - |
+        package test
+
+        main := {
+          "assignment": [true | _ := [true | _ := input.missing]],
+          "array_head": [count([input.missing | true]) | true],
+          "object_key": [count({input.missing: true | true}) | true],
+          "object_value": [count({"key": input.missing | true}) | true],
+          "loop_assignment": [count([true | _ := input.missing]) | some i in [1, 2]],
+          "loop_array_head": [count([input.missing | true]) | some i in [1, 2]],
+          "loop_object_key": [count({input.missing: true | true}) | some i in [1, 2]],
+          "loop_object_value": [count({"key": input.missing | true}) | some i in [1, 2]],
+          "inner_loop": [count([x | some x in [1, 2]; _ := input.missing]) | some i in [1, 2]],
+          "mixed": [count([x.value | some x in [{"value": false}, {}, {"value": null}]]) | some i in [1, 2]],
+          "every": [true | every i in [1, 2] { count([input.missing | true]) == 0 }],
+        }
+    query: data.test.main
+    want_result:
+      assignment: [true]
+      array_head: [0]
+      object_key: [0]
+      object_value: [0]
+      loop_assignment: [0, 0]
+      loop_array_head: [0, 0]
+      loop_object_key: [0, 0]
+      loop_object_value: [0, 0]
+      inner_loop: [0, 0]
+      mixed: [2, 2]
+      every: [true]
